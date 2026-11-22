@@ -4,17 +4,26 @@ import type http from "node:http";
 import path from "node:path";
 
 /**
- * The built client: `index.html` and the hashed files Vite puts under
- * `assets/`. These hold no data, so they are served without a session and the
+ * The built client: `index.html`, the hashed files Vite puts under
+ * `assets/`, and the install files below. These hold no data, so they are served without a session and the
  * sign-in screen can load. Everything else needs one.
  */
 
 const ASSETS_PREFIX = "/assets/";
 
+/**
+ * The files that make Botbench installable (unit 23), at fixed names in the client's root: the manifest, the service
+ * worker (at the root, so its scope is the whole app) and the manifest's four icons. They hold no data. They are open
+ * because the browser and the phone fetch them on their own, without the page's cookie: a manifest is fetched without
+ * credentials, and the home screen reads the icons whenever it likes.
+ */
+const INSTALL_FILES = new Set(["/manifest.webmanifest", "/sw.js", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-192.png", "/icons/icon-maskable-512.png"]);
+const SERVICE_WORKER = "/sw.js";
+
 /** Whether a request is for the client shell. The auth gate and the router both ask this, so they cannot disagree. */
 export function isShellRequest(method: string | undefined, pathname: string): boolean {
   if (method !== "GET" && method !== "HEAD") return false;
-  return pathname === "/" || pathname === "/index.html" || (pathname.startsWith(ASSETS_PREFIX) && pathname.length > ASSETS_PREFIX.length);
+  return pathname === "/" || pathname === "/index.html" || INSTALL_FILES.has(pathname) || (pathname.startsWith(ASSETS_PREFIX) && pathname.length > ASSETS_PREFIX.length);
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -22,6 +31,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
@@ -88,11 +98,13 @@ export function serveShell(req: http.IncomingMessage, res: http.ServerResponse, 
   res.writeHead(200, {
     "content-type": CONTENT_TYPES[path.extname(file)]!,
     "content-length": body.length,
-    // The page is small and names its hashed files, so it is always checked; the hashed files never change.
-    "cache-control": isPage ? "no-cache" : "public, max-age=31536000, immutable",
+    // The page and the install files keep their names across builds, so they are always checked; the hashed files never change.
+    "cache-control": isPage || INSTALL_FILES.has(pathname) ? "no-cache" : "public, max-age=31536000, immutable",
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     ...(isPage ? { "content-security-policy": policyFor(body.toString("utf8")) } : {}),
+    // A service worker is governed by the policy it is served with, not the page's.
+    ...(pathname === SERVICE_WORKER ? { "content-security-policy": "default-src 'self'" } : {}),
   });
   res.end(req.method === "HEAD" ? undefined : body);
 }

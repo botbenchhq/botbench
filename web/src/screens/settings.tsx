@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { ApiError, getAgents, type AgentState } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
+import { NotificationSettings } from "../app/notification-settings.tsx";
 import { Frame, Page, PageHeader } from "../components/header.tsx";
 
 /** An agent's state in a word or two, from the probe: what the CLI itself reported. */
@@ -40,6 +41,7 @@ const MODES: { value: Appearance; label: string }[] = [
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
  * now, and what Botbench lets it do: Claude Code plans and builds, Codex reviews. Appearance: the mode this device shows, saved as it is chosen.
+ * Notifications: this device's notifications, on or off (unit 23).
  */
 export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [agents, setAgents] = useState<AgentState[] | null>(null);
@@ -109,6 +111,8 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
               </div>
             </div>
           </div>
+
+          <NotificationSettings onSignedOut={onSignedOut} />
       </Page>
     </Frame>
   );
