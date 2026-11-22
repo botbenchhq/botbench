@@ -14,7 +14,7 @@ const RULE_WORDS: Record<LogRule, string> = {
   owner_declined: "You denied",
   ended_unanswered: "Ended without your answer",
   auto_worktree_edit: "Edited a file in the task's copy, without asking",
-  broker_failure_denied: "Smelt denied",
+  broker_failure_denied: "Botbench denied",
   stored_answer_applied: "Your answer from before a restart was used",
   stored_answer_discarded: "Your answer from before a restart was not used",
   preapproved: "Ran without asking: allowed for this task",
@@ -30,7 +30,7 @@ const shorten = (text: string, max = 300): string => (text.length > max ? `${tex
 const directoryWords = (cwd: string): string => (cwd === "." ? "The top folder of a task's copy" : `${cwd}, inside a task's copy`);
 
 /**
- * What Smelt may do without asking, and what it did: the standing permissions in force, each with the control
+ * What Botbench may do without asking, and what it did: the standing permissions in force, each with the control
  * that takes it back, and the action log, newest first.
  */
 export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
@@ -49,7 +49,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
       (err: unknown): void => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setBusy(false);
-        setProblem(err instanceof ApiError ? `${what} ${err.message}` : `${what} Smelt could not be reached.`);
+        setProblem(err instanceof ApiError ? `${what} ${err.message}` : `${what} Botbench could not be reached.`);
       },
     [onSignedOut],
   );
@@ -144,7 +144,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
                       testId="take-back-confirm"
                       onConfirm={() => takeBack(grant)}
                     >
-                      <p>The next time this command is asked for, Smelt asks you again.</p>
+                      <p>The next time this command is asked for, Botbench asks you again.</p>
                       <ul className="gw-confirm-dialog__losses">
                         <li className="gw-confirm-dialog__loss">
                           <code data-gw-content="">{visible(grant.command)}</code>

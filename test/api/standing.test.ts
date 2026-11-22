@@ -7,7 +7,7 @@ import type { Answer } from "../../src/approvals/broker.ts";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import type { Config } from "../../src/config.ts";
 import { createTask, moveTask } from "../../src/engine/task.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { createWorktree } from "../../src/worktrees.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
 
@@ -19,7 +19,7 @@ type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
 interface Api {
-  server: SmeltServer;
+  server: BotbenchServer;
   dir: string;
   repo: string;
   base: string;
@@ -30,7 +30,7 @@ interface Api {
 }
 
 async function start(t: T, offerStandingAfter?: number, preapproved?: string[]): Promise<Api> {
-  const dir = tempDir("smelt-standing-api-");
+  const dir = tempDir("botbench-standing-api-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...(offerStandingAfter === undefined ? {} : { autonomy: { offerStandingAfter } }) };
@@ -99,7 +99,7 @@ test("every standing-permission route needs a session: without one nothing is li
   const eligible = await cardFor(api, "toolu_2");
   assert.ok(eligible.standingOffer, "the card is eligible");
 
-  for (const without of [{}, { cookie: "smelt_session=not-a-session" }] as Record<string, string>[]) {
+  for (const without of [{}, { cookie: "botbench_session=not-a-session" }] as Record<string, string>[]) {
     for (const route of ["/api/grants", "/api/action-log?limit=2", "/api/action-log?before=5&limit=2"]) assert.deepEqual(await get(api, route, without), { status: 401, body: { error: "sign in required" } }, route);
     assert.deepEqual(await post(api, `/api/approvals/${eligible.id}`, { decision: "allow", standing: true }, without), { status: 401, body: { error: "sign in required" } });
     assert.deepEqual(await post(api, "/api/grants/1/revoke", {}, without), { status: 401, body: { error: "sign in required" } });

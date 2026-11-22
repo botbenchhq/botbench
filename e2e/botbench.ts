@@ -6,12 +6,12 @@ import { DatabaseSync } from "node:sqlite";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
-export interface Smelt {
+export interface Botbench {
   /** The address the client is opened at. */
   base: string;
   port: number;
   home: string;
-  /** The owner's login token, read from the file Smelt wrote. */
+  /** The owner's login token, read from the file Botbench wrote. */
   token: string;
   /** Freeze the process, as a stalled machine or network would: connections stay open and nothing answers. */
   freeze(): void;
@@ -33,12 +33,12 @@ export function tempDir(prefix: string): string {
 async function launchServer(home: string, port: number, settings: string, env: Record<string, string>): Promise<{ child: ChildProcess; port: number }> {
   const child: ChildProcess = spawn(process.execPath, [path.join(ROOT, "src", "server.ts")], {
     cwd: ROOT,
-    env: { ...process.env, SMELT_HOME: home, SMELT_PORT: String(port), SMELT_CONFIG: settings, ...env },
+    env: { ...process.env, BOTBENCH_HOME: home, BOTBENCH_PORT: String(port), BOTBENCH_CONFIG: settings, ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
   const bound = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Smelt did not start:\n${output}`)), 15_000);
+    const timer = setTimeout(() => reject(new Error(`Botbench did not start:\n${output}`)), 15_000);
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();
       const match = /listening on http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
@@ -46,18 +46,18 @@ async function launchServer(home: string, port: number, settings: string, env: R
     };
     child.stdout!.on("data", onData);
     child.stderr!.on("data", onData);
-    child.once("exit", (code) => (clearTimeout(timer), reject(new Error(`Smelt exited with code ${code}:\n${output}`))));
+    child.once("exit", (code) => (clearTimeout(timer), reject(new Error(`Botbench exited with code ${code}:\n${output}`))));
   });
   return { child, port: bound };
 }
 
 /**
- * Start a real Smelt process: `node src/server.ts`, its data in `home`, on a
+ * Start a real Botbench process: `node src/server.ts`, its data in `home`, on a
  * free port (or `port`, to come back on the same one). Turns ask for the
  * cheapest model unless `settings` gives the owner's settings file. `env` adds to the process environment.
  */
-export async function startSmelt(options: { home?: string; port?: number; env?: Record<string, string>; settings?: unknown } = {}): Promise<Smelt> {
-  const home = options.home ?? path.join(tempDir("smelt-e2e-"), "home");
+export async function startBotbench(options: { home?: string; port?: number; env?: Record<string, string>; settings?: unknown } = {}): Promise<Botbench> {
+  const home = options.home ?? path.join(tempDir("botbench-e2e-"), "home");
   const settings = path.join(path.dirname(home), "settings.json");
   fs.writeFileSync(settings, JSON.stringify(options.settings ?? { drivers: { "claude-code": { model: "haiku" } } }));
   const first = await launchServer(home, options.port ?? 0, settings, options.env ?? {});
@@ -74,8 +74,8 @@ export async function startSmelt(options: { home?: string; port?: number; env?: 
   };
 
   const stop = async (): Promise<{ leftover: number[] }> => {
-    // Every process group Smelt started, read from its own records before it goes.
-    const db = new DatabaseSync(path.join(home, "smelt.sqlite"), { readOnly: true });
+    // Every process group Botbench started, read from its own records before it goes.
+    const db = new DatabaseSync(path.join(home, "botbench.sqlite"), { readOnly: true });
     const groups = db.prepare("SELECT pgid FROM attempts WHERE pgid IS NOT NULL").all().map((row) => Number(row.pgid));
     db.close();
     await end("SIGTERM");

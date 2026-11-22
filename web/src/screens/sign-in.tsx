@@ -16,16 +16,16 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
       setBusy(false);
       if (err instanceof ApiError && err.status === 401) setError("Wrong token. Check it and try again.");
       else if (err instanceof ApiError) setError(`Sign-in was refused: ${err.message}.`);
-      else setError("Cannot reach Smelt. Check that it is running, then try again.");
+      else setError("Cannot reach Botbench. Check that it is running, then try again.");
     });
   };
 
   return (
     <main className="gw-sign-in p-lg">
-      <p className="gw-sign-in__product">Smelt</p>
+      <p className="gw-sign-in__product">Botbench</p>
       <div className="gw-stack gw-gap-sm">
         <h1>Sign in</h1>
-        <p id="token-help">Smelt printed the token the first time it started. It is also in the file named login-token in Smelt's data directory on your Mac.</p>
+        <p id="token-help">Botbench printed the token the first time it started. It is also in the file named login-token in Botbench's data directory on your Mac.</p>
       </div>
       <form onSubmit={submit} className="gw-stack gw-gap-lg">
         {notice !== null && (

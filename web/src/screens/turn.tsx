@@ -5,11 +5,13 @@ import { ModelPicker, modelName, modelWords, sessionModel, useModelChoice } from
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
-const CONVERSATION_KEY = "smelt.conversation";
+const CONVERSATION_KEY = "botbench.conversation";
+/** The same entry under the product's old name (Smelt), read for one release while the new one has never been written. */
+const OLD_CONVERSATION_KEY = "smelt.conversation";
 
 function loadConversation(): number[] {
   try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(CONVERSATION_KEY) ?? "[]");
+    const parsed: unknown = JSON.parse((window.localStorage.getItem(CONVERSATION_KEY) ?? window.localStorage.getItem(OLD_CONVERSATION_KEY)) ?? "[]");
     return Array.isArray(parsed) && parsed.every((id) => Number.isSafeInteger(id) && id > 0) ? (parsed as number[]) : [];
   } catch {
     return [];
@@ -162,7 +164,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         setStopping(false);
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         if (err instanceof ApiError && err.driver !== null) setDriver(err.driver);
-        setError(err instanceof ApiError ? `The prompt was not sent. ${err.message}` : "The prompt was not sent: Smelt could not be reached.");
+        setError(err instanceof ApiError ? `The prompt was not sent. ${err.message}` : "The prompt was not sent: Botbench could not be reached.");
       },
     );
   };
@@ -180,7 +182,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
           // 409: the turn ended on its own first, which the transcript already shows.
           if (err instanceof ApiError && err.status === 409) return;
           if (err instanceof ApiError && err.status === 401) return onSignedOut();
-          setError(err instanceof ApiError ? `Claude Code was not stopped. ${err.message}` : "Claude Code was not stopped: Smelt could not be reached.");
+          setError(err instanceof ApiError ? `Claude Code was not stopped. ${err.message}` : "Claude Code was not stopped: Botbench could not be reached.");
         }),
       // The turn never started, and `send` has already said why.
       () => setStopping(false),
@@ -199,7 +201,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     }
   };
 
-  /** Begin again: the transcript is put away on this device (Smelt keeps what was stored), and the next prompt starts afresh. */
+  /** Begin again: the transcript is put away on this device (Botbench keeps what was stored), and the next prompt starts afresh. */
   const newChat = (): void => {
     if (running) return;
     setConversation([]);
@@ -243,7 +245,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
             {shown.length === 0 ? (
               <div className="gw-empty-state gw-empty-state--compact">
                 <h2 className="gw-empty-state__title">No messages yet</h2>
-                <p className="gw-empty-state__body">Send a prompt and Claude Code answers here. It works in an empty folder of its own inside Smelt's data folder, not in any of your projects.</p>
+                <p className="gw-empty-state__body">Send a prompt and Claude Code answers here. It works in an empty folder of its own inside Botbench's data folder, not in any of your projects.</p>
               </div>
             ) : (
               <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} />
@@ -286,7 +288,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
               <Alert
                 tone="warning"
                 testId="driver-problem"
-                title={driverFailed ? "Smelt could not check Claude Code." : (driver!.problem ?? undefined)}
+                title={driverFailed ? "Botbench could not check Claude Code." : (driver!.problem ?? undefined)}
                 action={
                   <button type="button" onClick={checkDriver} className="gw-button gw-button--small">
                     Check again

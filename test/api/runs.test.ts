@@ -9,7 +9,7 @@ import type { PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, createRun, MAX_SPEC_BYTES, storePlan } from "../../src/engine/run.ts";
 import { insertEvidence } from "../../src/engine/stations.ts";
 import { moveTask } from "../../src/engine/task.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 
 // No test in this file starts a driver: a run that is started for real reaches Claude Code, and is in
@@ -26,7 +26,7 @@ const THREE: PlanTask[] = [
 ];
 
 interface Api {
-  server: SmeltServer;
+  server: BotbenchServer;
   dir: string;
   home: string;
   repo: string;
@@ -39,7 +39,7 @@ interface Api {
 const FAILING_SETUP = "echo preparing the copy; exit 1";
 
 async function start(t: T, setup: string[] = [FAILING_SETUP]): Promise<Api> {
-  const dir = tempDir("smelt-runs-api-");
+  const dir = tempDir("botbench-runs-api-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -93,7 +93,7 @@ test("every run route refuses a request without a session", async (t) => {
     ["POST", `/api/runs/${run.id}/cancel`, {}],
   ];
   for (const [method, route, body] of routes) {
-    for (const without of [{}, { cookie: "smelt_session=not-a-session" }] as Record<string, string>[]) {
+    for (const without of [{}, { cookie: "botbench_session=not-a-session" }] as Record<string, string>[]) {
       const res = await fetch(`${api.base}${route}`, { method, headers: { ...without, ...(body ? JSON_TYPE : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
       assert.equal(res.status, 401, `${method} ${route} without a session`);
       assert.deepEqual(await res.json(), { error: "sign in required" });
@@ -156,7 +156,7 @@ test("a spec file that is missing, relative, too large, not a regular file, not 
     [path.join(api.dir, "pipe.md"), /not a regular file/],
     [file("binary.md", Buffer.from([0x23, 0x00, 0xff, 0xfe])), /not text/],
     [file("notes.pem", "text"), /\.md/],
-    [path.join(api.home, LOGIN_TOKEN_FILE), /\.md|Smelt's own/],
+    [path.join(api.home, LOGIN_TOKEN_FILE), /\.md|Botbench's own/],
   ];
   for (const [specPath, words] of bad) {
     const res = await call(api, "POST", "/api/runs", { repo: api.repo, specPath });

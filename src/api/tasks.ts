@@ -42,7 +42,7 @@ function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   };
 }
 
-/** The files the task changed, from its base commit to the commit Smelt made. Null with the reason when they cannot be read. */
+/** The files the task changed, from its base commit to the commit Botbench made. Null with the reason when they cannot be read. */
 async function changedFiles(task: Task): Promise<{ files: FileChange[] | null; filesProblem: string | null }> {
   if (task.headCommit === null || task.worktreePath === null || task.baseCommit === null) return { files: null, filesProblem: null };
   try {

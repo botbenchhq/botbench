@@ -13,12 +13,12 @@ import { MIGRATIONS } from "../../src/store/schema.ts";
 import { migrate, openStore, schemaVersion } from "../../src/store/db.ts";
 import { createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
-import { checkoutState, git, initRepo, ownerCommit, smeltBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { checkoutState, git, initRepo, ownerCommit, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
 
 // The build line: a run's approved tasks are built one at a time, in plan order, each in its own worktree from the
 // run's base commit, after the repository's setup commands. No test in this file starts a CLI: each builder's turn is a
 // turn recorded from a real Claude Code session, replayed (test/support/replay-build.ts). Setup commands are real
-// commands run by Smelt in the real worktree; the live build is in test/live/build.live.test.ts.
+// commands run by Botbench in the real worktree; the live build is in test/live/build.live.test.ts.
 
 type T = { after(fn: () => unknown): void };
 
@@ -44,7 +44,7 @@ interface Line {
 }
 
 async function line(t: T, script: BuildTurn[], o: { hold?: number[]; setup?: StationCommand[]; files?: Record<string, string> } = {}): Promise<Line> {
-  const dir = tempDir("smelt-build-test-");
+  const dir = tempDir("botbench-build-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
   const repo = path.join(dir, "repo");
@@ -104,7 +104,7 @@ test("AE1: deleting one of three planned tasks and approving creates exactly two
   await e.tasks.idle();
 
   assert.equal(worktreeCount(e.repo), 3, "the owner's checkout and exactly two task worktrees");
-  assert.deepEqual(smeltBranches(e.repo), tasks.map((task) => `smelt/run-${run.id}/task-${task.id}`));
+  assert.deepEqual(botbenchBranches(e.repo), tasks.map((task) => `botbench/run-${run.id}/task-${task.id}`));
   for (const [i, made] of tasks.entries()) {
     const built = getTask(e.db, made.id)!;
     assert.equal(built.status, "awaiting_decision", `task ${i + 1}: ${built.reason}`);
@@ -180,7 +180,7 @@ test("a failing setup command fails its task with the reason and its output befo
 });
 
 test("a setup command that passes its time limit is killed with its child processes and recorded as timed out; a stand-alone task runs setup commands too", { timeout: 30_000 }, async (t) => {
-  const pids = path.join(tempDir("smelt-build-pids-"), "child.pid");
+  const pids = path.join(tempDir("botbench-build-pids-"), "child.pid");
   t.after(() => fs.rmSync(path.dirname(pids), { recursive: true, force: true }));
   const stall = 'sleep 300 &\necho $! > "$1"\nsleep 300\n';
   const e = await line(t, ["done"], { setup: [{ command: `sh stall.sh ${pids}`, limitMs: 1000 }], files: { "README.md": "# Sample\n", "stall.sh": stall } });
@@ -203,7 +203,7 @@ test("a setup command that passes its time limit is killed with its child proces
   assert.equal(e.driver.started.length, 0);
 });
 
-test("a stand-alone task's setup output is evidence on it, and what setup wrote is committed by Smelt with the agent's work", async (t) => {
+test("a stand-alone task's setup output is evidence on it, and what setup wrote is committed by Botbench with the agent's work", async (t) => {
   const e = await line(t, ["done"], { setup: [SETUP_WRITES] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -297,7 +297,7 @@ test("cancelling a run while its task waits for an answer closes the pending app
 });
 
 test("after a restart, a running run's unstarted tasks are built in order; the task that was building is stopped with its work committed and not started again, and the run reaches its end", async (t) => {
-  const dir = tempDir("smelt-build-restart-");
+  const dir = tempDir("botbench-build-restart-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -306,7 +306,7 @@ test("after a restart, a running run's unstarted tasks are built in order; the t
   const base = initRepo(repo);
   const run = storePlan(db, createRun(db, { repo, prompt: "three files", baseCommit: base }).id, THREE);
   const { tasks } = approvePlan(db, run.id, run.planVersion, "haiku");
-  // What a Smelt that stopped mid-build leaves: the first task building in its worktree, with a file half-written.
+  // What a Botbench that stopped mid-build leaves: the first task building in its worktree, with a file half-written.
   const worktree = await createWorktree({ repo, home, run: `run-${run.id}`, task: `task-${tasks[0]!.id}` });
   moveTask(db, tasks[0]!.id, "building", { worktree });
   write(worktree.path, "partial.txt", "written before the stop\n");
@@ -345,11 +345,11 @@ test("setup evidence is append-only: a row cannot be changed, deleted or replace
 });
 
 test("a database at the previous schema version gains the evidence table and keeps its runs and tasks", (t) => {
-  const dir = tempDir("smelt-build-migrate-");
+  const dir = tempDir("botbench-build-migrate-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home);
-  const old = new DatabaseSync(path.join(home, "smelt.sqlite"));
+  const old = new DatabaseSync(path.join(home, "botbench.sqlite"));
   migrate(old, MIGRATIONS.slice(0, 9));
   assert.equal(schemaVersion(old), 9);
   old.exec("INSERT INTO runs (id, kind, repo_path, prompt, created_at, updated_at) VALUES (4, 'single', '/r', 'p', 't', 't')");
@@ -362,8 +362,8 @@ test("a database at the previous schema version gains the evidence table and kee
   assert.deepEqual(taskEvidence(db, 7), []);
 });
 
-test("Smelt runs an owner's command in a directory with a time limit, in its own process group, without the caller's git variables, and keeps the end of a long output", { timeout: 30_000 }, async (t) => {
-  const dir = tempDir("smelt-command-");
+test("Botbench runs an owner's command in a directory with a time limit, in its own process group, without the caller's git variables, and keeps the end of a long output", { timeout: 30_000 }, async (t) => {
+  const dir = tempDir("botbench-command-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const before = process.env.GIT_DIR;
   process.env.GIT_DIR = "/somewhere/else";
@@ -402,9 +402,9 @@ test("Smelt runs an owner's command in a directory with a time limit, in its own
 
 // Found by the critique pass, each first seen failing.
 
-/** A Smelt home in which a run's first task waited for the owner's answer when Smelt stopped: parked at building, with its worktree and a session to resume. */
+/** A Botbench home in which a run's first task waited for the owner's answer when Botbench stopped: parked at building, with its worktree and a session to resume. */
 async function parkedRun(t: T): Promise<{ db: DatabaseSync; home: string; repo: string; run: Run; taskIds: number[]; worktree: string; approvalId: number }> {
-  const dir = tempDir("smelt-build-parked-");
+  const dir = tempDir("botbench-build-parked-");
   const home = path.join(dir, "home");
   const db = openStore(home);
   t.after(() => {
@@ -469,9 +469,9 @@ test("critique: when a parked task cannot be resumed after the owner answers, it
 });
 
 test("critique: a command that ends by itself is recorded as it ended, even when its time limit or a stop comes while its output is still being read", async (t) => {
-  const dir = tempDir("smelt-command-race-");
+  const dir = tempDir("botbench-command-race-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  // It exits at once and leaves a child outside its group holding its output open, so Smelt is still reading when the limit passes.
+  // It exits at once and leaves a child outside its group holding its output open, so Botbench is still reading when the limit passes.
   const abort = new AbortController();
   const ran = runCommand({ command: "perl -MPOSIX -e 'setsid(); sleep 3' & sleep 0.2; exit 0", cwd: dir, limitMs: 400, signal: abort.signal });
   setTimeout(() => abort.abort(), 600);

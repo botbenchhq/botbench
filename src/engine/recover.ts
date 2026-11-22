@@ -7,20 +7,20 @@ import { killProcessGroup, processGroupAlive } from "../drivers/launch.ts";
 import { now } from "../store/db.ts";
 
 /*
- * What a start of Smelt does about a task that was waiting on the owner when the last run stopped: the
+ * What a start of Botbench does about a task that was waiting on the owner when the last run stopped: the
  * parked-approval half of restart recovery. Such a task is not re-driven and not interrupted. Its approval
  * stays pending, its CLI process from before is stopped if it survived, and it waits until the owner answers.
  * Tasks that were mid-turn without an approval are not handled here: they are marked interrupted by the engine.
  */
 
 /**
- * What Smelt says to the agent when it re-drives a task after the owner answered a parked approval. The session
+ * What Botbench says to the agent when it re-drives a task after the owner answered a parked approval. The session
  * it resumes ends with a tool call that was never answered; the agent is asked to make it again, so that the
- * owner's stored answer can be given to exactly that request. These are Smelt's words and say so: the transcript
+ * owner's stored answer can be given to exactly that request. These are Botbench's words and say so: the transcript
  * shows a prompt as the owner's.
  */
 export const RESUME_PROMPT =
-  "[From Smelt, not from the owner] Smelt was restarted while you were waiting for permission for your last tool call. That call was neither run nor refused. Make exactly that same tool call again now, unchanged, and then carry on with the task.";
+  "[From Botbench, not from the owner] Botbench was restarted while you were waiting for permission for your last tool call. That call was neither run nor refused. Make exactly that same tool call again now, unchanged, and then carry on with the task.";
 
 const PS_LIMIT_MS = 5000;
 /** A CLI is started just before its attempt row is written; the clock `ps` reads has whole seconds. */
@@ -30,7 +30,7 @@ const START_SLACK_MS = 5000;
 function startedAt(pid: number): Promise<number | null> {
   return new Promise((resolve, reject) => {
     // A time limit, and a fixed locale so the date reads the same on every machine.
-    // `ps` is told to print the time in UTC and it is read as UTC, so neither Smelt's own time zone nor a clock change can shift it.
+    // `ps` is told to print the time in UTC and it is read as UTC, so neither Botbench's own time zone nor a clock change can shift it.
     execFile("ps", ["-o", "lstart=", "-p", String(pid)], { timeout: PS_LIMIT_MS, killSignal: "SIGKILL", env: { PATH: process.env.PATH ?? "/bin:/usr/bin", LC_ALL: "C", TZ: "UTC" } }, (err, stdout) => {
       // `ps` ends with 1 and prints nothing when the process does not exist.
       if (err && err.code === 1 && stdout.trim() === "") return resolve(null);

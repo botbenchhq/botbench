@@ -9,15 +9,15 @@ import { checkRepository, createTask, createTasks, getTask, listTasks, moveTask,
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
 import { MIGRATIONS } from "../../src/store/schema.ts";
 import { createWorktree } from "../../src/worktrees.ts";
-import { checkoutState, git, initRepo, smeltBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { checkoutState, git, initRepo, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
 
 // No test in this file starts a driver: tasks that reach Claude Code are in test/live/task.live.test.ts.
 
 type T = { after(fn: () => unknown): void };
 
-/** A temporary directory for a Smelt home and the repositories of one test. Removing it removes their worktrees with them. */
+/** A temporary directory for a Botbench home and the repositories of one test. Removing it removes their worktrees with them. */
 function scratch(t: T): { dir: string; home: string } {
-  const dir = tempDir("smelt-task-test-");
+  const dir = tempDir("botbench-task-test-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return { dir, home: path.join(dir, "home") };
 }
@@ -87,7 +87,7 @@ test("a database at the previous schema version gains the task tables and keeps 
 
   // The new tables work against the kept attempt.
   const task = createTask(db, { repo: "/somewhere/repo", prompt: "p" });
-  const worktree = { path: "/somewhere/home/worktrees/r/task-1", branch: "smelt/r/task-1", baseCommit: "a".repeat(40) };
+  const worktree = { path: "/somewhere/home/worktrees/r/task-1", branch: "botbench/r/task-1", baseCommit: "a".repeat(40) };
   moveTask(db, task.id, "building", { worktree });
   assert.equal(moveTask(db, task.id, "building", { attemptId: 1 }).attemptId, 1);
   assert.throws(() => moveTask(db, task.id, "building", { attemptId: 99 }), /FOREIGN KEY/, "an attempt that does not exist cannot be recorded");
@@ -120,7 +120,7 @@ test("a task moves along the line, and each state is stored with its event", (t)
   const { db } = store(t);
   const attemptId = Number(db.prepare("INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('claude-code', 'running', 'x', 'x')").run().lastInsertRowid);
   const task = createTask(db, { repo: "/repos/sample", prompt: "p" });
-  const worktree = { path: "/home/worktrees/run-1/task-1", branch: "smelt/run-1/task-1", baseCommit: "b".repeat(40) };
+  const worktree = { path: "/home/worktrees/run-1/task-1", branch: "botbench/run-1/task-1", baseCommit: "b".repeat(40) };
 
   const building = moveTask(db, task.id, "building", { worktree });
   assert.deepEqual([building.status, building.worktreePath, building.branch, building.baseCommit, building.attemptId], ["building", worktree.path, worktree.branch, worktree.baseCommit, null]);
@@ -148,7 +148,7 @@ test("a task moves along the line, and each state is stored with its event", (t)
 test("a state change and its event are written together or not at all", (t) => {
   const { db } = store(t);
   const task = createTask(db, { repo: "/repos/sample", prompt: "p" });
-  moveTask(db, task.id, "building", { worktree: { path: "/home/worktrees/r/task-1", branch: "smelt/r/task-1", baseCommit: "b".repeat(40) } });
+  moveTask(db, task.id, "building", { worktree: { path: "/home/worktrees/r/task-1", branch: "botbench/r/task-1", baseCommit: "b".repeat(40) } });
   const before = { task: row(db, task.id), events: eventRows(db, task.id) };
 
   // The database itself refuses the event: the state change that caused it must not stay.
@@ -223,7 +223,7 @@ test("a repository path is checked before it is used: absolute, a git repository
   }
 });
 
-test("on start, a task left building by a Smelt that stopped has its work committed by Smelt and is marked interrupted; the checkout is untouched", async (t) => {
+test("on start, a task left building by a Botbench that stopped has its work committed by Botbench and is marked interrupted; the checkout is untouched", async (t) => {
   const { db, dir, home } = store(t);
   const repo = path.join(dir, "repo");
   const base = initRepo(repo);
@@ -231,7 +231,7 @@ test("on start, a task left building by a Smelt that stopped has its work commit
   write(repo, "notes.txt", "untracked, the owner's\n");
   const before = checkoutState(repo);
 
-  // What a Smelt that was killed mid-build leaves: a queued task, and a building one with files its agent had written.
+  // What a Botbench that was killed mid-build leaves: a queued task, and a building one with files its agent had written.
   const queued = createTask(db, { repo, prompt: "never started" });
   const building = createTask(db, { repo, prompt: "half done\nsecond line" });
   const worktree = await createWorktree({ repo, home, run: "run-old", task: `task-${building.id}` });
@@ -245,11 +245,11 @@ test("on start, a task left building by a Smelt that stopped has its work commit
 
   const after = getTask(db, building.id)!;
   assert.equal(after.status, "interrupted");
-  assert.match(after.reason ?? "", /Smelt stopped/);
+  assert.match(after.reason ?? "", /Botbench stopped/);
   assert.notEqual(after.headCommit, base);
   assert.equal(git(repo, "rev-parse", worktree.branch).trim(), after.headCommit);
   assert.equal(git(repo, "show", `${worktree.branch}:partial.txt`), "written before the stop\n");
-  assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%s", worktree.branch).trim(), `Smelt <smelt@localhost>|Smelt task ${building.id}: half done`);
+  assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%s", worktree.branch).trim(), `Botbench <botbench@localhost>|Botbench task ${building.id}: half done`);
   assert.equal(git(worktree.path, "status", "--porcelain"), "", "nothing is left uncommitted in the worktree");
 
   const never = getTask(db, queued.id)!;
@@ -257,13 +257,13 @@ test("on start, a task left building by a Smelt that stopped has its work commit
   assert.deepEqual(announced.sort(), [queued.id, building.id].sort(), "each change is announced");
   assert.deepEqual(checkoutState(repo), before, "the owner's checkout: same branch, same commit, same uncommitted changes");
   assert.equal(worktreeCount(repo), 2);
-  assert.deepEqual(smeltBranches(repo), [worktree.branch]);
+  assert.deepEqual(botbenchBranches(repo), [worktree.branch]);
   assert.equal(db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
 });
 
 test("a task whose worktree cannot be made fails with the reason, without a driver; after closing, nothing more is started", async (t) => {
-  // Smelt's home inside the repository itself: the one place a worktree must never go.
-  const dir = tempDir("smelt-task-test-");
+  // Botbench's home inside the repository itself: the one place a worktree must never go.
+  const dir = tempDir("botbench-task-test-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   initRepo(dir);
   const home = path.join(dir, "home");
@@ -284,7 +284,7 @@ test("a task whose worktree cannot be made fails with the reason, without a driv
   assert.deepEqual(eventRows(db, task.id).map((e) => e.status), ["queued", "failed"]);
   assert.equal(db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
   assert.equal(worktreeCount(dir), 1);
-  assert.deepEqual(smeltBranches(dir), []);
+  assert.deepEqual(botbenchBranches(dir), []);
   assert.deepEqual(checkoutState(dir), before);
 
   await tasks.close();

@@ -3,13 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, smeltHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, botbenchHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-config-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const files = { defaults: path.join(dir, "smelt.config.json"), local: path.join(dir, "smelt.local.json") };
+  const files = { defaults: path.join(dir, "botbench.config.json"), local: path.join(dir, "botbench.local.json") };
   fs.writeFileSync(files.defaults, typeof defaults === "string" ? defaults : JSON.stringify(defaults));
   if (local !== undefined) fs.writeFileSync(files.local, typeof local === "string" ? local : JSON.stringify(local));
   return files;
@@ -50,10 +50,10 @@ test("a local config file overrides defaults key by key and keeps the rest", (t)
   });
 });
 
-test("the data directory is ~/.smelt unless SMELT_HOME says otherwise", () => {
-  assert.equal(smeltHome({}), path.join(os.homedir(), ".smelt"));
-  assert.equal(smeltHome({ SMELT_HOME: "/tmp/elsewhere" }), "/tmp/elsewhere");
-  assert.equal(smeltHome({ SMELT_HOME: "" }), path.join(os.homedir(), ".smelt"));
+test("the data directory is ~/.botbench unless BOTBENCH_HOME says otherwise", () => {
+  assert.equal(botbenchHome({}), path.join(os.homedir(), ".botbench"));
+  assert.equal(botbenchHome({ BOTBENCH_HOME: "/tmp/elsewhere" }), "/tmp/elsewhere");
+  assert.equal(botbenchHome({ BOTBENCH_HOME: "" }), path.join(os.homedir(), ".botbench"));
 });
 
 test("a role that names an unknown driver is rejected, naming the role and the file", (t) => {
@@ -103,17 +103,17 @@ test("a config file that is not a JSON object is rejected, naming the file", (t)
   assert.throws(() => loadConfig(broken), (err: Error) => err.message.includes(broken.local));
   const list = configFiles(t, "[1, 2]");
   assert.throws(() => loadConfig(list), (err: Error) => err.message.includes(list.defaults) && /must be a JSON object/.test(err.message));
-  const missing = path.join(os.tmpdir(), "smelt-no-such-dir", "smelt.config.json");
+  const missing = path.join(os.tmpdir(), "botbench-no-such-dir", "botbench.config.json");
   assert.throws(() => loadConfig({ defaults: missing }), (err: Error) => err.message.includes(missing));
 });
 
-test("SMELT_HOME is resolved to an absolute path, and a leading ~ means the home directory", async () => {
-  const { smeltHome } = await import("../src/config.ts");
+test("BOTBENCH_HOME is resolved to an absolute path, and a leading ~ means the home directory", async () => {
+  const { botbenchHome } = await import("../src/config.ts");
   const os = await import("node:os");
   const path = await import("node:path");
-  assert.equal(smeltHome({ SMELT_HOME: "relative/dir" }), path.resolve("relative/dir"));
-  assert.equal(smeltHome({ SMELT_HOME: "~/elsewhere" }), path.join(os.homedir(), "elsewhere"));
-  assert.equal(smeltHome({}), path.join(os.homedir(), ".smelt"));
+  assert.equal(botbenchHome({ BOTBENCH_HOME: "relative/dir" }), path.resolve("relative/dir"));
+  assert.equal(botbenchHome({ BOTBENCH_HOME: "~/elsewhere" }), path.join(os.homedir(), "elsewhere"));
+  assert.equal(botbenchHome({}), path.join(os.homedir(), ".botbench"));
 });
 
 test("publicHosts is a list of host names: absent by default in a file, overridden by the local file, rejected when malformed", (t) => {
@@ -196,7 +196,7 @@ test("the number of approvals after which a card offers standing permission is 3
 });
 
 test("a repository's setup and check commands are each a command, or a command with its own time limit in seconds; the limit is 10 minutes when none is given", (t) => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "smelt-config-repo-")));
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const config = loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { setup: ["npm ci", { command: "make deps", timeoutSeconds: 90 }], checks: [{ command: "npm test" }] } } }));
   assert.deepEqual(repositoryCommands(config, repo), {

@@ -32,7 +32,7 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
   switch (run.status) {
     case "planning":
       // No planner has been started for it yet: one planner works at a time.
-      if (run.attemptId === null) return "Queued. Smelt plans one run at a time, and this one starts when the one before it has its plan. Nothing is changed meanwhile.";
+      if (run.attemptId === null) return "Queued. Botbench plans one run at a time, and this one starts when the one before it has its plan. Nothing is changed meanwhile.";
       return run.waitingOnApproval
         ? "Needs input. While planning, Claude Code asked for permission to run a command and is paused until you allow or deny."
         : "Planning. Claude Code is reading the repository and writing the task list. It only reads: nothing is changed while it plans.";
@@ -41,7 +41,7 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
     case "running":
       // A task that waits for an answer holds up the tasks after it.
       if (run.waitingOnApproval) return `Needs input. Claude Code asked for permission while building a task and is paused until you allow or deny; the tasks after it wait. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
-      return `Working. Smelt builds the tasks one at a time, in plan order, each by Claude Code in a separate copy of the project. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
+      return `Working. Botbench builds the tasks one at a time, in plan order, each by Claude Code in a separate copy of the project. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
     case "awaiting_decision":
       return "Ready for review. Every task has been built or has stopped; each says how it went.";
     case "done":

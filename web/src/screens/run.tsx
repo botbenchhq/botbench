@@ -95,7 +95,7 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
 /** What a task of the run is doing, in words, for its row. */
 function taskFacts(task: RunTask): string {
   if (task.status === "queued") return "Starts when the tasks before it have finished";
-  if (task.status === "verifying") return "Smelt is running this repository's checks";
+  if (task.status === "verifying") return "Botbench is running this repository's checks";
   if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
   if (task.status === "awaiting_decision") return task.branch ?? "Built";
   return task.branch ?? "No branch";
@@ -123,7 +123,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
     const failed = (what: string) => (err: unknown): void => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       if (read !== reads.current) return;
-      setProblem(err instanceof ApiError ? `${what} could not be read. ${err.message}` : `${what} could not be read: Smelt could not be reached.`);
+      setProblem(err instanceof ApiError ? `${what} could not be read. ${err.message}` : `${what} could not be read: Botbench could not be reached.`);
     };
     getRun(id).then((next) => {
       if (read !== reads.current) return;
@@ -187,7 +187,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
     }
     // The plan or the run moved on in another window: show what is so now.
     if (err instanceof ApiError && err.status === 409) load();
-    return err instanceof ApiError ? err.message : "Smelt could not be reached.";
+    return err instanceof ApiError ? err.message : "Botbench could not be reached.";
   };
   const focusEdit = (at: number): void => void window.requestAnimationFrame(() => (document.querySelector<HTMLElement>(`[data-edit="${at}"]:not(:disabled)`) ?? document.querySelector<HTMLElement>("[data-add-task]"))?.focus());
 
@@ -288,8 +288,8 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const building = run?.status === "running";
   const working = planning && attemptId !== null && !shown.some((e) => e.type === "turn_ended" && e.id === shown.at(-1)?.id) ? (asking === undefined ? "Claude Code is planning." : "Claude Code is paused until you answer.") : null;
   const transcript = (
-    // The planning prompt is Smelt's own, with the owner's words inside it, so the row says Smelt wrote it.
-    <Transcript events={shown} working={working} modelName={nameOf} promptBy="Smelt, to Claude Code" folded={!planning} />
+    // The planning prompt is Botbench's own, with the owner's words inside it, so the row says Botbench wrote it.
+    <Transcript events={shown} working={working} modelName={nameOf} promptBy="Botbench, to Claude Code" folded={!planning} />
   );
   const cancel = run !== null && (planning || gate || building) && (
     <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null} losing testId="cancel-run" onConfirm={() => decide("cancel")}>

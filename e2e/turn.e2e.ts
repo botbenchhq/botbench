@@ -2,13 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkDesign, checkWords, copyShot, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
-import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
+import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
 
-test("LIVE: sign in, send a prompt, and the real reply appears without a reload; both screens follow the design system", async ({ page, smelt }) => {
-  const foreign = watchRequests(page, smelt);
-  await page.goto(smelt.base);
+test("LIVE: sign in, send a prompt, and the real reply appears without a reload; both screens follow the design system", async ({ page, botbench }) => {
+  const foreign = watchRequests(page, botbench);
+  await page.goto(botbench.base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("button")).toHaveCount(1);
   await checkDesign(page, "sign-in");
@@ -17,7 +17,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
 
   // The keyboard alone is enough: the field has focus and Enter submits.
   await expect(page.getByLabel("Login token")).toBeFocused();
-  await page.keyboard.type(smelt.token);
+  await page.keyboard.type(botbench.token);
   await page.keyboard.press("Enter");
 
   await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code \d+\.\d+\.\d+ · signed in · subscription$/);
@@ -27,7 +27,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await checkDesign(page, "turn, empty");
 
   // A mark on the page that a reload would wipe out.
-  await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+  await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const prompt = "Reply with exactly the word: marmot";
   await page.getByLabel("Prompt").fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
@@ -54,7 +54,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await expect(page.getByLabel("Prompt")).toHaveValue("");
   // The transcript is in order: prompt, reply, end.
   expect(await page.locator("[data-event]").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-event")).filter((k) => ["user_prompt", "text", "turn_ended"].includes(k!)))).toEqual(["user_prompt", "text", "turn_ended"]);
-  expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce)).toBe(true);
+  expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
 
   await checkDesign(page, "turn, with a transcript");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u4-turn.png") });
@@ -68,13 +68,13 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.reload();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.locator("[data-event]")).toHaveCount(0);
-  expect(foreign, "requests to anything but Smelt").toEqual([]);
+  expect(foreign, "requests to anything but Botbench").toEqual([]);
 });
 
-test("LIVE: a chat reply that used a tool shows what the agent did as one plain line, with the detail one tap away and the raw arguments a level deeper", async ({ page, smelt }) => {
+test("LIVE: a chat reply that used a tool shows what the agent did as one plain line, with the detail one tap away and the raw arguments a level deeper", async ({ page, botbench }) => {
   // A real file in the folder a chat works in, for the agent to read.
-  fs.writeFileSync(path.join(smelt.home, "scratch", "notes.txt"), "The word is heron.\n");
-  await signIn(page, smelt);
+  fs.writeFileSync(path.join(botbench.home, "scratch", "notes.txt"), "The word is heron.\n");
+  await signIn(page, botbench);
   await page.getByLabel("Prompt").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
   await page.getByRole("button", { name: "Send" }).click();
   // The action is in the transcript as soon as it is made: nothing the agent did is hidden.
@@ -106,9 +106,9 @@ test("LIVE: a chat reply that used a tool shows what the agent did as one plain 
   await copyShot(page, "chat-tool");
 });
 
-test("LIVE: words the owner or the agent wrote are never judged, and the same words in Smelt's own text are", async ({ page, smelt }) => {
-  await signIn(page, smelt);
-  // A prompt and a reply full of the words Smelt itself never shows.
+test("LIVE: words the owner or the agent wrote are never judged, and the same words in Botbench's own text are", async ({ page, botbench }) => {
+  await signIn(page, botbench);
+  // A prompt and a reply full of the words Botbench itself never shows.
   const words = "turn attempt worktree driver broker gate floor hook stream role grant blocked declined rate limit";
   await page.getByLabel("Prompt").fill(`Reply with exactly this line and nothing else: ${words}`);
   await page.getByRole("button", { name: "Send" }).click();
@@ -128,19 +128,19 @@ test("LIVE: words the owner or the agent wrote are never judged, and the same wo
   await checkWords(page, "chat, after the planted word is gone");
 });
 
-test("LIVE: a dropped event stream shows a banner, recovers, and the next reply still arrives; a reload shows the transcript again", async ({ page, smelt }) => {
-  await signIn(page, smelt);
+test("LIVE: a dropped event stream shows a banner, recovers, and the next reply still arrives; a reload shows the transcript again", async ({ page, botbench }) => {
+  await signIn(page, botbench);
   await page.getByLabel("Prompt").fill("Reply with exactly the word: otter");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(reply(page)).toContainText(/otter/i, { timeout: 120_000 });
   await expect(page.getByTestId("stream-banner")).toHaveCount(0);
 
-  // Freeze the Smelt process: the stream goes silent, as it does when a network path dies without closing
+  // Freeze the Botbench process: the stream goes silent, as it does when a network path dies without closing
   // the connection. The client notices the missing heartbeats, says so, and keeps trying.
-  smelt.freeze();
+  botbench.freeze();
   await expect(page.getByTestId("stream-banner")).toHaveText("Live updates are disconnected. Reconnecting.", { timeout: 60_000 });
   await expect(page.locator("[data-event]").first()).toBeVisible();
-  smelt.thaw();
+  botbench.thaw();
   await expect(page.getByTestId("stream-banner")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
 
@@ -161,9 +161,9 @@ test("LIVE: a dropped event stream shows a banner, recovers, and the next reply 
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
 });
 
-test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as markup", async ({ page, smelt }) => {
-  await signIn(page, smelt);
-  const prompt = 'Write a 1500 word essay about rivers. <img src=x onerror="window.smeltXss=1"><b id="injected">bold</b>';
+test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as markup", async ({ page, botbench }) => {
+  await signIn(page, botbench);
+  const prompt = 'Write a 1500 word essay about rivers. <img src=x onerror="window.botbenchXss=1"><b id="injected">bold</b>';
   await page.getByLabel("Prompt").fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="session_started"]')).toBeVisible({ timeout: 60_000 });
@@ -174,16 +174,16 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
 
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
   await expect(page.locator("#injected, [role=log] img, [role=log] b")).toHaveCount(0);
-  expect(await page.evaluate(() => (window as unknown as { smeltXss?: number }).smeltXss)).toBeUndefined();
+  expect(await page.evaluate(() => (window as unknown as { botbenchXss?: number }).botbenchXss)).toBeUndefined();
 });
 
 test("with Claude Code signed out, the screen says so and offers no send control", async ({ page }) => {
   // The real CLI, pointed at an empty configuration directory, reports itself signed out.
-  const empty = tempDir("smelt-e2e-claude-config-");
-  const smelt = await startSmelt({ env: { CLAUDE_CONFIG_DIR: empty } });
+  const empty = tempDir("botbench-e2e-claude-config-");
+  const botbench = await startBotbench({ env: { CLAUDE_CONFIG_DIR: empty } });
   try {
-    await page.goto(smelt.base);
-    await page.getByLabel("Login token").fill(smelt.token);
+    await page.goto(botbench.base);
+    await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
     await expect(page.getByTestId("driver-problem")).toContainText("Claude Code is signed out. Run `claude auth login` in a terminal.");
@@ -199,14 +199,14 @@ test("with Claude Code signed out, the screen says so and offers no send control
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
     await expect(page.getByRole("textbox")).toHaveCount(0);
   } finally {
-    expect((await smelt.stop()).leftover).toEqual([]);
-    fs.rmSync(path.dirname(smelt.home), { recursive: true, force: true });
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
     fs.rmSync(empty, { recursive: true, force: true });
   }
 });
 
-test("a wrong token shows an error and stays on sign-in", async ({ page, smelt }) => {
-  await page.goto(smelt.base);
+test("a wrong token shows an error and stays on sign-in", async ({ page, botbench }) => {
+  await page.goto(botbench.base);
   await page.getByLabel("Login token").fill("not-the-token");
   await page.getByRole("button", { name: "Sign in" }).click();
   // The alert names its tone in a word, then says what happened and what to do.
@@ -216,23 +216,23 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, smelt }
   await expect(page.getByLabel("Prompt")).toHaveCount(0);
   await checkDesign(page, "sign-in, with an error");
   // No session came of it: the API still refuses this browser.
-  expect((await page.request.get(`${smelt.base}/api/session`)).status()).toBe(401);
-  expect((await page.request.get(`${smelt.base}/api/driver`)).status()).toBe(401);
+  expect((await page.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
+  expect((await page.request.get(`${botbench.base}/api/driver`)).status()).toBe(401);
   // The right token still works afterwards.
-  await page.getByLabel("Login token").fill(smelt.token);
+  await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByTestId("driver-state")).toContainText("Claude Code");
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("when Smelt restarts, the stream banner shows and the client returns to sign-in, since sessions do not outlive the process", async ({ page }) => {
-  const first = await startSmelt();
-  let second: Smelt | undefined;
+test("when Botbench restarts, the stream banner shows and the client returns to sign-in, since sessions do not outlive the process", async ({ page }) => {
+  const first = await startBotbench();
+  let second: Botbench | undefined;
   try {
     await signIn(page, first);
     expect((await first.stop()).leftover).toEqual([]);
     await expect(page.getByTestId("stream-banner")).toBeVisible();
-    second = await startSmelt({ home: first.home, port: first.port });
+    second = await startBotbench({ home: first.home, port: first.port });
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     await expect(page.getByRole("status")).toContainText("Your session ended");
     await page.getByLabel("Login token").fill(second.token);

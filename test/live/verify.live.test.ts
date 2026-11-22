@@ -4,10 +4,10 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir } from "../support/repo.ts";
 
-// The verify station on the real Claude Code, on the owner's login, through Smelt's HTTP API: a task of its own (a run
+// The verify station on the real Claude Code, on the owner's login, through Botbench's HTTP API: a task of its own (a run
 // of one) in a real temporary repository whose settings give it a check command, a fixture script committed in the
 // repository that checks the agent's work. One tiny turn each, on the cheapest model.
 
@@ -17,7 +17,7 @@ const JSON_TYPE = { "content-type": "application/json" };
 const CHECK_SCRIPT = '#!/bin/sh\necho "checking hello.txt for $1"\ngrep -q "$1" hello.txt && echo "found it" || { echo "hello.txt does not hold $1" >&2; exit 1; }\n';
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   repo: string;
@@ -25,7 +25,7 @@ interface Live {
 type Body = Record<string, unknown>;
 
 async function start(t: TestContext, check: string): Promise<Live> {
-  const dir = tempDir("smelt-live-verify-");
+  const dir = tempDir("botbench-live-verify-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");

@@ -1,6 +1,6 @@
 import sprite from "../../vendor/groundwork/icons.svg";
 
-/** The design system's icons this client uses. Each is a symbol in the vendored sprite, which Smelt itself serves. */
+/** The design system's icons this client uses. Each is a symbol in the vendored sprite, which Botbench itself serves. */
 export type IconName = "terminal" | "file" | "plus" | "circle-check" | "circle-alert" | "copy" | "git-branch" | "check" | "x";
 
 /** A decorative icon from the sprite. `className` is the icon class of the component it sits in. */

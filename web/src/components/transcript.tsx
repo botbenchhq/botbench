@@ -274,14 +274,14 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
         </Line>
       );
     case "permission_request": {
-      // A request Smelt answered itself, because the command was allowed in advance, never waited for the owner: its outcome row says what happened.
+      // A request Botbench answered itself, because the command was allowed in advance, never waited for the owner: its outcome row says what happened.
       const answer = story.answers.get(e.toolCallId);
-      // Nor did one Smelt refused by itself.
+      // Nor did one Botbench refused by itself.
       if (answer === "preapproved" || answer === "standing" || answer === "denied") return null;
       return (
         <Line kind={e.type} look="asked" label="Asked you">
           <What call={story.calls.get(e.toolCallId)} fallback={e.name} />
-          <Body>{answer === undefined ? "It needs your answer before it runs." : "Smelt asked you first."}</Body>
+          <Body>{answer === undefined ? "It needs your answer before it runs." : "Botbench asked you first."}</Body>
         </Line>
       );
     }
@@ -291,11 +291,11 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
         preapproved: "It was allowed without asking you: you listed this command when you started the task.",
         standing: "It was allowed without asking you: you chose Always allow for this command. Permissions lists it, and you can take it back there.",
         declined: "You denied it. It was not run.",
-        denied: "Smelt denied it without asking you. It was not run.",
+        denied: "Botbench denied it without asking you. It was not run.",
         cancelled: "The request ended without an answer. It was not run.",
       }[e.decision];
-      const label = { allowed: "Allowed", preapproved: "Allowed for this task", standing: "Always allowed", declined: "Denied", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
-      // The owner's own answers and the two standing rules are decisions; a refusal by Smelt and a request nobody answered are not.
+      const label = { allowed: "Allowed", preapproved: "Allowed for this task", standing: "Always allowed", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" }[e.decision];
+      // The owner's own answers and the two standing rules are decisions; a refusal by Botbench and a request nobody answered are not.
       const icon = ({ allowed: "check", declined: "x", preapproved: "circle-check", standing: "circle-check" } as const)[e.decision as "allowed" | "declined" | "preapproved" | "standing"];
       return (
         <Line kind={e.type} look={icon === undefined ? "refused" : "decision"} label={label} icon={icon}>
@@ -303,7 +303,7 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
           <Body>{said}</Body>
           {e.note !== null && (
             <Body>
-              {/* A reason Smelt gives is Smelt's own sentence; a note is the owner's. */}
+              {/* A reason Botbench gives is Botbench's own sentence; a note is the owner's. */}
               {e.decision === "denied" ? `Why: ${e.note}` : "Your note: "}
               {e.decision !== "denied" && <Theirs>{e.note}</Theirs>}
             </Body>
@@ -373,7 +373,7 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
 /**
  * The transcript of one or more attempts, oldest first. `working` is a note shown last while something is still
  * running. `modelName` gives the name Claude Code has for a model id, or the id itself when it has none. `promptBy`
- * says who wrote the prompts (the owner, unless Smelt wrote them, as it does for planning). `folded` is for a
+ * says who wrote the prompts (the owner, unless Botbench wrote them, as it does for planning). `folded` is for a
  * transcript that sits behind a disclosure of its own, so its rows fold one level and not two.
  */
 export function Transcript({ events, working, modelName, promptBy = "You", folded = false }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; promptBy?: string; folded?: boolean }) {

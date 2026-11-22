@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
 import { checkDesign, expect, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
-import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
+import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// Pre-approved commands in the real client, at a phone's size: a real Smelt process whose settings list commands
+// Pre-approved commands in the real client, at a phone's size: a real Botbench process whose settings list commands
 // for a real temporary repository, and the owner's Claude Code on its cheapest model running one of them for real.
 
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
@@ -12,31 +12,31 @@ const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly
 const NONE_WAITING = "No approvals are waiting.";
 const HEADING = "Allowed for this task";
 
-/** A Smelt whose settings name the commands its sample repository offers for pre-approval. The repository must exist before Smelt reads its settings. */
+/** A Botbench whose settings name the commands its sample repository offers for pre-approval. The repository must exist before Botbench reads its settings. */
 const test = base.extend<{ repo: string }>({
   repo: async ({}, use) => {
-    const dir = tempDir("smelt-e2e-pre-");
+    const dir = tempDir("botbench-e2e-pre-");
     const repo = path.join(dir, "sample-repo");
     initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });
     await use(repo);
   },
-  smelt: async ({ repo }, use) => {
-    const smelt: Smelt = await startSmelt({
+  botbench: async ({ repo }, use) => {
+    const botbench: Botbench = await startBotbench({
       home: path.join(path.dirname(repo), "home"),
       settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [repo]: { preapproved: ["npm test", "git status"] } } },
     });
-    await use(smelt);
-    const { leftover } = await smelt.stop();
-    expect(leftover, "no CLI process is left after Smelt stops").toEqual([]);
-    fs.rmSync(path.dirname(smelt.home), { recursive: true, force: true });
+    await use(botbench);
+    const { leftover } = await botbench.stop();
+    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
+    fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
   },
 });
 
-test("LIVE: New task lists the repository's configured commands; the owner removes one and adds another; the task runs the added command with no card and finishes, and its screen lists what was pre-approved", async ({ page, smelt, repo }) => {
-  const foreign = watchRequests(page, smelt);
+test("LIVE: New task lists the repository's configured commands; the owner removes one and adds another; the task runs the added command with no card and finishes, and its screen lists what was pre-approved", async ({ page, botbench, repo }) => {
+  const foreign = watchRequests(page, botbench);
   const before = checkoutState(repo);
-  await signIn(page, smelt);
-  await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+  await signIn(page, botbench);
+  await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const tray = page.getByTestId("approval-tray");
   await openNewTask(page);
 
@@ -81,7 +81,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await page.getByRole("button", { name: "Start task" }).click();
   await expect(page.getByRole("alert")).toContainText("The task was not started");
   await expect(page.getByRole("alert")).toContainText('"sh make-marker.sh && echo done" cannot be allowed in advance');
-  expect(await (await page.request.get(`${smelt.base}/api/tasks`)).json()).toEqual({ tasks: [] });
+  expect(await (await page.request.get(`${botbench.base}/api/tasks`)).json()).toEqual({ tasks: [] });
   await checkDesign(page, "new task, an entry refused");
   await page.getByRole("button", { name: "Remove sh make-marker.sh && echo done" }).click();
   await expect(list.getByRole("listitem")).toHaveText([/^git status/, /^sh make-marker\.sh/]);
@@ -95,7 +95,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   expect(await granted.evaluate((el) => [el.tagName, ...[...el.children].map((child) => child.tagName)])).toEqual(["UL", "LI", "LI"]);
 
   // It finishes with nobody answering: no card, the tray never counts one.
-  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
+  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(tray).toHaveText(NONE_WAITING);
   const resolved = page.locator('[data-event="permission_resolved"]');
@@ -119,20 +119,20 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-task.png"), fullPage: true });
 
   // The record: no approval was ever created, and the log names the rule and the grant.
-  expect(await (await page.request.get(`${smelt.base}/api/approvals`)).json()).toEqual({ approvals: [] });
-  const log = (await (await page.request.get(`${smelt.base}/api/action-log?taskId=1`)).json()) as { entries: { rule: string; grantId: number | null; command: string }[] };
+  expect(await (await page.request.get(`${botbench.base}/api/approvals`)).json()).toEqual({ approvals: [] });
+  const log = (await (await page.request.get(`${botbench.base}/api/action-log?taskId=1`)).json()) as { entries: { rule: string; grantId: number | null; command: string }[] };
   expect(log.entries.map((e) => [e.rule, e.grantId, e.command])).toEqual([["preapproved", 2, "sh make-marker.sh"]]);
 
-  expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce), "all of it without a reload").toBe(true);
-  expect(foreign, "requests to anything but Smelt").toEqual([]);
+  expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "all of it without a reload").toBe(true);
+  expect(foreign, "requests to anything but Botbench").toEqual([]);
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("a repository with nothing configured offers an empty list that says every command asks, and the offer follows the repository named", async ({ page, smelt, repo }) => {
+test("a repository with nothing configured offers an empty list that says every command asks, and the offer follows the repository named", async ({ page, botbench, repo }) => {
   // A second repository, which the settings do not name.
-  const other = path.join(smelt.home, "..", "other-repo");
+  const other = path.join(botbench.home, "..", "other-repo");
   initRepo(other);
-  await signIn(page, smelt);
+  await signIn(page, botbench);
   await openNewTask(page);
   await page.getByLabel("Repository path").fill(other);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");

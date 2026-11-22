@@ -33,7 +33,7 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
       (err: unknown) => {
         setBusy(false);
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setError(err instanceof ApiError ? `The task was not started. ${err.message}` : "The task was not started: Smelt could not be reached.");
+        setError(err instanceof ApiError ? `The task was not started. ${err.message}` : "The task was not started: Botbench could not be reached.");
       },
     );
   };
@@ -60,7 +60,7 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
           <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
             {busy ? "Starting" : "Start task"}
           </button>
-          <p>Smelt works on the task in a separate copy of the project (a git worktree), on a new branch that starts from the repository's current commit. Your own files and your branch are not touched.</p>
+          <p>Botbench works on the task in a separate copy of the project (a git worktree), on a new branch that starts from the repository's current commit. Your own files and your branch are not touched.</p>
         </form>
       </Page>
     </Frame>

@@ -2,26 +2,26 @@ import path from "node:path";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
 import fs from "node:fs";
 import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
-import { startSmelt } from "./smelt.ts";
+import { startBotbench } from "./botbench.ts";
 
-// Choosing the model in the real client, at a phone's size, against a real Smelt process and the owner's Claude Code.
-// The models named here are the cheapest the CLI lists. The Smelt these tests start is configured with "haiku".
+// Choosing the model in the real client, at a phone's size, against a real Botbench process and the owner's Claude Code.
+// The models named here are the cheapest the CLI lists. The Botbench these tests start is configured with "haiku".
 
 const CONFIGURED = "haiku";
 const CHEAP = "claude-haiku-4-5-20251001";
-// The name Claude Code itself reports for that id. Smelt shows the name and keeps the id one tap away.
+// The name Claude Code itself reports for that id. Botbench shows the name and keeps the id one tap away.
 const NAME = "Haiku [\\d.]+";
 const NAMED_ROW = new RegExp(`^Model${NAME}$`);
 // As long as a model name may be, and unbroken: the screen must wrap it wherever it shows it.
-const UNKNOWN = `smelt-no-such-model-${"1".repeat(80)}`;
+const UNKNOWN = `botbench-no-such-model-${"1".repeat(77)}`;
 
-test("LIVE: on the Turn screen the model is picked from the CLI's own list, a name the CLI does not know is reported in its words, the transcript names the model that answered, and the choice survives a reload", async ({ page, smelt }) => {
-  const foreign = watchRequests(page, smelt);
+test("LIVE: on the Turn screen the model is picked from the CLI's own list, a name the CLI does not know is reported in its words, the transcript names the model that answered, and the choice survives a reload", async ({ page, botbench }) => {
+  const foreign = watchRequests(page, botbench);
   const turnsSent: string[] = [];
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().endsWith("/api/turns")) turnsSent.push(request.postData() ?? "");
   });
-  await signIn(page, smelt);
+  await signIn(page, botbench);
 
   // The picker: the configured model is preselected, and the list is the one Claude Code reports.
   const picker = page.getByLabel("Model", { exact: true });
@@ -90,14 +90,14 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   await page.getByLabel("Model", { exact: true }).selectOption("");
   await page.reload();
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue("");
-  expect(foreign, "requests to anything but Smelt").toEqual([]);
+  expect(foreign, "requests to anything but Botbench").toEqual([]);
 });
 
-test("LIVE: on New task a model is picked, and the task screen names the model that was asked for and the one that answered", async ({ page, smelt }) => {
-  const repo = path.join(path.dirname(smelt.home), "sample-repo");
+test("LIVE: on New task a model is picked, and the task screen names the model that was asked for and the one that answered", async ({ page, botbench }) => {
+  const repo = path.join(path.dirname(botbench.home), "sample-repo");
   initRepo(repo);
   const before = checkoutState(repo);
-  await signIn(page, smelt);
+  await signIn(page, botbench);
   await openNewTask(page);
 
   const picker = page.getByLabel("Model", { exact: true });
@@ -120,9 +120,9 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
 
   // This test is about the model, so any command the agent wants to run is declined, as an owner could.
   await expect(async () => {
-    const pending = (await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
+    const pending = (await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
     for (const approval of pending.approvals) {
-      await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Not needed for this task; just create the file." } });
+      await page.request.post(`${botbench.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Not needed for this task; just create the file." } });
     }
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
@@ -133,7 +133,7 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
   await expect(page.locator('[data-event="session_started"] summary')).toHaveText(NAMED_ROW);
   await expect(page.locator('[data-event="session_started"]')).toContainText(`Model id: ${CHEAP}`);
   const taskId = Number(/#\/tasks\/(\d+)$/.exec(page.url())![1]);
-  expect(((await (await page.request.get(`${smelt.base}/api/tasks/${taskId}`)).json()) as { requestedModel: string | null }).requestedModel).toBe(CHEAP);
+  expect(((await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { requestedModel: string | null }).requestedModel).toBe(CHEAP);
   await checkDesign(page, "task, with its model");
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
@@ -141,20 +141,20 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
 test("where Claude Code reports no list, the picker offers the configured models and says the list comes from configuration", async ({ page }) => {
   // A real machine state: no `claude` in any PATH folder, so the CLI cannot be asked and nothing of it runs.
   const withoutClaude = (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== "" && !fs.existsSync(path.join(dir, "claude"))).join(path.delimiter);
-  const smelt = await startSmelt({ env: { PATH: withoutClaude }, settings: { drivers: { "claude-code": { model: "sonnet", models: ["opus", "sonnet"] } } } });
+  const botbench = await startBotbench({ env: { PATH: withoutClaude }, settings: { drivers: { "claude-code": { model: "sonnet", models: ["opus", "sonnet"] } } } });
   try {
-    await page.goto(smelt.base);
-    await page.getByLabel("Login token").fill(smelt.token);
+    await page.goto(botbench.base);
+    await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");
     await openNewTask(page);
     const picker = page.getByLabel("Model", { exact: true });
     await expect(picker).toHaveValue("sonnet");
-    await expect(page.getByTestId("model-source")).toHaveText("The list comes from Smelt's configuration: Claude Code reported none.");
+    await expect(page.getByTestId("model-source")).toHaveText("The list comes from Botbench's configuration: Claude Code reported none.");
     expect(await picker.locator("option").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
     await checkDesign(page, "new task, models from configuration");
   } finally {
-    expect((await smelt.stop()).leftover).toEqual([]);
-    fs.rmSync(path.dirname(smelt.home), { recursive: true, force: true });
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
   }
 });

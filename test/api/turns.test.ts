@@ -9,7 +9,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { now } from "../../src/store/db.ts";
 
 // No test in this file starts a driver: turns that reach Claude Code are in test/live/turns.live.test.ts.
@@ -20,12 +20,12 @@ const JSON_TYPE = { "content-type": "application/json" };
 
 /** A client directory with real files in it, plus a file beside it that must never be served. */
 function clientDir(t: T): { dir: string; outside: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-client-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-client-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, "dist");
   fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "index.html"), '<!doctype html><title>Smelt</title><script type="module" src="/assets/app-1a2b.js"></script>');
-  fs.writeFileSync(path.join(dir, "assets", "app-1a2b.js"), "console.log('smelt');");
+  fs.writeFileSync(path.join(dir, "index.html"), '<!doctype html><title>Botbench</title><script type="module" src="/assets/app-1a2b.js"></script>');
+  fs.writeFileSync(path.join(dir, "assets", "app-1a2b.js"), "console.log('botbench');");
   fs.writeFileSync(path.join(dir, "assets", "app-1a2b.css"), "body{margin:0}");
   fs.writeFileSync(path.join(dir, "assets", "geist-1a2b.woff2"), Buffer.from([0x77, 0x4f, 0x46, 0x32]));
   const outside = path.join(root, "outside.js");
@@ -34,8 +34,8 @@ function clientDir(t: T): { dir: string; outside: string } {
   return { dir, outside };
 }
 
-async function start(t: T, options: { clientDir?: string; heartbeatMs?: number } = {}): Promise<{ server: SmeltServer; home: string; token: string; base: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-turns-"));
+async function start(t: T, options: { clientDir?: string; heartbeatMs?: number } = {}): Promise<{ server: BotbenchServer; home: string; token: string; base: string }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
@@ -170,7 +170,7 @@ test("the client shell is served without a session, and /api/session says 401 be
     assert.match(page.headers.get("content-type") ?? "", /^text\/html; charset=utf-8/);
     assert.equal(page.headers.get("cache-control"), "no-cache");
     assert.equal(page.headers.get("x-content-type-options"), "nosniff");
-    // The page may load scripts, styles, fonts and data from Smelt itself and nowhere else.
+    // The page may load scripts, styles, fonts and data from Botbench itself and nowhere else.
     const csp = page.headers.get("content-security-policy") ?? "";
     assert.match(csp, /default-src 'self'/);
     assert.match(csp, /frame-ancestors 'none'/);
@@ -208,12 +208,12 @@ test("the client shell is served without a session, and /api/session says 401 be
   // Health is still behind the session, as before.
   assert.equal((await fetch(`${base}/health`)).status, 401);
   assert.equal((await fetch(`${base}/health`, { headers })).status, 200);
-  // A shell path on a host Smelt does not serve is refused like any other request.
+  // A shell path on a host Botbench does not serve is refused like any other request.
   assert.equal((await raw(Number(new URL(base).port), "/", { host: "evil.example" })).status, 403);
 });
 
 test("a server whose client has not been built says so instead of serving a page", async (t) => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-noclient-"));
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-noclient-"));
   t.after(() => fs.rmSync(empty, { recursive: true, force: true }));
   const { base } = await start(t, { clientDir: path.join(empty, "dist") });
   const page = await fetch(`${base}/`);
@@ -254,7 +254,7 @@ test("path traversal out of the client directory is refused, with and without a 
       assert.equal(reply.body.includes(loginToken), false, `${attempt} leaked the login token`);
     }
   }
-  // A request target that is not an address at all is refused like any unknown path, and Smelt keeps running.
+  // A request target that is not an address at all is refused like any unknown path, and Botbench keeps running.
   const garbled = await new Promise<string>((resolve, reject) => {
     const socket = net.connect(server.port, "127.0.0.1", () => socket.write(`GET http://[ HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\nConnection: close\r\n\r\n`));
     let reply = "";

@@ -1,6 +1,6 @@
 ---
 version: alpha
-name: Smelt
+name: Botbench
 # Generated: everything from here to the closing line is web/vendor/groundwork/design-tokens.md
 # (Groundwork 0.4.0), unchanged. Do not edit it here. After a sync, copy that file over this block again.
 colors:
@@ -122,11 +122,11 @@ High-density developer interface. Closer to a well-made terminal or Linear than 
 ## Design system
 The interface is built from Groundwork, the shared design system vendored at `web/vendor/groundwork/` (read-only; changed in its own repository and synced). Before any UI work read `web/vendor/groundwork/rules/core.md`, and look each component up in `web/vendor/groundwork/components.json` before writing markup.
 - Colour, border, radius, shadow and type come from `gw-` components. Screen markup uses Tailwind utilities for layout, spacing and sizing only.
-- What the catalogue lacks is an app-local component under the `sm-` prefix, declared in `web/design-gaps.json`. Keep that list short.
+- What the catalogue lacks is an app-local component under the `bb-` prefix, declared in `web/design-gaps.json`. Keep that list short.
 - `npm test` runs the system's static scan and fails on a finding. `npm run e2e` runs its rendered check on every screen and open dialog.
 
 ## Tokens
-Use only the values above. No arbitrary spacing, radii, or colors. The block is generated from the design system; a value changes there, never here. Typefaces: IBM Plex Sans, and IBM Plex Mono for code, both served by Smelt itself.
+Use only the values above. No arbitrary spacing, radii, or colors. The block is generated from the design system; a value changes there, never here. Typefaces: IBM Plex Sans, and IBM Plex Mono for code, both served by Botbench itself.
 
 ## Never
 - Purple, indigo, or violet gradients (background or text)

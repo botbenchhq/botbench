@@ -1,11 +1,11 @@
 import type { Config } from "../config.ts";
 
 /*
- * The roles an agent works in, and what Smelt and the planner say to each other. A role is who is asking when a
+ * The roles an agent works in, and what Botbench and the planner say to each other. A role is who is asking when a
  * permission is asked for, so grants never carry from one role to another.
  *   planner       reads the repository and proposes tasks; changes nothing
  *   implementer   builds one task in its own worktree
- * What a planner replies is model output: data that is validated here and shown as text, never instructions to Smelt.
+ * What a planner replies is model output: data that is validated here and shown as text, never instructions to Botbench.
  */
 
 export const PLANNER = "planner";
@@ -150,7 +150,7 @@ ${o.work}
 
 /** What a planner is sent when its plan was not accepted: what was wrong, and the reply's form once more. */
 export function correctionPrompt(errors: readonly string[]): string {
-  return `Smelt could not accept that plan (${count(errors.length, "problem", "problems")}):
+  return `Botbench could not accept that plan (${count(errors.length, "problem", "problems")}):
 ${errors.map((error) => `- ${error}`).join("\n")}
 
 Reply once more with the whole corrected plan. ${REPLY_RULES}`;

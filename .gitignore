@@ -1,4 +1,6 @@
 node_modules
+botbench.local.json
+# The same settings under the product's old name, still read when botbench.local.json is absent.
 smelt.local.json
 web/dist
 test-results

@@ -9,18 +9,18 @@ import { summarize } from "../../src/approvals/gate.ts";
 import { claudeArgs, ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { createRun } from "../../src/engine/run.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { createPlanningWorktree, removePlanningWorktree } from "../../src/worktrees.ts";
-import { checkoutState, initRepo, smeltBranches, tempDir, worktreeCount } from "../support/repo.ts";
+import { checkoutState, initRepo, botbenchBranches, tempDir, worktreeCount } from "../support/repo.ts";
 
-// These tests start the real Claude Code on the owner's login as Smelt's planner, through Smelt's HTTP API, in real
+// These tests start the real Claude Code on the owner's login as Botbench's planner, through Botbench's HTTP API, in real
 // temporary repositories. Every prompt is tiny and the planner role is configured with the cheapest model.
 
 const PLAN_TIMEOUT = 300_000;
 const JSON_TYPE = { "content-type": "application/json" };
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   home: string;
@@ -28,7 +28,7 @@ interface Live {
 }
 
 async function start(t: TestContext): Promise<Live> {
-  const dir = tempDir("smelt-live-plan-");
+  const dir = tempDir("botbench-live-plan-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -95,7 +95,7 @@ async function untilPlanned(live: Live, runId: number, onPending: (approval: App
 }
 
 const decline = (live: Live, id: number): Promise<unknown> => post(live, `/api/approvals/${id}`, { decision: "decline", note: "The planner changes nothing." });
-/** Everything under the Smelt home where a worktree could be. */
+/** Everything under the Botbench home where a worktree could be. */
 const worktreeDirs = (home: string): string[] => (fs.existsSync(path.join(home, "worktrees")) ? fs.readdirSync(path.join(home, "worktrees"), { recursive: true }).map(String) : []);
 
 function assertValidPlan(run: RunBody): void {
@@ -117,7 +117,7 @@ test("live: a prompt against a temporary repository returns a valid task list wi
   assert.equal(run.requestedModel, "haiku", "the planner role's configured model");
   assert.match(String(run.plannerModel), /haiku/i, "the model that answered");
   assert.deepEqual(run.tasks, [], "no task exists before approval");
-  // The planner's transcript is the attempt's: the prompt Smelt sent, and a turn that completed.
+  // The planner's transcript is the attempt's: the prompt Botbench sent, and a turn that completed.
   const events = await transcript(live, run.attemptId!);
   assert.equal(events[0]!.type, "user_prompt");
   assert.ok(events.some((e) => e.type === "turn_ended" && e.reason === "completed"));
@@ -125,7 +125,7 @@ test("live: a prompt against a temporary repository returns a valid task list wi
   assert.deepEqual(checkoutState(live.repo), before);
   assert.deepEqual(fs.readdirSync(live.repo).sort(), [".git", "README.md"]);
   assert.equal(worktreeCount(live.repo), 1);
-  assert.deepEqual(smeltBranches(live.repo), []);
+  assert.deepEqual(botbenchBranches(live.repo), []);
   assert.deepEqual(worktreeDirs(live.home), []);
   assert.equal(Number(live.server.db.prepare("SELECT count(*) AS n FROM attempts WHERE pgid IS NOT NULL").get()!.n), 0, "no planner process is left");
 });
@@ -133,7 +133,7 @@ test("live: a prompt against a temporary repository returns a valid task list wi
 test("live: a planner told to create a file cannot: it has no tool that writes, a shell command for it asks the owner under the planner role, and no file appears in the planning worktree or the source", { timeout: PLAN_TIMEOUT }, async (t) => {
   const live = await start(t);
   const before = checkoutState(live.repo);
-  // Smelt's own planner prompt tells the model not to try, and a model that obeys shows nothing about the enforcement.
+  // Botbench's own planner prompt tells the model not to try, and a model that obeys shows nothing about the enforcement.
   // So this attempt is started exactly as the engine starts a planner (the run's planning worktree, a read-only
   // admission under the planner role, a read-only gated attempt) and is sent a prompt that asks for the write outright.
   const { db, broker } = live.server;
@@ -225,6 +225,6 @@ test("live: requesting changes with feedback calls the planner again and the new
   assert.equal(Number(live.server.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n), 0);
   assert.equal(worktreeCount(live.repo), 1);
   assert.deepEqual(worktreeDirs(live.home), []);
-  assert.deepEqual(smeltBranches(live.repo), []);
+  assert.deepEqual(botbenchBranches(live.repo), []);
   assert.deepEqual(checkoutState(live.repo), before);
 });

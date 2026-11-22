@@ -4,8 +4,8 @@ import path from "node:path";
 import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
-import { checkoutState, initRepo, smeltBranches, tempDir, worktreeCount } from "../support/repo.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
+import { checkoutState, initRepo, botbenchBranches, tempDir, worktreeCount } from "../support/repo.ts";
 
 // No test in this file starts a driver: turns and tasks that reach Claude Code with a chosen model are in
 // test/live/models.live.test.ts, and so is the list the real CLI reports.
@@ -14,7 +14,7 @@ type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 const BARE: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
 
-async function start(t: T, config: Config = BARE, dir = tempDir("smelt-models-api-")): Promise<{ server: SmeltServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
+async function start(t: T, config: Config = BARE, dir = tempDir("botbench-models-api-")): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const server = await startServer({ config, home, signInDelayMs: 1 });
@@ -38,7 +38,7 @@ async function post(base: string, headers: Record<string, string>, route: string
 
 /**
  * For the rest of the test, this process is a machine on which Claude Code is not installed: every PATH folder
- * that holds a `claude` is left out, so Smelt's attempt to start the CLI really fails and nothing of it runs.
+ * that holds a `claude` is left out, so Botbench's attempt to start the CLI really fails and nothing of it runs.
  */
 function withoutClaudeOnPath(t: T): void {
   const saved = process.env.PATH;
@@ -125,7 +125,7 @@ test("a model that is not a plain model name is refused with 400 before any atte
   assert.equal(fs.existsSync(path.join(home, "worktrees")), false, "no worktree folder");
   assert.deepEqual(fs.readdirSync(path.join(home, "scratch")), scratchBefore);
   assert.equal(worktreeCount(repo), 1);
-  assert.deepEqual(smeltBranches(repo), []);
+  assert.deepEqual(botbenchBranches(repo), []);
   assert.deepEqual(checkoutState(repo), before);
 
   // A plain name passes the check; here the attempt it names does not exist, so still nothing starts.
@@ -136,8 +136,8 @@ test("a model that is not a plain model name is refused with 400 before any atte
 });
 
 test("POST /api/tasks records the model asked for: the one named, the CLI's own default for null, the configured one when none is given", async (t) => {
-  // Smelt's home inside the repository: each task is real and fails at its first step, before any driver could start.
-  const repo = tempDir("smelt-models-api-");
+  // Botbench's home inside the repository: each task is real and fails at its first step, before any driver could start.
+  const repo = tempDir("botbench-models-api-");
   initRepo(repo);
   const { server, base, headers } = await start(t, { ...BARE, drivers: { "claude-code": { model: "sonnet" } }, roles: { implementer: { driver: "claude-code" } } }, repo);
 

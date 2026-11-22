@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import { createTask, moveTask } from "../../src/engine/task.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { createWorktree } from "../../src/worktrees.ts";
 import type { Left } from "../support/leave-pending.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
@@ -18,7 +18,7 @@ type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
 interface Api {
-  server: SmeltServer;
+  server: BotbenchServer;
   dir: string;
   base: string;
   headers: Record<string, string>;
@@ -28,7 +28,7 @@ interface Api {
 
 /** A real server, and a task that stands where a task being built stands: at `building`, in a real worktree, with an attempt. */
 async function start(t: T): Promise<Api> {
-  const dir = tempDir("smelt-apr-api-");
+  const dir = tempDir("botbench-apr-api-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
@@ -109,7 +109,7 @@ test("every approval route refuses a request without a session, and an answer se
     ["GET", `/api/action-log?taskId=${api.taskId}`],
   ];
   for (const [method, route, body] of routes) {
-    for (const without of [{}, { cookie: "smelt_session=not-a-session" }] as Record<string, string>[]) {
+    for (const without of [{}, { cookie: "botbench_session=not-a-session" }] as Record<string, string>[]) {
       const res = await fetch(`${api.base}${route}`, { method, headers: { ...without, ...(body ? JSON_TYPE : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
       assert.equal(res.status, 401, `${method} ${route} without a session`);
       assert.deepEqual(await res.json(), { error: "sign in required" });
@@ -215,12 +215,12 @@ test("closing the server leaves no approval pending and no socket behind", async
 });
 
 test("after a restart, an approval asked before it is still listed, says so, and its task is shown as parked; an answer without a session stores nothing", async (t) => {
-  const dir = tempDir("smelt-apr-api-");
+  const dir = tempDir("botbench-apr-api-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);
-  // A real Smelt process that was killed while a task waited for the owner. The owner's answer itself re-drives
+  // A real Botbench process that was killed while a task waited for the owner. The owner's answer itself re-drives
   // the task with the real CLI, so that part is in test/live/recover-approval.live.test.ts.
   const run = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "..", "support", "leave-pending.ts"), JSON.stringify({ home, repo, cursor: "0b7b7c9e-4a51-4c0e-9d0c-0d3f8f6f2a11", commands: ["sh make-marker.sh"] })], { encoding: "utf8" });
   const left = JSON.parse(run.stdout) as Left;

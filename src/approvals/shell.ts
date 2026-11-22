@@ -1,5 +1,5 @@
 /*
- * Reading a shell command the careful way. Smelt never runs what it reads here; it only decides whether a
+ * Reading a shell command the careful way. Botbench never runs what it reads here; it only decides whether a
  * command is plain enough to be compared word by word. The reading is narrower than any shell's: whatever
  * it is not sure a shell would take as ordinary words makes the whole command "not plain", and a command
  * that is not plain is never matched by a grant.

@@ -1,28 +1,28 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test as base, type Page } from "@playwright/test";
-import { startSmelt, type Smelt } from "./smelt.ts";
+import { startBotbench, type Botbench } from "./botbench.ts";
 import { bannedIn } from "./voice.ts";
 
-// What every end-to-end test shares. Everything is real: a Smelt process, the built client, Chrome,
+// What every end-to-end test shares. Everything is real: a Botbench process, the built client, Chrome,
 // and for the tests marked LIVE the owner's Claude Code on its cheapest model.
 
-/** Set SMELT_SHOTS to a directory to keep screenshots of the screens. */
-export const SHOTS = process.env.SMELT_SHOTS;
+/** Set BOTBENCH_SHOTS to a directory to keep screenshots of the screens. */
+export const SHOTS = process.env.BOTBENCH_SHOTS;
 
-export const test = base.extend<{ smelt: Smelt }>({
-  smelt: async ({}, use) => {
-    const smelt = await startSmelt();
-    await use(smelt);
-    const { leftover } = await smelt.stop();
-    expect(leftover, "no CLI process is left after Smelt stops").toEqual([]);
-    fs.rmSync(path.dirname(smelt.home), { recursive: true, force: true });
+export const test = base.extend<{ botbench: Botbench }>({
+  botbench: async ({}, use) => {
+    const botbench = await startBotbench();
+    await use(botbench);
+    const { leftover } = await botbench.stop();
+    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
+    fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
   },
 });
 
-export async function signIn(page: Page, smelt: Smelt): Promise<void> {
-  await page.goto(smelt.base);
-  await page.getByLabel("Login token").fill(smelt.token);
+export async function signIn(page: Page, botbench: Botbench): Promise<void> {
+  await page.goto(botbench.base);
+  await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByTestId("driver-state")).toContainText("signed in");
 }
@@ -34,12 +34,12 @@ export async function openNewTask(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "New task", level: 1 })).toBeVisible();
 }
 
-/** Every request the page makes must go to Smelt itself. */
-export function watchRequests(page: Page, smelt: Smelt): string[] {
+/** Every request the page makes must go to Botbench itself. */
+export function watchRequests(page: Page, botbench: Botbench): string[] {
   const foreign: string[] = [];
   page.on("request", (request) => {
     const url = request.url();
-    if (!url.startsWith(`${smelt.base}/`) && !url.startsWith("data:")) foreign.push(url);
+    if (!url.startsWith(`${botbench.base}/`) && !url.startsWith("data:")) foreign.push(url);
   });
   return foreign;
 }
@@ -56,12 +56,12 @@ const PALETTE = Object.values(TOKENS.color).map(({ $value: { hex } }) => `rgb(${
 /**
  * The design system, checked on the rendered page: its structural rules (one primary action per view, disclosure
  * limits, cards, badges, emoji, stock phrases, controls that use no system component) find nothing; the view has one h1, in its page header; every colour drawn is one of its tokens; there is no
- * gradient or blur, no shadow except on a dialog or a toast, and no corner off its radius scale; its two typefaces are loaded from Smelt and not
+ * gradient or blur, no shadow except on a dialog or a toast, and no corner off its radius scale; its two typefaces are loaded from Botbench and not
  * substituted; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
  * screen has its data, and again with each dialog open: an open dialog is a view of its own.
  */
 export async function checkDesign(page: Page, screen: string): Promise<void> {
-  // The script's text is evaluated, not added as a script element, which Smelt's content security policy would refuse.
+  // The script's text is evaluated, not added as a script element, which Botbench's content security policy would refuse.
   await page.evaluate(CHECK_DOM);
   // The app's class prefix, as web/groundwork.config.json has it: the rule that a view's controls use the system needs it on a rendered page.
   const findings = await page.evaluate((appPrefix) => (globalThis as unknown as { gwCheckDom(root: Element, options: { appPrefix: string }): { rule: string; message: string; fix: string; snippet: string }[] }).gwCheckDom(document.documentElement, { appPrefix }), APP_PREFIX);
@@ -145,14 +145,14 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(found.bodyFont, `${screen}: body font`).toMatch(/^"?IBM Plex Sans"?,/);
   expect(found.bodySize).toBe("14px");
   expect(found.monoFont, `${screen}: mono font`).toMatch(/^"?IBM Plex Mono"?,/);
-  expect(found.sansLoaded, `${screen}: IBM Plex Sans is loaded from Smelt, not substituted`).toBe(true);
-  expect(found.monoLoaded, `${screen}: IBM Plex Mono is loaded from Smelt, not substituted`).toBe(true);
+  expect(found.sansLoaded, `${screen}: IBM Plex Sans is loaded from Botbench, not substituted`).toBe(true);
+  expect(found.monoLoaded, `${screen}: IBM Plex Mono is loaded from Botbench, not substituted`).toBe(true);
   expect(found.overflow, `${screen}: no sideways scrolling at phone width`).toBe(0);
   await checkWords(page, screen);
 }
 
 /**
- * The words on the screen, checked against docs/product/voice.md: every piece of text Smelt itself wrote, drawn or not
+ * The words on the screen, checked against docs/product/voice.md: every piece of text Botbench itself wrote, drawn or not
  * (a closed disclosure and a visually hidden label are one tap or one screen reader away), every accessible name and
  * the tab title hold none of the internal words that list bans. Text somebody else wrote (a prompt, the agent's reply,
  * a command, a path, a program's output) is marked `data-gw-content` where it is rendered and is not read here; nor is
@@ -184,14 +184,14 @@ export async function checkWords(page: Page, screen: string): Promise<void> {
 }
 
 /**
- * Keep a screenshot of the whole screen named `copy-<name>.png` when SMELT_COPY_SHOTS is set to a directory: the
+ * Keep a screenshot of the whole screen named `copy-<name>.png` when BOTBENCH_COPY_SHOTS is set to a directory: the
  * screens as the plain-language pass left them, for a reader to judge. The window is made as tall as the page for the
  * capture and put back after it, so the header and the tab bar, which stay in place while a page scrolls, are drawn
  * once, where they belong. Resizing leaves an inline size on a textarea that sizes itself; what the capture added is
  * taken off again, so the design check still sees the client's own page.
  */
 export async function copyShot(page: Page, name: string): Promise<void> {
-  const directory = process.env.SMELT_COPY_SHOTS;
+  const directory = process.env.BOTBENCH_COPY_SHOTS;
   if (!directory) return;
   await tallShot(page, path.join(directory, `copy-${name}.png`));
 }

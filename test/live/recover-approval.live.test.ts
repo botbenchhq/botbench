@@ -11,12 +11,12 @@ import type { DriverEvent } from "../../src/drivers/events.ts";
 import { killProcessGroup, processGroupAlive } from "../../src/drivers/launch.ts";
 import { startServer } from "../../src/server.ts";
 import { DB_FILE } from "../../src/store/db.ts";
-import { startSmelt } from "../../e2e/smelt.ts";
+import { startBotbench } from "../../e2e/botbench.ts";
 import type { Left } from "../support/leave-pending.ts";
 import { checkoutState, initRepo, tempDir } from "../support/repo.ts";
 
 // Approvals across a restart, with the real Claude Code on the owner's login, cheapest model, tiny prompts.
-// Smelt is stopped for real: killed as a process in the first test, shut down in the second.
+// Botbench is stopped for real: killed as a process in the first test, shut down in the second.
 
 const TASK_TIMEOUT = 300_000;
 const JSON_TYPE = { "content-type": "application/json" };
@@ -123,45 +123,45 @@ const attemptRows = (home: string): { id: number; status: string; pgid: number |
   }
 };
 
-test("live: Smelt is killed while a task waits on an approval and its Claude Code is left running; on the next start that process is stopped, the approval is still listed, and allowing it re-drives the task, which finishes with the marker file and no second approval", { timeout: TASK_TIMEOUT }, async (t) => {
-  const smelt = await startSmelt();
-  const dir = path.dirname(smelt.home);
+test("live: Botbench is killed while a task waits on an approval and its Claude Code is left running; on the next start that process is stopped, the approval is still listed, and allowing it re-drives the task, which finishes with the marker file and no second approval", { timeout: TASK_TIMEOUT }, async (t) => {
+  const botbench = await startBotbench();
+  const dir = path.dirname(botbench.home);
   const repo = path.join(dir, "repo");
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });
   const before = checkoutState(repo);
   let survivor: number | null = null;
   t.after(async () => {
-    const { leftover } = await smelt.stop();
+    const { leftover } = await botbench.stop();
     if (survivor !== null) await killProcessGroup(survivor).catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
-    assert.deepEqual(leftover, [], "no CLI process is left after Smelt stops");
+    assert.deepEqual(leftover, [], "no CLI process is left after Botbench stops");
   });
 
-  let client = await signIn(smelt.base, smelt.home);
+  let client = await signIn(botbench.base, botbench.home);
   const taskId = await startTask(client, repo);
   const asked = await firstPending(client, taskId);
   assert.deepEqual([asked.command, asked.cwd, asked.parkedAt, asked.storedDecision], ["sh make-marker.sh", ".", null, null]);
   const waiting = await getTask(client, taskId);
   assert.deepEqual([waiting.status, waiting.waitingOnApproval, waiting.parked], ["building", true, false]);
-  const worktree = worktreeOf(smelt.home, waiting);
-  const [first] = attemptRows(smelt.home);
+  const worktree = worktreeOf(botbench.home, waiting);
+  const [first] = attemptRows(botbench.home);
   assert.ok(first && first.pgid !== null && first.resume_cursor !== null);
   survivor = first.pgid;
 
-  // The CLI hangs (it is frozen, so it cannot notice anything), and Smelt is killed outright: nothing of it closes.
+  // The CLI hangs (it is frozen, so it cannot notice anything), and Botbench is killed outright: nothing of it closes.
   process.kill(-survivor, "SIGSTOP");
-  await smelt.kill();
-  assert.equal(processGroupAlive(survivor), true, "Claude Code outlived the Smelt that started it");
+  await botbench.kill();
+  assert.equal(processGroupAlive(survivor), true, "Claude Code outlived the Botbench that started it");
   assert.equal(fs.existsSync(path.join(worktree, "marker.txt")), false);
 
   // Recovery goes on behind the listening server. A frozen process ignores the polite signal, so it is killed after the grace period.
-  await smelt.restart();
+  await botbench.restart();
   // The attempt forgets its process group only once the group is gone.
-  for (const deadline = Date.now() + 15_000; attemptRows(smelt.home)[0]!.pgid !== null && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 100));
+  for (const deadline = Date.now() + 15_000; attemptRows(botbench.home)[0]!.pgid !== null && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 100));
   assert.equal(processGroupAlive(survivor), false, "the surviving Claude Code was stopped on start");
-  assert.deepEqual(attemptRows(smelt.home).map((a) => [a.id, a.pgid]), [[first.id, null]]);
+  assert.deepEqual(attemptRows(botbench.home).map((a) => [a.id, a.pgid]), [[first.id, null]]);
   await assert.rejects(getTask(client, taskId).then((task) => assert.equal(task.id, taskId)), "the old session is gone with the old process");
-  client = await signIn(smelt.base, smelt.home);
+  client = await signIn(botbench.base, botbench.home);
 
   // The approval is still there, as it was asked, and its task waits on the owner; nothing was run, re-driven or committed.
   const listed = await approvals(client, "pending");
@@ -170,7 +170,7 @@ test("live: Smelt is killed while a task waits on an approval and its Claude Cod
   const parked = await getTask(client, taskId);
   assert.deepEqual([parked.status, parked.waitingOnApproval, parked.parked, parked.attemptId, parked.reason], ["building", true, true, first.id, null]);
   await new Promise((r) => setTimeout(r, 1500));
-  assert.equal(attemptRows(smelt.home).length, 1, "nothing is re-driven until the owner answers");
+  assert.equal(attemptRows(botbench.home).length, 1, "nothing is re-driven until the owner answers");
   assert.equal(fs.existsSync(path.join(worktree, "marker.txt")), false);
 
   const stored = await answer(client, asked.id, "allow");
@@ -180,7 +180,7 @@ test("live: Smelt is killed while a task waits on an approval and its Claude Cod
   assert.equal(fs.readFileSync(path.join(worktree, "marker.txt"), "utf8").trim(), "ran");
   assert.deepEqual(task.files!.map((f) => [f.path, f.status]), [["marker.txt", "added"]]);
   assert.notEqual(task.attemptId, first.id, "a new attempt resumed the session");
-  const attempts = attemptRows(smelt.home);
+  const attempts = attemptRows(botbench.home);
   assert.deepEqual(attempts.map((a) => [a.pgid, a.resume_cursor]), [[null, first.resume_cursor], [null, first.resume_cursor]], "same session, in the same worktree, and no process left");
 
   // Exactly one approval ever existed, and the log says how its answer was used.
@@ -202,8 +202,8 @@ test("live: Smelt is killed while a task waits on an approval and its Claude Cod
   assert.deepEqual(checkoutState(repo), before);
 });
 
-test("live: Smelt is shut down while a task waits on an approval and started again on the same home; the approval is still listed, and declining it re-drives the task: the agent receives the declined result and the marker file exists nowhere", { timeout: TASK_TIMEOUT }, async (t) => {
-  const dir = tempDir("smelt-live-recover-");
+test("live: Botbench is shut down while a task waits on an approval and started again on the same home; the approval is still listed, and declining it re-drives the task: the agent receives the declined result and the marker file exists nowhere", { timeout: TASK_TIMEOUT }, async (t) => {
+  const dir = tempDir("botbench-live-recover-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -256,12 +256,12 @@ test("live: Smelt is shut down while a task waits on an approval and started aga
 });
 
 test("live: when Claude Code cannot resume the session a parked approval belongs to, allowing it runs nothing: the task is marked interrupted with the reason and the approval is closed as superseded", { timeout: 120_000 }, async (t) => {
-  const dir = tempDir("smelt-live-recover-");
+  const dir = tempDir("botbench-live-recover-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });
-  // A Smelt that was killed while a task waited, whose attempt names a session Claude Code does not have.
+  // A Botbench that was killed while a task waited, whose attempt names a session Claude Code does not have.
   const run = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "..", "support", "leave-pending.ts"), JSON.stringify({ home, repo, cursor: "3f0e0c4e-9a57-4f0e-8a5d-1c2b3a4d5e6f", commands: ["sh make-marker.sh"] })], { encoding: "utf8" });
   const left = JSON.parse(run.stdout) as Left;
 

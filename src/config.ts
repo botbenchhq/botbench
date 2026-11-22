@@ -9,17 +9,60 @@ import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const DEFAULT_CONFIG_FILE = path.join(ROOT, "smelt.config.json");
+export const DEFAULT_CONFIG_FILE = path.join(ROOT, "botbench.config.json");
 /** Optional, git-ignored: the owner's own settings, merged over the defaults. */
-export const LOCAL_CONFIG_FILE = path.join(ROOT, "smelt.local.json");
+export const LOCAL_CONFIG_FILE = path.join(ROOT, "botbench.local.json");
+/** The same file under the product's old name (Smelt), read for one release when the new one is absent. */
+export const LEGACY_LOCAL_CONFIG_FILE = path.join(ROOT, "smelt.local.json");
 
-/** Where Smelt keeps its database and everything else it stores. */
-export function smeltHome(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = env.SMELT_HOME;
-  if (!raw) return path.join(os.homedir(), ".smelt");
+/** Writes one line to the log on stdout, for whoever runs the process. */
+export type Log = (line: string) => void;
+
+/**
+ * A setting from the environment: `BOTBENCH_<name>`, or for one release the old name `SMELT_<name>` when the new one is
+ * unset, with a line saying so. An empty value counts as unset.
+ */
+export function envSetting(env: NodeJS.ProcessEnv, name: "HOME" | "PORT" | "CONFIG", log: Log): string | undefined {
+  const current = env[`BOTBENCH_${name}`];
+  const old = env[`SMELT_${name}`];
+  if (current) {
+    if (old) log(`SMELT_${name} is set but not read: BOTBENCH_${name} is set too and is used. Remove SMELT_${name}.`);
+    return current;
+  }
+  if (!old) return undefined;
+  log(`SMELT_${name} is the old name of BOTBENCH_${name}. It is read for this release only; rename it to BOTBENCH_${name}.`);
+  return old;
+}
+
+/**
+ * Where Botbench keeps its database and everything else it stores (`home`), and the old default folder an installation
+ * from before the rename may have left (`legacy`). There is a legacy folder only when no variable names the data folder:
+ * a folder the owner named is used as it is, and an installation is never moved into it.
+ */
+export function dataHomes(env: NodeJS.ProcessEnv = process.env, log: Log = () => {}, homedir: string = os.homedir()): { home: string; legacy: string | null } {
+  const raw = envSetting(env, "HOME", log);
+  if (!raw) return { home: path.join(homedir, ".botbench"), legacy: path.join(homedir, ".smelt") };
   // The shell does not expand ~ inside an environment value, and a relative path would move with the working directory.
-  if (raw === "~" || raw.startsWith("~/")) return path.join(os.homedir(), raw.slice(1));
-  return path.resolve(raw);
+  if (raw === "~" || raw.startsWith("~/")) return { home: path.join(homedir, raw.slice(1)), legacy: null };
+  return { home: path.resolve(raw), legacy: null };
+}
+
+/** Where Botbench keeps its database and everything else it stores. */
+export function botbenchHome(env: NodeJS.ProcessEnv = process.env): string {
+  return dataHomes(env).home;
+}
+
+/**
+ * The owner's settings file: the one `BOTBENCH_CONFIG` (or the old `SMELT_CONFIG`) names for one start, else
+ * botbench.local.json, else for one release the old smelt.local.json beside it, with a line saying so. Botbench never
+ * writes either file.
+ */
+export function localConfigFile(env: NodeJS.ProcessEnv, log: Log, files = { current: LOCAL_CONFIG_FILE, legacy: LEGACY_LOCAL_CONFIG_FILE }): string {
+  const named = envSetting(env, "CONFIG", log);
+  if (named) return path.resolve(named);
+  if (fs.existsSync(files.current) || !fs.existsSync(files.legacy)) return files.current;
+  log(`Read the settings from ${files.legacy}, the file's old name. Rename it to ${path.basename(files.current)}; the old name is read for this release only.`);
+  return files.legacy;
 }
 
 export const DRIVER_NAMES = ["claude-code", "codex", "gemini-cli", "grok"] as const;
@@ -40,12 +83,12 @@ export interface RoleConfig {
 export interface RepositoryConfig {
   /** Commands offered on the new-task screen as the ones a task may run without asking. The owner confirms or edits them per task. */
   preapproved?: string[];
-  /** Commands Smelt runs in each new worktree before its builder starts, in order; one that fails ends the task. */
+  /** Commands Botbench runs in each new worktree before its builder starts, in order; one that fails ends the task. */
   setup?: CommandConfig[];
-  /** Commands Smelt runs in the worktree after the work is committed, each with its time limit; their results are evidence on the task. */
+  /** Commands Botbench runs in the worktree after the work is committed, each with its time limit; their results are evidence on the task. */
   checks?: CommandConfig[];
 }
-/** A command Smelt runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
+/** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
 const MAX_TIMEOUT_SECONDS = 86_400;
 /** One entry the owner adds to the safety floor: a command whose words, found anywhere in a request, make it always ask. */
@@ -155,7 +198,7 @@ function validate(c: Json, where: string): Config {
           if (problem) fail(`repository "${repo}": "${setting}" holds a command that cannot be used. ${problem}`);
           continue;
         }
-        // Setup and check commands are run by Smelt itself, through a shell, so they are not held to one plain command.
+        // Setup and check commands are run by Botbench itself, through a shell, so they are not held to one plain command.
         if (!Array.isArray(list) || !list.every((entry) => typeof entry === "string" || isObject(entry))) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
         for (const entry of list as unknown[]) {
           const problem = commandProblem(entry);
@@ -201,7 +244,7 @@ function commandProblem(entry: unknown): string | null {
 const asCommand = (entry: CommandConfig): StationCommand =>
   typeof entry === "string" ? { command: entry, limitMs: DEFAULT_LIMIT_MS } : { command: entry.command, limitMs: entry.timeoutSeconds === undefined ? DEFAULT_LIMIT_MS : entry.timeoutSeconds * 1000 };
 
-/** The commands Smelt runs itself in a repository's worktrees, each with its time limit. */
+/** The commands Botbench runs itself in a repository's worktrees, each with its time limit. */
 export function repositoryCommands(config: Config, repo: string): { setup: StationCommand[]; checks: StationCommand[] } {
   const settings = repositorySettings(config, repo);
   return { setup: (settings.setup ?? []).map(asCommand), checks: (settings.checks ?? []).map(asCommand) };

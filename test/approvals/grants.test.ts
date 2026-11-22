@@ -15,7 +15,7 @@ import { tempDir } from "../support/repo.ts";
 // No test in this file starts a driver. The matching is pure; the store and the broker are the real ones.
 
 type T = { after(fn: () => unknown): void };
-const WORKTREE = "/Users/owner/.smelt/worktrees/run-1/task-1";
+const WORKTREE = "/Users/owner/.botbench/worktrees/run-1/task-1";
 const REPO = "/Users/owner/code/sample";
 const HOME = "/Users/owner";
 
@@ -180,7 +180,7 @@ interface Rig {
 }
 
 async function rig(t: T): Promise<Rig> {
-  const dir = tempDir("smelt-grants-");
+  const dir = tempDir("botbench-grants-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const worktree = path.join(dir, "worktree");
@@ -263,7 +263,7 @@ test("a pre-approved command is allowed without an approval and logged with its 
   assert.equal(told.verdict, "ask");
   assert.doesNotMatch(JSON.stringify(told), /grant|preapproved|pre-approved/i);
 
-  // The CLI's permission request for it is answered inside Smelt, at once.
+  // The CLI's permission request for it is answered inside Botbench, at once.
   assert.deepEqual(await request("sh make-marker.sh", "toolu_1"), { decision: "allow", note: null, approvalId: null, refused: null, preapproved: { grantId: 1 } });
   assert.deepEqual(listApprovals(r.db), [], "no approval was created");
   assert.deepEqual(
@@ -342,7 +342,7 @@ test("after a restart, a pre-approved command asked first does not take the owne
   await new Promise((resolve) => setTimeout(resolve, 20));
   const [asked] = listApprovals(r.db, "pending");
   assert.ok(asked);
-  // Smelt stops with the request unanswered and starts again; the owner answers the parked request.
+  // Botbench stops with the request unanswered and starts again; the owner answers the parked request.
   before.park();
   await r.broker.close();
   const next = createBroker({ db: r.db, home: r.home, onChange: () => {} });
@@ -513,7 +513,7 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `;
 
 test("a database at schema version 6 gains the grants table and the pre-approved log rule, and keeps its tasks, approvals and log", (t) => {
-  const dir = tempDir("smelt-grants-v6-");
+  const dir = tempDir("botbench-grants-v6-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });

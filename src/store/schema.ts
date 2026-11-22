@@ -50,7 +50,7 @@ BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
   },
   {
     // One row per task: the repository and prompt it was given, the station it is at, and where its
-    // work is (worktree, branch, the commit it started from and the one Smelt made). `run_id` stays
+    // work is (worktree, branch, the commit it started from and the one Botbench made). `run_id` stays
     // empty until runs exist, and `depends_on` until tasks may depend on each other.
     // `task_events` is the history of a task's states. Rows are only ever added.
     name: "tasks",
@@ -142,7 +142,7 @@ ALTER TABLE tasks ADD COLUMN requested_model TEXT;
 `,
   },
   {
-    // Approvals that outlive a restart. `parked_at` is set when a start finds the approval pending from a Smelt
+    // Approvals that outlive a restart. `parked_at` is set when a start finds the approval pending from a Botbench
     // that stopped; only such an approval can carry the owner's answer (`stored_decision`, with `note`) until the
     // task is re-driven, and it ends as that answer or as superseded, never as anything else.
     // The action log gains the two rules for what became of a stored answer. A check cannot be altered in place,
@@ -461,7 +461,7 @@ BEGIN SELECT RAISE(ABORT, 'the note of a stored answer cannot be changed'); END;
 `,
   },
   {
-    // Evidence: one row per command Smelt ran on a task (unit 12: the repository's setup commands), with how it ended,
+    // Evidence: one row per command Botbench ran on a task (unit 12: the repository's setup commands), with how it ended,
     // its exit code or signal, the end of its output, its time limit and its times. Rows are only ever added; the
     // triggers refuse edits and deletes, and with recursive triggers on, a row replaced by INSERT OR REPLACE too.
     name: "evidence",

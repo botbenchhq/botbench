@@ -25,7 +25,7 @@ export interface DriverProbe {
   installed: boolean;
   /** The version the CLI reports, or null when it is not installed or printed none. */
   version: string | null;
-  /** This Smelt knows how to drive that version. */
+  /** This Botbench knows how to drive that version. */
   supported: boolean;
   signedIn: boolean;
   billing: BillingKind;
@@ -41,7 +41,7 @@ export interface ModelChoice {
   resolved?: string;
 }
 
-/** The models a driver offers, and where the list came from. Smelt never makes a list up. */
+/** The models a driver offers, and where the list came from. Botbench never makes a list up. */
 export interface DriverModels {
   /** "cli": the CLI itself reported the list. "config": it reported none, and the list is the owner's configuration. */
   source: "cli" | "config";

@@ -25,7 +25,7 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
     <div className={fill ? "gw-app-shell h-screen" : "gw-app-shell"}>
       <header className="gw-app-header gw-app-header--sticky">
         <a className="gw-app-header__name" href="#/turn">
-          Smelt
+          Botbench
         </a>
         <div className="gw-app-header__tray">
           <ApprovalTray />

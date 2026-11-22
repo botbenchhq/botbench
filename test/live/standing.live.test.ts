@@ -6,10 +6,10 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir } from "../support/repo.ts";
 
-// This test starts the real Claude Code on the owner's login, through Smelt's HTTP API, in one real temporary
+// This test starts the real Claude Code on the owner's login, through Botbench's HTTP API, in one real temporary
 // repository, and answers its permission requests the way the client does: it earns a standing permission, uses it,
 // and takes it back. Four tiny turns on the cheapest model.
 
@@ -22,7 +22,7 @@ const ONCE = `Run the command \`${COMMAND}\` with your Bash tool, exactly once. 
 const TWICE = `Run the command \`${COMMAND}\` with your Bash tool. When it has finished, run the very same command a second time, as a second, separate tool call. Never put both in one command. Then reply with the single word: done`;
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   home: string;
@@ -30,7 +30,7 @@ interface Live {
 }
 
 async function start(t: TestContext): Promise<Live> {
-  const dir = tempDir("smelt-live-standing-");
+  const dir = tempDir("botbench-live-standing-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");

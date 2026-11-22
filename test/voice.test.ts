@@ -16,11 +16,12 @@ const SRC = path.resolve(import.meta.dirname, "..", "src");
 /** Files whose sentences are not for a screen. */
 const NOT_FOR_A_SCREEN: Record<string, string> = {
   "engine/roles.ts": "prompts written for the agent, in the plan's own terms",
-  "config.ts": "errors about the settings file, printed in the terminal when Smelt starts, which must name the file's own keys",
+  "config.ts": "errors about the settings file, printed in the terminal when Botbench starts, which must name the file's own keys",
   "store/schema.ts": "SQL and errors raised inside the database",
-  "store/db.ts": "errors about the data directory, printed in the terminal when Smelt starts",
+  "store/db.ts": "errors about the data directory, printed in the terminal when Botbench starts",
+  "store/move-home.ts": "errors about moving an installation from before the rename, printed in the terminal when Botbench starts",
 };
-/** Calls whose arguments go to Smelt's own log on stdout, for whoever runs the process. */
+/** Calls whose arguments go to Botbench's own log on stdout, for whoever runs the process. */
 const LOG_CALLS = /^(console\.(log|error|warn)|report|log)$/;
 /** A literal on a line that carries this marker, or on the line after it, is not for a screen; the marker says why. */
 const MARKER = /voice: not on screen/;
@@ -79,10 +80,14 @@ test("a banned word is found as a whole word, in any case, singular or plural, a
   assert.deepEqual(bannedIn('"npm run gate && git stream" cannot be allowed in advance.'), []);
   assert.deepEqual(bannedIn("Claude Code is signed out. Run `claude hook` in a terminal."), []);
   assert.deepEqual(bannedIn('The gate refused "npm test".'), ["gate"]);
-  // A path inside a sentence is a fact about the machine, not Smelt's wording.
-  assert.deepEqual(bannedIn("The folder /Users/me/.smelt/worktrees/run-1/task-1 already exists."), []);
-  assert.deepEqual(bannedIn("The worktree at /Users/me/.smelt/worktrees/run-1 is gone."), ["worktree"]);
+  // A path inside a sentence is a fact about the machine, not Botbench's wording.
+  assert.deepEqual(bannedIn("The folder /Users/me/.botbench/worktrees/run-1/task-1 already exists."), []);
+  assert.deepEqual(bannedIn("The worktree at /Users/me/.botbench/worktrees/run-1 is gone."), ["worktree"]);
   assert.deepEqual(bannedIn("the CLI default"), ["cli"]);
+  // The product's old name is never shown; its old folder, as a path, is a fact about the machine.
+  assert.ok(BANNED.includes("smelt"));
+  assert.deepEqual(bannedIn("Smelt could not be reached."), ["smelt"]);
+  assert.deepEqual(bannedIn("The old folder ~/.smelt was left untouched."), []);
 });
 
 test("no sentence the server builds for a screen holds an internal word", () => {
@@ -99,7 +104,7 @@ test("a role is said as its step of the work, never by its name in code", () => 
   assert.equal(stepWords("planner"), "Plan step");
   assert.equal(stepWords("implementer"), "Build step");
   assert.equal(stepWords("reviewer"), "Review step");
-  // A role Smelt has no step for is not given one.
+  // A role Botbench has no step for is not given one.
   assert.equal(stepWords("auditor"), "auditor");
   for (const role of ["planner", "implementer", "reviewer"]) assert.deepEqual(bannedIn(`For the ${stepWords(role)} in /tmp/repo.`), []);
 });

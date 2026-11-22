@@ -16,10 +16,10 @@ import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/
 import { initRepo, tempDir, write } from "../support/repo.ts";
 import { V10_SCHEMA } from "../support/schema-v10.ts";
 
-// The verify station: after a task is built and Smelt has committed the work, the repository's check commands run in
+// The verify station: after a task is built and Botbench has committed the work, the repository's check commands run in
 // the task's worktree, each with a time limit, and each result is evidence on the task. No test here starts a CLI: each
 // builder's turn is replayed from a real Claude Code session (test/support/replay-build.ts). The check commands are
-// real commands, run by Smelt in the real worktree; a verify with Claude Code is in test/live/verify.live.test.ts.
+// real commands, run by Botbench in the real worktree; a verify with Claude Code is in test/live/verify.live.test.ts.
 
 type T = { after(fn: () => unknown): void };
 const TWO: PlanTask[] = [
@@ -41,7 +41,7 @@ interface Line {
 }
 
 async function line(t: T, script: BuildTurn[], o: { setup?: StationCommand[]; checks?: StationCommand[]; files?: Record<string, string>; hold?: number[] } = {}): Promise<Line> {
-  const dir = tempDir("smelt-verify-test-");
+  const dir = tempDir("botbench-verify-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
   const repo = path.join(dir, "repo");
@@ -97,7 +97,7 @@ test("after the build, each check command runs in the task's worktree and a pass
   assert.match(rows[1]!.output, /two tests failed/);
   assert.match(rows[1]!.output, /expected 1 got 2/);
   for (const row of rows) assert.ok(row.durationMs >= 0 && row.limitMs === 10_000 && row.endedAt >= row.startedAt);
-  // The checks ran after Smelt committed the work, while the task said Checking.
+  // The checks ran after Botbench committed the work, while the task said Checking.
   const states = e.taskChanges.filter((change) => change.startsWith(`${task.id}:`)).map((change) => change.split(":")[1]);
   const verifying = states.indexOf("verifying");
   assert.ok(verifying > states.lastIndexOf("building") && verifying < states.indexOf("awaiting_decision"), states.join(" "));
@@ -138,7 +138,7 @@ test("a repository with no check commands: the task says so as 'none', with no c
 });
 
 test("a check that passes its time limit is killed with its child processes and recorded as timed out, and the task is checks failed", { timeout: 30_000 }, async (t) => {
-  const pids = path.join(tempDir("smelt-verify-pids-"), "child.pid");
+  const pids = path.join(tempDir("botbench-verify-pids-"), "child.pid");
   t.after(() => fs.rmSync(path.dirname(pids), { recursive: true, force: true }));
   const e = await line(t, ["done"], { checks: [cmd(`sh stall.sh ${pids}`, 1000), cmd("echo after the stalled one")], files: { "README.md": "# Sample\n", "stall.sh": 'sleep 300 &\necho $! > "$1"\nsleep 300\n' } });
   const started = await e.tasks.start(e.repo, "create hello.txt");
@@ -160,7 +160,7 @@ test("a check that edits the worktree does not change the committed work; nothin
   await e.tasks.idle();
   const task = getTask(e.db, started.id)!;
   assert.equal(task.checks, "passed");
-  assert.equal(task.headCommit, task.baseCommit, "the commit is the one Smelt made after the turn, before the checks");
+  assert.equal(task.headCommit, task.baseCommit, "the commit is the one Botbench made after the turn, before the checks");
   assert.equal(execFileSync("git", ["-C", e.repo, "rev-parse", task.branch!], { encoding: "utf8" }).trim(), task.headCommit);
   assert.throws(() => execFileSync("git", ["-C", e.repo, "show", `${task.branch}:check-output.txt`], { stdio: "pipe" }), "what the check wrote is not on the branch");
   assert.ok(fs.existsSync(path.join(task.worktreePath!, "check-output.txt")), "it is left, uncommitted, in the copy");
@@ -198,7 +198,7 @@ test("check evidence is append-only like setup evidence: a row cannot be changed
 });
 
 test("after a restart, a task left at Checking is stopped with its work kept and its run goes on", async (t) => {
-  const dir = tempDir("smelt-verify-restart-");
+  const dir = tempDir("botbench-verify-restart-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -230,11 +230,11 @@ test("after a restart, a task left at Checking is stopped with its work kept and
 });
 
 test("a database at the literal version 10 schema gains the check evidence and the task's checks mark, and keeps every row it had", (t) => {
-  const dir = tempDir("smelt-verify-migrate-");
+  const dir = tempDir("botbench-verify-migrate-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home);
-  const old = new DatabaseSync(path.join(home, "smelt.sqlite"));
+  const old = new DatabaseSync(path.join(home, "botbench.sqlite"));
   old.exec(V10_SCHEMA);
   old.exec("INSERT INTO runs (id, kind, repo_path, prompt, created_at, updated_at) VALUES (3, 'single', '/r', 'p', 't', 't')");
   old.exec("INSERT INTO tasks (id, run_id, repo_path, prompt, status, created_at, updated_at) VALUES (5, 3, '/r', 'p', 'failed', 't', 't')");

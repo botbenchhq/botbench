@@ -29,7 +29,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".woff": "font/woff",
 };
 
-/** The page may load from Smelt itself and nowhere else, and nothing may frame it. */
+/** The page may load from Botbench itself and nowhere else, and nothing may frame it. */
 const CONTENT_SECURITY_POLICY = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 function plain(res: http.ServerResponse, status: number, text: string): void {
@@ -70,7 +70,7 @@ export function serveShell(req: http.IncomingMessage, res: http.ServerResponse, 
   const isPage = pathname === "/" || pathname === "/index.html";
   const file = resolveFile(clientDir, pathname);
   if (file === null) {
-    if (isPage) return plain(res, 503, "The Smelt client has not been built. Run: npm run build --prefix web\n");
+    if (isPage) return plain(res, 503, "The Botbench client has not been built. Run: npm run build --prefix web\n");
     return plain(res, 404, "Not found\n");
   }
   const body = fs.readFileSync(file);

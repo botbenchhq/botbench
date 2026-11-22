@@ -7,7 +7,7 @@ import type { DriverEvent, TurnEndReason } from "../../src/drivers/events.ts";
 /*
  * Replays turns of the planner session captured from a real Claude Code run (test/recordings/planner-plans.json)
  * through the driver contract. This is the exception to "real CLIs only" the owner approved, for a scenario a live
- * model cannot be made to produce on demand: a planner that returns a plan Smelt does not accept.
+ * model cannot be made to produce on demand: a planner that returns a plan Botbench does not accept.
  *
  * What is real: every event after the prompt is one the real CLI produced, in its order, within its turn.
  * What is not: the CLI produced each turn for the capture's prompt, and the replay plays it after whatever prompt

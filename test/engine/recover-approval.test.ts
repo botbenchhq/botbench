@@ -17,7 +17,7 @@ import { checkoutState, git, initRepo, tempDir } from "../support/repo.ts";
 import type { Left } from "../support/leave-pending.ts";
 import { loadRecording, replayDriver } from "../support/replay.ts";
 
-// Approvals across a restart. The store, the broker and its socket, git and the processes are the real ones. The Smelt
+// Approvals across a restart. The store, the broker and its socket, git and the processes are the real ones. The Botbench
 // that "stopped" is a real process that is killed where it stands (test/support/leave-pending.ts). No test here starts
 // a CLI: the one that needs an agent's turn replays a session recorded from the real Claude Code (test/support/replay.ts),
 // and the turns themselves are in test/live/recover-approval.live.test.ts.
@@ -32,16 +32,16 @@ interface Stopped extends Left {
   repo: string;
 }
 
-/** A Smelt home in which a task waited for the owner when its Smelt was killed. */
+/** A Botbench home in which a task waited for the owner when its Botbench was killed. */
 function stoppedWhileWaiting(t: T, options: { cursor?: string; model?: string; commands?: string[]; survivor?: boolean; attemptMadeEarlier?: boolean } = {}): Stopped {
-  const dir = tempDir("smelt-recover-");
+  const dir = tempDir("botbench-recover-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n' });
   const order = { home, repo, commands: [MARKER], ...("cursor" in options ? {} : { cursor: "0b7b7c9e-4a51-4c0e-9d0c-0d3f8f6f2a11" }), ...options };
   const run = spawnSync(process.execPath, [SCRIPT, JSON.stringify(order)], { encoding: "utf8" });
-  assert.equal(run.signal, "SIGKILL", `the Smelt that stops is killed where it stands: ${run.stderr}`);
+  assert.equal(run.signal, "SIGKILL", `the Botbench that stops is killed where it stands: ${run.stderr}`);
   const left = JSON.parse(run.stdout) as Left;
   if (left.pgid !== null) t.after(() => killProcessGroup(left.pgid!).catch(() => {}));
   return { ...left, dir, home, repo };
@@ -107,7 +107,7 @@ test("a pending approval row is still pending after the store is closed and reop
   const s = stoppedWhileWaiting(t);
   const before = checkoutState(s.repo);
   const peek = new DatabaseSync(path.join(s.home, DB_FILE), { readOnly: true });
-  assert.deepEqual(peek.prepare("SELECT status FROM approvals").all().map((r) => r.status), ["pending"], "what the killed Smelt left");
+  assert.deepEqual(peek.prepare("SELECT status FROM approvals").all().map((r) => r.status), ["pending"], "what the killed Botbench left");
   peek.close();
 
   const again = await startAgain(t, s.home);
@@ -138,7 +138,7 @@ test("a pending approval row is still pending after the store is closed and reop
 test("a CLI process that survived from before the restart is stopped on start, before the task is parked; a process group that began after the attempt is not touched", { timeout: 30_000 }, async (t) => {
   const s = stoppedWhileWaiting(t, { survivor: true });
   assert.ok(s.pgid !== null && processGroupAlive(s.pgid), "the survivor is running");
-  // Smelt's own time zone must not shift when a process is taken to have begun: far west here, far east below.
+  // Botbench's own time zone must not shift when a process is taken to have begun: far west here, far east below.
   const zone = process.env.TZ;
   t.after(() => (zone === undefined ? delete process.env.TZ : (process.env.TZ = zone)));
   process.env.TZ = "Pacific/Honolulu";
@@ -148,7 +148,7 @@ test("a CLI process that survived from before the restart is stopped on start, b
   assert.equal(getTask(again.db, s.taskId)!.status, "building");
   assert.deepEqual(listApprovals(again.db).map((a) => a.status), ["pending"]);
 
-  // The attempt's number now belongs to a process that started an hour after the attempt was made: not Smelt's to stop.
+  // The attempt's number now belongs to a process that started an hour after the attempt was made: not Botbench's to stop.
   const other = stoppedWhileWaiting(t, { survivor: true, attemptMadeEarlier: true });
   process.env.TZ = "Pacific/Auckland";
   const otherStart = await startAgain(t, other.home);
@@ -287,7 +287,7 @@ test("what a crafted row could try is refused by the store: an answer stored twi
   assert.throws(() => db.prepare("INSERT INTO action_log (ts, rule, tool, command, cwd) VALUES ('now', 'owner_said_so', 'Bash', 'ls', '.')").run(), /constraint/i);
 });
 
-test("a first request that Smelt itself refuses still uses up the resuming attempt's turn at the stored answer: it is discarded, not kept for a later request", async (t) => {
+test("a first request that Botbench itself refuses still uses up the resuming attempt's turn at the stored answer: it is discarded, not kept for a later request", async (t) => {
   const s = stoppedWhileWaiting(t);
   const again = await brokerAgain(t, s.home);
   const id = s.approvalIds[0]!;
@@ -303,7 +303,7 @@ test("a first request that Smelt itself refuses still uses up the resuming attem
   assert.deepEqual(listApprovals(again.db).map((a) => a.status), ["superseded", "pending"], "the exact request afterwards asks the owner");
 });
 
-test("an answer given while Smelt is still recovering is not mistaken for one the last run left behind: its task is resumed in its turn", async (t) => {
+test("an answer given while Botbench is still recovering is not mistaken for one the last run left behind: its task is resumed in its turn", async (t) => {
   const s = stoppedWhileWaiting(t);
   const db = openStore(s.home);
   const broker = createBroker({ db, home: s.home, onChange: () => {} });
@@ -321,7 +321,7 @@ test("an answer given while Smelt is still recovering is not mistaken for one th
   const task = getTask(db, s.taskId)!;
   assert.equal(task.status, "interrupted");
   assert.match(task.reason ?? "", /could not be started again/);
-  assert.doesNotMatch(task.reason ?? "", /Smelt stopped/);
+  assert.doesNotMatch(task.reason ?? "", /Botbench stopped/);
 });
 
 test("a task with several parked approvals is resumed only when each has an answer", async (t) => {
@@ -355,7 +355,7 @@ test("a task that cannot be resumed is not parked: with no session to resume it 
   assert.equal(again.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 1, "nothing was started");
 });
 
-test("an answer that was stored but not yet applied when Smelt stopped again is not carried over: the approval is closed, the task interrupted with the reason, and nothing is allowed", async (t) => {
+test("an answer that was stored but not yet applied when Botbench stopped again is not carried over: the approval is closed, the task interrupted with the reason, and nothing is allowed", async (t) => {
   const s = stoppedWhileWaiting(t);
   // The answer is stored by a start whose engine never gets to resume the task.
   const db = openStore(s.home);
@@ -397,7 +397,7 @@ test("replayed from a real session: a re-driven turn whose first request does no
   const events = (): DriverEvent[] => again.db.prepare("SELECT payload FROM events WHERE attempt_id = ? ORDER BY id").all(card.attemptId).map((r) => JSON.parse(String(r.payload)) as DriverEvent);
   assert.equal(events().some((e) => e.type === "permission_resolved" || e.type === "tool_result"), false, "nothing was answered or run on the old allow");
   const prompt = events()[0]!;
-  assert.ok(prompt.type === "user_prompt" && /Smelt/.test(prompt.text) && /restart/.test(prompt.text), "the resumed turn opens with Smelt's own words");
+  assert.ok(prompt.type === "user_prompt" && /Botbench/.test(prompt.text) && /restart/.test(prompt.text), "the resumed turn opens with Botbench's own words");
   // Which is where the replay departs from the recorded run: the CLI produced these events under the capture's own prompt.
   assert.equal(recording.prompts.includes(prompt.text), false);
 
@@ -528,7 +528,7 @@ ALTER TABLE tasks ADD COLUMN requested_model TEXT;
 `;
 
 test("a database from before this unit gains the parked-approval columns and the new log rules, and keeps its approvals and its log", (t) => {
-  const dir = tempDir("smelt-recover-");
+  const dir = tempDir("botbench-recover-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
