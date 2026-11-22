@@ -17,17 +17,17 @@ export function CopyField({ label, value, testId, buttonName }: { label: string;
     );
   };
   return (
-    <div className="gw-field">
-      <label htmlFor={id} className="gw-field__label">
+    <div className="ds-field">
+      <label htmlFor={id} className="ds-field__label">
         {label}
       </label>
-      <div className="gw-copy-field">
-        <input id={id} data-testid={testId} type="text" readOnly value={value} className="gw-copy-field__value basis-full" />
-        <button type="button" aria-label={buttonName} onClick={copy} className="gw-button">
-          <Icon name="copy" className="gw-button__icon" />
+      <div className="ds-copy-field">
+        <input id={id} data-testid={testId} type="text" readOnly value={value} className="ds-copy-field__value basis-full" />
+        <button type="button" aria-label={buttonName} onClick={copy} className="ds-button">
+          <Icon name="copy" className="ds-button__icon" />
           Copy
         </button>
-        <p data-testid={`${testId}-copy-state`} role="status" className="gw-copy-field__status">
+        <p data-testid={`${testId}-copy-state`} role="status" className="ds-copy-field__status">
           {copied}
         </p>
       </div>
@@ -38,12 +38,12 @@ export function CopyField({ label, value, testId, buttonName }: { label: string;
 /** The files the checks left in the task's copy, each by its path. */
 function Leftovers({ files }: { files: readonly string[] }) {
   return (
-    <ul data-testid="leftovers" className="gw-list gw-list--dense">
+    <ul data-testid="leftovers" className="ds-list ds-list--dense">
       {files.map((file) => (
-        <li key={file} className="gw-list__row">
-          <div className="gw-list__content">
-            <span className="gw-list__body">
-              <code data-gw-content="" className="gw-list__primary">
+        <li key={file} className="ds-list__row">
+          <div className="ds-list__content">
+            <span className="ds-list__body">
+              <code data-ds-content="" className="ds-list__primary">
                 {file}
               </code>
             </span>
@@ -93,15 +93,15 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
   const acceptLabel = busy === "accept" ? "Accepting" : "Accept";
   const opener = name === undefined ? undefined : { small: false, name: `${acceptLabel} ${name}` };
   return (
-    <div className="gw-stack gw-gap-sm">
+    <div className="ds-stack ds-gap-sm">
       {problem !== null && (
         <Alert tone="error" role="alert">
           {problem}
         </Alert>
       )}
-      <div className="gw-cluster">
+      <div className="ds-cluster">
         {left.length === 0 ? (
-          <button type="button" aria-busy={busy === "accept"} disabled={busy !== null} aria-label={opener?.name} onClick={() => send("accept")} className={primary ? "gw-button gw-button--primary" : "gw-button"}>
+          <button type="button" aria-busy={busy === "accept"} disabled={busy !== null} aria-label={opener?.name} onClick={() => send("accept")} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
             {acceptLabel}
           </button>
         ) : (
@@ -112,23 +112,23 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
           </ConfirmAction>
         )}
         <ConfirmAction label={busy === "reject" ? "Rejecting" : "Reject"} {...(name === undefined ? {} : { opener: { small: false, name: `${busy === "reject" ? "Rejecting" : "Reject"} ${name}` } })} title="Reject this task?" confirmLabel="Reject" cancelLabel="Cancel" disabled={busy !== null} losing testId="reject" onConfirm={() => send("reject")}>
-          <fieldset className="gw-radio__group">
-            <legend className="gw-radio__legend">What becomes of the branch?</legend>
-            <div className="gw-radio">
-              <input className="gw-radio__input" type="radio" id={`${radio}-keep`} name={`${radio}-branch`} value="keep" checked={branch === "keep"} onChange={() => setBranch("keep")} aria-describedby={`${radio}-keep-about`} />
-              <label className="gw-radio__label" htmlFor={`${radio}-keep`}>
+          <fieldset className="ds-radio__group">
+            <legend className="ds-radio__legend">What becomes of the branch?</legend>
+            <div className="ds-radio">
+              <input className="ds-radio__input" type="radio" id={`${radio}-keep`} name={`${radio}-branch`} value="keep" checked={branch === "keep"} onChange={() => setBranch("keep")} aria-describedby={`${radio}-keep-about`} />
+              <label className="ds-radio__label" htmlFor={`${radio}-keep`}>
                 Keep the branch
               </label>
-              <p className="gw-radio__description" id={`${radio}-keep-about`}>
+              <p className="ds-radio__description" id={`${radio}-keep-about`}>
                 The work stays in the repository on its branch, for you to merge or delete later.
               </p>
             </div>
-            <div className="gw-radio">
-              <input className="gw-radio__input" type="radio" id={`${radio}-discard`} name={`${radio}-branch`} value="discard" checked={branch === "discard"} onChange={() => setBranch("discard")} aria-describedby={`${radio}-discard-about`} />
-              <label className="gw-radio__label" htmlFor={`${radio}-discard`}>
+            <div className="ds-radio">
+              <input className="ds-radio__input" type="radio" id={`${radio}-discard`} name={`${radio}-branch`} value="discard" checked={branch === "discard"} onChange={() => setBranch("discard")} aria-describedby={`${radio}-discard-about`} />
+              <label className="ds-radio__label" htmlFor={`${radio}-discard`}>
                 Delete the branch
               </label>
-              <p className="gw-radio__description" id={`${radio}-discard-about`}>
+              <p className="ds-radio__description" id={`${radio}-discard-about`}>
                 The work on it is gone for good.
               </p>
             </div>
@@ -159,20 +159,20 @@ export function DecisionOutcome({ decision, repo, compact = false }: { decision:
   }
   if (decision.branch === "deleted") {
     return (
-      <div className="gw-stack gw-gap-sm">
+      <div className="ds-stack ds-gap-sm">
         <p data-testid="not-merged">Nothing has been merged or pushed. The branch and the task's copy of the project are gone.</p>
-        {removed !== null && <p data-gw-content="">{removed}</p>}
+        {removed !== null && <p data-ds-content="">{removed}</p>}
       </div>
     );
   }
   return (
-    <div className="gw-stack gw-gap-sm">
+    <div className="ds-stack ds-gap-sm">
       <CopyField label="Branch" value={decision.branchName} testId="branch" buttonName="Copy branch name" />
       {decision.decision === "accept" ? (
         <>
           <p>
             {"To bring the work into your own files, run this in the repository at "}
-            <code data-testid="decision-repo" data-gw-content="">
+            <code data-testid="decision-repo" data-ds-content="">
               {repo}
             </code>
             {", on the branch you want it in:"}
@@ -183,7 +183,7 @@ export function DecisionOutcome({ decision, repo, compact = false }: { decision:
       ) : (
         <p data-testid="not-merged">Nothing has been merged or pushed. The branch stays in the repository for you to look at, and to delete when you no longer want it.</p>
       )}
-      {removed !== null && <p data-gw-content="">{removed}</p>}
+      {removed !== null && <p data-ds-content="">{removed}</p>}
     </div>
   );
 }

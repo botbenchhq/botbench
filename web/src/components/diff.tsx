@@ -16,16 +16,16 @@ export function DiffLine({ line, plain = false }: { line: string; plain?: boolea
   if (kind === "added" || kind === "removed") {
     const cells = (
       <>
-        <span className="gw-diff__sign">{line[0]}</span>
-        <span className="gw-diff__text">{line.slice(1)}</span>
+        <span className="ds-diff__sign">{line[0]}</span>
+        <span className="ds-diff__text">{line.slice(1)}</span>
       </>
     );
     return kind === "added" ? (
-      <ins data-line={kind} className="gw-diff__line gw-diff__line--added">
+      <ins data-line={kind} className="ds-diff__line ds-diff__line--added">
         {cells}
       </ins>
     ) : (
-      <del data-line={kind} className="gw-diff__line gw-diff__line--removed">
+      <del data-line={kind} className="ds-diff__line ds-diff__line--removed">
         {cells}
       </del>
     );
@@ -33,9 +33,9 @@ export function DiffLine({ line, plain = false }: { line: string; plain?: boolea
   // A context line starts with the space that is its sign. Git's own header lines, hunk headers and notes have none of their own.
   const context = kind === "context";
   return (
-    <span data-line={kind} className={context ? "gw-diff__line" : "gw-diff__line gw-diff__line--hunk"}>
-      <span className="gw-diff__sign"> </span>
-      <span className="gw-diff__text">{context && line.startsWith(" ") ? line.slice(1) : line}</span>
+    <span data-line={kind} className={context ? "ds-diff__line" : "ds-diff__line ds-diff__line--hunk"}>
+      <span className="ds-diff__sign"> </span>
+      <span className="ds-diff__text">{context && line.startsWith(" ") ? line.slice(1) : line}</span>
     </span>
   );
 }

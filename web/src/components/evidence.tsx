@@ -1,5 +1,6 @@
 import type { ChecksMark, Evidence } from "../api/client.ts";
-import { Icon } from "./icon.tsx";
+import { LOOKS } from "./looks.ts";
+import { StatusBadge } from "./status.tsx";
 
 /** A duration in words with its unit, and as an ISO 8601 duration for the time element. */
 export function duration(ms: number): { words: string; iso: string } {
@@ -18,11 +19,11 @@ export function duration(ms: number): { words: string; iso: string } {
 function result(row: Evidence): { words: string; look: string } {
   switch (row.outcome) {
     case "passed":
-      return { words: "Passed", look: "gw-check-list__result--passed" };
+      return { words: "Passed", look: "ds-check-list__result--passed" };
     case "failed":
-      return { words: row.exitCode === null ? `Failed, ended by ${row.signal ?? "a signal"}` : `Failed, exit code ${row.exitCode}`, look: "gw-check-list__result--failed" };
+      return { words: row.exitCode === null ? `Failed, ended by ${row.signal ?? "a signal"}` : `Failed, exit code ${row.exitCode}`, look: "ds-check-list__result--failed" };
     case "timed_out":
-      return { words: `Timed out after ${duration(row.limitMs).words}`, look: "gw-check-list__result--timed-out" };
+      return { words: `Timed out after ${duration(row.limitMs).words}`, look: "ds-check-list__result--timed-out" };
     case "stopped":
       // Stopped by Botbench (the run was cancelled, or Botbench stopped): it says nothing about the command itself.
       return { words: "Stopped before it finished", look: "" };
@@ -53,27 +54,27 @@ export function CommandEvidence({ rows, what, failedFirst = false, testId }: { r
   const RANK: Record<Evidence["outcome"], number> = { failed: 0, timed_out: 1, stopped: 2, passed: 3 };
   const shownRows = failedFirst ? [...rows].sort((a, b) => RANK[a.outcome] - RANK[b.outcome] || a.position - b.position) : rows;
   return (
-    <div data-testid={testId} className="gw-check-list">
-      <p className="gw-check-list__summary">{summary(rows, what)}</p>
-      <ul className="gw-check-list__items">
+    <div data-testid={testId} className="ds-check-list">
+      <p className="ds-check-list__summary">{summary(rows, what)}</p>
+      <ul className="ds-check-list__items">
         {shownRows.map((row) => {
           const shown = result(row);
           const took = duration(row.durationMs);
           return (
-            <li key={row.id} className="gw-check-list__item">
-              <span data-gw-content="" className="gw-check-list__name">
+            <li key={row.id} className="ds-check-list__item">
+              <span data-ds-content="" className="ds-check-list__name">
                 {row.command}
               </span>
-              <span className={`gw-check-list__result ${shown.look}`.trim()}>{shown.words}</span>
-              <span className="gw-check-list__duration">
+              <span className={`ds-check-list__result ${shown.look}`.trim()}>{shown.words}</span>
+              <span className="ds-check-list__duration">
                 <time dateTime={took.iso}>{took.words}</time>
               </span>
-              <details className="gw-check-list__output">
-                <summary className="gw-check-list__toggle">
+              <details className="ds-check-list__output">
+                <summary className="ds-check-list__toggle">
                   Output
-                  <span data-gw-content="" className="gw-visually-hidden">{` of ${row.command}`}</span>
+                  <span data-ds-content="" className="ds-visually-hidden">{` of ${row.command}`}</span>
                 </summary>
-                <pre data-gw-content="" className="gw-check-list__log">
+                <pre data-ds-content="" className="ds-check-list__log">
                   {row.truncated ? `…\n${row.output}` : row.output === "" ? "(no output)" : row.output}
                 </pre>
               </details>
@@ -99,10 +100,7 @@ export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: reado
   const notPassed = rows.filter((row) => row.outcome !== "passed").length;
   return (
     <p data-testid="checks-result">
-      <span className={checks === "passed" ? "gw-badge gw-badge--success" : "gw-badge gw-badge--danger"}>
-        <Icon name={checks === "passed" ? "circle-check" : "circle-alert"} className="gw-badge__icon" />
-        {checks === "passed" ? "Checks passed:" : "Checks failed:"}
-      </span>
+      <StatusBadge look={checks === "passed" ? LOOKS.checkPassed : LOOKS.checkFailed}>{checks === "passed" ? "Checks passed:" : "Checks failed:"}</StatusBadge>
       {checks === "passed" ? ` ${rows.length} of ${plural(rows.length, "check", "checks")} passed.` : ` ${notPassed} of ${plural(rows.length, "check", "checks")} did not pass.`}
     </p>
   );

@@ -144,3 +144,39 @@ export function duration(from: string, to: string): string | null {
   const minutes = Math.floor(seconds / 60);
   return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
+
+/** What a step group counts each tool's calls as, in the past tense the rows use: the verb, and the thing in one and many. */
+const KINDS: Record<string, [verb: string, one: string, many: string]> = {
+  Bash: ["ran", "command", "commands"],
+  Read: ["read", "file", "files"],
+  Edit: ["edited", "file", "files"],
+  NotebookEdit: ["edited", "notebook", "notebooks"],
+  Write: ["wrote", "file", "files"],
+  Grep: ["searched", "time", "times"],
+  Glob: ["looked for files", "time", "times"],
+  WebFetch: ["fetched", "page", "pages"],
+  WebSearch: ["searched the web", "time", "times"],
+};
+
+/**
+ * The line of a step group (the design system's step group), counted from its calls: each kind of call that ran and
+ * returned, in the order the kinds first appear ("Ran 2 commands, edited 1 file"), then how many were not run and how
+ * many did not finish. A call that failed, runs or waits is not in a count: the group says it in words of its own.
+ * Empty when no call has ended in one of these ways yet.
+ */
+export function stepsSummary(steps: readonly { name: string; state: CallState }[]): string {
+  const counts = new Map<string, { kind: [string, string, string]; n: number }>();
+  for (const step of steps) {
+    if (step.state !== "done") continue;
+    const kind = KINDS[step.name] ?? [`used ${step.name}`, "time", "times"];
+    const key = kind.join("|");
+    counts.set(key, { kind, n: (counts.get(key)?.n ?? 0) + 1 });
+  }
+  const parts = [...counts.values()].map(({ kind: [verb, one, many], n }) => `${verb} ${n} ${n === 1 ? one : many}`);
+  const notRun = steps.filter((step) => step.state === "refused").length;
+  const unfinished = steps.filter((step) => step.state === "unfinished").length;
+  if (notRun > 0) parts.push(`${notRun} not run`);
+  if (unfinished > 0) parts.push(`${unfinished} did not finish`);
+  const line = parts.join(", ");
+  return line === "" ? "" : `${line[0]!.toUpperCase()}${line.slice(1)}`;
+}

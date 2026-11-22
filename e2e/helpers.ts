@@ -45,13 +45,69 @@ export function watchRequests(page: Page, botbench: Botbench): string[] {
 }
 
 /** The design system's structural rules, as the one script it ships for the rendered page. */
-const CHECK_DOM = fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "groundwork", "check-dom.js"), "utf8");
+const CHECK_DOM = fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "check-dom.js"), "utf8");
 
-const APP_PREFIX = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "groundwork.config.json"), "utf8")) as { appPrefix: string }).appPrefix;
+const APP_PREFIX = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "design-system.config.json"), "utf8")) as { appPrefix: string }).appPrefix;
 
-/** The system's light colours as the browser reports them, read from the vendored tokens: the only colours a screen may draw. */
-const TOKENS = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "groundwork", "tokens.json"), "utf8")) as { color: Record<string, { $value: { hex: string } }>; radius: Record<string, { $value: unknown }> };
-const PALETTE = Object.values(TOKENS.color).map(({ $value: { hex } }) => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(", ")})`);
+/**
+ * The Botbench theme's tokens, as the vendored copy has them: the light values, and the dark ones under the system's extension.
+ * The client loads the theme in its default mode, dark, so the dark colours and the radii are the only ones a screen may draw.
+ */
+type Colour = { hex: string };
+const THEME = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "themes", "botbench.tokens.json"), "utf8")) as {
+  color: Record<string, { $value: Colour; $extensions?: { "design-system"?: { dark?: Colour } } }>;
+  radius: Record<string, { $value: { value: number; unit: string } }>;
+};
+const rgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(", ")})`;
+
+/**
+ * A colour token as the browser reports it in the mode the client shows, which is the theme's default, dark: the root
+ * carries no data-theme. For assertions on a colour a component draws, such as the primary button's background.
+ */
+export function token(name: string): string {
+  const entry = THEME.color[name];
+  if (entry === undefined) throw new Error(`The Botbench theme has no colour token "${name}".`);
+  return rgb(entry.$extensions?.["design-system"]?.dark?.hex ?? entry.$value.hex);
+}
+
+// The colours of the mode the client shows, dark: a light value drawn on the dark page is off the palette.
+const PALETTE = Object.keys(THEME.color).map(token);
+const RADII = Object.values(THEME.radius).map(({ $value }) => `${$value.value}${$value.unit}`);
+
+/** The badge's status set, as the vendored catalogue has it: one icon and one tone for each state. */
+const STATUS_SET = (
+  JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "components.json"), "utf8")) as { components: { name: string; statusSet?: { state: string; icon: string; tone: string }[] }[] }
+).components.find((c) => c.name === "badge")!.statusSet!;
+
+/**
+ * Every badge on the screen, checked against the status set: a state the set names takes its icon and tone, and any
+ * badge with the same words as another on the screen has the same icon and tone, so one state never looks two ways.
+ */
+export async function checkStatuses(page: Page, screen: string): Promise<void> {
+  const badges = await page.locator(".ds-badge").evaluateAll((els) =>
+    els.map((el) => ({
+      words: (el.textContent ?? "").trim().replace(/:$/, ""),
+      tone: [...el.classList].find((c) => c.startsWith("ds-badge--"))?.slice("ds-badge--".length) ?? "neutral",
+      icon: el.querySelector("use")?.getAttribute("href")?.split("#ds-icon-")[1] ?? null,
+    })),
+  );
+  const named: Record<string, string> = { "Checks passed": "Check passed", "Checks failed": "Check failed" };
+  for (const badge of badges) {
+    const state = STATUS_SET.find((entry) => entry.state === (named[badge.words] ?? badge.words));
+    if (state !== undefined) expect({ words: badge.words, icon: badge.icon, tone: badge.tone }, `${screen}: the status set's look for ${state.state}`).toEqual({ words: badge.words, icon: state.icon, tone: state.tone });
+    expect(badge.icon, `${screen}: the badge "${badge.words}" has its icon beside its words`).not.toBeNull();
+    const same = badges.find((other) => other.words === badge.words);
+    expect({ icon: badge.icon, tone: badge.tone }, `${screen}: every "${badge.words}" badge looks the same`).toEqual({ icon: same!.icon, tone: same!.tone });
+  }
+}
+
+/** The primary button's look and a secondary button's, from the theme's tokens. */
+export const PRIMARY_LOOK = { background: token("accent"), text: token("on-accent"), border: token("accent") };
+export const SECONDARY_LOOK = { background: token("surface-raised"), text: token("on-surface"), border: token("border") };
+
+/** The buttons drawn as the primary action: filled with the theme's accent colour. */
+export const primaries = (page: Page): Promise<(string | null)[]> =>
+  page.getByRole("button").evaluateAll((buttons, accent) => buttons.filter((b) => getComputedStyle(b).backgroundColor === accent).map((b) => b.textContent), token("accent"));
 
 /**
  * The design system, checked on the rendered page: its structural rules (one primary action per view, disclosure
@@ -63,8 +119,8 @@ const PALETTE = Object.values(TOKENS.color).map(({ $value: { hex } }) => `rgb(${
 export async function checkDesign(page: Page, screen: string): Promise<void> {
   // The script's text is evaluated, not added as a script element, which Botbench's content security policy would refuse.
   await page.evaluate(CHECK_DOM);
-  // The app's class prefix, as web/groundwork.config.json has it: the rule that a view's controls use the system needs it on a rendered page.
-  const findings = await page.evaluate((appPrefix) => (globalThis as unknown as { gwCheckDom(root: Element, options: { appPrefix: string }): { rule: string; message: string; fix: string; snippet: string }[] }).gwCheckDom(document.documentElement, { appPrefix }), APP_PREFIX);
+  // The app's class prefix, as web/design-system.config.json has it: the rule that a view's controls use the system needs it on a rendered page.
+  const findings = await page.evaluate((appPrefix) => (globalThis as unknown as { dsCheckDom(root: Element, options: { appPrefix: string }): { rule: string; message: string; fix: string; snippet: string }[] }).dsCheckDom(document.documentElement, { appPrefix }), APP_PREFIX);
   expect(findings, `${screen}: findings of the design system's rendered check`).toEqual([]);
 
   const found = await page.evaluate(async () => {
@@ -89,7 +145,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
         }
         if (style.backgroundImage !== "none") decorations.push(`background-image ${style.backgroundImage} on ${describe(el)}${pseudo ?? ""}`);
         // The system's one shadow is on its overlays: a dialog, and a toast, which floats over the page the same way.
-        if (style.boxShadow !== "none" && el.tagName !== "DIALOG" && !el.classList.contains("gw-toast")) decorations.push(`box-shadow on ${describe(el)}${pseudo ?? ""}`);
+        if (style.boxShadow !== "none" && el.tagName !== "DIALOG" && !el.classList.contains("ds-toast")) decorations.push(`box-shadow on ${describe(el)}${pseudo ?? ""}`);
         if (style.textShadow !== "none") decorations.push(`text-shadow on ${describe(el)}`);
         if (style.backdropFilter !== "none" || style.filter !== "none") decorations.push(`filter on ${describe(el)}`);
         radii[style.borderTopLeftRadius] ??= `${describe(el)}${pseudo ?? ""}`;
@@ -109,18 +165,19 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
     // The view's headings outside an open dialog: the one h1, and the size each plain heading is drawn at.
     const headings = [...document.querySelectorAll("h1, h2, h3")].filter((el) => el.getClientRects().length > 0 && el.closest("dialog") === null);
     const plain = (level: string): string[] => [...new Set(headings.filter((el) => el.tagName === level && el.className === "").map((el) => getComputedStyle(el).fontSize))];
-    const mono = document.querySelector(".gw-app-header__name, .gw-sign-in__product, code, pre");
+    const mono = document.querySelector(".ds-app-header__name, .ds-sign-in__product, code, pre");
     const loaded = (family: string): boolean => [...document.fonts].some((f) => f.family.replace(/"/g, "") === family && f.status === "loaded");
     return {
       small,
       colours,
       decorations,
       radii,
-      components: document.querySelectorAll('[class*="gw-"]').length,
-      h1: headings.filter((el) => el.tagName === "H1").map((el) => `${getComputedStyle(el).fontSize} ${el.className === "" ? "plain" : String(el.className)}${el.closest(".gw-page-header, .gw-sign-in, .gw-not-found") === null ? " outside a page header" : ""}`),
+      components: document.querySelectorAll('[class*="ds-"]').length,
+      h1: headings.filter((el) => el.tagName === "H1").map((el) => `${getComputedStyle(el).fontSize} ${el.className === "" ? "plain" : String(el.className)}${el.closest(".ds-page-header, .ds-sign-in, .ds-not-found") === null ? " outside a page header" : ""}`),
       h2: plain("H2"),
       h3: plain("H3"),
-      offSystem: [...document.querySelectorAll("[style]")].map(describe),
+      // An empty style attribute sets nothing: a screenshot that hides the caret leaves one on the focused field.
+      offSystem: [...document.querySelectorAll("[style]")].filter((el) => el.getAttribute("style")!.trim() !== "").map(describe),
       bodyFont: getComputedStyle(document.body).fontFamily,
       bodySize: getComputedStyle(document.body).fontSize,
       monoFont: mono ? getComputedStyle(mono).fontFamily : "",
@@ -132,7 +189,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(found.components, `${screen}: the screen is built from the design system's components`).toBeGreaterThan(2);
   // One h1 a view: at 24px in the page header, or plain in the sign-in pattern, or the empty state's title in the not-found
   // pattern, which that component draws at its own size. Plain h2 and h3 are a step smaller each.
-  expect(found.h1, `${screen}: the view's one h1, at the size of a title`).toEqual([expect.stringMatching(/^(24px (plain|gw-page-header__title)|\d+px gw-empty-state__title)$/)]);
+  expect(found.h1, `${screen}: the view's one h1, at the size of a title`).toEqual([expect.stringMatching(/^(24px (plain|ds-page-header__title)|\d+px ds-empty-state__title)$/)]);
   expect(found.h2.filter((size) => size !== "20px"), `${screen}: plain h2 headings are 20px`).toEqual([]);
   expect(found.h3.filter((size) => size !== "16px"), `${screen}: plain h3 headings are 16px`).toEqual([]);
   expect(found.offSystem, `${screen}: inline styles`).toEqual([]);
@@ -140,7 +197,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(offPalette, `${screen}: colours that are not tokens of the design system`).toEqual([]);
   expect(Object.keys(found.colours).length, `${screen}: the check saw colours`).toBeGreaterThan(2);
   expect(found.decorations, `${screen}: gradients, blur, or a shadow on anything but a dialog or a toast`).toEqual([]);
-  expect(Object.entries(found.radii).filter(([radius]) => !["0px", "4px", "8px", "9999px"].includes(radius)), `${screen}: corners off the radius scale`).toEqual([]);
+  expect(Object.entries(found.radii).filter(([radius]) => radius !== "0px" && !RADII.includes(radius)), `${screen}: corners off the radius scale`).toEqual([]);
   expect(found.small, `${screen}: touch targets under 44px`).toEqual([]);
   expect(found.bodyFont, `${screen}: body font`).toMatch(/^"?IBM Plex Sans"?,/);
   expect(found.bodySize).toBe("14px");
@@ -148,6 +205,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(found.sansLoaded, `${screen}: IBM Plex Sans is loaded from Botbench, not substituted`).toBe(true);
   expect(found.monoLoaded, `${screen}: IBM Plex Mono is loaded from Botbench, not substituted`).toBe(true);
   expect(found.overflow, `${screen}: no sideways scrolling at phone width`).toBe(0);
+  await checkStatuses(page, screen);
   await checkWords(page, screen);
 }
 
@@ -155,14 +213,14 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
  * The words on the screen, checked against docs/product/voice.md: every piece of text Botbench itself wrote, drawn or not
  * (a closed disclosure and a visually hidden label are one tap or one screen reader away), every accessible name and
  * the tab title hold none of the internal words that list bans. Text somebody else wrote (a prompt, the agent's reply,
- * a command, a path, a program's output) is marked `data-gw-content` where it is rendered and is not read here; nor is
- * an accessible name marked `data-gw-content-label`, which holds such text, nor what a sentence quotes, nor a path in it.
+ * a command, a path, a program's output) is marked `data-ds-content` where it is rendered and is not read here; nor is
+ * an accessible name marked `data-ds-content-label`, which holds such text, nor what a sentence quotes, nor a path in it.
  * `checkDesign` calls it, so it runs on every screen and state the design check runs on.
  */
 export async function checkWords(page: Page, screen: string): Promise<void> {
   const pieces = await page.evaluate(() => {
     const found: string[] = [document.title];
-    const ours = (el: Element | null): boolean => el !== null && el.closest("[data-gw-content], script, style") === null;
+    const ours = (el: Element | null): boolean => el !== null && el.closest("[data-ds-content], script, style") === null;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     // Text is read element by element, so words that sit side by side in two elements are not run together.
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
@@ -171,7 +229,7 @@ export async function checkWords(page: Page, screen: string): Promise<void> {
     }
     for (const el of document.querySelectorAll("[aria-label], [title], [alt], [placeholder]")) {
       // A name that holds somebody else's words (the command a button removes, the title of the task it edits) is marked where it is written.
-      if (!ours(el) || el.hasAttribute("data-gw-content-label")) continue;
+      if (!ours(el) || el.hasAttribute("data-ds-content-label")) continue;
       for (const name of ["aria-label", "title", "alt", "placeholder"]) {
         const value = el.getAttribute(name);
         if (value !== null && value.trim() !== "") found.push(value);

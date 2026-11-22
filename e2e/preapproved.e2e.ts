@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
+import { checkDesign, expect, primaries, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Pre-approved commands in the real client, at a phone's size: a real Botbench process whose settings list commands
@@ -53,8 +53,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await expect(page.getByTestId("preapproved-about")).toContainText("Dangerous commands always ask");
   expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
   // Start task is still the one primary action.
-  const primaries = (): Promise<(string | null)[]> => page.getByRole("button").evaluateAll((buttons) => buttons.filter((b) => getComputedStyle(b).backgroundColor === "rgb(26, 26, 26)").map((b) => b.textContent));
-  expect(await primaries()).toEqual(["Start task"]);
+  expect(await primaries(page)).toEqual(["Start task"]);
   await checkDesign(page, "new task, with the repository's pre-approved commands");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-new-task.png"), fullPage: true });
 
@@ -85,7 +84,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await checkDesign(page, "new task, an entry refused");
   await page.getByRole("button", { name: "Remove sh make-marker.sh && echo done" }).click();
   await expect(list.getByRole("listitem")).toHaveText([/^git status/, /^sh make-marker\.sh/]);
-  expect(await primaries()).toEqual(["Start task"]);
+  expect(await primaries(page)).toEqual(["Start task"]);
 
   await page.getByRole("button", { name: "Start task" }).click();
   await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
@@ -105,7 +104,8 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await expect(resolved).toContainText("allowed without asking you");
   // The action itself is one plain line, and what ran is one tap away, never raw arguments on the line.
   const ran = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first();
-  await expect(ran.locator("summary").first()).toHaveText(/^Ran\s*sh make-marker\.sh$/);
+  await expect(ran.locator(".ds-tool-call")).toHaveAttribute("data-state", "succeeded");
+  await expect(ran.locator(".ds-tool-call__title")).toHaveText(/^Done\s*Ran\s*sh make-marker\.sh$/);
   await expect(ran.locator("summary").first()).not.toContainText("{");
   await expect(page.getByRole("log")).not.toContainText("You allowed");
   await expect(page.getByRole("log")).not.toContainText("needs your answer");

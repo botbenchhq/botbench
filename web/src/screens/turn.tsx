@@ -218,22 +218,22 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <Frame current="turn" fill banner={connected ? undefined : <StreamBanner />}>
       <main className="flex min-h-0 min-w-0 flex-col">
-        <div className="gw-container py-md">
+        <div className="ds-container py-md">
           <PageHeader
             title="Chat"
             action={
               conversation.length > 0 ? (
-                <button type="button" disabled={running} onClick={newChat} className="gw-button">
+                <button type="button" disabled={running} onClick={newChat} className="ds-button">
                   New chat
                 </button>
               ) : undefined
             }
           >
-            <p data-testid="driver-state" className="gw-page-header__description">
+            <p data-testid="driver-state" className="ds-page-header__description">
               {driverWords(driver, driverFailed)}
             </p>
             {session !== null && (
-              <p data-testid="turn-model" className="gw-page-header__description">
+              <p data-testid="turn-model" className="ds-page-header__description">
                 {modelWords(session, nameOf)}
               </p>
             )}
@@ -241,11 +241,11 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         </div>
 
         <div ref={logRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
-          <div className="gw-container pb-lg">
+          <div className="ds-container pb-lg">
             {shown.length === 0 ? (
-              <div className="gw-empty-state gw-empty-state--compact">
-                <h2 className="gw-empty-state__title">No messages yet</h2>
-                <p className="gw-empty-state__body">Send a prompt and Claude Code answers here. It works in an empty folder of its own inside Botbench's data folder, not in any of your projects.</p>
+              <div className="ds-empty-state ds-empty-state--compact">
+                <h2 className="ds-empty-state__title">No messages yet</h2>
+                <p className="ds-empty-state__body">Send a prompt and Claude Code answers here. It works in an empty folder of its own inside Botbench's data folder, not in any of your projects.</p>
               </div>
             ) : (
               <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} />
@@ -254,31 +254,31 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         </div>
 
         {canSend ? (
-          <form onSubmit={submit} aria-busy={running && error === null} className="gw-composer gw-composer--sticky">
+          <form onSubmit={submit} aria-busy={running && error === null} className="ds-composer ds-composer--sticky">
             <ModelPicker state={models} />
-            <label htmlFor="prompt" className="gw-composer__label">
+            <label htmlFor="prompt" className="ds-composer__label">
               Prompt
             </label>
-            <div className="gw-composer__row">
-              <textarea id="prompt" name="prompt" ref={promptRef} rows={1} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="gw-composer__input" />
+            <div className="ds-composer__row">
+              <textarea id="prompt" name="prompt" ref={promptRef} rows={1} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="ds-composer__input" />
               {running ? (
-                <button type="button" onClick={stop} aria-busy={stopping} className="gw-button">
+                <button type="button" onClick={stop} aria-busy={stopping} className="ds-button">
                   Stop
                 </button>
               ) : (
-                <button type="submit" className="gw-button gw-button--primary">
+                <button type="submit" className="ds-button ds-button--primary">
                   Send
                 </button>
               )}
             </div>
             {error !== null && (
-              <p id="prompt-error" role="alert" className="gw-composer__error">
+              <p id="prompt-error" role="alert" className="ds-composer__error">
                 {error}
               </p>
             )}
           </form>
         ) : (
-          <div className="gw-container gw-stack py-md">
+          <div className="ds-container ds-stack py-md">
             {error !== null && (
               <Alert tone="error" role="alert">
                 {error}
@@ -290,7 +290,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 testId="driver-problem"
                 title={driverFailed ? "Botbench could not check Claude Code." : (driver!.problem ?? undefined)}
                 action={
-                  <button type="button" onClick={checkDriver} className="gw-button gw-button--small">
+                  <button type="button" onClick={checkDriver} className="ds-button ds-button--small">
                     Check again
                   </button>
                 }
@@ -298,7 +298,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 Prompts cannot be sent until this is fixed.
               </Alert>
             ) : (
-              <p role="status" className="gw-spinner">
+              <p role="status" className="ds-spinner">
                 Checking that Claude Code is ready.
               </p>
             )}

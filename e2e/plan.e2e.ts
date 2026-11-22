@@ -61,7 +61,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await page.getByLabel("Add a command").fill("npm test");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
-  await expect(page.locator(".gw-button--primary")).toHaveCount(1);
+  await expect(page.locator(".ds-button--primary")).toHaveCount(1);
   await checkDesign(page, "new run, filled in");
   await shot(page, "u11-new-run.png");
   await page.getByRole("button", { name: "Start run" }).click();
@@ -73,7 +73,12 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("run-preapproved")).toContainText("npm test");
   await expect(page.locator('[data-event="user_prompt"]')).toContainText("a.txt containing a", { timeout: 60_000 });
   // The planning prompt is Botbench's, with the owner's words inside it: the row does not say the owner wrote it.
-  await expect(page.locator('[data-event="user_prompt"] .gw-message__label')).toHaveText("Botbench, to Claude Code");
+  await expect(page.locator('[data-event="user_prompt"] .ds-message__label')).toHaveText("Botbench, to Claude Code");
+  // The run's stations, in order, each with its state in words: the run is at Plan, and nothing has been built.
+  const stations = page.getByRole("list", { name: /^Steps of run \d+$/ }).getByRole("listitem");
+  await expect(stations.locator(".ds-run-timeline__name")).toHaveText(["Plan", "Build", "Decide"]);
+  await expect(stations.nth(1)).toHaveAttribute("data-state", "not-started");
+  await expect(stations.nth(2)).toHaveAttribute("data-state", "not-started");
   await checkDesign(page, "run, planning");
   // While the planner works there is no plan to approve, and nothing offers to.
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
@@ -88,13 +93,16 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   }).toPass({ timeout: 240_000, intervals: [1_000] });
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "the plan arrived without a reload").toBe(true);
   await expect(page.getByTestId("run-status")).toHaveText(/^Plan ready for review\./);
+  await expect(stations.nth(0)).toHaveAttribute("data-state", "waiting");
+  await expect(stations.nth(0)).toHaveAttribute("aria-current", "step");
+  await expect(stations.nth(0).locator(".ds-run-timeline__status")).toHaveText("Waiting for your approval");
   const plan = page.getByRole("list", { name: "Plan" });
   const rows = plan.locator(":scope > li");
   await expect(rows).toHaveCount(3);
   await expect(approve).toHaveText("Approve 3 tasks");
   // Every task shows its acceptance criteria.
   for (const row of await rows.all()) await expect(row.getByRole("listitem").first()).toBeVisible();
-  await expect(page.locator(".gw-button--primary")).toHaveCount(1);
+  await expect(page.locator(".ds-button--primary")).toHaveCount(1);
   // How the plan was made is one tap away, folded, under the plan it produced.
   const made = page.locator("details").filter({ has: page.locator("summary", { hasText: "How the plan was made" }) }).first();
   await expect(made).not.toHaveAttribute("open");
@@ -115,7 +123,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(rows.nth(0)).toContainText("Give the task a title.");
   await title.fill("Create a.txt <b>first</b>");
   await page.getByRole("button", { name: "Save task" }).click();
-  await expect(rows.nth(0).locator(".gw-editable-list__text")).toContainText("Create a.txt <b>first</b>");
+  await expect(rows.nth(0).locator(".ds-editable-list__text")).toContainText("Create a.txt <b>first</b>");
   await expect(rows.nth(0).locator("b")).toHaveCount(0);
   await expect(approve).toHaveText("Approve 3 tasks");
 
@@ -143,18 +151,23 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // Approve: the run says in plain words that it builds, one task at a time, and the owner can still cancel it.
   await approve.click();
   await expect(page.getByTestId("run-status")).toHaveText(/^Working\. Botbench builds the tasks one at a time/);
-  const queued = page.getByTestId("run-tasks").getByRole("listitem").filter({ has: page.locator(".gw-run-status") });
+  const queued = page.getByTestId("run-tasks").getByRole("listitem").filter({ has: page.locator(".ds-run-status") });
   await expect(queued).toHaveCount(2);
   await expect(queued.nth(0)).toContainText("Create a.txt <b>first</b>");
   await expect(page.getByRole("button", { name: /Approve|Request changes|Edit|Delete|Add task|Undo/ })).toHaveCount(0);
-  await expect(page.locator(".gw-button--primary")).toHaveCount(0);
+  await expect(page.locator(".ds-button--primary")).toHaveCount(0);
+  await expect(stations.nth(0)).toHaveAttribute("data-state", "done");
+  await expect(stations.nth(1)).toHaveAttribute("data-state", /^(running|waiting)$/);
+  await expect(stations.nth(1)).toHaveAttribute("aria-current", "step");
   await checkDesign(page, "run, approved and building");
 
   // Cancelled at once, so this test builds nothing: the turn that may have begun is stopped.
   await page.getByRole("button", { name: "Cancel run" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Cancel run" }).click();
   await expect(page.getByTestId("run-status")).toHaveText(/^Cancelled\./);
-  await expect(queued.locator(".gw-badge").filter({ hasText: /^(Queued|Working)$/ })).toHaveCount(0, { timeout: 60_000 });
+  // The timeline has no state for a station that was cancelled, so a cancelled run shows none; its state is in words above.
+  await expect(stations).toHaveCount(0);
+  await expect(queued.locator(".ds-badge").filter({ hasText: /^(Queued|Working)$/ })).toHaveCount(0, { timeout: 60_000 });
 
   // A task of the run says on its own screen where it stands.
   await queued.nth(1).getByRole("link").click();

@@ -98,7 +98,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
       (window as unknown as { seen: string[][] }).seen = seen;
       const look = (): void => {
         document.querySelectorAll('[data-testid="run-tasks"] > li').forEach((row, i) => {
-          const word = row.querySelector(".gw-badge")?.textContent ?? "";
+          const word = row.querySelector(".ds-badge")?.textContent ?? "";
           if (seen[i] && word !== "" && seen[i]!.at(-1) !== word) seen[i]!.push(word);
         });
       };
@@ -111,16 +111,16 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
     await expect(rows).toHaveCount(2);
     await expect(page.getByTestId("run-status")).toHaveText(/^(Working|Needs input)\. /);
     // The first is built while the second waits its turn.
-    await expect(rows.nth(0).locator(".gw-badge")).toHaveText(/^(Working|Needs input)$/, { timeout: 60_000 });
-    await expect(rows.nth(1).locator(".gw-badge")).toHaveText("Queued");
+    await expect(rows.nth(0).locator(".ds-badge")).toHaveText(/^(Working|Needs input)$/, { timeout: 60_000 });
+    await expect(rows.nth(1).locator(".ds-badge")).toHaveText("Queued");
     await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
     await checkDesign(page, "run, building");
     await shot(page, "u12-run-building.png");
     // The task being built is one tap away, with its transcript live.
     await expect(rows.nth(0).getByRole("link")).toHaveAttribute("href", /#\/tasks\/\d+$/);
 
-    await expect(rows.nth(1).locator(".gw-badge")).toHaveText("Ready for review", { timeout: 240_000 });
-    await expect(rows.nth(0).locator(".gw-badge")).toHaveText("Ready for review");
+    await expect(rows.nth(1).locator(".ds-badge")).toHaveText("Ready for review", { timeout: 240_000 });
+    await expect(rows.nth(0).locator(".ds-badge")).toHaveText("Ready for review");
     await expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./);
     await stopDeclining();
     const seen = await page.evaluate(() => (window as unknown as { seen: string[][] }).seen);
@@ -132,14 +132,14 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
 
     // Each task's setup command is evidence on its row: the command, its result in words, how long it took, and its output one tap away.
     for (const row of await rows.all()) {
-      const check = row.locator(".gw-check-list__item");
+      const check = row.locator(".ds-check-list__item");
       await expect(check).toHaveCount(1);
-      await expect(check.locator(".gw-check-list__name")).toHaveText("echo preparing the copy");
-      await expect(check.locator(".gw-check-list__result")).toHaveText("Passed");
-      await expect(check.locator(".gw-check-list__duration time")).toHaveAttribute("datetime", /^PT/);
-      await expect(check.locator(".gw-check-list__log")).toBeHidden();
-      await check.locator(".gw-check-list__toggle").click();
-      await expect(check.locator(".gw-check-list__log")).toHaveText(/preparing the copy/);
+      await expect(check.locator(".ds-check-list__name")).toHaveText("echo preparing the copy");
+      await expect(check.locator(".ds-check-list__result")).toHaveText("Passed");
+      await expect(check.locator(".ds-check-list__duration time")).toHaveAttribute("datetime", /^PT/);
+      await expect(check.locator(".ds-check-list__log")).toBeHidden();
+      await check.locator(".ds-check-list__toggle").click();
+      await expect(check.locator(".ds-check-list__log")).toHaveText(/preparing the copy/);
     }
     await expect(page.getByRole("button", { name: "Cancel run" })).toHaveCount(0);
     await checkDesign(page, "run, built, setup output open");
@@ -148,7 +148,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
     await rows.nth(0).getByRole("link").click();
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
     await expect(page.getByRole("heading", { name: "Setup" })).toBeVisible();
-    await expect(page.locator(".gw-check-list__item .gw-check-list__result")).toHaveText("Passed");
+    await expect(page.locator(".ds-check-list__item .ds-check-list__result")).toHaveText("Passed");
     await checkDesign(page, "task of a run, built");
     expect(checkoutState(repo)).toEqual(before);
     expect(foreign).toEqual([]);
@@ -168,7 +168,7 @@ test("LIVE (planner only): cancel a run while it builds: the dialog says what is
     ]);
     await page.getByRole("button", { name: "Approve 2 tasks" }).click();
     const rows = page.getByTestId("run-tasks").locator(":scope > li");
-    await expect(rows.nth(0).locator(".gw-badge")).toHaveText("Working");
+    await expect(rows.nth(0).locator(".ds-badge")).toHaveText("Working");
     await expect(rows.nth(0)).toContainText("Preparing a separate copy of the project");
     await checkDesign(page, "run, setting up");
 
@@ -179,8 +179,8 @@ test("LIVE (planner only): cancel a run while it builds: the dialog says what is
     await checkDesign(page, "run, cancel while building");
     await dialog.getByRole("button", { name: "Cancel run" }).click();
     await expect(page.getByTestId("run-status")).toHaveText(/^Cancelled\./);
-    for (const row of await rows.all()) await expect(row.locator(".gw-badge")).toHaveText("Cancelled", { timeout: 15_000 });
-    await expect(rows.nth(0).locator(".gw-check-list__result")).toHaveText(/^Stopped/);
+    for (const row of await rows.all()) await expect(row.locator(".ds-badge")).toHaveText("Cancelled", { timeout: 15_000 });
+    await expect(rows.nth(0).locator(".ds-check-list__result")).toHaveText(/^Stopped/);
     await expect(page.getByRole("button", { name: "Cancel run" })).toHaveCount(0);
     await checkDesign(page, "run, cancelled while building");
     const attempts = (await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { tasks: { attemptId: number | null }[] };

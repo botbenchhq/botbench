@@ -1,3 +1,4 @@
+import { LOOKS, type Look } from "./looks.ts";
 import type { TaskStatus, TaskSummary } from "../api/client.ts";
 
 const STATUS_WORD: Record<TaskStatus, string> = {
@@ -20,19 +21,19 @@ const resuming = (task: Pick<TaskSummary, "status" | "resuming">): boolean => ta
 /** A task's station in a word or two, for lists. */
 export const statusWord = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "Needs input" : resuming(task) ? "Resuming" : STATUS_WORD[task.status]);
 
-/** The badge a station is drawn as. The word says the station; the tone only repeats it. */
-const STATUS_LOOK: Record<TaskStatus, string> = {
-  queued: "gw-badge",
-  building: "gw-badge gw-badge--info",
-  verifying: "gw-badge gw-badge--info",
-  awaiting_decision: "gw-badge gw-badge--success",
-  accepted: "gw-badge gw-badge--success",
-  rejected: "gw-badge",
-  interrupted: "gw-badge gw-badge--danger",
-  failed: "gw-badge gw-badge--danger",
-  cancelled: "gw-badge",
+/** The look of a station, from the status set. The word says the station; the icon and tone only repeat it. */
+const STATUS_LOOK: Record<TaskStatus, Look> = {
+  queued: LOOKS.queued,
+  building: LOOKS.working,
+  verifying: LOOKS.checking,
+  awaiting_decision: LOOKS.readyForReview,
+  accepted: LOOKS.accepted,
+  rejected: LOOKS.rejected,
+  interrupted: LOOKS.stopped,
+  failed: LOOKS.failed,
+  cancelled: LOOKS.cancelled,
 };
-export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "gw-badge gw-badge--warning" : STATUS_LOOK[task.status]);
+export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
 export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision">): string {

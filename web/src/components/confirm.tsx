@@ -29,37 +29,37 @@ export function ConfirmAction({ label, opener, primary = false, title, confirmLa
   };
 
   const confirmButton = (
-    <button type="submit" value="confirm" disabled={disabled} className={losing ? "gw-button gw-button--danger" : "gw-button"}>
+    <button type="submit" value="confirm" disabled={disabled} className={losing ? "ds-button ds-button--danger" : "ds-button"}>
       {confirmLabel}
     </button>
   );
   const cancelButton = (
-    <button ref={cancel} type="submit" value="cancel" className="gw-button">
+    <button ref={cancel} type="submit" value="cancel" className="ds-button">
       {cancelLabel}
     </button>
   );
 
   return (
     <>
-      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-label={opener?.name} data-gw-content-label={opener === undefined ? undefined : ""} className={opener?.small === true ? "gw-button gw-button--quiet gw-button--small" : primary ? "gw-button gw-button--primary" : "gw-button"}>
+      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-label={opener?.name} data-ds-content-label={opener === undefined ? undefined : ""} className={opener?.small === true ? "ds-button ds-button--quiet ds-button--small" : primary ? "ds-button ds-button--primary" : "ds-button"}>
         {label}
       </button>
       {open && (
-        <dialog ref={dialog} data-testid={testId} role={losing ? "alertdialog" : undefined} aria-labelledby={titleId} aria-describedby={bodyId} onClose={closed} className={losing ? "gw-dialog gw-confirm-dialog" : "gw-dialog"}>
-          <form method="dialog" className="gw-dialog__panel">
-            <h2 id={titleId} className="gw-dialog__title">
+        <dialog ref={dialog} data-testid={testId} role={losing ? "alertdialog" : undefined} aria-labelledby={titleId} aria-describedby={bodyId} onClose={closed} className={losing ? "ds-dialog ds-confirm-dialog" : "ds-dialog"}>
+          <form method="dialog" className="ds-dialog__panel">
+            <h2 id={titleId} className="ds-dialog__title">
               {title}
             </h2>
-            <div id={bodyId} className="gw-dialog__body">
+            <div id={bodyId} className="ds-dialog__body">
               {children}
             </div>
             {losing ? (
-              <div className="gw-dialog__footer gw-confirm-dialog__actions">
+              <div className="ds-dialog__footer ds-confirm-dialog__actions">
                 {cancelButton}
                 {confirmButton}
               </div>
             ) : (
-              <div className="gw-dialog__footer">
+              <div className="ds-dialog__footer">
                 {confirmButton}
                 {cancelButton}
               </div>

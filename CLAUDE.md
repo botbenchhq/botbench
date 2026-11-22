@@ -23,7 +23,7 @@ Done = tests pass. Owner checks batched per milestone.
 - Complex or parallel research: use subagents. Keep main context clean.
 - Read DESIGN.md before any UI work.
 - Any text a person sees (labels, states, errors, also the server's) follows `docs/product/voice.md`; its glossary is the list the tests enforce.
-- UI work follows the vendored design system: read `web/vendor/groundwork/rules/core.md` first, and never edit `web/vendor/groundwork/`.
+- UI work follows the vendored design system: read `web/vendor/design-system/rules/core.md` first, and never edit `web/vendor/design-system/`.
 
 ## Hard rules
 - Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract for scenarios a live model cannot produce on demand.

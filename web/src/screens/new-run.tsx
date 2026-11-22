@@ -47,21 +47,21 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
     <Frame current={null}>
       <Page>
         <PageHeader title="New run" />
-        <form onSubmit={submit} className="gw-stack gw-gap-lg" noValidate>
+        <form onSubmit={submit} className="ds-stack ds-gap-lg" noValidate>
           <RepositoryField choice={repository} />
-          <div className="gw-field">
-            <label htmlFor="run-prompt" className="gw-field__label">
+          <div className="ds-field">
+            <label htmlFor="run-prompt" className="ds-field__label">
               Prompt
             </label>
-            <textarea id="run-prompt" name="prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-describedby="run-prompt-about" className="gw-field__control gw-textarea" />
-            <p id="run-prompt-about" className="gw-field__description">What to build, in your own words. Leave this empty when you give a spec file.</p>
+            <textarea id="run-prompt" name="prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-describedby="run-prompt-about" className="ds-field__control ds-textarea" />
+            <p id="run-prompt-about" className="ds-field__description">What to build, in your own words. Leave this empty when you give a spec file.</p>
           </div>
-          <div className="gw-field">
-            <label htmlFor="run-spec" className="gw-field__label">
+          <div className="ds-field">
+            <label htmlFor="run-spec" className="ds-field__label">
               Spec file path
             </label>
-            <input id="run-spec" name="specPath" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={specPath} onChange={(e) => setSpecPath(e.target.value)} aria-describedby="run-spec-about" className="gw-field__control" />
-            <p id="run-spec-about" className="gw-field__description">Or the full path of a .md, .markdown or .txt file on this Mac that describes the work. Botbench reads it once, now.</p>
+            <input id="run-spec" name="specPath" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={specPath} onChange={(e) => setSpecPath(e.target.value)} aria-describedby="run-spec-about" className="ds-field__control" />
+            <p id="run-spec-about" className="ds-field__description">Or the full path of a .md, .markdown or .txt file on this Mac that describes the work. Botbench reads it once, now.</p>
           </div>
           <ModelPicker state={models} />
           <PreapprovedEditor choice={repository} scope="run" />
@@ -70,7 +70,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
               {error}
             </Alert>
           )}
-          <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
+          <button type="submit" aria-busy={busy} className="ds-button ds-button--primary">
             {busy ? "Starting" : "Start run"}
           </button>
           <p>The model above plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks. Nothing is built until you approve the plan. Your own files and your branch are not touched.</p>

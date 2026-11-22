@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/vendor/design-system/hooks/claude-hook.mjs", "${CLAUDE_PROJECT_DIR}/design-system.config.json"]
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/vendor/design-system/hooks/claude-hook.mjs", "${CLAUDE_PROJECT_DIR}/design-system.config.json"]
+          }
+        ]
+      }
+    ]
+  }
+}

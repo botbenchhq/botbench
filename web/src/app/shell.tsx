@@ -52,13 +52,13 @@ function screenFor(route: Route, onSignedOut: () => void) {
   return (
     <Frame current={null}>
       <Page>
-        <div className="gw-not-found">
-          <div role="alert" className="gw-empty-state">
-            <h1 className="gw-empty-state__title">
+        <div className="ds-not-found">
+          <div role="alert" className="ds-empty-state">
+            <h1 className="ds-empty-state__title">
               {"There is no screen at "}
-              <span data-gw-content="">{route.what}</span>.
+              <span data-ds-content="">{route.what}</span>.
             </h1>
-            <p className="gw-empty-state__body">The address may be mistyped. The navigation lists every screen there is.</p>
+            <p className="ds-empty-state__body">The address may be mistyped. The navigation lists every screen there is.</p>
           </div>
         </div>
       </Page>
@@ -108,10 +108,10 @@ export function Shell() {
   }
   if (session === "signed-out") return <SignInScreen notice={notice} onSignedIn={onSignedIn} />;
   return (
-    <main className="gw-sign-in p-lg">
-      <p className="gw-sign-in__product">Botbench</p>
+    <main className="ds-sign-in p-lg">
+      <p className="ds-sign-in__product">Botbench</p>
       {session === "checking" ? (
-        <p role="status" className="gw-spinner">
+        <p role="status" className="ds-spinner">
           Checking your session.
         </p>
       ) : (

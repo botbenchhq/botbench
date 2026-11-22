@@ -1,7 +1,7 @@
 import path from "node:path";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
 import fs from "node:fs";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
+import { checkDesign, expect, primaries, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
 import { startBotbench } from "./botbench.ts";
 
 // Choosing the model in the real client, at a phone's size, against a real Botbench process and the owner's Claude Code.
@@ -109,7 +109,7 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
   await page.getByLabel("Prompt").fill("Create a file named hello.txt containing exactly: hi");
   // Start task is the one primary action; the only other control is the plain Add of the pre-approved list, which is empty here.
   await expect(page.getByRole("button")).toHaveText(["Add", "Start task"]);
-  expect(await page.getByRole("button").evaluateAll((buttons) => buttons.filter((b) => getComputedStyle(b).backgroundColor === "rgb(26, 26, 26)").map((b) => b.textContent))).toEqual(["Start task"]);
+  expect(await primaries(page)).toEqual(["Start task"]);
   await checkDesign(page, "new task, with a model picked");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u25-new-task-model.png"), fullPage: true });
   await page.getByRole("button", { name: "Start task" }).click();

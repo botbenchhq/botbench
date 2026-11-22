@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
+import { checkDesign, expect, primaries, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, signIn, test, token, watchRequests, openNewTask } from "./helpers.ts";
 import type { Botbench } from "./botbench.ts";
 
 // Approvals in the real client, at a phone's size: a real Botbench process, a real temporary repository,
@@ -10,8 +10,6 @@ import type { Botbench } from "./botbench.ts";
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done";
 const NONE_WAITING = "No approvals are waiting.";
-/** A secondary button of the design system: the raised surface, the text colour, the plain border. */
-const SECONDARY_LOOK = { background: "rgb(255, 255, 255)", text: "rgb(23, 23, 23)", border: "rgb(229, 229, 229)" };
 
 /** A real repository beside the test's Botbench home, with a script that leaves a marker file where it lies. */
 function scriptRepo(botbench: Botbench): string {
@@ -54,6 +52,14 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(tray).toHaveText("1 approval is waiting. Open it.", { timeout: 120_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Needs input. Claude Code asked for permission and is paused until you allow or deny.");
   await expect(page.locator('[data-event="permission_request"]')).toContainText("sh make-marker.sh");
+  // The call itself waits in the transcript, open, in the approval tone: the status set's Needs input, with its paused icon.
+  const asked = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator(".ds-tool-call");
+  await expect(asked).toHaveAttribute("data-state", "awaiting-approval");
+  await expect(asked.locator(".ds-tool-call__status")).toHaveText("Needs input");
+  await expect(asked.locator(".ds-tool-call__title")).toHaveText(/^Needs input\s*Wants to run\s*sh make-marker\.sh$/);
+  await expect(asked.locator("details").first()).toHaveAttribute("open");
+  expect(await asked.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el).color)).toBe(token("approval"));
+  expect(await asked.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el, "::before").maskImage), "the paused icon of Needs input").toContain("circle-pause");
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "the card came without a reload").toBe(true);
 
   // On the other screens the tray says the same, and the list says which task waits.
@@ -90,8 +96,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   // A card's buttons take a moment to come alive, so a tap meant for an earlier card cannot answer this one. Until then they are drawn as unavailable.
   await expect(card.getByRole("button", { name: "Allow once" })).toBeEnabled();
   // The button has just come alive, and its colour takes the system's transition time to settle: the check waits for it.
-  const primaries = (): Promise<(string | null)[]> => page.getByRole("button").evaluateAll((buttons) => buttons.filter((b) => getComputedStyle(b).backgroundColor === "rgb(26, 26, 26)").map((b) => b.textContent));
-  await expect.poll(primaries, { message: "one primary action on the screen" }).toEqual(["Allow once"]);
+  await expect.poll(() => primaries(page), { message: "one primary action on the screen" }).toEqual(["Allow once"]);
   await expect(page.getByRole("button", { name: /always|standing|every time|remember|pre-?approve/i })).toHaveCount(0);
   await expect(card.getByRole("checkbox")).toHaveCount(0);
   const allow = card.getByRole("button", { name: "Allow once" });
@@ -100,7 +105,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };
   };
-  expect(await allow.evaluate(look)).toEqual({ background: "rgb(26, 26, 26)", text: "rgb(250, 250, 249)", border: "rgb(26, 26, 26)" });
+  expect(await allow.evaluate(look)).toEqual(PRIMARY_LOOK);
   expect(await decline.evaluate(look)).toEqual(SECONDARY_LOOK);
   const allowBox = (await allow.boundingBox())!;
   const declineBox = (await decline.boundingBox())!;
@@ -171,7 +176,11 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   await expect(resolved).toContainText("You denied it");
   // The row that records the question does not say the command ran.
   await expect(page.locator('[data-event="permission_request"]')).toContainText("Botbench asked you first.");
-  await expect(page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator("summary").first()).toHaveText(/^Did not run\s*sh make-marker\.sh$/);
+  const refused = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator(".ds-tool-call");
+  await expect(refused).toHaveAttribute("data-state", "declined");
+  await expect(refused.locator(".ds-tool-call__title")).toHaveText(/^Denied\s*Did not run\s*sh make-marker\.sh$/);
+  await expect(refused.locator(".ds-tool-call__note")).toHaveText("You denied it. It was not run.");
+  expect(await refused.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el, "::before").maskImage), "a denied call's icon").toContain("ban");
   await expect(resolved).toContainText(`Your note: ${note}`);
   await expect(resolved.locator("b")).toHaveCount(0);
   await expect(page.locator('[data-event="tool_result"]').filter({ hasText: "The owner denied this request" })).toContainText("What Claude Code was told");
