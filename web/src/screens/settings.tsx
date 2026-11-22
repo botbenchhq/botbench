@@ -32,6 +32,8 @@ function agentAbout(agent: AgentState): string {
 const AGENTS = [
   { agent: "claude-code", name: "Claude Code" },
   { agent: "codex", name: "Codex" },
+  { agent: "grok", name: "Grok" },
+  { agent: "antigravity", name: "Antigravity" },
 ];
 
 const MODES: { value: Appearance; label: string }[] = [
@@ -42,7 +44,7 @@ const MODES: { value: Appearance; label: string }[] = [
 
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
- * now, and what Botbench lets it do: Claude Code plans and builds, Codex reviews. Runs: the mode New run starts with,
+ * now, and what Botbench lets it do: Claude Code plans and builds, Codex, Grok and Antigravity review. Runs: the mode New run starts with,
  * kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
  * Notifications: this device's notifications, on or off (unit 23).
  */

@@ -19,6 +19,7 @@ const ALLOWED_ENV = new Set([
   // Where a CLI keeps its own login and settings when the owner moved them.
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
+  "GROK_HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
@@ -218,6 +219,27 @@ export const VERSION_TABLE = {
     { flag: "--disable", since: "0.171.0" },
     { flag: "-c default_permissions", since: "0.171.0" },
     { flag: "--model", since: "0.171.0" },
+  ],
+  // Checked against `grok --help`, its bundled user guide and real runs of 1.0.92 (src/drivers/grok.ts says what each is for).
+  grok: [
+    { flag: "-p -", since: "1.0.92" },
+    { flag: "--output-format streaming-json", since: "1.0.92" },
+    { flag: "--disallowed-tools", since: "1.0.92" },
+    { flag: "--no-memory", since: "1.0.92" },
+    { flag: "--no-subagents", since: "1.0.92" },
+    { flag: "--disable-web-search", since: "1.0.92" },
+    { flag: "--max-turns", since: "1.0.92" },
+    { flag: "-m", since: "1.0.92" },
+  ],
+  // Checked against `agy --help`, antigravity.google/docs and real runs of 1.5.14 (src/drivers/antigravity.ts says what each is for).
+  antigravity: [
+    { flag: "--input-format stream-json", since: "1.5.14" },
+    { flag: "--output-format stream-json", since: "1.5.14" },
+    { flag: "--agent", since: "1.5.14" },
+    { flag: "--settings", since: "1.5.14" },
+    { flag: "--disable-slash-commands", since: "1.5.14" },
+    { flag: "--sandbox", since: "1.5.14" },
+    { flag: "--model", since: "1.5.14" },
   ],
 } as const satisfies Record<string, readonly RequiredFlag[]>;
 

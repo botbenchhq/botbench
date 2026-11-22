@@ -78,7 +78,7 @@ export const HOME_SECRETS: readonly string[] = [
 ];
 
 /** Folders a vendor CLI keeps its sign-in in when the owner moved it, named by the variable the CLI reads. */
-const MOVED_SIGN_INS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+const MOVED_SIGN_INS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"];
 
 /** Where one confined command runs and what it may reach. */
 export interface Confinement {

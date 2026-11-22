@@ -61,7 +61,7 @@ test("a role that names an unknown driver is rejected, naming the role and the f
   assert.throws(() => loadConfig(files), (err: Error) => {
     assert.match(err.message, /role "reviewer"/);
     assert.match(err.message, /unknown driver "copilot"/);
-    assert.match(err.message, /claude-code, codex, gemini-cli, grok/);
+    assert.match(err.message, /claude-code, codex, gemini-cli, grok, antigravity/);
     assert.ok(err.message.includes(files.local), "names the file the value came from");
     return true;
   });
@@ -82,9 +82,9 @@ test("a role that names a known driver missing from the drivers map is rejected"
   assert.throws(() => loadConfig(files), /role "planner" uses driver "grok", which is not in "drivers"/);
 });
 
-test("all four known driver names are accepted", (t) => {
-  const drivers = { "claude-code": {}, codex: {}, "gemini-cli": {}, grok: {} };
-  const roles = { a: { driver: "claude-code" }, b: { driver: "codex" }, c: { driver: "gemini-cli" }, d: { driver: "grok" } };
+test("all five known driver names are accepted", (t) => {
+  const drivers = { "claude-code": {}, codex: {}, "gemini-cli": {}, grok: {}, antigravity: {} };
+  const roles = { a: { driver: "claude-code" }, b: { driver: "codex" }, c: { driver: "gemini-cli" }, d: { driver: "grok" }, e: { driver: "antigravity" } };
   const files = configFiles(t, { ...BASE, drivers, roles });
   assert.deepEqual(loadConfig(files).drivers, drivers);
 });
@@ -94,6 +94,15 @@ test("Codex cannot be set as the builder or the planner, and says why; it can be
   assert.throws(() => loadConfig(configFiles(t, { ...BASE, drivers, roles: { implementer: { driver: "codex" } } })), /role "implementer": Codex cannot be the builder: in Botbench it cannot ask you for permission or edit files/);
   assert.throws(() => loadConfig(configFiles(t, { ...BASE, drivers, roles: { planner: { driver: "codex" } } })), /role "planner": Codex cannot be the planner/);
   assert.equal(loadConfig(configFiles(t, { ...BASE, drivers, roles: { reviewer: { driver: "codex" } } })).roles.reviewer?.driver, "codex");
+});
+
+test("Grok and Antigravity cannot be set as the builder or the planner, and say why; each can be set as the reviewer", (t) => {
+  for (const [driver, name] of [["grok", "Grok"], ["antigravity", "Antigravity"]] as const) {
+    const drivers = { "claude-code": {}, [driver]: {} };
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, drivers, roles: { implementer: { driver } } })), new RegExp(`role "implementer": ${name} cannot be the builder`));
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, drivers, roles: { planner: { driver } } })), new RegExp(`role "planner": ${name} cannot be the planner`));
+    assert.equal(loadConfig(configFiles(t, { ...BASE, drivers, roles: { reviewer: { driver } } })).roles.reviewer?.driver, driver);
+  }
 });
 
 test("malformed values are rejected with the setting's name", (t) => {

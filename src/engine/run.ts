@@ -680,7 +680,7 @@ export function createRuns(options: RunsOptions): Runs {
     const same = sameModelProblem({ agent: driver.name, model: buildModel }, reviewer);
     if (same !== null) throw new RunError(400, same);
     const found = options.reviewers?.[reviewer.agent];
-    if (found === undefined) throw new RunError(400, `${agentName(reviewer.agent)} cannot review a run yet. Choose Codex, or no review.`);
+    if (found === undefined) throw new RunError(400, `${agentName(reviewer.agent)} cannot review a run. Choose ${Object.keys(options.reviewers ?? {}).map(agentName).join(", ")}, or no review.`);
     const cannot = roleProblem(REVIEWER, reviewer.agent, found.capabilities);
     if (cannot !== null) throw new RunError(400, cannot);
     const probe = await found.probe();
@@ -822,7 +822,7 @@ export function modeChoice(given: unknown): RunMode {
 /** The reviewer a request names: null for none, else a known agent and a model name or null. Anything else is refused with the reason, before anything exists. */
 export function reviewerChoice(given: unknown): RoleChoice | null {
   if (given === undefined || given === null) return null;
-  const shape = '"reviewer" must be null, or { "agent": "codex", "model": "<model name>" or null }.';
+  const shape = '"reviewer" must be null, or { "agent": "codex", "grok" or "antigravity", "model": "<model name>" or null }.';
   if (typeof given !== "object" || Array.isArray(given)) throw new RunError(400, shape);
   const { agent, model, ...rest } = given as Record<string, unknown>;
   if (Object.keys(rest).length > 0 || typeof agent !== "string") throw new RunError(400, shape);

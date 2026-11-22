@@ -25,6 +25,8 @@ export interface DriverCapabilities {
    * asking (engine/modes.ts). Left out, they are not known to.
    */
   confinedCommands?: boolean;
+  /** False when the CLI is started with no tools at all and sees only what it is sent. Left out: it has tools. */
+  tools?: boolean;
 }
 
 /** How the CLI is billed, taken from the CLI's own account of its login. */

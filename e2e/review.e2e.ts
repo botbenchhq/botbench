@@ -55,7 +55,7 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   const review = page.getByLabel("Review");
   await expect(review).toHaveValue("");
   await expect(review.locator("option").first()).toHaveText("Off");
-  await review.selectOption("gpt-6-luna");
+  await review.selectOption("codex gpt-6-luna");
   await checkDesign(page, "new run, review by Codex");
   await shot(page, "review-new-run.png");
   await page.getByRole("button", { name: "Start run" }).click();

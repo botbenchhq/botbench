@@ -60,7 +60,7 @@ async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknow
 }
 
 // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
-const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex", "model": string | null }, "mode"?: "manual" | "semi" | "full" }';
+const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full" }';
 
 /**
  * The run routes: start one, list them, describe one, and the owner's decisions at the plan gate (edit, approve,
