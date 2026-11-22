@@ -175,7 +175,7 @@ test("a committed task is described with its changed files, and each file's diff
   assert.equal(described.status, 200);
   assert.deepEqual({ ...described.body, createdAt: null, updatedAt: null }, {
     id: task.id, repo, prompt: "change three files", requestedModel: null, status: "awaiting_decision", reason: null,
-    branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, waitingOnApproval: false, createdAt: null, updatedAt: null,
+    branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, waitingOnApproval: false, parked: false, resuming: false, createdAt: null, updatedAt: null,
     files: [
       { path: "hello.txt", status: "added", added: 1, removed: 0, binary: false },
       { path: "odd name's \"file\".txt", status: "added", added: 1, removed: 0, binary: false },

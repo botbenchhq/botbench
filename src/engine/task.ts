@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { Broker } from "../approvals/broker.ts";
+import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sourceHead, type Worktree } from "../worktrees.ts";
+import { RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 
 /**
  * The stations a task can be at so far. `awaiting_decision` means Smelt has
@@ -108,6 +109,8 @@ export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; 
 
 export interface TaskChange {
   reason?: string;
+  /** Something for the task's history only, when the task stays at its station. */
+  note?: string;
   worktree?: Worktree;
   attemptId?: number;
   headCommit?: string;
@@ -147,6 +150,7 @@ export function moveTask(db: DatabaseSync, id: number, to: TaskStatus, change: T
       values.push(change.reason);
       details.unshift(change.reason);
     }
+    if (change.note !== undefined) details.unshift(change.note);
     db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`).run(...values, id);
     insertEvent(db, id, at, to, details.length === 0 ? null : details.join("; "));
     return getTask(db, id)!;
@@ -216,6 +220,10 @@ export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
   let closed = false;
   let current: DriverSession | null = null;
+  /** Set while a turn runs: called when Smelt begins to stop, it decides whether that turn's task is parked. */
+  let parkCurrent: (() => void) | null = null;
+  /** When this engine began. What the store holds from before it is the last run's. */
+  const began = now();
 
   const report = (what: string) => (err: unknown): void => console.error(`${what} failed: ${words(err)}`);
 
@@ -268,12 +276,26 @@ export function createTasks(options: TasksOptions): Tasks {
       return void move(id, closed ? "interrupted" : "failed", { reason });
     }
 
+    await drive(task, session, admission, task.prompt, false);
+  };
+
+  /**
+   * Run one turn of a task's attempt to its end and record where that leaves the task. `resumed` is true for the
+   * turn that re-drives a task after a restart. If Smelt is stopped while the turn waits for the owner, the task
+   * is parked: its approvals stay pending and it stays at `building` for the next start to find.
+   */
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: boolean): Promise<void> => {
+    const id = task.id;
     current = session;
     admission.bind(session.attemptId);
     let detail: string | null = null;
+    let sessionStarted = false;
+    let parking = false;
+    parkCurrent = () => void (parking = waitingOnApproval(db, id));
     /** Permission requests the CLI is still waiting on, by request id. */
     const asking = new Set<string>();
     session.onEvent((event) => {
+      if (event.type === "session_started") sessionStarted = true;
       if (event.type === "turn_ended") detail = event.detail;
       if (event.type === "permission_request") {
         asking.add(event.id);
@@ -286,16 +308,17 @@ export function createTasks(options: TasksOptions): Tasks {
       }
       if (event.type === "permission_resolved") {
         asking.delete(event.id);
-        // The CLI gave up on the request (the turn was stopped): its card must not stay answerable.
-        if (event.decision === "cancelled") admission.supersede(event.toolCallId);
+        // The CLI gave up on the request (the turn was stopped): its card must not stay answerable. When it is
+        // Smelt itself that is stopping, the request is kept for the owner instead.
+        if (event.decision === "cancelled" && !parking) admission.supersede(event.toolCallId);
       }
       options.onEvent();
     });
-    move(id, "building", { attemptId: session.attemptId });
+    move(id, "building", { attemptId: session.attemptId, ...(resumed ? { note: `resumed after a restart, from attempt ${task.attemptId}` } : {}) });
     let end: TurnEndReason | "not sent";
     try {
       // Smelt began stopping while the attempt was starting: the turn is not sent.
-      end = closed ? "not sent" : await session.sendTurn(task.prompt);
+      end = closed ? "not sent" : await session.sendTurn(prompt);
     } catch (err) {
       end = "error";
       detail = words(err);
@@ -308,6 +331,14 @@ export function createTasks(options: TasksOptions): Tasks {
       leftover = `Its Claude Code process could not be stopped: ${words(err)}`;
     }
     current = null;
+    parkCurrent = null;
+    // Parked only if the owner's answer is still outstanding now: it may have come in while Smelt was stopping.
+    if (parking && leftover === null && end === "interrupted" && waitingOnApproval(db, id)) {
+      // Smelt is stopping while the owner's answer is outstanding. Nothing is committed and nothing ends: the next start finds it.
+      admission.park();
+      options.onEvent();
+      return void move(id, "building", { note: "Smelt stopped while this task waited for the owner's answer; the request is kept for the next start" });
+    }
     admission.release();
     options.onEvent();
 
@@ -316,22 +347,109 @@ export function createTasks(options: TasksOptions): Tasks {
     else if (end === "completed") await finish(task, "awaiting_decision");
     else if (end === "not sent") await finish(task, "interrupted", "Smelt stopped before the prompt was sent.");
     else if (end === "interrupted") await finish(task, "interrupted", "The turn was stopped before it finished. The work done up to then is committed.");
+    // Nothing came of the session at all: the CLI did not take it up again.
+    else if (resumed && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
     else await finish(task, "failed", `The turn ended with an error${detail === null ? "." : `: ${detail}`}`);
   };
 
-  /** A Smelt that stopped without warning leaves tasks at stations nothing is working at. Say so, and keep their work. */
+  /** End a task that waited on the owner across a restart and cannot go on: its approvals are closed, never allowed, and it says why. */
+  const giveUp = async (task: Task, reason: string): Promise<void> => {
+    broker.endParked(task.id, reason);
+    if (task.worktreePath === null) move(task.id, "interrupted", { reason });
+    else await finish(task, "interrupted", `${reason} The work done up to then is committed.`);
+  };
+
+  /** Stop what is left of the CLI processes of a task's attempts from before this start. Returns why, when one could not be stopped. */
+  const stopSurvivors = async (task: Task, parked: readonly { attemptId: number }[]): Promise<string | null> => {
+    const attempts = new Set([...(task.attemptId === null ? [] : [task.attemptId]), ...parked.map((approval) => approval.attemptId)]);
+    for (const attemptId of attempts) {
+      try {
+        await stopSurvivor(db, attemptId);
+      } catch (err) {
+        return `Its Claude Code process from before the restart could not be stopped: ${words(err)}`;
+      }
+    }
+    return null;
+  };
+
+  /**
+   * The owner answered an approval that was asked before a restart. Once every such approval of the task has its
+   * answer, the task is re-driven: a new attempt resumes the session in the same worktree, and the broker gives
+   * the stored answers to that attempt's matching requests. A task that cannot be resumed ends interrupted, and
+   * its stored answers are discarded.
+   */
+  const redrive = async (id: number): Promise<void> => {
+    const task = getTask(db, id);
+    if (!task) return;
+    const parked = pendingApprovals(db, id);
+    if (parked.length === 0) return;
+    if (task.status !== "building") return broker.endParked(id, `Its task is ${task.status}, so there is nothing to resume.`);
+    // Other requests of the task still wait for the owner: it is resumed when all of them are answered.
+    if (parked.some((approval) => approval.storedDecision === null)) return;
+    // Smelt is stopping: the next start says what became of the answer.
+    if (closed) return;
+    const problem = (await stopSurvivors(task, parked)) ?? resumeProblem(db, task, parked, driver.capabilities);
+    if (problem !== null) return giveUp(task, `This task waited for your answer across a restart and cannot be resumed: ${problem} Your answer was not applied and nothing was run.`);
+
+    // The model stays the one the task was started with, whatever is configured by now.
+    const previous = task.attemptId!;
+    const resumeCursor = String(db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(previous)!.resume_cursor);
+    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, resumes: previous });
+    let session: DriverSession;
+    try {
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+    } catch (err) {
+      admission.release();
+      return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
+    }
+    await drive(task, session, admission, RESUME_PROMPT, true);
+  };
+
+  /**
+   * A Smelt that stopped leaves tasks at stations nothing is working at. One that was waiting for the owner is
+   * parked: whatever is left of its CLI process is stopped, and it stays where it is until the owner answers.
+   * Every other one is marked interrupted, with its work kept. Say so in each case.
+   */
   const recover = async (): Promise<void> => {
+    // A CLI process of the last run that is recorded on no task (Smelt stopped between starting it and writing it down) is stopped too.
+    for (const row of db.prepare("SELECT id FROM attempts WHERE pgid IS NOT NULL AND created_at < ? ORDER BY id").all(began)) {
+      await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
+    }
     const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building') ORDER BY id").all();
     for (const row of stale) {
       const task = getTask(db, Number(row.id))!;
+      const parked = pendingApprovals(db, task.id);
+      if (parked.length > 0) {
+        // An answer the last run stored and did not get to apply is not carried into this one. One stored since this
+        // start (the owner was quick) is not that: its task is resumed in its turn.
+        const unapplied = db.prepare("SELECT 1 FROM approvals WHERE task_id = ? AND status = 'pending' AND stored_decision IS NOT NULL AND stored_at < ? LIMIT 1").get(task.id, began) !== undefined;
+        const problem =
+          (await stopSurvivors(task, parked)) ??
+          (unapplied ? "Smelt stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
+        if (problem === null) {
+          move(task.id, "building", { note: "parked across a restart: waiting for the owner's answer to a request made before it" });
+          continue;
+        }
+        await giveUp(task, `Smelt stopped while this task waited for your answer, and it cannot be resumed: ${problem} The request was closed and nothing was run.`);
+        continue;
+      }
       const reason = "Smelt stopped while this task was on its way.";
       if (task.worktreePath === null) move(task.id, "interrupted", { reason });
       else await finish(task, "interrupted", `${reason} The work done up to then is committed.`);
+    }
+    // A pending approval whose task is at no station where it could be resumed has nobody to answer to.
+    for (const row of db.prepare("SELECT DISTINCT a.task_id AS id FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'pending' AND t.status <> 'building'").all()) {
+      broker.endParked(Number(row.id), "Its task was no longer being built when Smelt started.");
     }
   };
 
   // One chain: recovery first, then each task in the order it was started.
   let chain: Promise<void> = recover().catch(report("Recovering tasks"));
+
+  // An answer stored for a parked approval re-drives its task, in its turn like any other work.
+  broker.onStoredAnswer((approval) => {
+    chain = chain.then(() => redrive(approval.taskId)).catch(report(`Resuming task ${approval.taskId}`));
+  });
 
   const start = async (repo: unknown, prompt: string, model?: string | null): Promise<Task> => {
     if (closed) throw new TaskError(503, "Smelt is shutting down.");
@@ -345,7 +463,9 @@ export function createTasks(options: TasksOptions): Tasks {
 
   const close = async (): Promise<void> => {
     closed = true;
-    // Ends the running turn as interrupted; the build then commits and records it. The build reports a
+    // A task that is waiting for the owner right now is parked, not ended: its approvals stay for the next start.
+    parkCurrent?.();
+    // Ends the running turn as interrupted; the build then commits and records it, or parks it. The build reports a
     // process that would not stop, and the chain is always waited for: the database closes after this.
     await current?.close().catch(() => {});
     await chain;

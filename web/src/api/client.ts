@@ -143,6 +143,10 @@ export interface TaskSummary {
   attemptId: number | null;
   /** The task's agent asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
+  /** A request that waits for the owner was asked before Smelt restarted: the agent is stopped, and the answer resumes the task. */
+  parked: boolean;
+  /** The owner's answer to such a request is stored, and the task is being started again to receive it. */
+  resuming: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -203,10 +207,15 @@ export interface Approval {
   note: string | null;
   createdAt: string;
   resolvedAt: string | null;
+  /** Set when the request was asked before Smelt restarted: its agent is stopped, and answering resumes the task. */
+  parkedAt: string | null;
+  /** The owner's answer to such a request, stored until the resumed task asks again. The status stays pending until then. */
+  storedDecision: "allow" | "decline" | null;
 }
 
-/** The approvals waiting for an answer, oldest first. */
-export const listPendingApprovals = async (): Promise<Approval[]> => (await request<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals;
+/** The approvals waiting for the owner's answer, oldest first. One whose answer is already stored no longer waits for the owner. */
+export const listPendingApprovals = async (): Promise<Approval[]> =>
+  (await request<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals.filter((approval) => approval.storedDecision === null);
 export const answerApproval = (id: number, decision: "allow" | "decline", note?: string): Promise<{ approval: Approval }> =>
   request("POST", `/api/approvals/${id}`, note === undefined || note.trim() === "" ? { decision } : { decision, note }, 30_000);
 

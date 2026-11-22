@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -7,6 +8,7 @@ import type { Config } from "../../src/config.ts";
 import { createTask, moveTask } from "../../src/engine/task.ts";
 import { startServer, type SmeltServer } from "../../src/server.ts";
 import { createWorktree } from "../../src/worktrees.ts";
+import type { Left } from "../support/leave-pending.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
 
 // No test in this file starts a driver: the requests are made to the server's own broker, as a driver's session would.
@@ -140,7 +142,7 @@ test("a pending approval is listed with what the card shows, answering it resolv
   const approval = listed[0]!;
   assert.deepEqual(
     { ...approval, id: 0, createdAt: "" },
-    { id: 0, taskId: api.taskId, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null },
+    { id: 0, taskId: api.taskId, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null },
   );
   assert.deepEqual(announced[0], { approvalId: approval.id, taskId: api.taskId, status: "pending" });
   // The task says it is waiting on the owner, in its own description and in the list.
@@ -210,4 +212,45 @@ test("closing the server leaves no approval pending and no socket behind", async
   await api.server.close();
   assert.equal((await waiting).decision, "decline");
   assert.equal(fs.existsSync(socket), false);
+});
+
+test("after a restart, an approval asked before it is still listed, says so, and its task is shown as parked; an answer without a session stores nothing", async (t) => {
+  const dir = tempDir("smelt-apr-api-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  const repo = path.join(dir, "repo");
+  initRepo(repo);
+  // A real Smelt process that was killed while a task waited for the owner. The owner's answer itself re-drives
+  // the task with the real CLI, so that part is in test/live/recover-approval.live.test.ts.
+  const run = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "..", "support", "leave-pending.ts"), JSON.stringify({ home, repo, cursor: "0b7b7c9e-4a51-4c0e-9d0c-0d3f8f6f2a11", commands: ["sh make-marker.sh"] })], { encoding: "utf8" });
+  const left = JSON.parse(run.stdout) as Left;
+
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const server = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
+  const signedIn = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
+  await signedIn.arrayBuffer();
+  const api: Api = { server, dir, base, headers: { cookie: signedIn.headers.getSetCookie()[0]!.split(";")[0]! }, taskId: left.taskId, attemptId: left.attemptId };
+
+  const pending = (await get(api, "/api/approvals?status=pending")).body.approvals as Record<string, unknown>[];
+  assert.deepEqual(pending.map((a) => [a.id, a.taskId, a.attemptId, a.command, a.cwd, a.status, a.storedDecision]), [[left.approvalIds[0], left.taskId, left.attemptId, "sh make-marker.sh", ".", "pending", null]]);
+  assert.equal(typeof pending[0]!.parkedAt, "string");
+  const task = (await get(api, `/api/tasks/${left.taskId}`)).body;
+  assert.deepEqual([task.status, task.waitingOnApproval, task.parked, task.resuming, task.reason, task.attemptId], ["building", true, true, false, null, left.attemptId]);
+
+  const res = await fetch(`${base}/api/approvals/${left.approvalIds[0]}`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ decision: "allow" }) });
+  assert.equal(res.status, 401);
+  await res.arrayBuffer();
+  const after = (await get(api, "/api/approvals")).body.approvals as Record<string, unknown>[];
+  assert.deepEqual(after.map((a) => [a.status, a.storedDecision]), [["pending", null]]);
+  assert.deepEqual(((await get(api, "/api/action-log")).body.entries as Record<string, unknown>[]).map((e) => e.rule), ["asked_owner"]);
+  assert.equal(server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 1, "nothing was started");
+
+  // Shutting down again leaves it as it is: still pending, for the next start.
+  await server.close();
+  const again = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => again.close());
+  assert.deepEqual(again.broker.pending().map((a) => [a.id, a.parkedAt]), [[left.approvalIds[0], pending[0]!.parkedAt]]);
 });

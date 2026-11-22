@@ -116,6 +116,11 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
           </div>
         )}
       </dl>
+      {approval.parkedAt !== null && (
+        <p data-testid="approval-parked" className="break-words font-medium">
+          Asked before Smelt restarted. Claude Code is stopped; your answer starts it again where it stood, and counts only if it asks for exactly this again.
+        </p>
+      )}
       {more > 0 && <p className="text-muted">{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
       {problem !== null && (
         <p role="alert" className="break-words font-medium">

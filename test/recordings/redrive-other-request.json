@@ -1,0 +1,161 @@
+{
+  "about": "A real Claude Code session, recorded through Smelt's driver and permission broker by test/support/capture-redrive.ts. Attempt 1 asked to run `sh make-marker.sh` and was stopped while it waited. Attempt 2 resumed the session under the capture's own prompt (not the one Smelt sends after a restart) and asked to run `sh other.sh` instead, was allowed, and finished.",
+  "cli": "2.1.322 (Claude Code)",
+  "model": "haiku",
+  "recordedAt": "2026-11-22T11:14:03.504Z",
+  "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+  "prompts": [
+    "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done",
+    "Do not run that command after all. Run the command `sh other.sh` with your Bash tool instead, exactly once. Then reply with the single word: done"
+  ],
+  "approvals": [
+    {
+      "attempt": 1,
+      "tool": "Bash",
+      "command": "sh make-marker.sh",
+      "cwd": ".",
+      "toolCallId": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+      "status": "superseded"
+    },
+    {
+      "attempt": 2,
+      "tool": "Bash",
+      "command": "sh other.sh",
+      "cwd": ".",
+      "toolCallId": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+      "status": "allowed"
+    }
+  ],
+  "attempts": [
+    [
+      {
+        "type": "user_prompt",
+        "text": "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done"
+      },
+      {
+        "type": "session_started",
+        "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+        "model": "claude-haiku-5-5",
+        "keySource": "none"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "name": "Bash",
+        "input": {
+          "command": "sh make-marker.sh",
+          "description": "Run make-marker.sh script once"
+        }
+      },
+      {
+        "type": "rate_limit",
+        "limited": false,
+        "status": "allowed",
+        "resetsAt": "2026-11-26T23:00:00.000Z"
+      },
+      {
+        "type": "permission_request",
+        "id": "ea28bdfa-21a8-4f74-8ac9-820ea931c4e7",
+        "toolCallId": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "name": "Bash",
+        "input": {
+          "command": "sh make-marker.sh",
+          "description": "Run make-marker.sh script once"
+        },
+        "reason": "Run make-marker.sh script once"
+      },
+      {
+        "type": "permission_resolved",
+        "id": "ea28bdfa-21a8-4f74-8ac9-820ea931c4e7",
+        "toolCallId": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "decision": "cancelled",
+        "note": null
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "output": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.\n\nNote: The user's next message may contain a correction or preference. Pay close attention — if they explain what went wrong or how they'd prefer you to work, consider saving that to memory for future sessions.",
+        "isError": true
+      },
+      {
+        "type": "usage",
+        "inputTokens": 2,
+        "outputTokens": 86,
+        "cacheReadTokens": 12932,
+        "cacheWriteTokens": 7494
+      },
+      {
+        "type": "turn_ended",
+        "reason": "interrupted",
+        "detail": "aborted_tools"
+      }
+    ],
+    [
+      {
+        "type": "user_prompt",
+        "text": "Do not run that command after all. Run the command `sh other.sh` with your Bash tool instead, exactly once. Then reply with the single word: done"
+      },
+      {
+        "type": "session_started",
+        "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+        "model": "claude-haiku-5-5",
+        "keySource": "none"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "name": "Bash",
+        "input": {
+          "command": "sh other.sh",
+          "description": "Run other.sh script once"
+        }
+      },
+      {
+        "type": "rate_limit",
+        "limited": false,
+        "status": "allowed",
+        "resetsAt": "2026-11-26T23:00:00.000Z"
+      },
+      {
+        "type": "permission_request",
+        "id": "7f81a597-989e-445e-ab0a-c7febf875ec6",
+        "toolCallId": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "name": "Bash",
+        "input": {
+          "command": "sh other.sh",
+          "description": "Run other.sh script once"
+        },
+        "reason": "Run other.sh script once"
+      },
+      {
+        "type": "permission_resolved",
+        "id": "7f81a597-989e-445e-ab0a-c7febf875ec6",
+        "toolCallId": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "decision": "allowed",
+        "note": null
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "output": "(Bash completed with no output)",
+        "isError": false
+      },
+      {
+        "type": "text",
+        "text": "done"
+      },
+      {
+        "type": "usage",
+        "inputTokens": 4,
+        "outputTokens": 83,
+        "cacheReadTokens": 41180,
+        "cacheWriteTokens": 447
+      },
+      {
+        "type": "turn_ended",
+        "reason": "completed",
+        "detail": null
+      }
+    ]
+  ]
+}

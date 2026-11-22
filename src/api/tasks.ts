@@ -1,6 +1,6 @@
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
-import { waitingOnApproval } from "../approvals/broker.ts";
+import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
@@ -13,11 +13,22 @@ export const MAX_DIFF = 400_000;
 
 /**
  * A task as a client sees it: what it was given, where it stands, and the branch and commits its work is on.
- * `waitingOnApproval` is read from the pending approvals, not stored: a task that waits for the owner is still building.
+ * What it says about approvals is read from the pending approvals, not stored: a task that waits for the owner is still building.
+ * `waitingOnApproval`: a request of its agent waits for the owner's answer. `parked`: such a request was asked before a
+ * restart, so the agent is stopped and the answer will resume the task. `resuming`: the owner's answer to such a request
+ * is stored and the task is being started again to receive it.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
-  return { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, waitingOnApproval: waitingOnApproval(db, id), createdAt, updatedAt };
+  const pending = status === "building" ? pendingApprovals(db, id) : [];
+  const waiting = pending.filter((approval) => approval.storedDecision === null);
+  return {
+    id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
+    waitingOnApproval: waitingOnApproval(db, id),
+    parked: waiting.some((approval) => approval.parkedAt !== null),
+    resuming: pending.length > 0 && waiting.length === 0,
+    createdAt, updatedAt,
+  };
 }
 
 /** The files the task changed, from its base commit to the commit Smelt made. Null with the reason when they cannot be read. */
