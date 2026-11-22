@@ -2,7 +2,7 @@
 version: alpha
 name: Smelt
 # Generated: everything from here to the closing line is web/vendor/groundwork/design-tokens.md
-# (Groundwork 0.3.0), unchanged. Do not edit it here. After a sync, copy that file over this block again.
+# (Groundwork 0.4.0), unchanged. Do not edit it here. After a sync, copy that file over this block again.
 colors:
   accent: "#1A1A1A"
   accent-hover: "#3D3D3A"

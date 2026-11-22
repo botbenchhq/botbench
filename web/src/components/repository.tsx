@@ -118,7 +118,7 @@ export function RepositoryField({ choice }: { choice: RepositoryChoice }) {
         Repository path <span className="gw-field__required">required</span>
       </label>
       <input id="repo" name="repo" type="text" required autoCapitalize="none" autoCorrect="off" spellCheck={false} value={choice.repo} onChange={(e) => choice.setRepo(e.target.value)} aria-describedby="repo-state" aria-invalid={choice.refused} className="gw-field__control" />
-      <p id="repo-state" data-testid="repo-state" role="status" className={choice.refused ? "gw-field__error sm-wrap" : "gw-field__description sm-wrap"}>
+      <p id="repo-state" data-testid="repo-state" role="status" className={choice.refused ? "gw-field__error" : "gw-field__description"}>
         {choice.words}
       </p>
     </div>

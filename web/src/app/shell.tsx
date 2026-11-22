@@ -54,7 +54,7 @@ function screenFor(route: Route, onSignedOut: () => void) {
       <Page>
         <div className="gw-not-found">
           <div role="alert" className="gw-empty-state">
-            <h1 className="gw-empty-state__title sm-wrap">{`There is no screen at ${route.what}.`}</h1>
+            <h1 className="gw-empty-state__title">{`There is no screen at ${route.what}.`}</h1>
             <p className="gw-empty-state__body">The address may be mistyped. The navigation lists every screen there is.</p>
           </div>
         </div>

@@ -25,7 +25,7 @@ type Deleted = { task: PlanTask; at: number; left: number; undoing: boolean };
 function PlanRow({ task, number, locked, onEdit, onDelete }: { task: PlanTask; number: number; locked: boolean; onEdit: () => void; onDelete: () => void }) {
   return (
     <>
-      <div className="gw-editable-list__text sm-wrap gw-stack gw-gap-xs">
+      <div className="gw-editable-list__text gw-stack gw-gap-xs">
         <strong>{task.title}</strong>
         <ul aria-label={`Acceptance criteria of task ${number}`} className="gw-stack gw-gap-xs">
           {task.criteria.map((criterion, i) => (
@@ -59,7 +59,7 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
         <label htmlFor="plan-title" className="gw-field__label">{`${name} title`}</label>
         <input ref={title} id="plan-title" type="text" autoComplete="off" readOnly={saving} value={editing.title} onChange={(e) => onChange({ ...editing, title: e.target.value })} aria-invalid={editing.problem.title !== undefined} aria-describedby={editing.problem.title === undefined ? undefined : "plan-title-error"} className="gw-field__control" />
         {editing.problem.title !== undefined && (
-          <p id="plan-title-error" className="gw-field__error sm-wrap">
+          <p id="plan-title-error" className="gw-field__error">
             {editing.problem.title}
           </p>
         )}
@@ -69,13 +69,13 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
         <textarea id="plan-criteria" readOnly={saving} value={editing.criteria} onChange={(e) => onChange({ ...editing, criteria: e.target.value })} aria-invalid={editing.problem.criteria !== undefined} aria-describedby={editing.problem.criteria === undefined ? "plan-criteria-about" : "plan-criteria-about plan-criteria-error"} className="gw-field__control gw-textarea" />
         <p id="plan-criteria-about" className="gw-field__description">One criterion on each line: a sentence that can be checked when the task is done.</p>
         {editing.problem.criteria !== undefined && (
-          <p id="plan-criteria-error" className="gw-field__error sm-wrap">
+          <p id="plan-criteria-error" className="gw-field__error">
             {editing.problem.criteria}
           </p>
         )}
       </div>
       {editing.problem.save !== undefined && (
-        <p role="alert" className="gw-field__error sm-wrap">
+        <p role="alert" className="gw-field__error">
           {editing.problem.save}
         </p>
       )}
@@ -284,6 +284,14 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   return (
     <Frame current={null} banner={connected ? undefined : <StreamBanner />}>
       <Page>
+        {/* The page header comes first and holds the view's one h1, also while the run is being read or cannot be. */}
+        <PageHeader title={`Run ${id}`}>
+          {run !== null && (
+            <p data-testid="run-status" role="status" className="gw-page-header__description">
+              {runSentence(run)}
+            </p>
+          )}
+        </PageHeader>
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}
@@ -297,11 +305,6 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
           )
         ) : (
           <>
-            <PageHeader title={`Run ${run.id}`}>
-              <p data-testid="run-status" role="status" className="gw-page-header__description sm-wrap">
-                {runSentence(run)}
-              </p>
-            </PageHeader>
             <dl className="gw-key-value">
               <div className="gw-key-value__item">
                 <dt className="gw-key-value__label">Repository</dt>
@@ -411,7 +414,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     <li key={task.id} className="gw-list__row">
                       <a href={`#/tasks/${task.id}`} className="gw-list__link">
                         <span className="gw-run-status">
-                          <span className="gw-run-status__title sm-wrap">{task.title}</span>
+                          <span className="gw-run-status__title">{task.title}</span>
                           <span className="gw-run-status__station">
                             <span className={statusLook({ status: task.status, waitingOnApproval: false, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: false, resuming: false })}</span>
                           </span>

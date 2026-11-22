@@ -64,7 +64,7 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
   if (state.kind === "failed") {
     return (
       <figure className="gw-diff">
-        <p role="alert" className="gw-diff__note sm-wrap">{`The diff could not be read. ${state.why}`}</p>
+        <p role="alert" className="gw-diff__note">{`The diff could not be read. ${state.why}`}</p>
       </figure>
     );
   }
@@ -198,6 +198,14 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   return (
     <Frame current={null} banner={connected ? undefined : <StreamBanner />}>
       <Page>
+        {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be. */}
+        <PageHeader title={`Task ${id}`}>
+          {task !== null && (
+            <p data-testid="task-status" role="status" className="gw-page-header__description">
+              {statusSentence(task)}
+            </p>
+          )}
+        </PageHeader>
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}
@@ -211,11 +219,6 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
           )
         ) : (
           <>
-            <PageHeader title={`Task ${task.id}`}>
-              <p data-testid="task-status" role="status" className="gw-page-header__description sm-wrap">
-                {statusSentence(task)}
-              </p>
-            </PageHeader>
             <dl className="gw-key-value">
               <div className="gw-key-value__item">
                 <dt className="gw-key-value__label">Model</dt>

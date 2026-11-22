@@ -143,7 +143,7 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
             )}
           </select>
         </div>
-        <p id="model-source" data-testid="model-source" role="status" className="gw-field__description sm-wrap">
+        <p id="model-source" data-testid="model-source" role="status" className="gw-field__description">
           {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
         </p>
       </div>

@@ -211,7 +211,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
               {driverWords(driver, driverFailed)}
             </p>
             {session !== null && (
-              <p data-testid="turn-model" className="gw-page-header__description sm-wrap">
+              <p data-testid="turn-model" className="gw-page-header__description">
                 {modelWords(session)}
               </p>
             )}
