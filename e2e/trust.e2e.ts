@@ -50,16 +50,11 @@ async function cardOf(page: Page, id: number): Promise<Locator> {
   return card;
 }
 
-test("LIVE: Trust starts empty in words; a card for a command allowed before offers standing permission with its scope, as a secondary step that must be confirmed; granted, the command runs with no card; Trust lists the grant and the log, and Take back, once confirmed, removes it; a card for `git push` never offers", async ({ page, botbench, repo }) => {
-  const foreign = watchRequests(page, botbench);
-  const before = checkoutState(repo);
+test("Permissions starts empty in words, with nothing to tap and nothing in the tray", async ({ page, botbench }) => {
   await signIn(page, botbench);
-  await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const nav = page.getByRole("navigation", { name: "Screens" });
-  const tray = page.getByTestId("approval-tray");
-
-  // Trust is a screen of its own in the navigation. With nothing granted and nothing logged it says so in words.
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions"]);
+  // Permissions is a screen of its own in the navigation. With nothing granted and nothing logged it says so in words.
+  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
   await nav.getByRole("link", { name: "Permissions" }).click();
   await expect(page.getByRole("heading", { name: "Permissions", level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Activity"]);
@@ -69,8 +64,19 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
   await expect(page.getByTestId("action-log")).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(0);
-  await expect(tray).toBeEmpty();
+  await expect(page.getByTestId("approval-tray")).toBeEmpty();
   await checkDesign(page, "trust, empty");
+});
+
+test("LIVE: a card for a command allowed before offers standing permission with its scope, as a secondary step that must be confirmed; granted, the command runs with no card; Trust lists the grant and the log, and Take back, once confirmed, removes it; a card for `git push` never offers", async ({ page, botbench, repo }) => {
+  const foreign = watchRequests(page, botbench);
+  const before = checkoutState(repo);
+  await signIn(page, botbench);
+  await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
+  const nav = page.getByRole("navigation", { name: "Screens" });
+  const tray = page.getByTestId("approval-tray");
+
+  // The empty Permissions screen is drawn without a model: see "Permissions starts empty in words" above.
 
   // The first card for the command: nothing was allowed before, so it offers nothing.
   await startTask(page, repo, SCRIPT_PROMPT, 1);

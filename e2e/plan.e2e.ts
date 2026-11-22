@@ -38,31 +38,22 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // A mark on the page that a reload would wipe out.
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
-  // The navigation lists the destinations; starting something new is a button in its list's view.
+  // The navigation, New run when empty and the run's allowed list are drawn without a model: see "the navigation lists
+  // the destinations…" below. Here the run is started from the Runs view, as an owner would.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions"]);
   await nav.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Runs");
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
-  await checkDesign(page, "runs, none yet");
   await page.getByRole("link", { name: "New run" }).click();
   await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button")).toHaveCount(1);
-  await checkDesign(page, "new run, empty");
 
   // The repository is checked as it is typed; its pre-approved commands are confirmed here, for this run.
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   const prompt = "Add three files: a.txt containing a, b.txt containing b, c.txt containing c. Plan exactly three tasks, one per file. Do not run any command and do not read more than the README.";
   await page.getByLabel("Prompt").fill(prompt);
-  await expect(page.getByRole("heading", { name: "Allowed for this run" })).toBeVisible();
-  await expect(page.getByTestId("preapproved-none")).toBeVisible();
   await page.getByLabel("Add a command").fill("npm test");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
-  await expect(page.locator(".ds-button--primary")).toHaveCount(1);
-  await checkDesign(page, "new run, filled in");
   await shot(page, "u11-new-run.png");
   await page.getByRole("button", { name: "Start run" }).click();
 
@@ -191,6 +182,34 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   expect(checkoutState(repo)).toEqual(before);
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
   expect(foreign).toEqual([]);
+});
+
+test("the navigation lists the destinations; New run starts empty with one control, and its allowed list starts empty and takes a command", async ({ page, botbench }) => {
+  const repo = sourceRepo(botbench.home);
+  await signIn(page, botbench);
+  // Starting something new is a button in its list's view, not a destination.
+  const nav = page.getByRole("navigation", { name: "Screens" });
+  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
+  await nav.getByRole("link", { name: "Runs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Runs");
+  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
+  await checkDesign(page, "runs, none yet");
+  await page.getByRole("link", { name: "New run" }).click();
+  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button")).toHaveCount(1);
+  await checkDesign(page, "new run, empty");
+
+  await page.getByLabel("Repository path").fill(repo);
+  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
+  await page.getByLabel("Prompt").fill("Add a.txt containing a.");
+  await expect(page.getByRole("heading", { name: "Allowed for this run" })).toBeVisible();
+  await expect(page.getByTestId("preapproved-none")).toBeVisible();
+  await page.getByLabel("Add a command").fill("npm test");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
+  await expect(page.locator(".ds-button--primary")).toHaveCount(1);
+  await checkDesign(page, "new run, filled in");
 });
 
 test("a spec file that does not exist is reported in words and nothing starts; a prompt and a spec file together are not sent", async ({ page, botbench }) => {
