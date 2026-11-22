@@ -176,6 +176,20 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               </p>
             </section>
 
+            {task.preapproved.length > 0 && (
+              <section className="flex flex-col gap-sm">
+                <h2 className="font-semibold">Pre-approved for this task</h2>
+                <ul data-testid="task-preapproved" className="flex flex-col gap-xs">
+                  {task.preapproved.map((command) => (
+                    <li key={command} className="break-all font-mono text-mono">
+                      {command}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-muted">You listed these when you started the task. They run without asking, with further arguments too, unless they are on Smelt's never-list (git push, sudo, deleting outside the worktree and the like) or are chained, piped or redirected: those still ask.</p>
+              </section>
+            )}
+
             {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
 
             {shown.length > 0 || working !== null ? (
@@ -242,7 +256,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   </p>
                 )}
                 <p data-testid="not-merged" className="text-muted">
-                  Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.
+                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. ${task.preapproved.length > 0 ? "The commands listed above run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first"}, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or pre-approve" : ""} runs with your account's rights.`}
                 </p>
               </section>
             )}

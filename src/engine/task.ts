@@ -3,6 +3,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
+import { insertPreapproved } from "../approvals/grants.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
@@ -27,7 +28,7 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
 
 export interface Task {
   id: number;
-  /** The run this task belongs to. None until runs exist. */
+  /** The run this task belongs to. A task started on its own is a run of one; null only for tasks from before runs were numbered. */
   runId: number | null;
   repo: string;
   prompt: string;
@@ -97,11 +98,18 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: TaskStatu
   db.prepare("INSERT INTO task_events (task_id, ts, status, detail) VALUES (?, ?, ?, ?)").run(id, at, status, detail);
 };
 
-/** Store a new task as queued. The row and its first event are written together. */
-export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null }): Task {
+/**
+ * Store a new task as queued, as a run of its own. The row, the grants for the commands the owner pre-approved for
+ * that run, and the task's first event are written together: none exists without the others.
+ * Throws for a pre-approved command that cannot be a grant, and then nothing is written.
+ */
+export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null; preapproved?: readonly string[] }): Task {
   return transaction(db, () => {
     const at = now();
-    const id = Number(db.prepare("INSERT INTO tasks (repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)").run(o.repo, o.prompt, o.requestedModel ?? null, at, at).lastInsertRowid);
+    // Runs have no table of their own yet: a new run takes the next number after the highest in use.
+    const runId = Number(db.prepare("SELECT COALESCE(MAX(run_id), 0) + 1 AS next FROM tasks").get()!.next);
+    const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(runId, o.repo, o.prompt, o.requestedModel ?? null, at, at).lastInsertRowid);
+    insertPreapproved(db, { role: IMPLEMENTER, repo: o.repo, runId, taskId: id, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "queued", null);
     return getTask(db, id)!;
   });
@@ -187,8 +195,9 @@ export interface Tasks {
   /**
    * Check the repository, store the task as queued and return it at once. The build goes on in the background.
    * `model` is the model asked for: a name, null for the CLI's own default, or left out for the configured one.
+   * `preapproved` are the commands the owner lets this task's run use without asking; each must be one plain command.
    */
-  start(repo: unknown, prompt: string, model?: string | null): Promise<Task>;
+  start(repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task>;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /** Interrupt the task being built, commit what it did, and leave no CLI process behind. Tasks still queued are marked interrupted. */
@@ -301,9 +310,9 @@ export function createTasks(options: TasksOptions): Tasks {
         asking.add(event.id);
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
-          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), reason: event.reason, toolCallId: event.toolCallId })
+          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined }) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));
       }
       if (event.type === "permission_resolved") {
@@ -451,11 +460,11 @@ export function createTasks(options: TasksOptions): Tasks {
     chain = chain.then(() => redrive(approval.taskId)).catch(report(`Resuming task ${approval.taskId}`));
   });
 
-  const start = async (repo: unknown, prompt: string, model?: string | null): Promise<Task> => {
+  const start = async (repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task> => {
     if (closed) throw new TaskError(503, "Smelt is shutting down.");
     const checked = await checkRepository(repo);
     if (closed) throw new TaskError(503, "Smelt is shutting down.");
-    const task = createTask(db, { repo: checked, prompt, requestedModel: model === undefined ? (options.model ?? null) : model });
+    const task = createTask(db, { repo: checked, prompt, requestedModel: model === undefined ? (options.model ?? null) : model, ...(preapproved ? { preapproved } : {}) });
     options.onTaskChange(task);
     chain = chain.then(() => build(task.id)).catch(report(`Building task ${task.id}`));
     return task;

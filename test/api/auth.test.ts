@@ -114,7 +114,7 @@ test("AE10: without a session every route but sign-in is refused, on the loopbac
     assert.equal(signedIn.status, 200, `sign-in on ${address}`);
     const health = await request({ port, address, path: "/health", headers: { cookie: sessionCookie(signedIn).pair } });
     assert.equal(health.status, 200, `health with a session on ${address}`);
-    assert.deepEqual(JSON.parse(health.body), { status: "ok", schemaVersion: 6 });
+    assert.deepEqual(JSON.parse(health.body), { status: "ok", schemaVersion: 7 });
   }
 });
 

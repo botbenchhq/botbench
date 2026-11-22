@@ -2,6 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { FLOOR_RULES, type FloorEntry } from "./approvals/floor.ts";
+import { entryProblem, realRepo } from "./approvals/grants.ts";
+import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -32,6 +35,20 @@ export interface RoleConfig {
   /** Model for this role; the driver's `model` when absent. Only the implementer role is in use so far. */
   model?: string;
 }
+/** What the owner has set for one repository. */
+export interface RepositoryConfig {
+  /** Commands offered on the new-task screen as the ones a task may run without asking. The owner confirms or edits them per task. */
+  preapproved?: string[];
+  /** Commands that prepare a fresh worktree. Read and checked here; run by the build station when it exists. */
+  setup?: string[];
+  /** Commands that verify a task's work. Read and checked here; run by the verify station when it exists. */
+  checks?: string[];
+}
+/** One entry the owner adds to the safety floor: a command whose words, found anywhere in a request, make it always ask. */
+export interface FloorConfig {
+  name: string;
+  command: string;
+}
 export interface Config {
   port: number;
   /** Addresses to listen on. The default is the loopback address only. */
@@ -43,6 +60,10 @@ export interface Config {
   publicHosts?: string[];
   drivers: Partial<Record<DriverName, DriverConfig>>;
   roles: Record<string, RoleConfig>;
+  /** Settings per repository, keyed by the repository's full path. */
+  repositories?: Record<string, RepositoryConfig>;
+  /** Entries added to the safety floor. The built-in rules cannot be removed or changed from here. */
+  floor?: FloorConfig[];
 }
 
 type Json = Record<string, unknown>;
@@ -83,7 +104,7 @@ function validate(c: Json, where: string): Config {
   const fail = (message: string): never => {
     throw new Error(`${where}: ${message}`);
   };
-  const { port, listen, publicHosts, drivers, roles } = c;
+  const { port, listen, publicHosts, drivers, roles, repositories, floor } = c;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) fail(`"port" must be a whole number from 0 to 65535.`);
   if (!Array.isArray(listen) || listen.length === 0 || !listen.every((a) => typeof a === "string" && a !== "")) {
     fail(`"listen" must be a non-empty list of addresses.`);
@@ -104,7 +125,45 @@ function validate(c: Json, where: string): Config {
     else if (!(value.driver in drivers)) fail(`role "${role}" uses driver "${value.driver}", which is not in "drivers".`);
     else if (value.model !== undefined && modelNameProblem(value.model) !== null) fail(`role "${role}": "model" must be a model name. ${modelNameProblem(value.model)}`);
   }
+  if (repositories !== undefined) {
+    if (!isObject(repositories)) return fail(`"repositories" must be an object keyed by the full path of each repository.`);
+    for (const [repo, value] of Object.entries(repositories)) {
+      if (!path.isAbsolute(repo)) fail(`"repositories" has the key "${repo}", which is not a full path starting with /.`);
+      if (!isObject(value)) return fail(`repository "${repo}" must be an object.`);
+      for (const [setting, list] of Object.entries(value)) {
+        if (!(REPOSITORY_SETTINGS as readonly string[]).includes(setting)) fail(`repository "${repo}" has unknown setting "${setting}". Known settings: ${REPOSITORY_SETTINGS.join(", ")}.`);
+        if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
+        // Only the pre-approved list is held to one plain command each: setup and check commands are run by Smelt itself.
+        const problem = setting === "preapproved" ? list.map(entryProblem).find((p) => p !== null) : list.some((command) => command.trim() === "") ? "A command is empty." : undefined;
+        if (problem) fail(`repository "${repo}": "${setting}" holds a command that cannot be used. ${problem}`);
+      }
+    }
+  }
+  if (floor !== undefined) {
+    if (!Array.isArray(floor)) return fail(`"floor" must be a list of entries, each with a "name" and a "command".`);
+    for (const entry of floor) {
+      if (!isObject(entry) || typeof entry.name !== "string" || entry.name.trim() === "" || typeof entry.command !== "string") return fail(`"floor" must be a list of entries, each with a "name" and a "command".`);
+      if (FLOOR_RULES.some((rule) => rule.name === entry.name)) fail(`"floor" has an entry named "${entry.name}", which is the name of a built-in rule. Built-in rules cannot be replaced; give the entry its own name.`);
+      if (splitPlain(entry.command) === null) fail(`"floor" entry "${entry.name}": its command must be one plain command, such as "npm publish".`);
+    }
+  }
   return c as unknown as Config;
+}
+
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks"] as const;
+
+/** A repository's settings, found by its real path. The config's keys are compared as written and with their links followed. */
+export function repositorySettings(config: Config, repo: string): RepositoryConfig {
+  const real = realRepo(repo);
+  for (const [key, value] of Object.entries(config.repositories ?? {})) {
+    if (path.resolve(key) === real || realRepo(key) === real) return value;
+  }
+  return {};
+}
+
+/** The owner's added floor entries as the words the floor compares. */
+export function floorEntries(config: Config): FloorEntry[] {
+  return (config.floor ?? []).map((entry) => ({ name: entry.name, words: splitPlain(entry.command) ?? [] }));
 }
 
 /** Objects merge key by key; anything else, arrays included, is replaced. */
