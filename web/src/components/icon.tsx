@@ -6,6 +6,7 @@ export type IconName =
   | "file"
   | "plus"
   | "circle-check"
+  | "clock"
   | "circle-alert"
   | "circle-dashed"
   | "circle-pause"

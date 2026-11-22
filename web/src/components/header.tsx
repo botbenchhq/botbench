@@ -8,7 +8,7 @@ import { Icon, type IconName } from "./icon.tsx";
 /**
  * The destinations the navigation lists. Every one of them exists. Starting something new is an action, not a
  * destination: New run and New task are buttons in the Runs and Tasks views, as the design system has it, which
- * also keeps the phone's tab bar within the five it holds. Settings is not a destination either: it is the app
+ * also keeps the phone's tab bar within the five it holds (Chat, Runs, Tasks, Permissions, Usage). Settings is not a destination either: it is the app
  * header's action, on every signed-in screen, so the tab bar keeps room for the app's main destinations.
  */
 const SCREENS: readonly { name: string; label: string; href: string; icon: IconName }[] = [
@@ -16,8 +16,9 @@ const SCREENS: readonly { name: string; label: string; href: string; icon: IconN
   { name: "runs", label: "Runs", href: "#/runs", icon: "git-branch" },
   { name: "tasks", label: "Tasks", href: "#/tasks", icon: "file" },
   { name: "trust", label: "Permissions", href: "#/trust", icon: "circle-check" },
+  { name: "usage", label: "Usage", href: "#/usage", icon: "clock" },
 ];
-export type ScreenName = "turn" | "runs" | "tasks" | "trust";
+export type ScreenName = "turn" | "runs" | "tasks" | "trust" | "usage";
 
 /**
  * What every signed-in screen stands in: the app header with the approvals tray, the banner when there is one, the

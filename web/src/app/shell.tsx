@@ -12,10 +12,11 @@ import { TaskScreen } from "../screens/task.tsx";
 import { TasksScreen } from "../screens/tasks.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
 import { TurnScreen } from "../screens/turn.tsx";
+import { UsageScreen } from "../screens/usage.tsx";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn" } | { screen: "tasks" } | { screen: "new-task" } | { screen: "trust" } | { screen: "task"; id: number } | { screen: "runs" } | { screen: "settings" } | { screen: "new-run" } | { screen: "run"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn" } | { screen: "tasks" } | { screen: "new-task" } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "runs" } | { screen: "settings" } | { screen: "new-run" } | { screen: "run"; id: number } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -24,6 +25,7 @@ function parseRoute(hash: string): Route {
   if (at === "/tasks") return { screen: "tasks" };
   if (at === "/tasks/new") return { screen: "new-task" };
   if (at === "/trust") return { screen: "trust" };
+  if (at === "/usage") return { screen: "usage" };
   if (at === "/runs") return { screen: "runs" };
   if (at === "/settings") return { screen: "settings" };
   if (at === "/runs/new") return { screen: "new-run" };
@@ -46,6 +48,7 @@ function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "tasks") return <TasksScreen onSignedOut={onSignedOut} />;
   if (route.screen === "new-task") return <NewTaskScreen onSignedOut={onSignedOut} />;
   if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
   if (route.screen === "runs") return <BoardScreen onSignedOut={onSignedOut} />;
   if (route.screen === "settings") return <SettingsScreen onSignedOut={onSignedOut} />;
   if (route.screen === "new-run") return <NewRunScreen onSignedOut={onSignedOut} />;
