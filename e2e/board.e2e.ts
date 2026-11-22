@@ -89,21 +89,25 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   await openSettings(page);
   const probe = (await (await page.request.get(`${botbench.base}/api/driver`)).json()) as { version: string; signedIn: boolean; billing: string };
   expect(probe.signedIn, "this machine's Claude Code is signed in").toBe(true);
+  // The agents the server really registers, as it lists them: one row each, and no other.
+  const listed = ((await (await page.request.get(`${botbench.base}/api/agents`)).json()) as { agents: { agent: string; version: string | null; problem: string | null }[] }).agents;
+  expect(listed.map((found) => found.agent), "Claude Code, the agent that builds, is listed").toContain("claude-code");
   const agents = page.getByRole("group", { name: "Agents" });
-  await expect(agents.locator(".ds-settings-row")).toHaveCount(2);
+  await expect(agents.locator(".ds-settings-row")).toHaveCount(listed.length);
+  for (const found of listed) await expect(agents.getByTestId(`agent-${found.agent}`)).toHaveCount(1);
   const agent = page.getByTestId("agent-claude-code");
   await expect(agent.getByTestId("agent-state")).toHaveText("Available");
   await expect(agent).toContainText(`Version ${probe.version}.`);
   await expect(agent).toContainText(probe.billing === "subscription" ? "Signed in with a subscription." : "Signed in.");
   // Codex, as its own probe reports it, and what it does here.
-  const codex = ((await (await page.request.get(`${botbench.base}/api/agents`)).json()) as { agents: { agent: string; version: string | null; problem: string | null }[] }).agents.find((found) => found.agent === "codex")!;
+  const codex = listed.find((found) => found.agent === "codex")!;
   const codexRow = page.getByTestId("agent-codex");
   await expect(codexRow.getByTestId("agent-state")).toHaveText(codex.problem === null ? "Available" : /Signed out|Not installed|Unsupported version|Unavailable/);
   await expect(codexRow).toContainText(codex.problem ?? `Version ${codex.version}.`);
   if (codex.problem === null) await expect(codexRow).toContainText("Reviews a run's tasks when you choose it on New run; it cannot plan or build here.");
   for (const other of ["Gemini", "Grok"]) await expect(page.getByText(other)).toHaveCount(0);
-  // Settings is no tab: the tab bar keeps its four destinations.
-  await expect(page.locator(".ds-tab-bar__item")).toHaveCount(4);
+  // Settings is no tab: the tab bar keeps its five destinations.
+  await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
   await expect(page.locator('.ds-tab-bar__item[aria-current="page"]')).toHaveCount(0);
   await checkDesign(page, "settings");
   await shot(page, "u16-settings.png");
@@ -288,11 +292,7 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
   }
 });
 
-test("LIVE: in light mode, sign-in, a chat with a tool call, an approval card, a task ready for review, the board and Settings are drawn in the light colours", async ({ page, botbench }) => {
-  test.setTimeout(420_000);
-  const repo = path.join(path.dirname(botbench.home), "light-repo");
-  initRepo(repo, { "README.md": "# Sample\n" });
-  fs.writeFileSync(path.join(botbench.home, "scratch", "notes.txt"), "The word is heron.\n");
+test("in light mode, sign-in and Settings are drawn in the light colours", async ({ page, botbench }) => {
   // The owner chose Light on this device before: the choice is on the device, so it holds before sign-in too.
   await page.goto(botbench.base);
   await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
@@ -304,8 +304,24 @@ test("LIVE: in light mode, sign-in, a chat with a tool call, an approval card, a
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await openSettings(page);
+  await checkDesign(page, "settings, light");
+  await shot(page, "u16-light-settings.png");
+});
 
-  await page.getByLabel("Prompt").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
+test("LIVE: in light mode, a chat with a tool call, an approval card, a task ready for review and the board are drawn in the light colours", async ({ page, botbench }) => {
+  test.setTimeout(420_000);
+  const repo = path.join(path.dirname(botbench.home), "light-repo");
+  initRepo(repo, { "README.md": "# Sample\n" });
+  fs.writeFileSync(path.join(botbench.home, "scratch", "notes.txt"), "The word is heron.\n");
+  // The owner chose Light on this device before: the choice is on the device, so it holds before sign-in too.
+  await page.goto(botbench.base);
+  await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await signIn(page, botbench);
+
+  await page.getByLabel("Message Claude Code").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="turn_ended"]')).toBeVisible({ timeout: 120_000 });
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("notes.txt");
@@ -328,8 +344,4 @@ test("LIVE: in light mode, sign-in, a chat with a tool call, an approval card, a
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 120_000 });
   await checkDesign(page, "task ready for review, light");
   await shot(page, "u16-light-ready.png");
-
-  await openSettings(page);
-  await checkDesign(page, "settings, light");
-  await shot(page, "u16-light-settings.png");
 });

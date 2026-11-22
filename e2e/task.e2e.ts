@@ -23,28 +23,13 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   // A mark on the page that a reload would wipe out.
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
-  // The navigation lists the screens that exist, and gets to each.
+  // The empty Tasks view and New task are drawn without a model: see "the navigation reaches Tasks…" below.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions"]);
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Chat");
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
-  await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
-  await checkDesign(page, "tasks, none yet");
   await openNewTask(page);
-  await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
-  // New task is an action of the Tasks view, not a destination: no destination is marked while it is open.
-  await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveCount(1);
-  await expect(page.getByTestId("repo-state")).toHaveText("Enter the full path of a git repository on this Mac.");
-  await checkDesign(page, "new task, empty");
-
-  // The path is checked as it is typed, and the answer is in words.
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   const prompt = "Create a file named hello.txt containing exactly: hi";
   await page.getByLabel("Prompt").fill(prompt);
-  await checkDesign(page, "new task, filled in");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u6-new-task.png"), fullPage: true });
   await page.getByRole("button", { name: "Start task" }).click();
 
@@ -151,6 +136,31 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "all of it without a reload").toBe(true);
   expect(foreign, "requests to anything but Botbench").toEqual([]);
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
+});
+
+test("the navigation reaches Tasks, which says there are none yet; New task starts empty with one control, and a path is checked as it is typed", async ({ page, botbench }) => {
+  const repo = sourceRepo(botbench.home);
+  await signIn(page, botbench);
+  // The navigation lists the screens that exist, and gets to each.
+  const nav = page.getByRole("navigation", { name: "Screens" });
+  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Chat");
+  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
+  await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
+  await checkDesign(page, "tasks, none yet");
+  await openNewTask(page);
+  // New task is an action of the Tasks view, not a destination: no destination is marked while it is open.
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
+  await expect(page.getByRole("button")).toHaveCount(1);
+  await expect(page.getByTestId("repo-state")).toHaveText("Enter the full path of a git repository on this Mac.");
+  await checkDesign(page, "new task, empty");
+
+  // The path is checked as it is typed, and the answer is in words.
+  await page.getByLabel("Repository path").fill(repo);
+  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
+  await page.getByLabel("Prompt").fill("Create a file named hello.txt containing exactly: hi");
+  await checkDesign(page, "new task, filled in");
 });
 
 test("a repository path that cannot be used is reported in words, and Start task starts nothing", async ({ page, botbench }) => {

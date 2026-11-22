@@ -379,7 +379,10 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
           <details className="ds-message__details">
             <summary className="ds-message__summary">
               <span className="ds-message__label">Model</span>
-              <Theirs>{modelName(e.model)}</Theirs>
+              {/* A body, which breaks a long unbroken name, so a model id the CLI echoes back never widens the page. */}
+              <span data-ds-content="" className="ds-message__body">
+                {modelName(e.model)}
+              </span>
             </summary>
             <Body>
               {"Model id: "}

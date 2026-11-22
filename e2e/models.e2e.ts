@@ -15,8 +15,7 @@ const NAMED_ROW = new RegExp(`^Model${NAME}$`);
 // As long as a model name may be, and unbroken: the screen must wrap it wherever it shows it.
 const UNKNOWN = `botbench-no-such-model-${"1".repeat(77)}`;
 
-test("LIVE: on the Turn screen the model is picked from the CLI's own list, a name the CLI does not know is reported in its words, the transcript names the model that answered, and the choice survives a reload", async ({ page, botbench }) => {
-  const foreign = watchRequests(page, botbench);
+test("on the Turn screen the model is picked from the CLI's own list, a name that is no model name is not sent, and a long name does not widen the page", async ({ page, botbench }) => {
   const turnsSent: string[] = [];
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().endsWith("/api/turns")) turnsSent.push(request.postData() ?? "");
@@ -50,9 +49,28 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   expect(turnsSent).toEqual([]);
   await expect(page.locator("[data-event]")).toHaveCount(0);
   await checkDesign(page, "turn, another model being named");
+  // A name as long as a model name may be, unbroken, is cut to the box in the model control, not drawn past the page.
+  await other.fill(UNKNOWN);
+  await expect(page.getByRole("button", { name: /^Model: / })).toHaveText(`Model: ${UNKNOWN}`);
+  await checkDesign(page, "turn, a model name of 100 characters being named");
+  expect(turnsSent).toEqual([]);
+});
+
+test("LIVE: on the Turn screen a name the CLI does not know is reported in its words, the transcript names the model that answered, and the choice survives a reload", async ({ page, botbench }) => {
+  const foreign = watchRequests(page, botbench);
+  const turnsSent: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/turns")) turnsSent.push(request.postData() ?? "");
+  });
+  await signIn(page, botbench);
+  await page.getByRole("button", { name: /^Model: / }).click();
+  const picker = page.getByLabel("Model", { exact: true });
+  await expect(picker).toHaveValue(CONFIGURED);
 
   // A name the CLI does not know goes to the CLI, and what the CLI says about it is shown in words.
-  await other.fill(UNKNOWN);
+  await picker.selectOption({ label: "Other…" });
+  await page.getByLabel("Model name").fill(UNKNOWN);
+  await page.getByLabel("Message Claude Code").fill("Reply with exactly the word: lynx");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="turn_ended"]')).toContainText(`Ended with an error: api_error: There's an issue with the selected model (${UNKNOWN}).`, { timeout: 60_000 });
   await expect(page.locator('[data-event="error"]')).toContainText("It may not exist or you may not have access to it.");

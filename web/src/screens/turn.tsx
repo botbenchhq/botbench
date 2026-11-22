@@ -315,8 +315,9 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
               </p>
             )}
             <div className="ds-composer__controls">
-              <button type="button" aria-expanded={pickerOpen} aria-controls="model-picker" onClick={() => setPickerOpen((open) => !open)} className="ds-button ds-button--quiet ds-button--small">
-                {`Model: ${choiceName(models)}`}
+              <button type="button" aria-expanded={pickerOpen} aria-controls="model-picker" onClick={() => setPickerOpen((open) => !open)} className="ds-button ds-button--quiet ds-button--small max-w-full">
+                {/* Cut to the width of the box: a model name may be long and unbroken, and the picker shows it whole. */}
+                <span className="truncate">{`Model: ${choiceName(models)}`}</span>
               </button>
             </div>
             <div id="model-picker" hidden={!pickerOpen}>
