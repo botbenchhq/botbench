@@ -124,6 +124,8 @@ test("starting a run takes exactly one of a prompt and a spec file, a usable rep
     [{ repo: path.join(api.dir, "missing"), prompt: "p" }, 400, /does not exist/],
     [{ repo: api.dir, prompt: "p" }, 400, /not a git repository/],
     [{ repo: api.repo, prompt: "p", model: "--dangerously-skip-permissions" }, 400, /model/],
+    [{ repo: api.repo, prompt: "p", buildModel: "--dangerously-skip-permissions" }, 400, /build model/],
+    [{ repo: api.repo, prompt: "p", buildModel: 5 }, 400, /build model/],
     [{ repo: api.repo, prompt: "p", preapproved: "npm test" }, 400, /preapproved/],
     [{ repo: api.repo, prompt: "p", preapproved: ["ls | sh"] }, 400, /cannot be allowed in advance/],
   ];
@@ -424,4 +426,15 @@ test("the agents are listed with what each reports about itself, and Codex's mod
   assert.equal((await call(api, "GET", "/api/agents/grok/models")).status, 404);
   const refused = await fetch(`${api.base}/api/agents`);
   assert.equal(refused.status, 401);
+});
+
+test("a run says which model its tasks are to be built on, and its tasks say it too once its plan is approved", async (t) => {
+  const api = await start(t);
+  const run = storePlan(api.server.db, createRun(api.server.db, { repo: api.repo, prompt: "Add a file", baseCommit: api.commit, requestedModel: "opus", buildModel: "sonnet" }).id, THREE.slice(0, 1));
+  const read = await call(api, "GET", `/api/runs/${run.id}`);
+  assert.deepEqual([read.body.requestedModel, read.body.buildModel], ["opus", "sonnet"]);
+  const approved = await call(api, "POST", `/api/runs/${run.id}/plan/approve`, { planVersion: run.planVersion });
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  const task = await call(api, "GET", `/api/tasks/${((approved.body.tasks as Body[])[0]!).id}`);
+  assert.equal(task.body.requestedModel, "sonnet");
 });

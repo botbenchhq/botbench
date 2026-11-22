@@ -13,6 +13,9 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const models = useModelChoice(onSignedOut);
+  // The tasks are built on the planning model unless the owner picks another.
+  const [sameBuild, setSameBuild] = useState(true);
+  const buildModels = useModelChoice(onSignedOut, "botbench.buildModel");
   const review = useReviewChoice(onSignedOut);
   const { listed } = repository;
   // Preselected with the default from Settings; until it is read, nothing is chosen.
@@ -43,13 +46,15 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
     if (hasPrompt && hasSpec) return refuse("Give a prompt or a spec file, not both.");
     const model = models.request();
     if (!model.ok) return refuse(model.why);
+    const build = sameBuild ? model : buildModels.request();
+    if (!build.ok) return refuse(`Build model: ${build.why}`);
     // A command typed and not added is neither granted behind the owner's back nor dropped without a word.
     if (listed !== null && repository.adding.trim() !== "") return refuse("Add the command you typed, or clear it: it is not on the list yet.");
     setError(null);
     setBusy(true);
     // The server checks the repository and the spec file itself; what this screen knows is only for the owner's benefit.
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, preapproved: listed?.commands ?? [], reviewer: review.choice(), mode }).then(
+    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, ...(build.model === undefined ? {} : { buildModel: build.model }), preapproved: listed?.commands ?? [], reviewer: review.choice(), mode }).then(
       ({ runId }) => {
         window.location.hash = `#/runs/${runId}`;
       },
@@ -81,7 +86,17 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
             <input id="run-spec" name="specPath" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={specPath} onChange={(e) => setSpecPath(e.target.value)} aria-describedby="run-spec-about" className="ds-field__control" />
             <p id="run-spec-about" className="ds-field__description">Or the full path of a .md, .markdown or .txt file on this Mac that describes the work. Botbench reads it once, now.</p>
           </div>
-          <ModelPicker state={models} />
+          <ModelPicker state={models} label="Planning model" />
+          <div className="ds-checkbox">
+            <input className="ds-checkbox__input" type="checkbox" id="same-build-model" checked={sameBuild} onChange={(e) => setSameBuild(e.target.checked)} aria-describedby="same-build-model-about" />
+            <label className="ds-checkbox__label" htmlFor="same-build-model">
+              Build the tasks with the same model
+            </label>
+            <p className="ds-checkbox__description" id="same-build-model-about">
+              Clear this to build the tasks with another model than the one that plans.
+            </p>
+          </div>
+          {!sameBuild && <ModelPicker state={buildModels} id="build-model" label="Build model" />}
           <ReviewChoice state={review} />
           <ModePicker name="run-mode" legend="Mode" hint="How much the run does without you. It cannot be changed once the run starts." value={mode} onChange={setMode} />
           <PreapprovedEditor choice={repository} scope="run" />
@@ -94,7 +109,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
             {busy ? "Starting" : "Start run"}
           </button>
           <p>
-            The model above plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks.{" "}
+            The planning model plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks.{" "}
             {mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."} Your own files and your branch are not touched.
           </p>
         </form>

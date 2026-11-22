@@ -197,6 +197,13 @@ export const getTranscript = (attemptId: number): Promise<Transcript> => request
 export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
 
 /** The owner's decision on a task, as it was recorded. */
+/** One time a list of setup or check commands was run on a task, and how many commands it holds. */
+export interface CommandList {
+  kind: "setup" | "check";
+  round: number;
+  total: number;
+}
+
 export interface TaskDecision {
   decision: "accept" | "reject";
   /** What became of the task's branch. */
@@ -204,6 +211,8 @@ export interface TaskDecision {
   branchName: string;
   /** The files the checks left in the task's copy, removed with it. */
   leftovers: string[];
+  /** The owner's short note on the decision; null when none was given. */
+  note: string | null;
   /** The owner, or the run's mode: a fully autonomous run accepted the task without the owner. */
   decidedBy: "owner" | "mode";
   /** Why the mode accepted it, in words; null for the owner's own decision. */
@@ -286,6 +295,8 @@ export interface TaskDetail extends TaskSummary {
   filesProblem: string | null;
   /** The commands Botbench ran on the task, in the order they ran. */
   evidence: Evidence[];
+  /** How many commands each round of setup and checks holds, recorded as it starts. */
+  commandLists: CommandList[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
   /** Its review, once there is one. */
@@ -340,9 +351,9 @@ export const startTask = (repo: string, prompt: string, model: string | null | u
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 /** Accept a task that is ready for review. `removeLeftovers` is the list of files its checks left, as the owner saw and confirmed them. */
-export const acceptTask = (id: number, removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { removeLeftovers }, 60_000);
+export const acceptTask = (id: number, removeLeftovers: readonly string[], note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { removeLeftovers, note }, 60_000);
 /** Reject a task that is ready for review, keeping or deleting its branch. */
-export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/reject`, { branch, removeLeftovers }, 60_000);
+export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftovers: readonly string[], note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/reject`, { branch, removeLeftovers, note }, 60_000);
 /** Remove the copy and branch of a task that failed, was stopped or was cancelled. `removeFiles` is the list of files not on the branch, as the owner saw and confirmed it. */
 export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
 /** Take up a stopped task again. Refused (409, with the reason) for a task in any other state. */
@@ -389,6 +400,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   /** The model asked for the planner; null is the CLI's own default. */
   requestedModel: string | null;
   plannerModel: string | null;
+  /** The model the run's tasks are built on, as asked when it started (null: Claude Code's default); absent for a run from before this was recorded. */
+  buildModel?: string | null;
   /** Who reviews each built task; null when nobody does. */
   reviewer: ReviewerChoice | null;
   baseCommit: string;
@@ -412,6 +425,8 @@ export interface RunTask {
   checks: ChecksMark | null;
   waitingOnApproval: boolean;
   evidence: Evidence[];
+  /** How many commands each round of setup and checks holds, recorded as it starts. */
+  commandLists: CommandList[];
   decision: TaskDecision | null;
   leftovers: string[] | null;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
@@ -425,8 +440,8 @@ export interface RunAnnouncement {
 }
 
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode }, 30_000);
 /** The mode a new run is given unless the owner chooses another on New run. */
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;

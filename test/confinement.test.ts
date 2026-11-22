@@ -4,7 +4,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { confinementProblem, HOME_SECRETS, hostProblem, startHostProxy, unreadablePaths } from "../src/confinement.ts";
+import { spawnSync } from "node:child_process";
+import { confinementProblem, HOME_SECRETS, hostProblem, SANDBOX_EXEC, seatbeltProfile, startHostProxy, unreadablePaths } from "../src/confinement.ts";
 import { tempDir } from "./support/repo.ts";
 
 // What Botbench keeps every command an agent runs, and every setup and check command it runs itself, away from (U27).
@@ -93,4 +94,46 @@ test("a vendor sign-in folder the environment moved elsewhere is unreadable too,
   assert.ok(paths.includes(path.join(os.homedir(), ".smelt")));
   // A relative value is not a place anyone can name for the sandbox, and is left out rather than guessed at.
   assert.equal(unreadablePaths({ dataDir: "/data", env: { CLAUDE_CONFIG_DIR: "claude" } }).some((p) => p.endsWith("/claude")), false);
+});
+
+const BROWSER_PROFILES = [
+  "Library/Safari",
+  "Library/Cookies",
+  "Library/Containers/com.apple.Safari",
+  "Library/Application Support/Google/Chrome",
+  "Library/Application Support/Chromium",
+  "Library/Application Support/BraveSoftware",
+  "Library/Application Support/Microsoft Edge",
+  "Library/Application Support/Arc",
+  "Library/Application Support/Firefox",
+];
+
+test("the browsers' profile folders are on the one list, so no confined command reads a saved Botbench session cookie or anything else a browser keeps", () => {
+  const home = tempDir("botbench-confine-home-");
+  const paths = unreadablePaths({ dataDir: path.join(home, "data"), home });
+  for (const place of BROWSER_PROFILES) {
+    assert.ok(HOME_SECRETS.includes(place), `${place} is on the list`);
+    assert.ok(paths.includes(path.join(home, place)), `${place} is denied by its full path`);
+  }
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("a cookie file in a browser profile is refused to a command under the real sandbox-exec, as the list makes its profile", (t) => {
+  const dir = fs.realpathSync(tempDir("botbench-confine-browser-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  const copy = path.join(dir, "copy");
+  fs.mkdirSync(copy, { recursive: true });
+  const cookies = path.join(home, "Library/Application Support/Firefox/Profiles/x.default/cookies.sqlite");
+  fs.mkdirSync(path.dirname(cookies), { recursive: true });
+  fs.writeFileSync(cookies, "DECOY-cookie-botbench_session\n");
+  const profile = seatbeltProfile({ worktree: copy, unreadable: unreadablePaths({ dataDir: path.join(dir, "data"), home }), writable: [] });
+  const read = spawnSync(SANDBOX_EXEC, ["-p", profile, "/bin/cat", cookies], { cwd: copy, encoding: "utf8" });
+  assert.notEqual(read.status, 0);
+  assert.equal(read.stdout.includes("DECOY"), false);
+  assert.match(read.stderr, /Operation not permitted/);
+  // The same file outside the list's places is read, so the refusal is the list's.
+  const plain = path.join(dir, "plain.txt");
+  fs.writeFileSync(plain, "DECOY-plain\n");
+  assert.equal(spawnSync(SANDBOX_EXEC, ["-p", profile, "/bin/cat", plain], { cwd: copy, encoding: "utf8" }).stdout, "DECOY-plain\n");
 });

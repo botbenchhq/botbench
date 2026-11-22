@@ -84,7 +84,7 @@ test("Accept keeps the branch at Botbench's commit, removes the clean worktree, 
   assert.deepEqual(checkoutState(s.repo), before, "nothing was merged into or changed in the owner's checkout");
 
   const decision = taskDecision(s.db, task.id)!;
-  assert.deepEqual({ ...decision, id: 0, decidedAt: "" }, { id: 0, taskId: task.id, decision: "accept", branch: "kept", branchName: task.branch, headCommit: task.headCommit, leftovers: [], decidedBy: "owner", reasons: null, decidedAt: "" });
+  assert.deepEqual({ ...decision, id: 0, decidedAt: "" }, { id: 0, taskId: task.id, decision: "accept", branch: "kept", branchName: task.branch, headCommit: task.headCommit, leftovers: [], note: null, decidedBy: "owner", reasons: null, decidedAt: "" });
   assert.ok(Date.parse(decision.decidedAt) > 0);
   const events = s.db.prepare("SELECT status FROM task_events WHERE task_id = ? ORDER BY id").all(task.id).map((row) => String(row.status));
   assert.equal(events.at(-1), "accepted");
@@ -531,4 +531,15 @@ test("two discards sent at once for one task: one is made, the other is refused"
   const lost = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
   assert.ok(lost.reason instanceof TaskError && lost.reason.status === 409, String(lost.reason));
   assert.equal(actionLog(s.db, task.id).filter((entry) => String(entry.rule) === "owner_discarded").length, 1);
+});
+
+test("a decision's note is stored once with it, in its log entry too, and cannot be changed afterwards", async (t) => {
+  const s = store(t);
+  const task = await readyTask(s);
+  await refused(decideTask(s.db, { taskId: task.id, decision: "reject", branch: "keep", note: "a\u0007bell" }), 400, /note/i);
+  assert.equal(statusOf(s.db, task.id), "awaiting_decision");
+  await decideTask(s.db, { taskId: task.id, decision: "reject", branch: "keep", note: "Wrong file name" });
+  assert.equal(taskDecision(s.db, task.id)!.note, "Wrong file name");
+  assert.match(actionLog(s.db, task.id).find((e) => e.rule === "owner_rejected")!.detail ?? "", /Your note: Wrong file name$/);
+  assert.throws(() => s.db.prepare("UPDATE decisions SET note = 'changed' WHERE task_id = ?").run(task.id), /append-only/);
 });

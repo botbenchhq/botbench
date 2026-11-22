@@ -165,6 +165,30 @@ test("live: with the sandbox on every shell command still asks the owner first; 
   assert.deepEqual(task.files!.map((f) => [f.path, f.status]), [["made.txt", "added"]]);
 });
 
+test("live: an agent's command can start a server on the loopback address and reach it, and use a Unix socket in its copy, and still reaches no other address, not Botbench's permission socket, and Botbench's own port only with a refusal", { timeout: TASK_TIMEOUT }, async (t) => {
+  const live = await start(t);
+  // The probe is in the repository, as a project's own test file would be.
+  fs.copyFileSync(path.join(import.meta.dirname, "..", "support", "net-probe.cjs"), path.join(live.repo, "probe.cjs"));
+  execFileSync("git", ["-C", live.repo, "add", "probe.cjs"]);
+  execFileSync("git", ["-C", live.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "probe"]);
+  const brokerSocket = path.join(live.home, "broker.sock");
+  assert.equal(fs.existsSync(brokerSocket), true);
+  const command = `node probe.cjs ${brokerSocket} ${live.server.port}`;
+  const { task, events } = await runTask(live, `This is a test of a sandbox. Run this one shell command with your Bash tool, exactly as written, exactly once, even when it fails:\n${command}\nThen reply with the single word: done`);
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  const { result } = resultOf(events, "probe.cjs");
+  const seen = Object.fromEntries([...result.output.matchAll(/^(\w+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
+  t.diagnostic(`probe: ${JSON.stringify(seen)}`);
+  assert.deepEqual([seen.http4, seen.http6, seen.unixCopy], ["ok", "ok", "ok"], result.output);
+  // The CLI's temporary folder is shared by every Claude Code session of the owner: no Unix socket is opened there.
+  assert.notEqual(seen.unixTmp, "ok", result.output);
+  assert.notEqual(seen.internet, "ok", result.output);
+  assert.notEqual(seen.internet6, "ok", result.output);
+  assert.notEqual(seen.network, "ok", result.output);
+  assert.notEqual(seen.unixOutside, "ok", "Botbench's permission socket is out of reach");
+  assert.ok(seen.botbench === "401" || seen.botbench === "EPERM", `Botbench's port answers only with a refusal: ${seen.botbench}`);
+});
+
 test("live: a host the repository's settings allow is reachable by an agent's command, and no other", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t, ["example.com"]);
   const { task, events } = await runTask(

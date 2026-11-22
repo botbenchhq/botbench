@@ -51,6 +51,11 @@ export interface Run {
   requestedModel: string | null;
   /** The model that answered as the planner, from its session. */
   plannerModel: string | null;
+  /**
+   * The model the run's tasks are built on, chosen when it starts: a name, or null for the agent's own default.
+   * Undefined for a run started before a run recorded one, whose tasks took the configured model.
+   */
+  buildModel?: string | null;
   /** The commit the plan was made from. */
   baseCommit: string;
   /** The newest planner attempt: its events are the planner's transcript. */
@@ -94,6 +99,7 @@ function toRun(row: Record<string, unknown>): Run {
     reason: text(row.reason),
     requestedModel: text(row.requested_model),
     plannerModel: text(row.planner_model),
+    ...(row.build_model_set === 1 ? { buildModel: text(row.build_model) } : {}),
     baseCommit: String(row.base_commit),
     attemptId: int(row.attempt_id),
     planVersion: Number(row.plan_version),
@@ -147,7 +153,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode }): Run {
   if ((o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two.");
   return transaction(db, () => {
     const at = now();
@@ -155,8 +161,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, base_commit, reviewer_agent, reviewer_model, mode, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "planning", null);
@@ -253,8 +259,9 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
 
 /**
  * The owner approves the plan as it stands: one queued task row per plan task, each naming the run, and the run is
- * running. All in one write. No worktree is made here: building a task is the build station's. `by` "mode" is a fully
- * autonomous run approving its own plan as the planner gave it; only such a run's plan is approved that way.
+ * running. All in one write. The tasks are queued on the run's build model; a run that recorded none takes
+ * `implementerModel`, the configured one. No worktree is made here: building a task is the build station's. `by` "mode"
+ * is a fully autonomous run approving its own plan as the planner gave it; only such a run's plan is approved that way.
  */
 export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknown, implementerModel: string | null = null, by: "owner" | "mode" = "owner"): { run: Run; tasks: Task[] } {
   return transaction(db, () => {
@@ -269,7 +276,7 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
     if (!checked.ok) throw new RunError(409, `The plan cannot be approved as it is: ${checked.errors.join(" ")}`);
     const link = db.prepare("UPDATE plan_tasks SET task_id = ? WHERE run_id = ? AND position = ?");
     const tasks = plan.map((task) => {
-      const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: implementerModel });
+      const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: run.buildModel === undefined ? implementerModel : run.buildModel });
       link.run(made, runId, task.position);
       return made;
     });
@@ -395,6 +402,8 @@ export interface StartRun {
   specPath?: unknown;
   /** The planner's model: a name, null for the CLI's own default, or left out for the configured one. */
   model?: string | null;
+  /** The model the tasks are built on: a name, null for the CLI's own default, or left out for the planner's choice when one was given, else the configured one. */
+  buildModel?: unknown;
   /** The commands the run's builders may use without asking; each must be one plain command. */
   preapproved?: unknown;
   /** Who reviews each built task: null or left out for nobody, else `{ agent, model }` (a model name, or null for the agent's own default). */
@@ -667,8 +676,8 @@ export function createRuns(options: RunsOptions): Runs {
    * A reviewer must not be the builder's own agent and model (R5), must be an agent that can review, and must be usable
    * now, as its own probe says: a run is not started with a reviewer that could only fail.
    */
-  const reviewerUsable = async (reviewer: RoleChoice): Promise<void> => {
-    const same = sameModelProblem({ agent: driver.name, model: options.implementerModel ?? null }, reviewer);
+  const reviewerUsable = async (reviewer: RoleChoice, buildModel: string | null): Promise<void> => {
+    const same = sameModelProblem({ agent: driver.name, model: buildModel }, reviewer);
     if (same !== null) throw new RunError(400, same);
     const found = options.reviewers?.[reviewer.agent];
     if (found === undefined) throw new RunError(400, `${agentName(reviewer.agent)} cannot review a run yet. Choose Codex, or no review.`);
@@ -704,6 +713,9 @@ export function createRuns(options: RunsOptions): Runs {
     const preapproved = preapprovedList(input.preapproved);
     const reviewer = reviewerChoice(input.reviewer);
     const mode = input.mode === undefined ? (options.defaultMode?.() ?? "manual") : modeChoice(input.mode);
+    if (input.buildModel !== undefined && input.buildModel !== null && modelNameProblem(input.buildModel) !== null) throw new RunError(400, `The build model is not a model name. ${modelNameProblem(input.buildModel)}`);
+    // Left out: the same choice as planning when one was made, as the New run screen offers it; else the configured one.
+    const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : input.model !== undefined ? input.model : (options.implementerModel ?? null);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -719,9 +731,9 @@ export function createRuns(options: RunsOptions): Runs {
       throw new RunError(400, words(err));
     }
     if (mode === "full") fullyAutonomousUsable(repo);
-    if (reviewer !== null) await reviewerUsable(reviewer);
+    if (reviewer !== null) await reviewerUsable(reviewer, buildModel);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, baseCommit, preapproved, reviewer, mode });
+    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode });
     announce(run);
     enqueue(run.id);
     return run;

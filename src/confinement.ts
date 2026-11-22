@@ -15,7 +15,8 @@ import path from "node:path";
  * Seen on this Mac (macOS 27.2, 2026-11-22): in a sandbox-exec profile a later rule wins over an earlier one, so a
  * task's copy that lies inside the denied data folder is opened again by an allow rule after the deny; the rules hold
  * for every child process; `(remote ip "localhost:<port>")` lets a command reach one local port and nothing else; with
- * the network denied, a name does not even resolve.
+ * the network denied, a name does not even resolve. Allowing `(remote ip "localhost:*")` does not change that: names
+ * resolve through a Unix socket outside the copy.
  */
 
 /** The places in the owner's home folder no confined command may read: vendor sign-ins, the Keychain, keys and cloud credentials. */
@@ -58,6 +59,17 @@ export const HOME_SECRETS: readonly string[] = [
   ".config/op",
   ".password-store",
   ".config/configstore",
+  // Browser profiles: cookies (a saved Botbench session among them), saved passwords and history. A confined command
+  // can reach this Mac's own ports, Botbench's included, so a session cookie read here could act as the owner.
+  "Library/Safari",
+  "Library/Cookies",
+  "Library/Containers/com.apple.Safari",
+  "Library/Application Support/Google/Chrome",
+  "Library/Application Support/Chromium",
+  "Library/Application Support/BraveSoftware",
+  "Library/Application Support/Microsoft Edge",
+  "Library/Application Support/Arc",
+  "Library/Application Support/Firefox",
   // Shell history, which often holds a token typed on a command line.
   ".zsh_history",
   ".bash_history",
@@ -143,7 +155,7 @@ function local(address: string): boolean {
 /**
  * Botbench's own proxy for the setup and check commands of a repository that allows hosts. It opens a tunnel
  * (HTTP CONNECT) to an allowed host name only, on any port, and to nothing that resolves to this machine; it answers
- * anything else with 403. It listens on the loopback address, and a confined command may reach its port and no other.
+ * anything else with 403. It listens on the loopback address, which a confined command may reach.
  * It filters by the name the command asks for and does not look inside the encrypted connection.
  */
 export function startHostProxy(hosts: readonly string[]): Promise<{ port: number; close(): Promise<void> }> {
@@ -217,9 +229,10 @@ function ancestors(place: string): string[] {
 /**
  * The sandbox-exec profile for one setup or check command. Everything is allowed but: reading the unreadable places
  * (then the copy is opened again, as it may lie inside one of them), writing anywhere but the copy, the command's own
- * temporary folder and the terminal devices, and the network, apart from Botbench's proxy when hosts are allowed.
+ * temporary folder and the terminal devices, and the network, apart from this Mac's own addresses (where Botbench's
+ * proxy listens when hosts are allowed) and Unix sockets in the copy and the temporary folder.
  */
-export function seatbeltProfile(o: { worktree: string; unreadable: readonly string[]; writable: readonly string[]; proxyPort: number | null }): string {
+export function seatbeltProfile(o: { worktree: string; unreadable: readonly string[]; writable: readonly string[] }): string {
   const subpaths = (places: readonly string[]): string => places.map((place) => `(subpath ${quoted(place)})`).join(" ");
   return [
     "(version 1)",
@@ -231,11 +244,19 @@ export function seatbeltProfile(o: { worktree: string; unreadable: readonly stri
     "(deny file-write*)",
     `(allow file-write* ${subpaths([o.worktree, ...o.writable])} (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
     "(deny network*)",
+    // A project's own tests start servers. Seen on macOS 27.2: listening needs network-inbound, and Seatbelt's only
+    // host names are `*` and `localhost`, where `localhost` means any address of this Mac, so a server listening on all
+    // addresses is not refused (see the threat model). Connecting to `localhost` reaches this Mac's own addresses on any
+    // port, Botbench's proxy among them, and nothing beyond it.
+    '(allow network-inbound (local ip "localhost:*"))',
+    '(allow network-outbound (remote ip "localhost:*"))',
+    // Unix sockets in the copy and the temporary folder only, one rule per place: seen on macOS 27.2, a second
+    // `subpath` in the same filter is not matched.
+    ...[o.worktree, ...o.writable].flatMap((place) => [`(allow network-bind (local unix-socket (subpath ${quoted(place)})))`, `(allow network-outbound (remote unix-socket (subpath ${quoted(place)})))`]),
     // Seen on macOS 27.2: without these, `open` of an app the command wrote starts it through launchd, unconfined, with
     // the owner's full rights; with them `open` fails (error -54) and nothing escapes.
     "(deny lsopen)",
     "(deny appleevent-send)",
-    ...(o.proxyPort === null ? [] : [`(allow network-outbound (remote ip "localhost:${o.proxyPort}"))`]),
     "",
   ].join("\n");
 }

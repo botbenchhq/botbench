@@ -7,7 +7,7 @@ import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
 import { reviewAssignment, taskReview } from "../engine/review.ts";
-import { taskEvidence } from "../engine/stations.ts";
+import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { commitsFileDiff, describeCommits, describeWork, fileDiff, type FileChange } from "../worktrees.ts";
@@ -66,8 +66,8 @@ export function reviewOf(db: DatabaseSync, taskId: number): { reviewer: { agent:
 export function decisionOf(db: DatabaseSync, taskId: number): Record<string, unknown> | null {
   const found = taskDecision(db, taskId);
   if (found === null) return null;
-  const { decision, branch, branchName, leftovers, decidedBy, reasons, decidedAt } = found;
-  return { decision, branch, branchName, leftovers, decidedBy, reasons, decidedAt };
+  const { decision, branch, branchName, leftovers, note, decidedBy, reasons, decidedAt } = found;
+  return { decision, branch, branchName, leftovers, note, decidedBy, reasons, decidedAt };
 }
 
 /**
@@ -114,7 +114,7 @@ async function remainsOf(db: DatabaseSync, task: Task): Promise<{ remains: TaskR
 /** A task as its own screen shows it: the summary, its changed files, its evidence, what a decision would remove, and what a discard would. */
 async function detail(db: DatabaseSync, task: Task): Promise<Record<string, unknown>> {
   const left = await remainsOf(db, task);
-  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left };
+  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
@@ -202,7 +202,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
     } else if (method === "POST" && decision) {
       const body = await readJsonBody(req);
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
-      const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers });
+      const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note });
       ctx.stream.announceTask(decided.task);
       if (decided.run !== null) ctx.stream.announceRun(decided.run);
       json(res, 200, await detail(ctx.db, decided.task));

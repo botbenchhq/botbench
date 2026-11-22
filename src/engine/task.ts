@@ -14,7 +14,7 @@ import { closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopS
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview } from "./review.ts";
 import { agentName, IMPLEMENTER } from "./roles.ts";
-import { commandProblem, nextRound, runCommand, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
+import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
@@ -453,6 +453,8 @@ export function createTasks(options: TasksOptions): Tasks {
    */
   const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
     const round = nextRound(db, task.id, kind);
+    // The whole list is known before its first command runs, so a count shown meanwhile is out of all of it.
+    if (commands.length > 0) startCommandList(db, task.id, kind, round, commands.length);
     let failed: CommandRun | null = null;
     for (const [i, command] of commands.entries()) {
       if (signal?.aborted || closed) return { stopped: true, failed };

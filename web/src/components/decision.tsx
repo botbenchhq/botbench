@@ -60,13 +60,16 @@ const LEFT_BEHIND = "These files were left by the checks and are not on the bran
  * Accept and Reject, for a task that is ready for review. Accept keeps the branch and removes the task's copy; when the
  * checks left files in the copy it asks first, naming them. Reject always asks, and asks whether to keep the branch.
  * `primary` draws Accept as the view's one primary action: on the task's own screen, not on a row of a list.
- * `name` finishes each button's accessible name on a list, where there is one pair for each task.
+ * `name` finishes each button's accessible name on a list, where there is one pair for each task. On the task's own
+ * screen (`primary`) a short note may go with either, stored on the decision and shown in Activity.
  */
 export function DecisionControls({ taskId, leftovers, primary, name, onDecided, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; primary: boolean; name?: string; onDecided: () => void; onSignedOut: () => void }) {
   const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [branch, setBranch] = useState<"keep" | "discard">("keep");
+  const [note, setNote] = useState("");
   const radio = useId();
+  const noteId = useId();
   const left = leftovers ?? [];
 
   const send = (what: "accept" | "reject"): void => {
@@ -74,7 +77,8 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
     setBusy(what);
     setProblem(null);
     // The owner confirmed exactly the files this screen showed; the server refuses, and lists them again, if they changed since.
-    const sent = what === "accept" ? acceptTask(taskId, left) : rejectTask(taskId, branch, left);
+    const given = note.trim() === "" ? null : note.trim();
+    const sent = what === "accept" ? acceptTask(taskId, left, given) : rejectTask(taskId, branch, left, given);
     sent.then(
       () => {
         setBusy(null);
@@ -98,6 +102,17 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
         <Alert tone="error" role="alert">
           {problem}
         </Alert>
+      )}
+      {primary && (
+        <div className="ds-field">
+          <label htmlFor={noteId} className="ds-field__label">
+            Note (optional)
+          </label>
+          <input id={noteId} data-testid="decision-note" type="text" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} aria-describedby={`${noteId}-about`} className="ds-field__control" />
+          <p id={`${noteId}-about`} className="ds-field__description">
+            A short reason, kept with your Accept or Reject and shown in Activity.
+          </p>
+        </div>
       )}
       <div className="ds-cluster">
         {left.length === 0 ? (
@@ -152,14 +167,26 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
  * row of a run, whose screen already names the repository and says nothing was merged or pushed.
  */
 export function DecisionOutcome({ decision, repo, compact = false }: { decision: TaskDecision; repo: string; compact?: boolean }) {
+  const noted = decision.note === null ? null : (
+    <p data-testid="decision-note-shown">
+      {"Your note: "}
+      <span data-ds-content="">{decision.note}</span>
+    </p>
+  );
   const removed = decision.leftovers.length === 0 ? null : `The ${decision.leftovers.length === 1 ? "file" : `${decision.leftovers.length} files`} the checks left ${decision.leftovers.length === 1 ? "was" : "were"} removed with the task's copy: ${decision.leftovers.join(", ")}.`;
   if (compact) {
-    if (decision.decision !== "accept") return null;
-    return <CopyField label="Merge command, to run in the repository" value={`git merge ${decision.branchName}`} testId="merge-command" buttonName="Copy merge command" />;
+    if (decision.decision !== "accept") return noted;
+    return (
+      <>
+        {noted}
+        <CopyField label="Merge command, to run in the repository" value={`git merge ${decision.branchName}`} testId="merge-command" buttonName="Copy merge command" />
+      </>
+    );
   }
   if (decision.branch === "deleted") {
     return (
       <div className="ds-stack ds-gap-sm">
+        {noted}
         <p data-testid="not-merged">Nothing has been merged or pushed. The branch and the task's copy of the project are gone.</p>
         {removed !== null && <p data-ds-content="">{removed}</p>}
       </div>
@@ -167,6 +194,7 @@ export function DecisionOutcome({ decision, repo, compact = false }: { decision:
   }
   return (
     <div className="ds-stack ds-gap-sm">
+      {noted}
       <CopyField label="Branch" value={decision.branchName} testId="branch" buttonName="Copy branch name" />
       {decision.decision === "accept" ? (
         <>

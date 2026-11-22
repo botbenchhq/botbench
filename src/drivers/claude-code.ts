@@ -104,13 +104,15 @@ const realOrAsIs = (place: string): string => {
  *   `denyWrite` holds the repository's shared git folder, which the sandbox would otherwise open for a linked worktree:
  *   git still reads it, and no command moves one of the owner's branches.
  * - `network.allowedDomains` is the repository's allowed hosts, none by default, and `strictAllowlist` refuses every
- *   other host instead of asking (a prompt Botbench would not know how to put to the owner).
+ *   other host instead of asking (a prompt Botbench would not know how to put to the owner). With `local`, for an
+ *   attempt that builds, `allowLocalBinding` lets a project's own tests start a server on this Mac and reach it, and `allowUnixSockets` opens Unix sockets in the
+ *   attempt's own folder only: not in the CLI's temporary folder, which every Claude Code session of the owner shares.
  * - `credentials.envVars` takes the permission check's socket and secret out of every command's environment; the hook,
  *   which runs outside the sandbox, still has them.
  * - `permissions.blockReadsOutsideWorkingDirectories`: the CLI's own file tools, which run outside the sandbox, refuse
  *   reads outside the folder, and the sandbox also closes the rest of the home folder to commands.
  */
-export function sandboxSettings(place: AttemptPlace): Record<string, unknown> {
+export function sandboxSettings(place: AttemptPlace, local = false): Record<string, unknown> {
   // Claude Code's settings reference: the read block does not reach sandboxed commands when the folder the CLI starts in has a glob character.
   if (/[*?[]/.test(place.cwd)) throw new Error(`Claude Code cannot be confined in ${place.cwd}: its path holds *, ? or [. Move Botbench's data folder to a path without them.`);
   const bad = place.allowedHosts.find((host) => hostProblem(host) !== null);
@@ -128,15 +130,15 @@ export function sandboxSettings(place: AttemptPlace): Record<string, unknown> {
       autoAllowBashIfSandboxed: false,
       allowUnsandboxedCommands: false,
       filesystem,
-      network: { allowedDomains: [...place.allowedHosts], strictAllowlist: true },
+      network: { allowedDomains: [...place.allowedHosts], strictAllowlist: true, ...(local ? { allowLocalBinding: true, allowUnixSockets: [realOrAsIs(place.cwd)] } : {}) },
       credentials: { envVars: [{ name: SOCKET_ENV, mode: "deny" }, { name: SECRET_ENV, mode: "deny" }] },
     },
   };
 }
 
 /** The one settings object of an attempt: the sandbox, and with the gate its hook and ask rule as well. */
-function attemptSettings(place: AttemptPlace, gated: boolean): string {
-  const sandbox = sandboxSettings(place);
+function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean): string {
+  const sandbox = sandboxSettings(place, local);
   if (!gated) return JSON.stringify(sandbox);
   const gate = gateSettings();
   return JSON.stringify({ ...gate, ...sandbox, permissions: { ...(gate.permissions as object), ...(sandbox.permissions as object) } });
@@ -186,7 +188,8 @@ export function claudeArgs(options: { confinement: AttemptPlace; model?: string;
     "--strict-mcp-config",
     "--mcp-config", JSON.stringify({ mcpServers: {} }),
   ];
-  args.push("--settings", attemptSettings(options.confinement, gated));
+  // Only an attempt that builds runs a project's tests: it alone may listen and connect on this Mac.
+  args.push("--settings", attemptSettings(options.confinement, gated, allowEdits));
   if (gated) args.push("--permission-prompt-tool", "stdio");
   else args.push("--permission-prompts", "none");
   if (allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);

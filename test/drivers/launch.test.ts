@@ -467,7 +467,8 @@ test("every attempt runs its commands in Claude Code's sandbox: required, asking
         // The model cannot ask for a command to run outside the sandbox.
         allowUnsandboxedCommands: false,
         filesystem: { denyRead: unreadablePaths({ dataDir: DATA_DIR }), allowRead: [CWD] },
-        network: { allowedDomains: [], strictAllowlist: true },
+        // Only an attempt that builds runs a project's tests: it may start servers on this Mac and use Unix sockets in its own folder.
+        network: { allowedDomains: [], strictAllowlist: true, ...(kind === "edits" || kind === "gated" ? { allowLocalBinding: true, allowUnixSockets: [CWD] } : {}) },
         // The permission check's address and secret are for Botbench's hook, which runs outside the sandbox; commands never see them.
         credentials: { envVars: [{ name: SOCKET_ENV, mode: "deny" }, { name: SECRET_ENV, mode: "deny" }] },
       },
@@ -483,7 +484,7 @@ test("every attempt runs its commands in Claude Code's sandbox: required, asking
 
   // A repository's allowed hosts are the only hosts its commands may reach.
   const allowed = settingsOf(claudeArgs({ confinement: { ...CONFINED, allowedHosts: ["registry.npmjs.org", "github.com"] }, allowEdits: true, gated: true }));
-  assert.deepEqual((allowed.sandbox as { network: unknown }).network, { allowedDomains: ["registry.npmjs.org", "github.com"], strictAllowlist: true });
+  assert.deepEqual((allowed.sandbox as { network: unknown }).network, { allowedDomains: ["registry.npmjs.org", "github.com"], strictAllowlist: true, allowLocalBinding: true, allowUnixSockets: [CWD] });
   // A host that is not a plain name never gets onto the command line, whoever hands it over.
   assert.throws(() => claudeArgs({ confinement: { ...CONFINED, allowedHosts: ["*.npmjs.org"] } }), /plain host name/);
 

@@ -357,6 +357,24 @@ async function engine(t: T, order: number[], hold?: () => Promise<void>): Promis
   return { ...s, driver, runs, broker, line, changes };
 }
 
+test("a run stores a planning model and a build model: the planner works on the first, the plan's tasks are queued on the second, and a run given only a planning model builds on that one too", async (t) => {
+  const e = await engine(t, [THREE_TASKS, THREE_TASKS, THREE_TASKS]);
+  const both = await e.runs.start({ repo: e.repo, prompt: "Add two files", model: "opus", buildModel: "sonnet" });
+  assert.deepEqual([both.requestedModel, both.buildModel], ["opus", "sonnet"]);
+  await e.runs.idle();
+  assert.equal(e.driver.started[0]!.model, "opus", "the planner works on the planning model");
+  const approved = e.runs.approve(both.id, getRun(e.db, both.id)!.planVersion);
+  assert.deepEqual(approved.tasks.map((task) => task.requestedModel), ["sonnet", "sonnet", "sonnet"], "the tasks are built on the run's build model");
+
+  const one = await e.runs.start({ repo: e.repo, prompt: "Add two files", model: "opus" });
+  assert.deepEqual([one.requestedModel, one.buildModel], ["opus", "opus"], "the build model defaults to the planning choice");
+  const own = await e.runs.start({ repo: e.repo, prompt: "Add two files", model: "opus", buildModel: null });
+  assert.deepEqual([own.requestedModel, own.buildModel], ["opus", null], "null is the agent's own default, asked for");
+  await e.runs.idle();
+  await assert.rejects(e.runs.start({ repo: e.repo, prompt: "Add two files", buildModel: "--dangerously-skip-permissions" }), /model/);
+  assert.throws(() => e.db.prepare("UPDATE runs SET build_model = 'haiku' WHERE id = ?").run(both.id), /never changed/);
+});
+
 test("replayed planner: a valid plan makes the run wait for approval; the planner worked read-only in a detached worktree of the base commit, which is gone afterwards", async (t) => {
   const e = await engine(t, [THREE_TASKS]);
   const before = checkoutState(e.repo);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
 import { bannedIn } from "../e2e/voice.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
@@ -106,4 +106,17 @@ test("what the sandbox kept a call from is said in plain words, from what its re
   assert.equal(both.sentences.length, 2);
   assert.match(both.sentences[1]!, /a\.example\.com:443, b\.example\.com:80/);
   for (const words of [network, file, both]) for (const sentence of [words.note, ...words.sentences]) assert.deepEqual(bannedIn(sentence), [], sentence);
+});
+
+test("a step's time is how long it ran: from when it was allowed when it was asked about, else from the call, to its result; never the wait for the owner", () => {
+  const calledAt = "2026-11-22T10:00:00.000Z";
+  // Asked, the owner answered after 4 minutes, it ran for 1.5 s.
+  assert.equal(ranFor({ calledAt, asked: true, allowedAt: "2026-11-22T10:04:00.000Z", returnedAt: "2026-11-22T10:04:01.500Z" }), 1500);
+  // Not asked: from the call.
+  assert.equal(ranFor({ calledAt, asked: false, returnedAt: "2026-11-22T10:00:02.000Z" }), 2000);
+  // Asked, but when it was allowed is not known: no time rather than one that holds the wait.
+  assert.equal(ranFor({ calledAt, asked: true, returnedAt: "2026-11-22T10:04:01.500Z" }), null);
+  // No result yet, or times out of order: no time.
+  assert.equal(ranFor({ calledAt, asked: false }), null);
+  assert.equal(ranFor({ calledAt, asked: true, allowedAt: "2026-11-22T10:05:00.000Z", returnedAt: "2026-11-22T10:04:00.000Z" }), null);
 });
