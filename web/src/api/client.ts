@@ -327,6 +327,10 @@ export interface TaskSummary {
   parked: boolean;
   /** The owner's answer to such a request is stored, and the task is being started again to receive it. */
   resuming: boolean;
+  /** Its run read a GitHub issue, which people outside the project wrote: no pre-approved or always-allowed command applies to it. */
+  outsideText: boolean;
+  /** The issue its run was started from, or null. */
+  issue: IssueLink | null;
   /** The run whose approved plan queued this task, or null for a task started on its own. */
   ofPlan: number | null;
   /** The commands this task may run without asking, as the owner listed them when starting it. */
@@ -470,8 +474,19 @@ export interface RunSummary {
   /** Its planner asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
   mode: RunMode;
+  /** The run read a GitHub issue, which people outside the project wrote. */
+  outsideText: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** The GitHub issue a run was started from, as it was read then. */
+export interface IssueLink {
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  fetchedAt: string;
 }
 
 export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount" | "readyCount" | "decidedCount"> {
@@ -495,6 +510,10 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   tasks: RunTask[];
   /** The commands the run's builders may use without asking, as the owner listed them when starting it. */
   preapproved: string[];
+  /** The issue the run was started from, or null. */
+  issue: IssueLink | null;
+  /** The owner let this run's commands reach the repository's allowed network hosts all the same. */
+  outsideHosts: boolean;
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -524,8 +543,40 @@ export interface RunAnnouncement {
 }
 
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery }, 30_000);
+
+/** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
+export interface IssueChoice {
+  fetchId: number;
+  allowHosts: boolean;
+}
+/** An issue as it was read for the owner, before a run is started from it. Everything but the number and address is text written outside the project. */
+export interface IssuePreview {
+  fetchId: number;
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  author: string | null;
+  state: string;
+  labels: string[];
+  body: string;
+  comments: { author: string | null; body: string }[];
+  commentCount: number;
+  /** What was left out, in one sentence; null when nothing was. */
+  cutWords: string | null;
+  fetchedAt: string;
+}
+/** Whether issues can be read for a repository: its GitHub repository, or why there is none, and the hosts its settings allow. */
+export interface IssueSource {
+  repository: string | null;
+  problem: string | null;
+  hosts: string[];
+}
+export const issueSourceOf = (path: string, giveUp: AbortSignal): Promise<IssueSource> => request("GET", `/api/repos/github?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
+/** The gh tool reads it from GitHub, which can take a while. */
+export const lookUpIssue = async (repo: string, issue: string): Promise<IssuePreview> => (await request<{ issue: IssuePreview }>("POST", "/api/issues", { repo, issue }, 70_000)).issue;
 /** The mode a new run is given unless the owner chooses another in the composer. */
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
@@ -579,6 +630,8 @@ export interface Approval {
   storedDecision: "allow" | "decline" | null;
   /** Present when this card may offer standing permission: the scope the grant would have. The server decides this, and decides again when it is asked for. */
   standingOffer?: StandingOffer;
+  /** The request comes from a run that read a GitHub issue, written outside the project. */
+  outsideText: boolean;
 }
 
 /** The scope of a standing permission a card offers. */

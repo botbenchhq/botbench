@@ -11,8 +11,10 @@ import { gitEnv } from "./worktrees.ts";
  *   gh repo view <host/owner/name> --json=...                      the repository's default branch
  *   gh pr list --repo=... --head=<branch> --state=all --json=...   a pull request already open (or closed) for the branch
  *   gh pr create --repo=... --base=... --head=... --title=... --body-file=-   the body on standard input, never an argument
+ *   gh issue view <number> --repo=<host/owner/name> --json=...     one issue, read only (engine/intake.ts)
  *
- * Never `gh pr merge`, never `gh repo delete`, never anything that changes a branch.
+ * Never `gh pr merge`, never `gh repo delete`, never anything that changes a branch, and nothing that writes to an
+ * issue: no comment, label, close or assignment.
  */
 
 /** A repository on a host `gh` can open pull requests on. */
@@ -105,9 +107,50 @@ export const ghArgs = {
     if (title === "") throw new Error("A pull request needs a title.");
     return ["pr", "create", `--repo=${repoName(repo)}`, `--base=${o.base}`, `--head=${o.head}`, `--title=${title}`, "--body-file=-"];
   },
+  /** The number is checked to be a plain positive whole number, so it can only ever be read as the issue's number. */
+  issueView: (repo: RepoRef, number: number): string[] => {
+    if (!Number.isSafeInteger(number) || number < 1 || number > MAX_ISSUE_NUMBER) throw new Error(`${String(number)} is not an issue number.`);
+    return ["issue", "view", String(number), `--repo=${repoName(repo)}`, "--json=number,title,body,author,state,url,labels,comments"];
+  },
 };
 
+/** The largest issue number Botbench asks for: GitHub's numbers are 32-bit. */
+export const MAX_ISSUE_NUMBER = 2_147_483_647;
+
+/** One issue as `gh issue view --json=...` gives it: every field written by whoever wrote the issue, so all of it is data. */
+export interface IssueView {
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+  /** The author's login; null for an account GitHub no longer has. */
+  author: string | null;
+  /** OPEN or CLOSED. */
+  state: string;
+  labels: string[];
+  comments: { author: string | null; body: string }[];
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const loginOf = (v: unknown): string | null => (isObject(v) && typeof v.login === "string" && v.login !== "" ? v.login : null);
+
+/**
+ * The issue `number` of `repo`, from what `gh issue view --json=...` printed. Refused when the answer is about anything
+ * else: a pull request (which `gh issue view` also shows), another number, or another repository's address.
+ */
+export function parseIssueView(stdout: string, repo: RepoRef, number: number): IssueView {
+  const parsed = parseJson(stdout, "what the issue says");
+  if (!isObject(parsed)) throw new Error("The gh tool's answer about the issue could not be read.");
+  const address = `https://${repo.host}/${repo.owner}/${repo.name}`.toLowerCase();
+  const url = typeof parsed.url === "string" ? parsed.url : "";
+  if (url.toLowerCase() === `${address}/pull/${number}`) throw new Error(`#${number} in ${repoName(repo)} is a pull request, not an issue. Give the number of an issue.`);
+  if (parsed.number !== number || url.toLowerCase() !== `${address}/issues/${number}`) throw new Error(`The gh tool's answer is not about issue #${number} of ${repoName(repo)}.`);
+  if (typeof parsed.title !== "string" || typeof parsed.state !== "string") throw new Error("The gh tool's answer about the issue has no title or state.");
+  const labels = Array.isArray(parsed.labels) ? parsed.labels.flatMap((l) => (isObject(l) && typeof l.name === "string" ? [l.name] : [])) : [];
+  const comments = Array.isArray(parsed.comments) ? parsed.comments.flatMap((c) => (isObject(c) && typeof c.body === "string" ? [{ author: loginOf(c.author), body: c.body }] : [])) : [];
+  return { number, url, title: parsed.title, body: typeof parsed.body === "string" ? parsed.body : "", author: loginOf(parsed.author), state: parsed.state, labels, comments };
+}
+
 function parseJson(stdout: string, what: string): unknown {
   try {
     return JSON.parse(stdout);
@@ -216,6 +259,8 @@ export interface GitHub {
   findPullRequest(repo: RepoRef, branch: string): Promise<PullRequest | null>;
   /** Open a pull request; `body` goes to `gh` on its standard input. */
   openPullRequest(repo: RepoRef, o: { base: string; head: string; title: string; body: string; cwd: string }): Promise<PullRequest>;
+  /** Read one issue; nothing is written to it. */
+  issue(repo: RepoRef, number: number): Promise<IssueView>;
 }
 
 /** The GitHub Botbench uses: the owner's `gh`, run by `run`. */
@@ -234,5 +279,6 @@ export function createGitHub(run: RunGh = runGh, cwd = process.cwd()): GitHub {
     defaultBranch: async (repo) => parseRepoView(await ok(ghArgs.repoView(repo))).defaultBranch,
     findPullRequest: async (repo, branch) => parsePrList(await ok(ghArgs.prList(repo, branch)), branch, repo),
     openPullRequest: async (repo, o) => parsePrCreate(await ok(ghArgs.prCreate(repo, o), o.body, o.cwd)),
+    issue: async (repo, number) => parseIssueView(await ok(ghArgs.issueView(repo, number)), repo, number),
   };
 }

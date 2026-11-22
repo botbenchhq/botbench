@@ -151,6 +151,8 @@ export interface Approval {
   parkedAt: string | null;
   /** The owner's answer to a parked approval, kept until the re-driven task asks again. The status stays `pending` until then. */
   storedDecision: Decision | null;
+  /** The request comes from a run that read text from outside the project (a GitHub issue): no grant applied to it. */
+  outsideText: boolean;
 }
 
 export interface LogEntry {
@@ -298,11 +300,12 @@ function toApproval(row: Record<string, unknown>): Approval {
     resolvedAt: text(row.resolved_at),
     parkedAt: text(row.parked_at),
     storedDecision: row.stored_decision === "allow" || row.stored_decision === "decline" ? row.stored_decision : null,
+    outsideText: row.outside_text !== 0,
   };
 }
 
 /** An approval with what its card is titled by: its task's prompt, or what its run was given (the prompt, or the spec file's path). */
-const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path) AS prompt FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs r ON r.id = a.run_id";
+const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path, (SELECT 'Issue #' || f.number || ': ' || f.title FROM issue_fetches f WHERE f.id = r.issue_fetch_id)) AS prompt, COALESCE(tr.outside_text, r.outside_text, 1) AS outside_text FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs tr ON tr.id = t.run_id LEFT JOIN runs r ON r.id = a.run_id";
 
 /** Approvals, oldest first; all of them or those with one status. */
 export function listApprovals(db: DatabaseSync, status?: ApprovalStatus): Approval[] {
@@ -520,14 +523,16 @@ export function createBroker(options: {
       const known = !ticket.readOnly && r.taskId !== null && exact;
       const at = path.resolve(ticket.worktree, cwd === "" ? "." : cwd);
       const input = exact ? r.input : { command: r.command };
-      const task = r.taskId === null ? undefined : db.prepare("SELECT repo_path, run_id FROM tasks WHERE id = ?").get(r.taskId);
+      const task = r.taskId === null ? undefined : db.prepare("SELECT t.repo_path, t.run_id, r.outside_text FROM tasks t LEFT JOIN runs r ON r.id = t.run_id WHERE t.id = ?").get(r.taskId);
       const runId = known && task && typeof task.run_id === "number" ? task.run_id : null;
       // Who asks and where: only then can a grant apply. The repository is the task's, by the real path stored when
       // the task was started, so a standing permission earned in one task's worktree is the same one in the next task's.
       const scope = known && task ? { role: r.role, repo: String(task.repo_path), runId } : undefined;
       // Read from the store for this request: a standing permission taken back a moment ago is not among them.
       const grants = scope === undefined ? [] : [...(runId === null ? [] : runGrants(db, runId)), ...standingGrants(db, scope)];
-      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, mode, confined: ticket.confined && exact, ...(scope === undefined ? {} : { scope }) }, grants, floorSettings);
+      // A run that read outside text (engine/intake.ts) has no grant; one whose mark cannot be read counts as marked.
+      const outsideText = task === undefined || task.outside_text !== 0;
+      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, mode, confined: ticket.confined && exact, outsideText, ...(scope === undefined ? {} : { scope }) }, grants, floorSettings);
       if (verdict.verdict === "ask" || verdict.verdict === "deny" || verdict.verdict === "refuse") return verdict;
       if (verdict.rule === "mode_confined") return { verdict: "allow", rule: "mode", mode };
       if (verdict.rule !== "preapproved" && verdict.rule !== "standing") return nobody(fullAutonomyRefusal(r.tool));
@@ -710,6 +715,8 @@ export function createBroker(options: {
       const verdict = gate({ tool: "Bash", input: { command: approval.command }, worktree: ticket.worktree, cwd: path.resolve(ticket.worktree, approval.cwd) }, [], floorSettings);
       if (verdict.verdict !== "ask" || verdict.floor !== undefined) return verdict.verdict === "ask" ? `Botbench always asks about it (${verdict.floor})` : "it is not a command Botbench asks about";
       if (split === null) return "it is not one plain command";
+      // What a stranger's text may have led to is asked about every time.
+      if (approval.outsideText) return "its run read a GitHub issue, which people outside the project wrote";
       const problem = standingProblem(split);
       if (problem !== null) return problem;
       const task = db.prepare("SELECT repo_path FROM tasks WHERE id = ?").get(approval.taskId);

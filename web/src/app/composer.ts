@@ -1,4 +1,4 @@
-import type { Delivery, KnownRepository, ReviewerChoice, RunMode } from "../api/client.ts";
+import type { Delivery, IssueChoice, KnownRepository, ReviewerChoice, RunMode } from "../api/client.ts";
 
 /*
  * The composer on the home screen: one box that sends a chat prompt, starts a task or plans a run, depending on what
@@ -38,7 +38,18 @@ export interface Facts {
   commandTyped: boolean;
   /** Whether the repository has a check command configured; null while that is not known. */
   hasChecks: boolean | null;
+  /** The GitHub issue attached to a run, as it was looked up; null or left out for none. */
+  issue?: AttachedIssue | null;
 }
+
+/** An issue the owner looked up and attached: what is sent, and what its row shows. */
+export interface AttachedIssue extends IssueChoice {
+  number: number;
+  title: string;
+}
+
+/** Why a run from an issue cannot be fully autonomous; the server says the same. */
+export const ISSUE_NOT_FULL = "A run started from a GitHub issue cannot be fully autonomous: people outside this project wrote the issue, and a stranger's text must not lead to an accepted change and a pull request with nobody looking. Choose Manual or Semi-autonomous.";
 
 /** What Send does. */
 export type Send =
@@ -46,7 +57,7 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[] }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery } & ({ prompt: string } | { specPath: string }));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; issue?: IssueChoice } & ({ prompt: string } | { specPath: string } | {}));
 
 /** Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens. */
 export type Blocked = { reason: string; required: "repository" | null };
@@ -67,6 +78,8 @@ export function blocked(f: Facts): Blocked | null {
     if (f.repoStatus.state === "refused") return say(f.repoStatus.words, "repository");
     if (run && f.mode === null) return say("Reading the default mode from Settings.");
     if (run && f.text.trim() !== "" && f.specPath.trim() !== "") return say("Give a message or a spec file, not both.");
+    if (run && f.issue && f.specPath.trim() !== "") return say("A run from an issue takes your message, not a spec file. Clear the spec file, or remove the issue.");
+    if (run && f.issue && f.mode === "full") return say(ISSUE_NOT_FULL);
   }
   if (run && f.mode === "full" && f.hasChecks === false) return say("Fully autonomous needs a check command for this repository. Add one to Botbench's settings file, or choose Semi-autonomous.");
   if (!f.model.ok) return say(`Model: ${f.model.why}`);
@@ -85,21 +98,25 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   const repo = f.repo.path.trim();
   if (f.kind === "task") return prompt === null ? { do: "focus" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
   const spec = f.specPath.trim();
-  if (prompt === null && spec === "") return { do: "focus" };
+  const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
+  if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
   const build = f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
-  return { do: "run", repo, ...(prompt === null ? { specPath: spec } : { prompt }), model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery };
+  const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "kind" | "spec" | "mode" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "kind" | "issue" | "spec" | "mode" | "review" | "delivery" | "commands" | "models";
 
 /** The rows that apply: a chat has a repository and a model; a start in a repository adds what to do, mode and commands; a run adds its own settings. */
-export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean }): Row[] {
+export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean }): Row[] {
   if (!inRepository(f.repo)) return ["repository", "models"];
   const run = f.kind === "run";
   return [
     "repository",
     "kind",
+    // Only a repository whose remote is on GitHub has issues Botbench can read.
+    ...(run && f.issueOffered === true ? (["issue"] as const) : []),
     ...(run ? (["spec"] as const) : []),
     "mode",
     ...(run && f.reviewOffered ? (["review"] as const) : []),
@@ -158,6 +175,13 @@ export function repoName(repo: RepoPick, known: readonly KnownRepository[]): str
   if (repo.kind === "needed") return "Choose";
   if (repo.kind === "known") return known.find((k) => k.path === repo.path)?.name ?? lastFolder(repo.path);
   return lastFolder(repo.path.trim()) || "Another folder";
+}
+
+/** The From an issue row's value: the issue's number and the start of its title, which people outside the project wrote. */
+export function issueWords(issue: Pick<AttachedIssue, "number" | "title"> | null): string {
+  if (issue === null) return "None";
+  const title = issue.title.replace(/\s+/g, " ").trim();
+  return `#${issue.number} · ${title.length > 30 ? `${title.slice(0, 30).trimEnd()}…` : title}`;
 }
 
 /** The Allowed commands row's value. */

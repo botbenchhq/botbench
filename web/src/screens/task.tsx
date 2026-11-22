@@ -5,6 +5,7 @@ import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
 import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
+import { OutsideText } from "../components/outside-text.tsx";
 import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { MODE_SENTENCE } from "../components/mode-choice.tsx";
 import { DiscardSection } from "../components/discard.tsx";
@@ -171,6 +172,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             </p>
           )}
         </PageHeader>
+        {task !== null && task.outsideText && <OutsideText issue={task.issue} what="task" />}
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}

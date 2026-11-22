@@ -152,6 +152,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
           </Fact>
         )}
       </ul>
+      {approval.outsideText && <p data-testid="approval-outside">This request comes from a run that read a GitHub issue, which people outside this project wrote. Check the command for anything the issue might have led to.</p>}
       {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
       {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
       {problem !== null && (

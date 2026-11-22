@@ -27,7 +27,8 @@ export type IconName =
   | "shield"
   | "cpu"
   | "mic"
-  | "chevron-left";
+  | "chevron-left"
+  | "info";
 
 /** A decorative icon from the sprite. `className` is the icon class of the component it sits in. */
 export const SPRITE = sprite;

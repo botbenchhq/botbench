@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, startRun, startTask, startTurn, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, commandsWords, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, commandsWords, issueWords, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
 import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
@@ -9,6 +9,7 @@ import { Icon, SPRITE } from "../components/icon.tsx";
 import { MODES } from "../components/mode-choice.tsx";
 import { choiceName, modelName, useModelChoice } from "../components/model-picker.tsx";
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
+import { useIssueChoice } from "../components/issue-choice.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
@@ -106,6 +107,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const review = useReviewChoice(onSignedOut, remembered.review, runWanted);
   const known = useKnownRepositories(onSignedOut);
   const repository = useRepository(inRepository(repo) ? repo.path.trim() : "", onSignedOut);
+  // Only a run can start from an issue, and only in a usable repository whose remote is on GitHub.
+  const issue = useIssueChoice(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", runWanted, onSignedOut);
 
   useEffect(() => {
     if (repo.kind === "needed") return;
@@ -283,6 +286,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     buildModel: sameBuild ? null : buildModels.request(),
     commandTyped: repository.listed !== null && repository.adding.trim() !== "",
     hasChecks: repository.listed?.hasChecks ?? null,
+    issue: kind === "run" ? issue.attached : null,
   };
   const stopReason = blockedBy(facts);
   const chatting = !inRepository(repo);
@@ -418,8 +422,9 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
     commands: commandsWords(repository.listed?.commands.length ?? 0),
     models: run && !sameBuild ? `${choiceName(models)}, then ${choiceName(buildModels)}` : choiceName(models),
+    issue: issueWords(issue.attached),
   };
-  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null });
+  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
   const label = chatting ? "Message Claude Code" : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
   const builderDown = builder.state !== "ready";
@@ -584,6 +589,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             review,
             delivery,
             setDelivery,
+            issue,
             models,
             sameBuild,
             setSameBuild,

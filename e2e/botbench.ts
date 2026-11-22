@@ -30,8 +30,8 @@ export function tempDir(prefix: string): string {
 }
 
 /** Start one `node src/server.ts` and wait until it listens. */
-async function launchServer(home: string, port: number, settings: string, env: Record<string, string>): Promise<{ child: ChildProcess; port: number }> {
-  const child: ChildProcess = spawn(process.execPath, [path.join(ROOT, "src", "server.ts")], {
+async function launchServer(home: string, port: number, settings: string, env: Record<string, string>, entry = path.join(ROOT, "src", "server.ts")): Promise<{ child: ChildProcess; port: number }> {
+  const child: ChildProcess = spawn(process.execPath, [entry], {
     cwd: ROOT,
     env: { ...process.env, BOTBENCH_HOME: home, BOTBENCH_PORT: String(port), BOTBENCH_CONFIG: settings, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -56,11 +56,11 @@ async function launchServer(home: string, port: number, settings: string, env: R
  * free port (or `port`, to come back on the same one). Turns ask for the
  * cheapest model unless `settings` gives the owner's settings file. `env` adds to the process environment.
  */
-export async function startBotbench(options: { home?: string; port?: number; env?: Record<string, string>; settings?: unknown } = {}): Promise<Botbench> {
+export async function startBotbench(options: { home?: string; port?: number; env?: Record<string, string>; settings?: unknown; /** A test-only start under e2e/ in place of src/server.ts, such as e2e/serve-replayed-gh.ts. */ entry?: string } = {}): Promise<Botbench> {
   const home = options.home ?? path.join(tempDir("botbench-e2e-"), "home");
   const settings = path.join(path.dirname(home), "settings.json");
   fs.writeFileSync(settings, JSON.stringify(options.settings ?? { drivers: { "claude-code": { model: "haiku" } } }));
-  const first = await launchServer(home, options.port ?? 0, settings, options.env ?? {});
+  const first = await launchServer(home, options.port ?? 0, settings, options.env ?? {}, options.entry);
   const port = first.port;
   let child = first.child;
 
@@ -92,7 +92,7 @@ export async function startBotbench(options: { home?: string; port?: number; env
 
   const restart = async (): Promise<void> => {
     await end("SIGTERM");
-    child = (await launchServer(home, port, settings, options.env ?? {})).child;
+    child = (await launchServer(home, port, settings, options.env ?? {}, options.entry)).child;
   };
 
   return {

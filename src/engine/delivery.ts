@@ -10,6 +10,7 @@ import type { Delivery } from "./run.ts";
 import { taskEvidence } from "./stations.ts";
 import { MODE_WORDS, isRunMode } from "./modes.ts";
 import { getTask, TaskError, words, type Task } from "./task.ts";
+import { runIssue } from "./intake.ts";
 
 /*
  * Delivery: an accepted task's branch pushed, and a pull request opened for it, by Botbench itself on this Mac with the
@@ -156,8 +157,13 @@ function fenced(body: string): string {
 
 const VERDICT: Record<string, string> = { looks_right: "Verdict: looks right", concerns: "Verdict: concerns" };
 
-/** The title and body of a task's pull request, made from what is stored. Everything an agent, a planner or the owner wrote goes in fenced blocks, as data. */
-export function pullRequestText(db: DatabaseSync, task: Task): { title: string; body: string } {
+/**
+ * The title and body of a task's pull request, made from what is stored. Everything an agent, a planner or the owner
+ * wrote goes in fenced blocks, as data. For a run started from a GitHub issue the body closes that issue, the one line
+ * Botbench writes from it: built from the stored number and repository alone, `Closes #N` on the issue's own repository
+ * (`repo`, where the pull request is opened) and `Closes owner/name#N` elsewhere. Nothing the issue says is in the body.
+ */
+export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): { title: string; body: string } {
   const plan = db.prepare("SELECT title, criteria FROM plan_tasks WHERE task_id = ?").get(task.id);
   let criteria: string[] = [];
   if (plan) {
@@ -187,6 +193,12 @@ export function pullRequestText(db: DatabaseSync, task: Task): { title: string; 
     parts.push("## Review", `A model's opinion, not a check: ${review.agent}${review.model === null ? "" : ` (${review.model})`}.`, fenced(line));
   }
   if (mode !== null) parts.push("## Mode", fenced(mode));
+  const issue = runIssue(db, task.runId);
+  if (issue !== null) {
+    const [, owner, name] = issue.repository.split("/");
+    const here = repo !== undefined && repoName(repo).toLowerCase() === issue.repository.toLowerCase();
+    parts.push("## Issue", `Started from a GitHub issue. Closes ${here ? "" : `${owner}/${name}`}#${issue.number}`);
+  }
   parts.push(`Task ${task.id} · branch \`${task.branch}\` · commit \`${taskDecision(db, task.id)?.headCommit ?? task.headCommit}\``);
   return { title, body: `${parts.join("\n\n")}\n` };
 }
@@ -357,7 +369,7 @@ export function createDeliveries(options: DeliveryOptions): Deliveries {
         pr = found;
         adopted = true;
       } else {
-        const { title, body } = pullRequestText(db, task);
+        const { title, body } = pullRequestText(db, task, repo);
         pr = await github.openPullRequest(repo, { base, head: branch, title, body, cwd: task.repo });
         adopted = false;
       }

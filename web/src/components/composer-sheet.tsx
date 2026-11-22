@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { splitPath, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { ISSUE_NOT_FULL, splitPath, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
 import { ModePicker } from "./mode-choice.tsx";
 import { ModelOptions, type ModelChoiceState } from "./model-picker.tsx";
@@ -15,6 +16,7 @@ export type SheetView = "rows" | Row;
 const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   repository: { label: "Repository", title: "Repository", icon: "folder" },
   kind: { label: "What to do", title: "What to do", icon: "git-branch" },
+  issue: { label: "From an issue", title: "From an issue", icon: "external-link" },
   spec: { label: "Spec file", title: "Spec file", icon: "file" },
   mode: { label: "Mode", title: "Mode", icon: "shield" },
   review: { label: "Review", title: "Review", icon: "eye" },
@@ -44,6 +46,7 @@ export interface SheetState {
   review: ReviewChoiceState;
   delivery: Delivery;
   setDelivery(delivery: Delivery): void;
+  issue: IssueChoiceState;
   models: ModelChoiceState;
   sameBuild: boolean;
   setSameBuild(same: boolean): void;
@@ -143,8 +146,9 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
     return state.kind === "task" ? (
       <ModePicker name="run-mode" legend="Mode" hideLegend hint="A single task always runs in Manual. Plan a run to choose another mode." value="manual" onChange={() => {}} only="manual" />
     ) : (
-      <ModePicker name="run-mode" legend="Mode" hideLegend hint="Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right; the rest waits for you. The mode cannot be changed once the run starts." value={state.mode} onChange={state.setMode} />
+      <ModePicker name="run-mode" legend="Mode" hideLegend hint={state.issue.attached !== null ? ISSUE_NOT_FULL : "Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right; the rest waits for you. The mode cannot be changed once the run starts."} value={state.mode} onChange={state.setMode} {...(state.issue.attached !== null ? { refused: { mode: "full" as const, state: "Not for a run from an issue" } } : {})} />
     );
+  if (row === "issue") return <IssueOptions state={state.issue} />;
   if (row === "review") return <ReviewOptions state={state.review} />;
   if (row === "delivery")
     return (

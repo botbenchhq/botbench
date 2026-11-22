@@ -1055,4 +1055,48 @@ CREATE TABLE browser_sessions (
 );
 `,
   },
+  {
+    // Intake: a GitHub issue read for the owner, kept as it was read and only ever added to, so a run started from it
+    // is given exactly what the owner was shown. A run that read one names it and is marked as having read outside
+    // text; `outside_hosts` is the owner's choice to let its commands reach the repository's allowed hosts all the same.
+    // All three are set when the run starts and never changed, and a marked run is never fully autonomous. A run from an
+    // issue with no message of the owner's own stores an empty prompt, which the runs table's check allows; no other run may.
+    name: "issue_intake",
+    sql: `
+CREATE TABLE issue_fetches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_path TEXT NOT NULL,
+  repository TEXT NOT NULL,
+  number INTEGER NOT NULL CHECK (number >= 1),
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  author TEXT,
+  state TEXT NOT NULL,
+  labels TEXT NOT NULL,
+  body TEXT NOT NULL,
+  comments TEXT NOT NULL,
+  comment_count INTEGER NOT NULL,
+  cut TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+CREATE TRIGGER issue_fetches_no_update BEFORE UPDATE ON issue_fetches
+BEGIN SELECT RAISE(ABORT, 'an issue is kept as it was read'); END;
+CREATE TRIGGER issue_fetches_no_delete BEFORE DELETE ON issue_fetches
+BEGIN SELECT RAISE(ABORT, 'an issue is kept as it was read'); END;
+ALTER TABLE runs ADD COLUMN issue_fetch_id INTEGER REFERENCES issue_fetches (id);
+ALTER TABLE runs ADD COLUMN outside_text INTEGER NOT NULL DEFAULT 0 CHECK (outside_text IN (0, 1));
+ALTER TABLE runs ADD COLUMN outside_hosts INTEGER NOT NULL DEFAULT 0 CHECK (outside_hosts IN (0, 1));
+CREATE TRIGGER runs_outside_fixed BEFORE UPDATE OF issue_fetch_id, outside_text, outside_hosts ON runs
+BEGIN SELECT RAISE(ABORT, 'what a run read from outside is set when it starts and never changed'); END;
+CREATE TRIGGER runs_issue_marked BEFORE INSERT ON runs
+WHEN (NEW.issue_fetch_id IS NOT NULL AND NEW.outside_text = 0) OR (NEW.outside_text = 0 AND NEW.outside_hosts = 1)
+BEGIN SELECT RAISE(ABORT, 'a run that read an issue is marked as having read outside text'); END;
+CREATE TRIGGER runs_empty_prompt_issue_only BEFORE INSERT ON runs
+WHEN NEW.prompt = '' AND NEW.issue_fetch_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'only a run started from an issue may have no message'); END;
+CREATE TRIGGER runs_outside_not_full BEFORE INSERT ON runs
+WHEN NEW.outside_text = 1 AND NEW.mode = 'full'
+BEGIN SELECT RAISE(ABORT, 'a run that read outside text is never fully autonomous'); END;
+`,
+  },
 ];
