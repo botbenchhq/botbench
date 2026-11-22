@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { arrive, blocked, commandsWords, DEFAULTS, readRemembered, repoName, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { arrive, blocked, commandsWords, DEFAULTS, issueWords, ISSUE_NOT_FULL, readRemembered, repoName, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -142,4 +142,40 @@ test("row values in words", () => {
   assert.deepEqual(splitPath("/Users/owner/code/api"), ["/Users/owner/code/", "api"]);
   assert.deepEqual(splitPath("/Users/owner/code/api/"), ["/Users/owner/code/", "api/"]);
   assert.deepEqual(splitPath("api"), ["", "api"]);
+});
+
+// A run from a GitHub issue (engine/intake.ts): the From an issue row, its value, what Send sends, and why it is disabled.
+const issue = { fetchId: 4, allowHosts: false, number: 123, title: "Crash when the log has a very long line in it" };
+
+test("From an issue is a row of a run in a repository with a GitHub remote only, after What to do", () => {
+  const known = { reviewOffered: true, commandsKnown: true };
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known, issueOffered: true }), ["repository", "kind", "mode", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "review", "delivery", "commands", "models"]);
+});
+
+test("the row's value is the issue's number and the start of its title, or None", () => {
+  assert.equal(issueWords(null), "None");
+  assert.equal(issueWords(issue), "#123 · Crash when the log has a very…");
+  assert.equal(issueWords({ ...issue, title: "Short" }), "#123 · Short");
+});
+
+test("with an issue, Send starts a run with the issue and the owner's message, or the issue alone", () => {
+  const facts = inRepo({ kind: "run", mode: "semi", issue });
+  const sent = sendFor(facts, extras);
+  assert.equal(sent.do, "run");
+  assert.deepEqual(sent.do === "run" ? [sent.issue, "prompt" in sent ? sent.prompt : undefined] : [], [{ fetchId: 4, allowHosts: false }, "Add a README"]);
+  const alone = sendFor({ ...facts, text: "  " }, extras);
+  assert.deepEqual(alone.do === "run" ? [alone.issue, "prompt" in alone, "specPath" in alone] : [], [{ fetchId: 4, allowHosts: false }, false, false]);
+  // Without an issue an empty message still only focuses the box.
+  assert.deepEqual(sendFor(inRepo({ kind: "run", mode: "semi", text: "" }), extras), { do: "focus" });
+});
+
+test("a run from an issue cannot be sent fully autonomous, nor with a spec file, and says why", () => {
+  assert.deepEqual(blocked(inRepo({ kind: "run", mode: "full", issue })), { reason: ISSUE_NOT_FULL, required: null });
+  assert.match(ISSUE_NOT_FULL, /stranger's text must not lead to an accepted change and a pull request with nobody looking/);
+  assert.match(blocked(inRepo({ kind: "run", mode: "manual", issue, specPath: "/x/spec.md", text: "" }))!.reason, /spec file/);
+  assert.equal(blocked(inRepo({ kind: "run", mode: "semi", issue })), null);
+  // A task never carries an issue, whatever was attached while planning a run.
+  assert.equal(sendFor(inRepo({ kind: "task", issue }), extras).do, "task");
 });

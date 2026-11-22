@@ -1,3 +1,5 @@
+import { runIssue, runOutside } from "../engine/intake.ts";
+import { issueLink } from "./issues.ts";
 import type http from "node:http";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -45,6 +47,9 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     resuming: pending.length > 0 && waiting.length === 0,
     ofPlan: task.runId !== null && getRun(db, task.runId) !== null ? task.runId : null,
     preapproved: task.runId === null ? [] : runGrants(db, task.runId).map((grant) => showWords(grant.words)),
+    // Inherited from its run: it read a GitHub issue, written outside the project (engine/intake.ts).
+    outsideText: runOutside(db, task.runId).text,
+    issue: ((issue) => (issue === null ? null : issueLink(issue)))(runIssue(db, task.runId)),
     decision: decisionOf(db, task.id),
     pullRequest: deliveryOf(db, task),
     resumeNote: resumeNote(db, task),

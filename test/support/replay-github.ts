@@ -74,6 +74,10 @@ export function replayGitHub(o: { existing?: boolean; signedOut?: boolean; hold?
         opened.push({ repo, base: args.base, head: args.head, title: args.title, body: args.body });
         return parsePrCreate(out.prCreate.result.stdout);
       },
+      // Issues are read through test/support/replay-issue.ts, which can be laid over this one.
+      issue: async () => {
+        throw new Error("The delivery replay does not read issues.");
+      },
     },
   };
 }

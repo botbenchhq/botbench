@@ -111,3 +111,36 @@ test("a fully autonomous run accepts only when every check passed, the review is
   assert.equal(no({ checks: "passed", review: "none", refusals: ["git push origin HEAD"] }), "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
   assert.equal(no({ checks: "failed", review: "unresolved", refusals: ["sudo ls", "WebFetch https://x"] }), "It needs your review: A check failed. The reviewer raised concerns. Botbench refused 2 things an agent asked to do during this task (sudo ls; WebFetch https://x).");
 });
+
+// A run that read outside text (a GitHub issue, engine/intake.ts): no pre-approved command and no standing permission
+// applies to it, in any mode; what a mode lets run because it is confined still runs; the floor still asks (or refuses).
+const standing = (words: string[]): Grant => ({ id: 8, kind: "standing", role: "implementer", repo: REPO, cwd: ".", words, runId: null, taskId: 3, createdAt: "2026-11-22T10:00:00.000Z" });
+
+function expectedOutside(mode: RunMode, kind: Kind, confined: boolean): ReturnType<typeof expected> {
+  // Exactly the rule without any grant: whatever was allowed in advance counts for nothing.
+  return expected(mode, kind, confined, false);
+}
+
+test("the matrix for a run that read outside text: no grant of either kind applies in any mode, confinement still lets a mode run a command, the floor still holds", () => {
+  let cases = 0;
+  for (const mode of RUN_MODES) {
+    for (const kind of Object.keys(KINDS) as Kind[]) {
+      for (const confined of [true, false]) {
+        for (const grants of [[], [grant(["npm", "test"]), grant(["ls"])], [standing(["npm", "test"]), standing(["ls"])]] as Grant[][]) {
+          const { tool, input } = KINDS[kind];
+          const request = { tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode, confined };
+          const verdict = ask({ ...request, outsideText: true }, grants);
+          assert.equal(outcome(verdict), expectedOutside(mode, kind, confined), `outside text, ${mode}, ${kind}, ${confined ? "confined" : "not confined"}, ${grants[0]?.kind ?? "no grant"}: ${JSON.stringify(verdict)}`);
+          cases++;
+        }
+      }
+    }
+  }
+  assert.equal(cases, 3 * Object.keys(KINDS).length * 6);
+  // The same request and grants without the mark: the grants do apply, so the mark is what made the difference.
+  const plain = { tool: "Bash", input: { command: "npm test" }, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual" as const, confined: false };
+  assert.equal(outcome(ask(plain, [standing(["npm", "test"])])), "standing");
+  assert.equal(outcome(ask(plain, [grant(["npm", "test"])])), "preapproved");
+  assert.equal(outcome(ask({ ...plain, outsideText: true }, [standing(["npm", "test"])])), "ask");
+  assert.equal(outcome(ask({ ...plain, outsideText: true }, [grant(["npm", "test"])])), "ask");
+});

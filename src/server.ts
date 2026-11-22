@@ -79,7 +79,7 @@ export interface StartOptions {
   signIns?: readonly SignInDefinition[];
   /** Where dictation finds its programs and keeps its temporary files, and the largest recording, when not the defaults. */
   dictation?: Omit<DictationOptions, "home"> & { maxBytes?: number };
-  /** What Botbench asks of GitHub. The owner's own gh unless a test replays output captured from it. */
+  /** What Botbench asks of GitHub (pull requests, and reading an issue). The owner's own gh unless a test replays output captured from it. */
   github?: GitHub;
 }
 
@@ -138,8 +138,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
   const dictation = createDictation({ home, ...dictationOptions });
   // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
-  const deliveries = createDeliveries({ db, config, github: options.github ?? createGitHub(), onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, deliveries, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const github = options.github ?? createGitHub();
+  const deliveries = createDeliveries({ db, config, github, onTaskChange: stream.announceTask });
+  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });

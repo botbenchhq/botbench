@@ -19,6 +19,9 @@ export const LOOKS = {
   rejected: { tone: "neutral", icon: "x" },
   // Not in the set (a run's planning and a task's resuming are work, drawn as Working is). A run that ended with no task ever ready for review: nothing was built to decide on. Drawn as an end that is not a success.
   nothingToReview: { tone: "neutral", icon: "circle-slash" },
+  // Not in the set, and no tone of the set says "where this came from": a run or task that read a GitHub issue, which
+  // people outside the project wrote. Drawn neutral, with words that say it.
+  outsideText: { tone: "neutral", icon: "info" },
 } as const satisfies Record<string, { tone: Tone; icon: string }>;
 // Each icon is checked against the sprite's names where it is drawn, in status.tsx.
 

@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import { insertPreapproved, realRepo } from "../approvals/grants.ts";
+import { allowedHostsFor, outsideTextPrompt, runIssue } from "./intake.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
@@ -383,8 +384,13 @@ export interface TasksOptions {
  */
 export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
-  /** What the commands of a task in `repo` are kept from (U27). */
-  const confinement = (repo: string): Confinement => ({ dataDir: home, allowedHosts: options.repoHosts?.(repo) ?? [] });
+  /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
+  const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
+  /** A builder's first prompt: the task's own, then, for a run started from an issue, the issue as outside text. */
+  const builderPrompt = (task: Task): string => {
+    const issue = runIssue(db, task.runId);
+    return issue === null ? task.prompt : `${task.prompt}\n\n${outsideTextPrompt(issue)}`;
+  };
   /** Whether the builder's driver runs every shell command confined: only then may a run's mode let one run without asking. */
   const confined = driver.capabilities.confinedCommands === true;
   let closed = false;
@@ -457,7 +463,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let failed: CommandRun | null = null;
     for (const [i, command] of commands.entries()) {
       if (signal?.aborted || closed) return { stopped: true, failed };
-      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task.repo), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
+      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
       options.onTaskChange(getTask(db, task.id)!);
       if (result.outcome === "stopped") return { stopped: true, failed };
       if (result.outcome !== "passed") {
@@ -523,7 +529,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const done = await runReview({
       db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, round, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
       ...(before === undefined ? {} : { previous: { round, review: before.text, reasons: parseRefineReply(lastFix?.reply ?? "")?.notAddressed ?? null } }),
-      confinement: { ...confinement(task.repo), gitDir: await sharedGitDir(task.repo) }, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
+      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
     });
     options.onTaskChange(getTask(db, task.id)!);
     if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });
@@ -585,7 +591,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at.repo), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
@@ -678,7 +684,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       // No agent started: the next start takes the task up from its setup.
@@ -695,7 +701,7 @@ export function createTasks(options: TasksOptions): Tasks {
       return void move(id, cancelled(task) ? "cancelled" : "failed", { reason });
     }
 
-    await drive(task, session, admission, task.prompt, null, stop.signal);
+    await drive(task, session, admission, builderPrompt(task), null, stop.signal);
   };
 
   /**
@@ -867,7 +873,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let session: DriverSession;
     try {
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
@@ -915,7 +921,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
       // The model stays the one the task was started with, whatever is configured by now.
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(task.id, "building", "this task was being taken up again");
@@ -923,7 +929,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
     const reviewer = refineRoundOf(db, task.id) === null ? null : reviewAssignment(db, task.id)?.agent ?? null;
-    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? task.prompt : CONTINUE_PROMPT;
+    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? builderPrompt(task) : CONTINUE_PROMPT;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 

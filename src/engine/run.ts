@@ -17,6 +17,7 @@ import { isRunMode, MODE_WORDS, type RunMode } from "./modes.ts";
 import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
+import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
 
 /*
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
@@ -71,6 +72,12 @@ export interface Run {
   maxRefineRounds: number;
   /** Counts the plan's changes. An edit or an approval names the version it saw and is refused when the plan has moved on. */
   planVersion: number;
+  /** The GitHub issue the run was started from, by the id of the fetch the owner was shown (engine/intake.ts); null for none. */
+  issueFetchId: number | null;
+  /** The run read text from outside the project, so no grant applies to its commands and it is never fully autonomous. */
+  outsideText: boolean;
+  /** The owner let the commands of this marked run reach the repository's allowed network hosts all the same. */
+  outsideHosts: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -107,7 +114,8 @@ function toRun(row: Record<string, unknown>): Run {
   return {
     id: Number(row.id),
     repo: String(row.repo_path),
-    prompt: text(row.prompt),
+    // A run started from an issue with no message of the owner's own stores an empty prompt (the table's own check asks for one).
+    prompt: row.prompt === "" ? null : text(row.prompt),
     specPath: text(row.spec_path),
     specText: text(row.spec_text),
     status: String(row.status) as RunStatus,
@@ -122,6 +130,9 @@ function toRun(row: Record<string, unknown>): Run {
     mode: isRunMode(row.mode) ? row.mode : "manual",
     delivery: row.delivery === "pull_request" ? "pull_request" : "branch",
     maxRefineRounds: Number(row.max_refine_rounds ?? 0),
+    issueFetchId: int(row.issue_fetch_id),
+    outsideText: row.outside_text === 1,
+    outsideHosts: row.outside_hosts === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -170,16 +181,17 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number }): Run {
-  if ((o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two.");
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number }): Run {
+  // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
+  if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
     const at = now();
     // Kept by its real path as it is now: grants compare this stored path, so a link pointed elsewhere later carries no trust along.
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "planning", null);
@@ -429,6 +441,8 @@ export interface StartRun {
   mode?: unknown;
   /** What becomes of each task the run accepts: "branch" (the default) or "pull_request". */
   delivery?: unknown;
+  /** The GitHub issue the owner was shown, `{ fetchId, allowHosts }` (engine/intake.ts); left out or null for none. */
+  issue?: unknown;
 }
 
 export interface Runs {
@@ -480,6 +494,11 @@ export interface RunsOptions {
 type Outcome = { tasks: PlanTask[]; model: string | null } | { problem: string } | { cancelled: true };
 
 const STOPPED = "Botbench stopped before this run's plan was made.";
+/** The work of a run started from an issue with no message of the owner's own. Botbench's words, in the work's place. */
+const NO_MESSAGE = "(No message of the owner's own: the work is the problem the GitHub issue below describes.)";
+
+/** Why a run that read outside text cannot be fully autonomous. */
+export const OUTSIDE_NOT_FULL = "A run started from a GitHub issue cannot be fully autonomous: people outside this project wrote the issue, and a stranger's text must not lead to an accepted change and a pull request with nobody looking. Choose manual or semi-autonomous.";
 
 /**
  * Plans runs, one planner at a time, and takes the owner's decisions at the plan gate.
@@ -569,7 +588,9 @@ export function createRuns(options: RunsOptions): Runs {
       // The run names its planner's attempt before the first event, so a screen can follow the transcript from the start.
       // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
       if (!gone()) move(run.id, "planning", { attemptId: session.attemptId, detail: `planner attempt ${session.attemptId}` });
-      const first = gone() ? null : await turn(plannerPrompt({ work: run.prompt ?? run.specText ?? "", ...(change ? { current: change.current, feedback: change.feedback } : {}) }));
+      const issue = runIssue(db, run.id);
+      const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
+      const first = gone() ? null : await turn(plannerPrompt({ work, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
       if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };
       else {
@@ -727,8 +748,10 @@ export function createRuns(options: RunsOptions): Runs {
     stopping();
     const hasPrompt = input.prompt !== undefined && input.prompt !== null;
     const hasSpec = input.specPath !== undefined && input.specPath !== null;
+    const issueChoice = issueGiven(input.issue);
     if (hasPrompt && hasSpec) throw new RunError(400, "Give a prompt or a spec file, not both.");
-    if (!hasPrompt && !hasSpec) throw new RunError(400, "Give one of a prompt and a spec file path.");
+    if (issueChoice !== null && hasSpec) throw new RunError(400, "Give a message or nothing with an issue, not a spec file.");
+    if (!hasPrompt && !hasSpec && issueChoice === null) throw new RunError(400, "Give one of a prompt and a spec file path.");
     if (hasPrompt && (typeof input.prompt !== "string" || input.prompt.trim() === "")) throw new RunError(400, "The prompt must be text that says what to build.");
     if (hasPrompt && (input.prompt as string).length > MAX_PROMPT) throw new RunError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
     const preapproved = preapprovedList(input.preapproved);
@@ -752,10 +775,15 @@ export function createRuns(options: RunsOptions): Runs {
     } catch (err) {
       throw new RunError(400, words(err));
     }
+    // The issue must be one read for this repository, as the owner was shown it.
+    const issue = issueChoice === null ? null : issueFetch(db, issueChoice.fetchId);
+    if (issueChoice !== null && issue === null) throw new RunError(400, "There is no issue read with that number. Look the issue up again.");
+    if (issue !== null && issue.repoPath !== realRepo(repo)) throw new RunError(400, `That issue was read for another repository (${issue.repoPath}), not ${repo}. Look it up again for this one.`);
+    if (issue !== null && mode === "full") throw new RunError(400, OUTSIDE_NOT_FULL);
     if (mode === "full") fullyAutonomousUsable(repo);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -833,6 +861,17 @@ export function preapprovedList(given: unknown): string[] {
   const problem = given.map(entryProblem).find((p) => p !== null);
   if (problem) throw new RunError(400, problem);
   return given as string[];
+}
+
+/** The issue a request names: null for none, else the fetch the owner was shown and whether its network hosts are allowed. */
+export function issueGiven(given: unknown): { fetchId: number; allowHosts: boolean } | null {
+  if (given === undefined || given === null) return null;
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  const shape = '"issue" must be null, or { "fetchId": <the id the issue was looked up with>, "allowHosts": true or false }.';
+  if (typeof given !== "object" || Array.isArray(given)) throw new RunError(400, shape);
+  const { fetchId, allowHosts, ...rest } = given as Record<string, unknown>;
+  if (Object.keys(rest).length > 0 || typeof fetchId !== "number" || !Number.isSafeInteger(fetchId) || fetchId < 1 || typeof allowHosts !== "boolean") throw new RunError(400, shape);
+  return { fetchId, allowHosts };
 }
 
 /** The mode a request names. Anything else is refused with the reason, before anything exists. */

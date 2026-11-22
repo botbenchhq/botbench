@@ -46,8 +46,9 @@ Whether your subscription's terms allow this kind of unattended use of the vendo
 | | Confined commands, per-repository checks and setup commands | `src/confinement.ts`, `src/engine/stations.ts` |
 | | Codex as reviewer of a run's tasks (reviews only; it cannot plan or build) | `src/drivers/codex.ts`, `src/engine/review.ts` |
 | | Accept or Reject; runs board, chat, usage, settings; recovery after a restart | `src/engine/`, `web/src/screens/` |
+| | A run started from one GitHub issue you name: read with your own `gh`, shown to you as plain text, given to the planner and builder as text from outside (no command allowed in advance or always allowed for that run, no network unless you allow it, never fully autonomous); its pull request closes the issue. Nothing is posted to GitHub | `src/engine/intake.ts`, `src/github.ts` |
 | **In the code, not confirmed on a real iPhone** | Adding Botbench to the phone's Home Screen, and notifications when an approval is waiting or a task is ready | `src/push.ts`, `web/public/` |
-| **Planned, not in this code** | The reviewer's concerns going back to the builder; three modes per run (manual, semi-autonomous, fully autonomous; today every run is manual); opening a pull request for an accepted task; Gemini CLI and Grok; work from issues; one container per task; two developers' workbenches working on one repository | [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
+| **Planned, not in this code** | The reviewer's concerns going back to the builder; three modes per run (manual, semi-autonomous, fully autonomous; today every run is manual); opening a pull request for an accepted task; Gemini CLI and Grok; watching a repository for new issues, and posting back to them; one container per task; two developers' workbenches working on one repository | [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
 
 ## Quickstart
 
@@ -157,7 +158,8 @@ Do not put Botbench on the public internet. Its sign-in is one token, made for a
 
 - What each agent sends its provider: your prompts and the code it reads, as when you use it directly.
 - If you turn on notifications for a device: a short encrypted notice, through Apple's or Google's push service, that an approval is waiting or a task is ready. Never a command, code or a file name.
-- What a repository's commands send to the hosts you allowed for it in `allowedHosts` (none unless you set some).
+- What a repository's commands send to the hosts you allowed for it in `allowedHosts` (none unless you set some). A run started from a GitHub issue reaches none of them unless you allow them for that run.
+- If you start a run from a GitHub issue: your own `gh` asks GitHub for that one issue. It only reads; Botbench posts nothing back (no comment, label or close). A pull request it opens for such a run says "Closes #N".
 - If you use it from your phone: the traffic between phone and Mac, over the private network you chose.
 - Nothing else from Botbench itself. It drives the vendors' own, unmodified programs under your own sign-in. It never reads or stores your credentials and does not use API keys. Plans, transcripts, diffs, check results, approvals and the append-only action log stay in a database in `~/.botbench`.
 

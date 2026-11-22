@@ -24,7 +24,7 @@ export const MODE_SENTENCE: Record<RunMode, string> = {
  * The three modes as one choice (the design system's option picker). With `only`, the other modes cannot be chosen
  * and say so: a task started on its own is always manual.
  */
-export function ModePicker({ name, legend, hint, value, onChange, hideLegend = false, only }: { name: string; legend: string; hint: string; value: RunMode | null; onChange: (mode: RunMode) => void; hideLegend?: boolean; only?: RunMode }) {
+export function ModePicker({ name, legend, hint, value, onChange, hideLegend = false, only, refused }: { name: string; legend: string; hint: string; value: RunMode | null; onChange: (mode: RunMode) => void; hideLegend?: boolean; only?: RunMode; /** A mode that cannot be chosen, and the words its row says instead (the hint says why). */ refused?: { mode: RunMode; state: string } }) {
   return (
     <fieldset className="ds-option-picker" aria-describedby={`${name}-hint`} data-testid={`${name}-picker`}>
       <legend className={hideLegend ? "ds-option-picker__legend ds-visually-hidden" : "ds-option-picker__legend"}>{legend}</legend>
@@ -32,8 +32,9 @@ export function ModePicker({ name, legend, hint, value, onChange, hideLegend = f
         {hint}
       </p>
       {MODES.map((option) => {
-        const shut = only !== undefined && option.mode !== only;
-        const state = shut ? "Runs only" : (option.warning ?? null);
+        const closed = refused?.mode === option.mode;
+        const shut = (only !== undefined && option.mode !== only) || closed;
+        const state = closed ? refused.state : shut ? "Runs only" : (option.warning ?? null);
         return (
           <Option
             key={option.mode}

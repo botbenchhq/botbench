@@ -15,6 +15,7 @@ import { runSentence } from "../components/run-status.ts";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
+import { OutsideText } from "../components/outside-text.tsx";
 import { RunTimeline } from "../components/run-timeline.tsx";
 
 const UNDO_SECONDS = 10;
@@ -334,6 +335,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
           )
         ) : (
           <>
+            {run.outsideText && <OutsideText issue={run.issue} what="run" />}
             <RunTimeline run={run} id={id} />
             <dl className="ds-key-value">
               <div className="ds-key-value__item">

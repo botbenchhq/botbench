@@ -24,6 +24,9 @@ import { splitPlain } from "./shell.ts";
  * autonomous run every "ask" becomes "refuse". The floor's "not a plain command" is no danger of its own: it is why a
  * chained command cannot run on a grant, which is compared word by word. Every other rule of the floor still reads
  * each piece of such a command, so a mode lets a chained command run confined unless one of them names it.
+ *
+ * A run that read outside text loses every grant: what someone outside the project wrote could otherwise steer an agent
+ * to a command the owner allowed in advance for other reasons. Confinement is not a grant, so a mode keeps that.
  */
 
 /** What one tool call is, as far as the gate needs to know. */
@@ -40,6 +43,11 @@ export interface GateRequest {
   mode?: RunMode;
   /** The call would run inside Botbench's confinement. Left out, it is not known to. */
   confined?: boolean;
+  /**
+   * The run read text from outside the project (a GitHub issue, engine/intake.ts). Then no grant applies: neither the
+   * run's pre-approved commands nor any standing permission. What the mode lets run because it is confined still runs.
+   */
+  outsideText?: boolean;
 }
 
 /** The part of the floor that is not the request: the owner's home, and the entries the owner's config adds. */
@@ -148,7 +156,7 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
   // A call that carries more than its command (a time limit, a background run) is not the command alone.
   if (!Object.keys(input).every((name) => PLAIN_SHELL_FIELDS.has(name))) return otherwise;
   const words = splitPlain(command);
-  if (words === null || request.scope === undefined) return otherwise;
+  if (words === null || request.scope === undefined || request.outsideText === true) return otherwise;
   const relative = path.relative(request.worktree, request.cwd);
   const grant = matchGrant({ ...request.scope, cwd: relative === "" ? "." : relative, words }, grants);
   return grant === null ? otherwise : { verdict: "allow", rule: grant.kind === "standing" ? "standing" : "preapproved", grantId: grant.id };
