@@ -1,6 +1,6 @@
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test, openNewTask } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, signIn, startTaskIn, test } from "./helpers.ts";
 
 // An approval across a restart, in the real client at a phone's size: a real Botbench process that is stopped and
 // started again on the same data, and the owner's Claude Code on its cheapest model asking for real.
@@ -17,11 +17,7 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   await signIn(page, botbench);
 
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill(PROMPT);
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, PROMPT);
   await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
 
   const card = page.getByTestId("approval-card");

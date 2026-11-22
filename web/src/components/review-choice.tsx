@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, getAgentModels, getAgentsAndCap, type ModelList, type ReviewerChoice } from "../api/client.ts";
 import { agentName } from "./evidence.tsx";
+import { Option } from "./option.tsx";
 
 /** The model part of a select value for an agent with its own default model, when it lists none. It holds a character no model name may. */
 const DEFAULT = "?default";
@@ -9,73 +10,99 @@ const DEFAULT = "?default";
 const valueOf = (agent: string, model: string): string => `${agent} ${model}`;
 
 /** The reviewers that can review now, as their own probes say, with the models each offers; and, for the others, why not. */
-type Offer = { state: "checking" } | { state: "offered"; reviewers: { agent: string; models: ModelList }[]; notOffered: string[]; rounds: number } | { state: "not-offered"; why: string };
+type Offer = { state: "checking" } | { state: "offered"; reviewers: { agent: string; models: ModelList }[]; unavailable: { agent: string; problem: string }[]; rounds: number } | { state: "not-offered"; why: string; none: boolean };
 
 /**
  * New run's one choice of reviewer: Off, the default, or one of the agents that review (Codex, Grok, Antigravity) with
  * one of its models. An agent is offered only when it reports itself installed, supported and signed in now; otherwise
  * the screen says why, in its own words.
  */
-export function useReviewChoice(onSignedOut: () => void): { offer: Offer; value: string; setValue: (value: string) => void; choice: () => ReviewerChoice | null } {
+export interface ReviewChoiceState {
+  offer: Offer;
+  /** The select value as chosen: "" for Off. */
+  value: string;
+  setValue: (value: string) => void;
+  /** The reviewer a run would be started with: null for Off, and for a remembered choice that is not offered now. */
+  choice: () => ReviewerChoice | null;
+  /** The choice in a few words, for the Review row. */
+  words: string;
+}
+
+/** Every reviewer and model offered now, as select values with their words. */
+function offered(offer: Offer): { value: string; agent: string; model: string }[] {
+  if (offer.state !== "offered") return [];
+  return offer.reviewers.flatMap(({ agent, models }) =>
+    models.models.length === 0 ? [{ value: valueOf(agent, DEFAULT), agent: agentName(agent), model: "its default model" }] : models.models.map((model) => ({ value: valueOf(agent, model.id), agent: agentName(agent), model: model.label ?? model.id })),
+  );
+}
+
+/** `wanted` false leaves the agents unasked (each asks its own program, which takes seconds) until a run is being set up. */
+export function useReviewChoice(onSignedOut: () => void, initial = "", wanted = true): ReviewChoiceState {
   const [offer, setOffer] = useState<Offer>({ state: "checking" });
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initial);
   useEffect(() => {
+    if (!wanted) return;
     let live = true;
     const failed = (err: unknown): void => {
       if (!live) return;
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
-      setOffer({ state: "not-offered", why: "Review is not offered: Botbench could not check the agents that review just now." });
+      setOffer({ state: "not-offered", why: "Review is not offered: Botbench could not check the agents that review just now.", none: false });
     };
     getAgentsAndCap().then(({ agents, maxRefineRounds }) => {
       if (!live) return;
       const reviewers = agents.filter((agent) => agent.roles.includes("reviewer"));
-      if (reviewers.length === 0) return setOffer({ state: "not-offered", why: "Review is not offered by this Botbench." });
+      if (reviewers.length === 0) return setOffer({ state: "not-offered", why: "Review is not offered by this Botbench.", none: true });
       const usable = reviewers.filter((agent) => agent.problem === null);
-      const notOffered = reviewers.filter((agent) => agent.problem !== null).map((agent) => `Review by ${agentName(agent.agent)} is not offered: ${agent.problem}`);
-      if (usable.length === 0) return setOffer({ state: "not-offered", why: notOffered.join(" ") });
-      return Promise.all(usable.map((agent) => getAgentModels(agent.agent).then((models) => ({ agent: agent.agent, models })))).then((offered) => live && setOffer({ state: "offered", reviewers: offered, notOffered, rounds: maxRefineRounds }), failed);
+      const unavailable = reviewers.filter((agent) => agent.problem !== null).map((agent) => ({ agent: agent.agent, problem: agent.problem! }));
+      return Promise.all(usable.map((agent) => getAgentModels(agent.agent).then((models) => ({ agent: agent.agent, models })))).then((found) => live && setOffer({ state: "offered", reviewers: found, unavailable, rounds: maxRefineRounds }), failed);
     }, failed);
     return () => {
       live = false;
     };
-  }, [onSignedOut]);
+  }, [onSignedOut, wanted]);
+  const options = offered(offer);
+  const chosen = options.find((option) => option.value === value) ?? null;
   const choice = (): ReviewerChoice | null => {
-    if (offer.state !== "offered" || value === "") return null;
+    if (chosen === null) return null;
     const at = value.indexOf(" ");
     const model = value.slice(at + 1);
     return { agent: value.slice(0, at), model: model === DEFAULT ? null : model };
   };
-  return { offer, value, setValue, choice };
+  return { offer, value, setValue, choice, words: chosen === null ? "Off" : `${chosen.agent}, ${chosen.model}` };
 }
 
-export function ReviewChoice({ state }: { state: ReturnType<typeof useReviewChoice> }) {
+/** The rounds of fixes a run started now allows after a review with concerns. */
+const roundsWords = (rounds: number): string => (rounds === 0 ? "No rounds of fixes." : `Up to ${rounds} ${rounds === 1 ? "round" : "rounds"} of fixes.`);
+
+/** The reviewer as one choice: Off, each reviewer and model offered now, and the reviewers that cannot review now with why. */
+export function ReviewOptions({ state }: { state: ReviewChoiceState }) {
   const { offer } = state;
-  if (offer.state === "checking") return null;
-  if (offer.state === "not-offered") return <p data-testid="review-not-offered">{offer.why}</p>;
-  return (
-    <div className="ds-field">
-      <label htmlFor="run-review" className="ds-field__label">
-        Review
-      </label>
-      <div className="ds-select">
-        <select id="run-review" name="review" value={state.value} onChange={(e) => state.setValue(e.currentTarget.value)} aria-describedby="run-review-about" className="ds-field__control ds-select__control">
-          <option value="">Off</option>
-          {offer.reviewers.flatMap(({ agent, models }) =>
-            models.models.length === 0
-              ? [<option key={agent} value={valueOf(agent, DEFAULT)}>{`${agentName(agent)}, its default model`}</option>]
-              : models.models.map((model) => (
-                  <option key={`${agent} ${model.id}`} value={valueOf(agent, model.id)}>
-                    {`${agentName(agent)}, ${model.label ?? model.id}`}
-                  </option>
-                )),
-          )}
-        </select>
-      </div>
-      <p id="run-review-about" className="ds-field__description">
-        <span data-testid="review-rounds-cap">{offer.rounds === 0 ? "No rounds of fixes." : `Up to ${offer.rounds} ${offer.rounds === 1 ? "round" : "rounds"} of fixes.`}</span>{" "}
-        Off by default. With a reviewer, each task Claude Code builds is read by it after its checks, where it can change nothing and reach no network: Codex in the task's copy, Grok and Antigravity from the changes Botbench sends them, with no tools. When it has concerns, Claude Code is given its review to fix what it agrees with and say why for the rest, the checks run again, and the same reviewer looks again. Its reviews are a model's opinion, shown on the task before you decide.
-        {offer.notOffered.length > 0 ? ` ${offer.notOffered.join(" ")}` : ""}
+  if (offer.state === "checking")
+    return (
+      <p role="status" className="ds-spinner">
+        Checking the agents that review.
       </p>
-    </div>
+    );
+  const options = offered(offer);
+  const current = options.some((option) => option.value === state.value) ? state.value : "";
+  return (
+    <fieldset className="ds-option-picker" aria-describedby="review-hint" data-testid="review-options">
+      <legend className="ds-option-picker__legend ds-visually-hidden">Review</legend>
+      <p id="review-hint" className="ds-option-picker__hint">
+        {offer.state === "offered" ? (
+          <>
+            <span data-testid="review-rounds-cap">{roundsWords(offer.rounds)}</span> A reviewer reads each task after its checks and can change nothing. Its review is a model's opinion.
+          </>
+        ) : (
+          <span data-testid="review-not-offered">{offer.why}</span>
+        )}
+      </p>
+      <Option group="review" id="review-off" value="" checked={current === ""} onChange={() => state.setValue("")} name="Off" />
+      {options.map((option, at) => (
+        <Option key={option.value} group="review" id={`review-${at}`} value={option.value} checked={current === option.value} onChange={() => state.setValue(option.value)} name={option.agent} description={option.model} />
+      ))}
+      {offer.state === "offered" &&
+        offer.unavailable.map(({ agent, problem }) => <Option key={agent} group="review" id={`review-${agent}`} value={agent} checked={false} onChange={() => {}} disabled name={agentName(agent)} description={problem} state="Not available" />)}
+    </fieldset>
   );
 }

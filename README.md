@@ -93,13 +93,13 @@ git add README.md && git commit -m "Start"
 pwd
 ```
 
-**5. Start a task.** In Botbench, open Tasks and choose New task. For Repository path, paste the path `pwd` printed. For Prompt, write:
+**5. Start a task.** In Botbench, on Chat, press + (Add context) under the message box and choose Repository, then Another folder…. Paste the path `pwd` printed into Folder path; when it reads "Usable git repository.", close the sheet with the X. What to do is already One task. The box now reads "Describe the task"; write:
 
 ```
 Add a file hello.txt that says hello, then run ls to show that it is there.
 ```
 
-Any model will do; a small one such as Haiku is enough. Choose Start task.
+Any model will do; the chip under the box shows the one in use, and a small one such as Haiku is enough (tap the chip to change it). Choose Send.
 
 **6. Answer the approval.** Within a minute the task reads Needs input and shows the command Claude Code wants to run (the model chooses the exact command). Choose Allow once.
 
@@ -116,7 +116,7 @@ The new branch holds one commit by Botbench that adds `hello.txt`. Your own bran
 
 **Clean up:** Ctrl+C in the first terminal, then `rm -rf ~/botbench-try`. Botbench keeps its database and login token in `~/.botbench`; delete that folder only if you want to start again from nothing.
 
-From here, try Runs → New run on a real repository: Claude Code proposes a plan first, and you can add checks and a reviewer.
+From here, try Runs → New run on a real repository (or, in Add context, What to do → Plan a run): Claude Code proposes a plan first, and you can add checks and a reviewer.
 
 ## Configure a repository
 

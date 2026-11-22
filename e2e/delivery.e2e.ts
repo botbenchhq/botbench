@@ -9,7 +9,7 @@ import { openStore } from "../src/store/db.ts";
 import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { loadGhCapture, replayGitHub } from "../test/support/replay-github.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, expect, signIn } from "./helpers.ts";
+import { checkDesign, chooseRepository, closeContext, expect, openRow, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Pull requests in the real client, with no model turn. Before Botbench starts, a task is built, accepted and
@@ -55,16 +55,18 @@ const test = base.extend<{ dir: string; seeded: { home: string; taskId: number }
   },
 });
 
-test("New run offers Keep the branch (chosen) or Open a pull request; a delivered task shows its pull request's number and a link that opens GitHub in a new tab", async ({ page, botbench, seeded }) => {
+test("Plan a run offers Keep the branch (chosen) or Open a pull request; a delivered task shows its pull request's number and a link that opens GitHub in a new tab", async ({ page, botbench, seeded, dir }) => {
   await signIn(page, botbench);
   await page.goto(`${botbench.base}/#/runs/new`);
-  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
-  const choice = page.getByRole("group", { name: "When you accept a task" });
-  await expect(choice.getByRole("radio", { name: "Keep the branch" })).toBeChecked();
-  await expect(choice.getByRole("radio", { name: "Open a pull request" })).not.toBeChecked();
-  await choice.getByRole("radio", { name: "Open a pull request" }).check();
-  await expect(page.getByText("Each task you accept is then pushed and opened as a pull request.")).toBeVisible();
+  await chooseRepository(page, path.join(dir, "repo"));
+  const sheet = await openRow(page, "When accepted");
+  await expect(sheet.getByRole("heading", { name: "When you accept a task" })).toBeVisible();
+  await expect(sheet.getByRole("radio", { name: "Keep the branch" })).toBeChecked();
+  await expect(sheet.getByRole("radio", { name: "Open a pull request" })).not.toBeChecked();
+  await sheet.getByRole("radio", { name: "Open a pull request" }).check();
   await checkDesign(page, "new run, with the delivery choice");
+  await closeContext(page);
+  await expect(page.getByTestId("composer-about")).toContainText("Each accepted task is then opened as a pull request.");
 
   const created = loadGhCapture().outputs.prCreate.result.stdout.trim();
   const number = /\/pull\/(\d+)$/.exec(created)![1];

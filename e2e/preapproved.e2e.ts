@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, primaries, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
+import { checkDesign, chooseRepository, closeContext, expect, messageBox, MONO_FAMILY, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Pre-approved commands in the real client, at a phone's size: a real Botbench process whose settings list commands
@@ -31,26 +31,24 @@ const test = base.extend<{ repo: string }>({
   },
 });
 
-test("LIVE: New task lists the repository's configured commands; the owner removes one and adds another; the task runs the added command with no card and finishes, and its screen lists what was pre-approved", async ({ page, botbench, repo }) => {
+test("LIVE: a task's Allowed commands list the repository's configured commands; the owner removes one and adds another; the task runs the added command with no card and finishes, and its screen lists what was pre-approved", async ({ page, botbench, repo }) => {
   const foreign = watchRequests(page, botbench);
   const before = checkoutState(repo);
   await signIn(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const tray = page.getByTestId("approval-tray");
-  await openNewTask(page);
-
-  // The field starts with the configured repository, the one Botbench knows of.
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await expect(page.getByRole("heading", { name: HEADING })).toBeVisible();
+  await openComposer(page);
+  await chooseRepository(page, repo);
+  const sheet = await openRow(page, "Allowed commands");
+  await expect(sheet.getByRole("region", { name: HEADING })).toBeVisible();
   const list = page.getByTestId("preapproved-list");
   await expect(list.getByRole("listitem")).toHaveText([/^npm test/, /^git status/]);
   expect(await list.evaluate((el) => [el.tagName, ...[...el.children].map((child) => child.tagName)])).toEqual(["UL", "LI", "LI"]);
   await expect(page.getByTestId("preapproved-about")).toContainText("Dangerous commands always ask");
-  expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
-  // Start task is still the one primary action.
-  expect(await primaries(page)).toEqual(["Start task"]);
-  await checkDesign(page, "new task, with the repository's pre-approved commands");
+  expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
+  // Send is still the one primary action; the sheet has none of its own.
+  expect(await primaries(page)).toEqual(["Send"]);
+  await checkDesign(page, "add context, the repository's pre-approved commands");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-new-task.png"), fullPage: true });
 
   // Remove one, add another. Enter in the field adds; it does not start the task.
@@ -59,30 +57,35 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   const add = page.getByLabel("Add a command");
   await add.fill("sh make-marker.sh && echo done");
   await add.press("Enter");
-  await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
+  await expect(sheet.getByRole("heading", { name: "Allowed commands" })).toBeVisible();
   await expect(list.getByRole("listitem")).toHaveText([/^git status/, /^sh make-marker\.sh && echo done/]);
   await expect(add).toHaveValue("");
 
-  // A command typed and not added is neither dropped nor granted: the task is not started until the owner says which.
-  await page.getByLabel("Prompt").fill(PROMPT);
+  // A command typed and not added is neither dropped nor granted: Send waits until the owner says which.
   await add.fill("sh make-marker.sh");
-  await page.getByRole("button", { name: "Start task" }).click();
-  await expect(page.getByRole("alert")).toContainText("The task was not started");
-  await expect(page.getByRole("alert")).toContainText("Add the command you typed, or clear it");
+  await closeContext(page);
+  await messageBox(page).fill(PROMPT);
+  const send = page.getByRole("button", { name: "Send" });
+  await expect(send).toBeDisabled();
+  await expect(send).toHaveAccessibleDescription("Add the command you typed to Allowed commands, or clear it: it is not on the list yet.");
+  await openRow(page, "Allowed commands");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(list.getByRole("listitem")).toHaveCount(3);
+  await closeContext(page);
 
   // The server refuses a chained entry in words, and nothing is started.
-  await page.getByRole("button", { name: "Start task" }).click();
+  await send.click();
   await expect(page.getByRole("alert")).toContainText("The task was not started");
   await expect(page.getByRole("alert")).toContainText('"sh make-marker.sh && echo done" cannot be allowed in advance');
   expect(await (await page.request.get(`${botbench.base}/api/tasks`)).json()).toEqual({ tasks: [] });
-  await checkDesign(page, "new task, an entry refused");
+  await checkDesign(page, "composer, an entry refused");
+  await openRow(page, "Allowed commands");
   await page.getByRole("button", { name: "Remove sh make-marker.sh && echo done" }).click();
   await expect(list.getByRole("listitem")).toHaveText([/^git status/, /^sh make-marker\.sh/]);
-  expect(await primaries(page)).toEqual(["Start task"]);
+  await closeContext(page);
+  expect(await primaries(page)).toEqual(["Send"]);
 
-  await page.getByRole("button", { name: "Start task" }).click();
+  await send.click();
   await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
   // The task screen says in words what may run without asking, from the start.
   const granted = page.getByTestId("task-preapproved");
@@ -129,18 +132,21 @@ test("a repository with nothing configured offers an empty list that says every 
   const other = path.join(botbench.home, "..", "other-repo");
   initRepo(other);
   await signIn(page, botbench);
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(other);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await expect(page.getByRole("heading", { name: HEADING })).toBeVisible();
+  await openComposer(page);
+  await chooseRepository(page, other);
+  const sheet = await openRow(page, "Allowed commands");
+  await expect(sheet.getByRole("region", { name: HEADING })).toBeVisible();
   await expect(page.getByTestId("preapproved-list")).toHaveCount(0);
   await expect(page.getByTestId("preapproved-none")).toHaveText("No command is listed, so every shell command asks.");
-  await checkDesign(page, "new task, nothing pre-approved");
+  await checkDesign(page, "add context, nothing pre-approved");
 
   // Changing the repository changes the offer: the configured one's list replaces the empty one, and the other way round.
-  await page.getByLabel("Repository path").fill(repo);
+  await chooseRepository(page, repo);
+  await openRow(page, "Allowed commands");
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/^npm test/, /^git status/]);
-  await page.getByLabel("Repository path").fill(path.join(repo, "missing"));
+  const field = (await openRow(page, "Repository")).getByLabel("Folder path");
+  await field.fill(path.join(repo, "missing"));
   await expect(page.getByTestId("repo-state")).toContainText("does not exist");
-  await expect(page.getByRole("heading", { name: HEADING })).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+  await expect(sheet.locator('[data-row="commands"]')).toHaveCount(0);
 });

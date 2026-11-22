@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { checkDesign, copyShot, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { allowCommands, checkDesign, chooseRepository, closeContext, copyShot, expect, messageBox, openRow, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -38,24 +38,24 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // A mark on the page that a reload would wipe out.
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
-  // The navigation, New run when empty and the run's allowed list are drawn without a model: see "the navigation lists
+  // The navigation, the composer for a new run and the run's allowed list are drawn without a model: see "the navigation lists
   // the destinations…" below. Here the run is started from the Runs view, as an owner would.
   const nav = page.getByRole("navigation", { name: "Screens" });
   await nav.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
   await page.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeVisible();
 
   // The repository is checked as it is typed; its pre-approved commands are confirmed here, for this run.
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  const prompt = "Add three files: a.txt containing a, b.txt containing b, c.txt containing c. Plan exactly three tasks, one per file. Do not run any command and do not read more than the README.";
-  await page.getByLabel("Prompt").fill(prompt);
-  await page.getByLabel("Add a command").fill("npm test");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await chooseRepository(page, repo);
+  await allowCommands(page, ["npm test"]);
+  await openRow(page, "Allowed commands");
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
+  await closeContext(page);
+  const prompt = "Add three files: a.txt containing a, b.txt containing b, c.txt containing c. Plan exactly three tasks, one per file. Do not run any command and do not read more than the README.";
+  await messageBox(page).fill(prompt);
   await shot(page, "u11-new-run.png");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await page.getByRole("button", { name: "Send" }).click();
 
   // The run screen: its state in words, then the planner's transcript as it happens.
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
@@ -184,7 +184,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   expect(foreign).toEqual([]);
 });
 
-test("the navigation lists the destinations; New run starts empty with one control, and its allowed list starts empty and takes a command", async ({ page, botbench }) => {
+test("the navigation lists the destinations; New run opens the composer asking for a repository, and the run's allowed list starts empty and takes a command", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
   // Starting something new is a button in its list's view, not a destination.
@@ -196,46 +196,50 @@ test("the navigation lists the destinations; New run starts empty with one contr
   await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
   await checkDesign(page, "runs, none yet");
   await page.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button")).toHaveCount(1);
-  await checkDesign(page, "new run, empty");
+  await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository for the run, or None to just chat.");
+  await checkDesign(page, "composer, a new run with no repository");
 
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Add a.txt containing a.");
-  await expect(page.getByRole("heading", { name: "Allowed for this run" })).toBeVisible();
+  await chooseRepository(page, repo);
+  const sheet = await openRow(page, "Allowed commands");
+  await expect(sheet.getByRole("region", { name: "Allowed for this run" })).toBeVisible();
   await expect(page.getByTestId("preapproved-none")).toBeVisible();
   await page.getByLabel("Add a command").fill("npm test");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
+  await closeContext(page);
+  await messageBox(page).fill("Add a.txt containing a.");
   await expect(page.locator(".ds-button--primary")).toHaveCount(1);
-  await checkDesign(page, "new run, filled in");
+  await checkDesign(page, "composer, a run filled in");
 });
 
-test("a spec file that does not exist is reported in words and nothing starts; a prompt and a spec file together are not sent", async ({ page, botbench }) => {
+test("a spec file that does not exist is reported in words and nothing starts; a message and a spec file together are not sent", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
   await page.goto(`${botbench.base}/#/runs/new`);
-  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
+  await chooseRepository(page, repo);
+  await closeContext(page);
+  const send = page.getByRole("button", { name: "Send" });
 
-  // Neither a prompt nor a spec file: said in words, and nothing is sent.
-  await page.getByRole("button", { name: "Start run" }).click();
-  await expect(page.getByRole("alert")).toHaveText(/The run was not started\. Give a prompt or the path of a spec file\./);
+  // Neither a message nor a spec file: Send puts the cursor in the box, and nothing is sent.
+  await send.click();
+  await expect(messageBox(page)).toBeFocused();
 
   const missing = path.join(path.dirname(botbench.home), "no-such-spec.md");
-  await page.getByLabel("Spec file path").fill(missing);
-  await page.getByLabel("Prompt").fill("and a prompt as well");
-  await page.getByRole("button", { name: "Start run" }).click();
-  await expect(page.getByRole("alert")).toHaveText(/The run was not started\. Give a prompt or a spec file, not both\./);
+  const sheet = await openRow(page, "Spec file");
+  await sheet.getByLabel("Spec file path").fill(missing);
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+  await expect(sheet.locator('[data-row="spec"] .ds-context-list__value')).toHaveText("no-such-spec.md");
+  await closeContext(page);
+  await messageBox(page).fill("and a prompt as well");
+  await expect(send).toBeDisabled();
+  await expect(send).toHaveAccessibleDescription("Give a message or a spec file, not both.");
 
-  await page.getByLabel("Prompt").fill("");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await messageBox(page).fill("");
+  await send.click();
   await expect(page.getByRole("alert")).toContainText(`The run was not started. The spec file ${missing} does not exist.`);
-  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start run" })).toBeEnabled();
-  await checkDesign(page, "new run, spec file refused");
+  await expect(page).toHaveURL(/#\/turn$/);
+  await expect(send).toBeEnabled();
+  await checkDesign(page, "composer, spec file refused");
 
   // Nothing started: no run is listed, and no planner was launched.
   await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Runs", exact: true }).click();

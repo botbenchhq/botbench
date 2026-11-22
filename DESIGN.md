@@ -2,19 +2,19 @@
 version: alpha
 name: Botbench
 # Generated: everything from here to the closing line is web/vendor/design-system/themes/botbench.design-tokens.md
-# (the design system 0.7.0, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
+# (the design system 0.8.1, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
 colors:
-  accent: "#AD5D02"
-  accent-hover: "#914D01"
+  accent: "#1C1C1E"
+  accent-hover: "#3A3A3C"
   on-accent: "#FFFFFF"
-  surface: "#FAF8F4"
+  surface: "#F2F2F7"
   surface-raised: "#FFFFFF"
-  surface-sunken: "#EEEBE4"
-  on-surface: "#121417"
-  muted: "#535E6E"
-  border: "#DDD8CE"
-  border-strong: "#8F8B81"
-  focus: "#CC6F01"
+  surface-sunken: "#EDEDF1"
+  on-surface: "#1C1C1E"
+  muted: "#636366"
+  border: "#E6E6EB"
+  border-strong: "#86868B"
+  focus: "#0066CC"
   success: "#037A54"
   success-subtle: "#DCF8E9"
   warning: "#736C02"
@@ -32,17 +32,17 @@ colors:
   tainted: "#BC4100"
   tainted-subtle: "#FFEBE5"
 colors-dark:
-  accent: "#F59E0B"
-  accent-hover: "#E18A0F"
-  on-accent: "#121417"
-  surface: "#121417"
-  surface-raised: "#181B20"
-  surface-sunken: "#0D0F12"
-  on-surface: "#F8FAFC"
-  muted: "#94A3B8"
-  border: "#2B313B"
-  border-strong: "#646B76"
-  focus: "#F59E0B"
+  accent: "#F5F5F7"
+  accent-hover: "#D8D8DC"
+  on-accent: "#161618"
+  surface: "#161618"
+  surface-raised: "#212124"
+  surface-sunken: "#0F0F10"
+  on-surface: "#F5F5F7"
+  muted: "#A1A1A8"
+  border: "#29292D"
+  border-strong: "#75757C"
+  focus: "#4C9DFF"
   success: "#34D399"
   success-subtle: "#09291D"
   warning: "#FDE047"
@@ -61,33 +61,33 @@ colors-dark:
   tainted-subtle: "#341C0F"
 typography:
   xs:
-    fontFamily: "IBM Plex Sans"
+    fontFamily: "system-ui"
     fontSize: 12px
     fontWeight: 400
     lineHeight: 1.4
   mono:
-    fontFamily: "IBM Plex Mono"
+    fontFamily: "ui-monospace"
     fontSize: 13px
     fontWeight: 400
     lineHeight: 1.5
   ui:
-    fontFamily: "IBM Plex Sans"
-    fontSize: 14px
+    fontFamily: "system-ui"
+    fontSize: 15px
     fontWeight: 400
-    lineHeight: 1.4
+    lineHeight: 1.45
   lg:
-    fontFamily: "IBM Plex Sans"
-    fontSize: 16px
+    fontFamily: "system-ui"
+    fontSize: 17px
     fontWeight: 400
     lineHeight: 1.4
   xl:
-    fontFamily: "IBM Plex Sans"
-    fontSize: 20px
+    fontFamily: "system-ui"
+    fontSize: 22px
     fontWeight: 400
     lineHeight: 1.25
   2xl:
-    fontFamily: "IBM Plex Sans"
-    fontSize: 24px
+    fontFamily: "system-ui"
+    fontSize: 28px
     fontWeight: 400
     lineHeight: 1.2
 fontWeights:
@@ -95,8 +95,8 @@ fontWeights:
   medium: 500
   semibold: 600
 rounded:
-  sm: 4px
-  md: 6px
+  sm: 10px
+  md: 22px
   full: 9999px
 spacing:
   xs: 4px
@@ -125,6 +125,7 @@ sizes:
   touch: 44px
   column: 480px
   transcript: 720px
+  wide: 1200px
 breakpoint: 768px
 ---
 
@@ -136,18 +137,18 @@ Dense technical tool. Phone-first. One primary action per screen. Information ov
 High-density developer interface. Closer to a well-made terminal or Linear than a friendly AI product. Minimal chrome. Status and evidence first.
 
 ## Design system
-The interface is built from the owner's shared design system, vendored at `web/vendor/design-system/` (read-only; changed in its own repository and synced), under its Botbench theme (`themes/botbench.css`, loaded after `design-system.css`). The theme is dark by default, with an amber primary action. Settings offers Dark, Light and Match device, remembered on each device: the root always carries `data-theme` (`dark`, `light` or `auto`; never absent, since without it the page's `color-scheme` stays light), set before the first paint by the one inline script in `index.html` and kept by `web/src/app/appearance.ts`, which also sets the browser bar's colour and the header's logo for the mode shown. Before any UI work read `web/vendor/design-system/rules/core.md`, and look each component up in `web/vendor/design-system/components.json` before writing markup.
+The interface is built from the owner's shared design system, vendored at `web/vendor/design-system/` (read-only; changed in its own repository and synced), under its Botbench theme (`themes/botbench.css`, loaded after `design-system.css`). The theme is dark by default: neutral grey surfaces, the platform's own typeface, pill-shaped controls, and a monochrome primary action (near-white in dark, near-black in light). Amber is a status only, Needs input. Settings offers Dark, Light and Match device, remembered on each device: the root always carries `data-theme` (`dark`, `light` or `auto`; never absent, since without it the page's `color-scheme` stays light), set before the first paint by the one inline script in `index.html` and kept by `web/src/app/appearance.ts`, which also sets the browser bar's colour and the header's logo for the mode shown. Before any UI work read `web/vendor/design-system/rules/core.md`, and look each component up in `web/vendor/design-system/components.json` before writing markup.
 - Colour, border, radius, shadow and type come from `ds-` components. Screen markup uses Tailwind utilities for layout, spacing and sizing only.
 - What the catalogue lacks is an app-local component under the `bb-` prefix, declared in `web/design-gaps.json`. Keep that list short.
 - `npm test` runs the system's static scan and fails on a finding. `npm run e2e` runs its rendered check on every screen and open dialog.
 
 ## Tokens
-Use only the values above. No arbitrary spacing, radii, or colors. The block is generated from the design system; a value changes there, never here. Typefaces: IBM Plex Sans, and IBM Plex Mono for code, both served by Botbench itself.
+Use only the values above. No arbitrary spacing, radii, or colors. The block is generated from the design system; a value changes there, never here. Typefaces: the platform's own (system-ui, and ui-monospace for code), as the theme sets them; Botbench loads no font of its own.
 
 ## Never
 - Purple, indigo, or violet gradients (background or text)
 - Gradient text
-- Inter, Roboto, or system-ui as brand type
+- Inter or Roboto as brand type, or any font set by Botbench itself (the theme's platform typeface is the one choice)
 - Emoji as icons
 - Identical feature cards (especially three-up)
 - Glassmorphism or frosted panels

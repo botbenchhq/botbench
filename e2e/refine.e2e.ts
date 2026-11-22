@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The refine loop, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
@@ -63,14 +63,16 @@ test("LIVE the refine loop: Codex raises a defect in Claude Code's first build, 
   await signIn(page, botbench);
 
   // New run, with Review by Codex; the cap is said beside it.
-  await page.goto(`${botbench.base}/#/runs/new`);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Plan exactly one task: add a docstring to add in calc.py. Do not run any command; read calc.py only.");
-  await page.getByLabel("Review").selectOption("gpt-6-luna");
-  await expect(page.getByTestId("review-rounds-cap")).toHaveText("Up to 2 rounds of fixes.");
+  await openComposer(page);
+  await chooseRepository(page, repo);
+  await choose(page, "What to do", "Plan a run");
+  const sheet = await openRow(page, "Review");
+  await sheet.locator('input[name="review"][value="codex gpt-6-luna"]').check();
+  await expect(sheet.getByTestId("review-rounds-cap")).toHaveText("Up to 2 rounds of fixes.");
   await checkDesign(page, "new run, review by Codex, with the cap on rounds of fixes");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await closeContext(page);
+  await messageBox(page).fill("Plan exactly one task: add a docstring to add in calc.py. Do not run any command; read calc.py only.");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
   const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
   expect(((await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { maxRefineRounds: number }).maxRefineRounds).toBe(2);

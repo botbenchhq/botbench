@@ -33,7 +33,7 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <Frame current="tasks">
       <Page>
-        <PageHeader title="Tasks" action={<NewLink href="#/tasks/new">New task</NewLink>} />
+        <PageHeader title="Tasks" action={<NewLink href="#/turn?start=task">New task</NewLink>} />
         {failed !== null && (
           <Alert tone="error" role="alert">
             {failed}

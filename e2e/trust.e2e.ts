@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { checkDesign, copyShot, expect, primaries, SECONDARY_LOOK, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
+import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, checkDesign, copyShot, expect, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Botbench process whose settings offer standing
@@ -31,11 +31,7 @@ const test = base.extend<{ repo: string }>({
 });
 
 async function startTask(page: Page, repo: string, prompt: string, id: number): Promise<void> {
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill(prompt);
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, prompt);
   await expect(page.getByRole("heading", { name: `Task ${id}` })).toBeVisible();
 }
 
@@ -119,7 +115,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(confirm).toContainText("A different argument still asks, and dangerous commands always ask.");
   await expect(confirm).toContainText("You can take it back on the Permissions screen.");
   await expect(confirm.getByTestId("standing-command")).toHaveText(COMMAND);
-  expect(await confirm.getByTestId("standing-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
+  expect(await confirm.getByTestId("standing-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   await expect(confirm.getByTestId("standing-repo")).toHaveText(repo);
   await expect(confirm.getByTestId("standing-directory")).toHaveText("The top folder of the task's copy");
   await expect(confirm.getByTestId("standing-role")).toHaveText("Build");
@@ -190,7 +186,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   expect(await shape(grants)).toEqual(["UL", "LI"]);
   const grant = grants.getByRole("listitem");
   await expect(grant.getByTestId("grant-command")).toHaveText(COMMAND);
-  expect(await grant.getByTestId("grant-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
+  expect(await grant.getByTestId("grant-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   await expect(grant).toContainText("Claude Code runs this without asking you during the Build step.");
   await expect(grant).toContainText("The top folder of a task's copy");
   await expect(grant).toContainText(repo);

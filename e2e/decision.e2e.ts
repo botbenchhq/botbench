@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, git, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { checkDesign, expect, openNewTask, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Decisions in the real client, at a phone's size: a real Botbench process, real temporary repositories, and the
@@ -51,11 +51,7 @@ async function declineWhile(page: Page, botbench: Botbench, until: () => Promise
 
 /** Start a task from New task and wait on its screen until it is Ready for review. */
 async function readyTask(page: Page, botbench: Botbench, repo: string): Promise<void> {
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Create the file hello.txt containing the single word hi, with your Write tool. Run no command.");
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, "Create the file hello.txt containing the single word hi, with your Write tool. Run no command.");
   await expect(page.getByRole("heading", { name: /^Task \d+$/, level: 1 })).toBeVisible();
   await declineWhile(page, botbench, () => expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 1_000 }));
 }
@@ -156,11 +152,7 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
 test("LIVE: on a run's screen each built task is accepted or rejected from its row, and the run is done once the last is decided", async ({ page, botbench, repos }) => {
   test.setTimeout(600_000);
   await signIn(page, botbench);
-  await page.goto(`${botbench.base}/#/runs/new`);
-  await page.getByLabel("Repository path").fill(repos.run);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await startRunIn(page, repos.run, "Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
   const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
   let version = -1;

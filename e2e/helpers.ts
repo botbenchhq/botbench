@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, test as base, type Locator, type Page } from "@playwright/test";
 import { startBotbench, type Botbench } from "./botbench.ts";
 import { bannedIn } from "./voice.ts";
 
@@ -27,11 +27,117 @@ export async function signIn(page: Page, botbench: Botbench): Promise<void> {
   await expect(page.getByTestId("driver-state")).toContainText("signed in");
 }
 
-/** Open New task the way the client offers it: the Tasks destination, then that view's own action. */
+/*
+ * The composer on the home screen (Chat) starts everything: a chat with no repository, a task or a run in one. These
+ * steps are the one place the tests drive it, so a change to the composer changes the tests here.
+ */
+
+/** The home screen, from the navigation. */
+export async function openComposer(page: Page): Promise<void> {
+  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Chat", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+}
+
+/** New task the way the client offers it: the Tasks destination, then that view's own action, which opens the composer with One task chosen. */
 export async function openNewTask(page: Page): Promise<void> {
   await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Tasks", exact: true }).click();
   await page.getByRole("link", { name: "New task" }).click();
-  await expect(page.getByRole("heading", { name: "New task", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+}
+
+/** The composer's message box, whatever it is named for (a chat, a task, a run). */
+export const messageBox = (page: Page): Locator => page.locator("form.ds-composer textarea");
+/** The Add context sheet, in whichever of its views. */
+export const contextSheet = (page: Page): Locator => page.locator("dialog.ds-sheet");
+
+/** Open the Add context sheet on its rows, from wherever it is. */
+export async function openContext(page: Page): Promise<Locator> {
+  const sheet = contextSheet(page);
+  if (!(await sheet.evaluate((d: HTMLDialogElement) => d.open))) await page.getByRole("button", { name: "Add context" }).click();
+  const back = sheet.getByRole("button", { name: "Back to Add context" });
+  if (await back.isVisible()) await back.click();
+  await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
+  return sheet;
+}
+
+/** Open one row's view in the sheet: `row` is the row's name, as "Repository" or "Mode". */
+export async function openRow(page: Page, row: string): Promise<Locator> {
+  const sheet = await openContext(page);
+  await sheet.locator(".ds-context-list__button", { has: page.locator(".ds-context-list__label", { hasText: new RegExp(`^${row}$`) }) }).click();
+  await expect(sheet.getByRole("button", { name: "Back to Add context" })).toBeVisible();
+  return sheet;
+}
+
+export async function closeContext(page: Page): Promise<void> {
+  const sheet = contextSheet(page);
+  if (await sheet.evaluate((d: HTMLDialogElement) => d.open)) await sheet.getByRole("button", { name: "Close Add context" }).click();
+  await expect(sheet).toBeHidden();
+}
+
+/** Choose an option in one row's view, by its name, and go back to the rows. */
+export async function choose(page: Page, row: string, option: string): Promise<void> {
+  const sheet = await openRow(page, row);
+  await sheet.getByRole("radio", { name: option, exact: true }).check();
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+}
+
+/** Choose the repository at `path` by typing it as Another folder, and wait until Botbench calls it usable. */
+export async function chooseRepository(page: Page, path: string): Promise<void> {
+  const sheet = await openRow(page, "Repository");
+  await sheet.getByRole("radio", { name: "Another folder…" }).check();
+  await sheet.getByLabel("Folder path").fill(path);
+  await expect(sheet.getByTestId("repo-state")).toHaveText("Usable git repository.");
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+}
+
+/** Add commands to Allowed commands, which lists what the repository's settings offer. */
+export async function allowCommands(page: Page, commands: readonly string[]): Promise<void> {
+  const sheet = await openRow(page, "Allowed commands");
+  for (const command of commands) {
+    await sheet.getByLabel("Add a command").fill(command);
+    await sheet.getByRole("button", { name: "Add", exact: true }).click();
+  }
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+}
+
+/** Send what the box holds and wait for the task's or run's own screen. */
+async function sendAndOpen(page: Page, prompt: string, to: RegExp): Promise<void> {
+  await closeContext(page);
+  await messageBox(page).fill(prompt);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page).toHaveURL(to);
+}
+
+/** Start one task in `repo` through the composer, from the home screen, and open its screen. */
+export async function startTaskIn(page: Page, repo: string, prompt: string, options: { commands?: readonly string[] } = {}): Promise<void> {
+  await openComposer(page);
+  await chooseRepository(page, repo);
+  await choose(page, "What to do", "One task");
+  if (options.commands) await allowCommands(page, options.commands);
+  await sendAndOpen(page, prompt, /#\/tasks\/\d+$/);
+}
+
+/** Plan a run in `repo` through the composer, from the home screen, with the settings given, and open its screen. */
+export async function startRunIn(page: Page, repo: string, prompt: string, options: { mode?: "Manual" | "Semi-autonomous" | "Fully autonomous"; review?: string; delivery?: "Keep the branch" | "Open a pull request"; commands?: readonly string[] } = {}): Promise<void> {
+  await openComposer(page);
+  await chooseRepository(page, repo);
+  await choose(page, "What to do", "Plan a run");
+  if (options.mode) await choose(page, "Mode", options.mode);
+  if (options.review) {
+    const sheet = await openRow(page, "Review");
+    // The reviewer and model as the option's value: the agent and the model id, apart by a space.
+    await sheet.locator(`input[name="review"][value="${options.review}"]`).check();
+    await sheet.getByRole("button", { name: "Back to Add context" }).click();
+  }
+  if (options.delivery) await choose(page, "When accepted", options.delivery);
+  if (options.commands) await allowCommands(page, options.commands);
+  await sendAndOpen(page, prompt, /#\/runs\/\d+$/);
+}
+
+/** Send a chat message from the home screen, with no repository. */
+export async function sendChat(page: Page, text: string): Promise<void> {
+  await messageBox(page).fill(text);
+  await page.getByRole("button", { name: "Send" }).click();
 }
 
 /** Every request the page makes must go to Botbench itself. */
@@ -58,6 +164,9 @@ type Colour = { hex: string };
 const THEME = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "themes", "botbench.tokens.json"), "utf8")) as {
   color: Record<string, { $value: Colour; $extensions?: { "design-system"?: { dark?: Colour } } }>;
   radius: Record<string, { $value: { value: number; unit: string } }>;
+  text: Record<string, { $value: { value: number; unit: string } }>;
+  font: Record<string, { $value: string[] }>;
+  "border-width": { DEFAULT: { $value: { value: number; unit: string } } };
 };
 /** The browser-bar colour of each mode, as the theme gives it. */
 export const THEME_COLOR = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "themes", "botbench.json"), "utf8")) as { themeColor: Record<Mode, string> }).themeColor;
@@ -84,7 +193,15 @@ export const pageMode = (page: Page): Promise<Mode> =>
 
 // The colours of each mode: a light value drawn on the dark page is off the palette, and a dark one on the light page.
 const PALETTE: Record<Mode, string[]> = { dark: Object.keys(THEME.color).map((name) => token(name, "dark")), light: Object.keys(THEME.color).map((name) => token(name, "light")) };
-const RADII = Object.values(THEME.radius).map(({ $value }) => `${$value.value}${$value.unit}`);
+// A corner on the scale, or one nested inside a bordered corner on the scale, which the system draws a border's width
+// smaller so the two curves stay parallel (the first and last row of a context list).
+const RADII = Object.values(THEME.radius).flatMap(({ $value }) => [`${$value.value}${$value.unit}`, `${$value.value - THEME["border-width"].DEFAULT.$value.value}${$value.unit}`]);
+/** A type size of the theme, as the browser reports it. */
+const TEXT = (name: string): string => `${THEME.text[name]!.$value.value}${THEME.text[name]!.$value.unit}`;
+/** The first family of a font token: the one the theme names first, which the browser reports first. */
+const FIRST_FAMILY = (name: string): string => THEME.font[name]!.$value[0]!;
+/** A computed font-family that starts with the theme's mono typeface: for code, commands, paths and diffs. */
+export const MONO_FAMILY = new RegExp(`^"?${FIRST_FAMILY("mono")}"?(,|$)`);
 
 /** The badge's status set, as the vendored catalogue has it: one icon and one tone for each state. */
 const STATUS_SET = (
@@ -115,7 +232,7 @@ export async function checkStatuses(page: Page, screen: string): Promise<void> {
 
 /** The primary button's look and a secondary button's, from the theme's tokens, in the default mode. */
 export const PRIMARY_LOOK = { background: token("accent"), text: token("on-accent"), border: token("accent") };
-export const SECONDARY_LOOK = { background: token("surface-raised"), text: token("on-surface"), border: token("border") };
+export const SECONDARY_LOOK = { background: token("surface-sunken"), text: token("on-surface"), border: token("border") };
 
 /** The buttons drawn as the primary action: filled with the theme's accent colour in the mode the page is drawn in. */
 export const primaries = async (page: Page): Promise<(string | null)[]> => {
@@ -126,8 +243,7 @@ export const primaries = async (page: Page): Promise<(string | null)[]> => {
 /**
  * The design system, checked on the rendered page: its structural rules (one primary action per view, disclosure
  * limits, cards, badges, emoji, stock phrases, controls that use no system component) find nothing; the view has one h1, in its page header; every colour drawn is one of its tokens; there is no
- * gradient or blur, no shadow except on a dialog or a toast, and no corner off its radius scale; its two typefaces are loaded from Botbench and not
- * substituted; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
+ * gradient or blur, no shadow except on a dialog or a toast, and no corner off its radius scale; its typefaces are the theme's; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
  * screen has its data, and again with each dialog open: an open dialog is a view of its own.
  */
 export async function checkDesign(page: Page, screen: string): Promise<void> {
@@ -180,7 +296,6 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
     const headings = [...document.querySelectorAll("h1, h2, h3")].filter((el) => el.getClientRects().length > 0 && el.closest("dialog") === null);
     const plain = (level: string): string[] => [...new Set(headings.filter((el) => el.tagName === level && el.className === "").map((el) => getComputedStyle(el).fontSize))];
     const mono = document.querySelector(".ds-app-header__name, .ds-sign-in__product, code, pre");
-    const loaded = (family: string): boolean => [...document.fonts].some((f) => f.family.replace(/"/g, "") === family && f.status === "loaded");
     return {
       small,
       colours,
@@ -195,17 +310,15 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
       bodyFont: getComputedStyle(document.body).fontFamily,
       bodySize: getComputedStyle(document.body).fontSize,
       monoFont: mono ? getComputedStyle(mono).fontFamily : "",
-      sansLoaded: document.fonts.check('14px "IBM Plex Sans"') && loaded("IBM Plex Sans"),
-      monoLoaded: loaded("IBM Plex Mono"),
       overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
   });
   expect(found.components, `${screen}: the screen is built from the design system's components`).toBeGreaterThan(2);
-  // One h1 a view: at 24px in the page header, or plain in the sign-in pattern, or the empty state's title in the not-found
+  // One h1 a view: at the theme's 2xl in the page header, or plain in the sign-in pattern, or the empty state's title in the not-found
   // pattern, which that component draws at its own size. Plain h2 and h3 are a step smaller each.
-  expect(found.h1, `${screen}: the view's one h1, at the size of a title`).toEqual([expect.stringMatching(/^(24px (plain|ds-page-header__title)|\d+px ds-empty-state__title)$/)]);
-  expect(found.h2.filter((size) => size !== "20px"), `${screen}: plain h2 headings are 20px`).toEqual([]);
-  expect(found.h3.filter((size) => size !== "16px"), `${screen}: plain h3 headings are 16px`).toEqual([]);
+  expect(found.h1, `${screen}: the view's one h1, at the size of a title`).toEqual([expect.stringMatching(new RegExp(`^(${TEXT("2xl")} (plain|ds-page-header__title)|\\d+px ds-empty-state__title)$`))]);
+  expect(found.h2.filter((size) => size !== TEXT("xl")), `${screen}: plain h2 headings are the theme's xl`).toEqual([]);
+  expect(found.h3.filter((size) => size !== TEXT("lg")), `${screen}: plain h3 headings are the theme's lg`).toEqual([]);
   expect(found.offSystem, `${screen}: inline styles`).toEqual([]);
   const mode = await pageMode(page);
   const offPalette = Object.entries(found.colours).filter(([colour]) => !PALETTE[mode].includes(colour) && colour !== "rgba(0, 0, 0, 0)" && colour !== "transparent");
@@ -214,11 +327,10 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(found.decorations, `${screen}: gradients, blur, or a shadow on anything but a dialog or a toast`).toEqual([]);
   expect(Object.entries(found.radii).filter(([radius]) => radius !== "0px" && !RADII.includes(radius)), `${screen}: corners off the radius scale`).toEqual([]);
   expect(found.small, `${screen}: touch targets under 44px`).toEqual([]);
-  expect(found.bodyFont, `${screen}: body font`).toMatch(/^"?IBM Plex Sans"?,/);
-  expect(found.bodySize).toBe("14px");
-  expect(found.monoFont, `${screen}: mono font`).toMatch(/^"?IBM Plex Mono"?,/);
-  expect(found.sansLoaded, `${screen}: IBM Plex Sans is loaded from Botbench, not substituted`).toBe(true);
-  expect(found.monoLoaded, `${screen}: IBM Plex Mono is loaded from Botbench, not substituted`).toBe(true);
+  // The theme's own typefaces, as its tokens name them: the platform's, which Botbench does not load or substitute.
+  expect(found.bodyFont.split(",")[0]!.replace(/"/g, "").trim(), `${screen}: body font`).toBe(FIRST_FAMILY("ui"));
+  expect(found.bodySize, `${screen}: body size`).toBe(TEXT("ui"));
+  if (found.monoFont !== "") expect(found.monoFont.split(",")[0]!.replace(/"/g, "").trim(), `${screen}: mono font`).toBe(FIRST_FAMILY("mono"));
   expect(found.overflow, `${screen}: no sideways scrolling at phone width`).toBe(0);
   await checkStatuses(page, screen);
   await checkWords(page, screen);
@@ -285,6 +397,16 @@ export async function tallShot(page: Page, file: string): Promise<void> {
     document.querySelectorAll("[style]:not([data-styled-before-shot])").forEach((el) => el.removeAttribute("style"));
     document.querySelectorAll("[data-styled-before-shot]").forEach((el) => el.removeAttribute("data-styled-before-shot"));
   });
+}
+
+/** A screenshot of the window as a phone shows it, at `SHOTS/<name>.png` when BOTBENCH_SHOTS is set. */
+export async function tempShot(page: Page, name: string): Promise<void> {
+  if (!SHOTS) return;
+  // Wait for the sheet's slide and the caret to settle, so the picture is of the state, not of a transition.
+  await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
+  // A dialog's slide is a transition of the top layer, which getAnimations does not always list: the system's slowest is 240ms.
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
 export { expect };

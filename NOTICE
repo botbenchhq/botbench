@@ -8,9 +8,9 @@ Copied files (stored in this repository)
 ----------------------------------------
 
 web/vendor/design-system/ is a copy of the owner's shared design system, from
-its repository https://github.com/jon-lange/design-system: version 0.7.5,
-source commit 743029df57780435d64e097bbc34d1475a928539 (743029d, the merge of
-its pull request 16 into main), the `dist/` directory of that repository,
+its repository https://github.com/jon-lange/design-system: version 0.8.1,
+source commit d8499b616912e11aff707b458ee5f7c668cf6218 (d8499b6, the merge of
+its pull request 22 into main), the `dist/` directory of that repository,
 unmodified, written by its own `scripts/sync.mjs`. `hashes.json` in the copy
 holds the SHA-256 of every file. (Versions up to 0.5 were called Groundwork and
 were copied to web/vendor/groundwork/.)
@@ -75,7 +75,9 @@ The built client (web/dist, produced by `npm run build --prefix web`) contains:
 
 - From the copy of the design system listed above: its stylesheet, the
   Botbench theme's stylesheet (themes/botbench.css), the IBM Plex Sans and IBM
-  Plex Mono font files, the Lucide icon sprite and the Lucide icons its
+  Plex Mono font files (declared by the design system's stylesheet; the
+  Botbench theme sets the platform's own typeface, so a browser does not load
+  them), the Lucide icon sprite and the Lucide icons its
   stylesheet draws. Their notices are above. The gallery pages, the checker,
   the rules and the hook in the copy are not part of the built client.
 - React and React DOM. Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.

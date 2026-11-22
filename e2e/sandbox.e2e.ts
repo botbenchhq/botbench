@@ -1,6 +1,6 @@
 import path from "node:path";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, openNewTask, SHOTS, signIn, test } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, signIn, startTaskIn, test } from "./helpers.ts";
 
 // U27 in the real client, at a phone's size: a real Botbench process, a real temporary repository, and the owner's
 // Claude Code on its cheapest model running, once the owner allows it, a command that tries to reach the network.
@@ -13,11 +13,7 @@ test("LIVE: a command the owner allowed that tries to reach a host the repositor
   const repo = path.join(path.dirname(botbench.home), "sample-repo");
   initRepo(repo, { "README.md": "# Sample\n" });
   await signIn(page, botbench);
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill(PROMPT);
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, PROMPT);
   await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
 
   // The permission check still asks first, with the sandbox on.
