@@ -1,0 +1,216 @@
+import fs from "node:fs";
+import path from "node:path";
+import { checkoutState, git, initRepo, write } from "../test/support/repo.ts";
+import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { startSmelt, tempDir } from "./smelt.ts";
+
+// Tasks in the real client, at a phone's size, against a real Smelt process and real temporary repositories.
+
+/** A real repository beside the test's Smelt home, with the owner part-way through their own work. */
+function sourceRepo(smeltHome: string): string {
+  const repo = path.join(path.dirname(smeltHome), "sample-repo");
+  initRepo(repo);
+  write(repo, "README.md", "# Sample\nthe owner is half-way through this line\n");
+  return repo;
+}
+
+test("LIVE: start a task in a repository, watch its transcript, expand the changed file's diff and see the branch, without a reload; the new screens follow DESIGN.md", async ({ page, context, smelt }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const foreign = watchRequests(page, smelt);
+  const repo = sourceRepo(smelt.home);
+  const before = checkoutState(repo);
+  await signIn(page, smelt);
+  // A mark on the page that a reload would wipe out.
+  await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+
+  // The navigation lists the screens that exist, and gets to each.
+  const nav = page.getByRole("navigation", { name: "Screens" });
+  await expect(nav.getByRole("link")).toHaveText(["Turn", "Tasks", "New task"]);
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Turn");
+  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
+  await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet.");
+  await checkDesign(page, "tasks, none yet");
+  await nav.getByRole("link", { name: "New task" }).click();
+  await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("New task");
+  await expect(page.getByRole("button")).toHaveCount(1);
+  await expect(page.getByTestId("repo-state")).toHaveText("Enter the full path of a git repository on this Mac.");
+  await checkDesign(page, "new task, empty");
+
+  // The path is checked as it is typed, and the answer is in words.
+  await page.getByLabel("Repository path").fill(repo);
+  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
+  const prompt = "Create a file named hello.txt containing exactly: hi";
+  await page.getByLabel("Prompt").fill(prompt);
+  await checkDesign(page, "new task, filled in");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u6-new-task.png"), fullPage: true });
+  await page.getByRole("button", { name: "Start task" }).click();
+
+  // The task screen: the state in words, then the transcript as it happens.
+  await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
+  await expect(page.getByTestId("task-status")).toHaveText(/^(Queued|Building)\./);
+  await expect(page.getByTestId("task-repo")).toHaveText(repo);
+  await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
+  await expect(page.getByTestId("task-status")).toHaveText("Building. Claude Code is working in the task's worktree.");
+  await expect(page.getByTestId("changed-files")).toHaveCount(0);
+  await expect(page.getByTestId("branch")).toHaveText(/^smelt\/run-[0-9a-f]{8}\/task-\d+$/);
+  await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
+
+  await expect(page.getByTestId("task-status")).toHaveText("Built. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
+  await expect(page.locator('[data-event="turn_ended"]')).toContainText("Turn completed.");
+  // No working note is left once the turn is over.
+  await expect(page.getByRole("log").getByRole("status")).toHaveCount(0);
+
+  // The changed file with its line counts, expandable to its diff.
+  const files = page.getByTestId("changed-files");
+  await expect(files.getByRole("listitem")).toHaveCount(1);
+  const file = files.getByRole("button", { name: /hello\.txt/ });
+  await expect(file).toHaveText(/hello\.txt.*added.*\+1.*−0/);
+  await expect(file).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("diff")).toHaveCount(0);
+  await file.click();
+  await expect(file).toHaveAttribute("aria-expanded", "true");
+  const diff = page.getByTestId("diff");
+  await expect(diff).toContainText("+++ b/hello.txt");
+  await expect(diff).toContainText("+hi");
+  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Geist Mono"?,/);
+  // The diff scrolls inside its own block; the page itself never scrolls sideways.
+  const scroller = page.getByTestId("diff-scroll");
+  expect(await scroller.evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto");
+  expect(await scroller.evaluate((el) => el.scrollWidth > el.clientWidth), "a long diff line scrolls inside its block").toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+  // Lines are told apart by their sign, not by colour alone.
+  expect(await diff.locator('[data-line="added"]').first().textContent()).toMatch(/^\+/);
+
+  // The branch, by name, with a copy control that copies it.
+  const branch = (await page.getByTestId("branch").textContent())!;
+  expect(git(repo, "show", `${branch}:hello.txt`).trim()).toBe("hi");
+  await page.getByRole("button", { name: "Copy branch name" }).click();
+  await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
+  await expect(page.getByTestId("not-merged")).toHaveText(
+    "Nothing has been merged or pushed. Claude Code was allowed to change files only inside this task's worktree. Commands it treats as read-only, and ones that only write files there, could run; every command that needs approval was denied. Approvals for commands arrive in a later version.",
+  );
+  // No primary action on this screen, and nothing that claims to accept, reject, merge or push.
+  await expect(page.getByRole("button", { name: /accept|reject|merge|push|approve|stop/i })).toHaveCount(0);
+
+  await checkDesign(page, "task, finished with a diff open");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u6-task.png"), fullPage: true });
+
+  // Collapsing works too.
+  await file.click();
+  await expect(page.getByTestId("diff")).toHaveCount(0);
+
+  // The list shows the task, newest first, with its state in words, and leads back to it.
+  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
+  const rows = page.getByTestId("task-list").getByRole("link");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Built");
+  await expect(rows.first()).toContainText(prompt);
+  await checkDesign(page, "tasks, with one");
+  await rows.first().click();
+  await expect(page.getByTestId("branch")).toHaveText(branch);
+  await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
+
+  // The turn screen is still there and still works as the first screen.
+  await nav.getByRole("link", { name: "Turn" }).click();
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+
+  expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce), "all of it without a reload").toBe(true);
+  expect(foreign, "requests to anything but Smelt").toEqual([]);
+  expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
+});
+
+test("a repository path that cannot be used is reported in words, and Start task starts nothing", async ({ page, smelt }) => {
+  const repo = sourceRepo(smelt.home);
+  const plain = tempDir("smelt-e2e-plain-");
+  try {
+    await signIn(page, smelt);
+    const starts: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/tasks") starts.push(request.url());
+    });
+    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+    const state = page.getByTestId("repo-state");
+    const field = page.getByLabel("Repository path");
+    await page.getByLabel("Prompt").fill("Create hello.txt");
+
+    await field.fill("sample-repo");
+    await expect(state).toContainText("Give the full path, starting with /.");
+    await expect(field).toHaveAttribute("aria-invalid", "true");
+    await field.fill(path.join(plain, "missing"));
+    await expect(state).toContainText("does not exist");
+    await field.fill(plain);
+    await expect(state).toContainText("is not a git repository");
+    await checkDesign(page, "new task, path refused");
+
+    await page.getByRole("button", { name: "Start task" }).click();
+    await expect(page.getByRole("alert")).toContainText("The task was not started");
+    await expect(page.getByRole("alert")).toContainText("is not a git repository");
+    await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toHaveCount(0);
+
+    // A usable path with no prompt starts nothing either.
+    await field.fill(repo);
+    await expect(state).toHaveText("Usable git repository.");
+    await expect(field).toHaveAttribute("aria-invalid", "false");
+    await page.getByLabel("Prompt").fill("   ");
+    await page.getByRole("button", { name: "Start task" }).click();
+    await expect(page.getByRole("alert")).toContainText("Say what the task is.");
+
+    expect(starts, "no task was asked for").toEqual([]);
+    expect(await (await page.request.get(`${smelt.base}/api/tasks`)).json()).toEqual({ tasks: [] });
+    expect(fs.existsSync(path.join(smelt.home, "worktrees"))).toBe(false);
+    expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
+  } finally {
+    fs.rmSync(plain, { recursive: true, force: true });
+  }
+});
+
+test("a task address that names no task says so in words", async ({ page, smelt }) => {
+  await signIn(page, smelt);
+  await page.goto(`${smelt.base}/#/tasks/4242`);
+  await expect(page.getByRole("alert")).toHaveText("There is no task 4242.");
+  await expect(page.getByTestId("changed-files")).toHaveCount(0);
+  await expect(page.getByRole("button")).toHaveCount(0);
+});
+
+test("a task that cannot be built shows that it failed and why, as it happens, and lists as failed", async ({ page }) => {
+  // Smelt's home inside the repository itself, the one place a worktree must never go: the task is real and fails at
+  // its first step, before Claude Code is started.
+  const repo = tempDir("smelt-e2e-inside-");
+  initRepo(repo);
+  const smelt = await startSmelt({ home: path.join(repo, "home") });
+  try {
+    await signIn(page, smelt);
+    await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+    const nav = page.getByRole("navigation", { name: "Screens" });
+    await nav.getByRole("link", { name: "New task" }).click();
+    await page.getByLabel("Repository path").fill(repo);
+    await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
+    await page.getByLabel("Prompt").fill("Create hello.txt\nand a second line");
+    await page.getByRole("button", { name: "Start task" }).click();
+
+    await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+    await expect(page.getByTestId("task-status")).toContainText("Failed. The task's worktree could not be created");
+    await expect(page.getByTestId("task-status")).toContainText("inside the repository");
+    // What the task was asked is still shown; there is no transcript, no file list and no branch to show.
+    await expect(page.getByTestId("task-prompt")).toHaveText("Create hello.txt\nand a second line");
+    await expect(page.getByRole("log")).toHaveCount(0);
+    await expect(page.getByTestId("changed-files")).toHaveCount(0);
+    await expect(page.getByTestId("branch")).toHaveCount(0);
+    await expect(page.getByRole("button")).toHaveCount(0);
+    await checkDesign(page, "task, failed");
+
+    await nav.getByRole("link", { name: "Tasks", exact: true }).click();
+    await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Task 1 · Failed.*Create hello\.txt/);
+    await expect(page.getByTestId("task-list")).not.toContainText("second line");
+    expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce)).toBe(true);
+    expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
+  } finally {
+    expect((await smelt.stop()).leftover).toEqual([]);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});

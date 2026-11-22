@@ -38,6 +38,8 @@ export interface EventStream {
   handle(req: http.IncomingMessage, res: http.ServerResponse): void;
   /** Tell the stream that events were stored. It reads them from the database and sends each client what it has not had. */
   notify(): void;
+  /** Tell every client that a task reached a state. Clients read the task itself from its route. */
+  announceTask(task: { id: number; status: string; attemptId: number | null }): void;
   clients(): number;
   /** End every open stream. */
   close(): void;
@@ -50,7 +52,9 @@ export interface EventStream {
  * reconnects with `Last-Event-ID` (or `?after=` on its first connection, where
  * a browser cannot set the header) is sent every row after that id from the
  * database and then stays live, so it sees no gap and no repeat. Stored events
- * are unnamed SSE messages; the only named event is `heartbeat`.
+ * are unnamed SSE messages. The named events are `heartbeat` and `task`: a
+ * task announcement says which task changed and carries no id, so it never
+ * moves a client's place. A client that was away reads the task from its route.
  */
 export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTBEAT_MS): EventStream {
   const cursors = new Map<http.ServerResponse, number>();
@@ -96,10 +100,15 @@ export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTB
     for (const res of cursors.keys()) send(res, events);
   };
 
+  const announceTask = (task: { id: number; status: string; attemptId: number | null }): void => {
+    const frame = `event: task\ndata: ${JSON.stringify({ taskId: task.id, status: task.status, attemptId: task.attemptId })}\n\n`;
+    for (const res of cursors.keys()) res.write(frame);
+  };
+
   const close = (): void => {
     for (const res of [...cursors.keys()]) res.destroy();
     cursors.clear();
   };
 
-  return { handle, notify, clients: () => cursors.size, close };
+  return { handle, notify, announceTask, clients: () => cursors.size, close };
 }

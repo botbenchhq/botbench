@@ -95,7 +95,7 @@ function isDirectory(p: string): boolean {
 }
 
 /** Check `repo` is the top folder of a git repository with at least one commit; returns the commit `HEAD` points at. */
-async function sourceHead(repo: string): Promise<string> {
+export async function sourceHead(repo: string): Promise<string> {
   if (!fs.existsSync(repo)) throw new Error(`Repository path ${repo} does not exist.`);
   if (!isDirectory(repo)) throw new Error(`Repository path ${repo} is not a directory.`);
   let top: string;
@@ -167,6 +167,10 @@ async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: s
   if (!gitDir || !commonDir || !top) throw notOurs("git did not describe it");
   if (realPath(gitDir) === realPath(commonDir)) throw notOurs("it is a repository's main checkout");
   if (realPath(top) !== realPath(dir)) throw notOurs("it is a folder inside a worktree, not the worktree itself");
+  // What a task wrote in its worktree is not trusted. A git folder that lives inside the worktree, or one that is not
+  // the repository's own entry for a linked worktree, could carry a config whose filters are commands; git would run them.
+  if (isInside(realPath(commonDir), realPath(dir)) || isInside(realPath(gitDir), realPath(dir))) throw notOurs("its git folder is inside the worktree itself");
+  if (path.dirname(realPath(gitDir)) !== path.join(realPath(commonDir), "worktrees")) throw notOurs("its git folder is not one of the repository's worktree entries");
   let branch: string;
   try {
     branch = (await git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])).trim();

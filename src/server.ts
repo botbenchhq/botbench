@@ -9,6 +9,7 @@ import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
 import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, loadConfig, ROOT, smeltHome, type Config } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
+import { createTasks } from "./engine/task.ts";
 import { openStore } from "./store/db.ts";
 
 export interface SmeltServer {
@@ -67,8 +68,10 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   const login = loadOrCreateLoginToken(home);
   const stream = createEventStream(db, options.heartbeatMs);
   const model = turnModel(config);
-  const turns = createTurns({ db, home, driver: new ClaudeCodeDriver(), ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
-  const ctx = { db, turns, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const driver = new ClaudeCodeDriver();
+  const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
+  const tasks = createTasks({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, onTaskChange: stream.announceTask });
+  const ctx = { db, turns, tasks, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -93,7 +96,7 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
-    await turns.close();
+    await Promise.allSettled([turns.close(), tasks.close()]);
     db.close();
   };
 

@@ -19,6 +19,8 @@ export type DriverEvent =
   | { type: "tool_call"; id: string; name: string; input: unknown }
   /** What a tool returned, matched to its call by `id`. */
   | { type: "tool_result"; id: string; output: string; isError: boolean }
+  /** The CLI refused a tool call because it needed an approval nobody gave. `id` is the call's; `reason` is the CLI's own short account. */
+  | { type: "permission_denied"; id: string; name: string; reason: string | null }
   /** Tokens one turn used. No money: whether a turn costs dollars depends on the login, not on the CLI's printout. */
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   /** The CLI reported where the login stands against its limit. `limited` means the limit was hit. */

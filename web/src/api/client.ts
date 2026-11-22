@@ -12,6 +12,7 @@ export type DriverEvent =
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError: boolean }
+  | { type: "permission_denied"; id: string; name: string; reason: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -106,6 +107,58 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
+export type TaskStatus = "queued" | "building" | "awaiting_decision" | "interrupted" | "failed";
+
+export interface TaskSummary {
+  id: number;
+  repo: string;
+  prompt: string;
+  status: TaskStatus;
+  /** Why the task was interrupted or failed. */
+  reason: string | null;
+  branch: string | null;
+  baseCommit: string | null;
+  headCommit: string | null;
+  attemptId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FileChange {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  added: number;
+  removed: number;
+  binary: boolean;
+}
+
+export interface TaskDetail extends TaskSummary {
+  /** The files changed from the base commit to Smelt's commit; null until there is a commit, or when they cannot be read. */
+  files: FileChange[] | null;
+  filesProblem: string | null;
+}
+
+export interface RepoCheck {
+  usable: boolean;
+  path: string;
+  /** Why the path cannot be used, in words. */
+  reason: string | null;
+}
+
+export const checkRepo = (path: string): Promise<RepoCheck> => request("GET", `/api/repos/check?path=${encodeURIComponent(path)}`);
+export const startTask = (repo: string, prompt: string): Promise<{ taskId: number }> => request("POST", "/api/tasks", { repo, prompt }, 30_000);
+export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
+export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
+export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
+  request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
+
+/** A task reached a state. The task itself is read from its route. */
+export interface TaskAnnouncement {
+  taskId: number;
+  status: TaskStatus;
+  attemptId: number | null;
+}
+
 export interface StreamHandlers {
   /** Called once per stored event, in id order, never twice for the same id. */
   onEvent(event: StoredEvent): void;
@@ -113,6 +166,8 @@ export interface StreamHandlers {
   onConnection(connected: boolean): void;
   /** Called when the stream dropped because the session is gone. The stream stops. */
   onSignedOut(): void;
+  /** Called when a task reached a state. */
+  onTask?(announcement: TaskAnnouncement): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -159,6 +214,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
       handlers.onConnection(true);
     };
     source.addEventListener("heartbeat", alive);
+    source.addEventListener("task", (message) => {
+      alive();
+      handlers.onTask?.(JSON.parse((message as MessageEvent<string>).data) as TaskAnnouncement);
+    });
     source.onmessage = (message) => {
       alive();
       const event = JSON.parse(message.data as string) as StoredEvent;

@@ -175,3 +175,40 @@ test("output lines recorded from Claude Code 2.1.322 become normalized events", 
   assert.deepEqual(parseClaudeLine(`{"type":"control_response","response":{"subtype":"success","request_id":"int-1","response":{"still_queued":[]}}}`), []);
   assert.deepEqual(parseClaudeLine(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"session_id":"${session}"}`), []);
 });
+
+test("an attempt that may edit gets edits inside its working directory allowed, and loads no settings files at all", () => {
+  const args = claudeArgs({ model: "haiku", allowEdits: true });
+  const valueOf = (flag: string): string | undefined => {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  };
+  // One rule, for the file-editing tools, on paths below the working directory. No shell rule, and no permission mode that allows more.
+  assert.equal(valueOf("--allowedTools"), "Edit(./**)");
+  assert.equal(args.filter((a) => /^(Bash|Write|Edit|Read|WebFetch)/.test(a)).length, 1, "the edit rule is the only rule");
+  assert.equal(args.includes("--permission-mode"), false, "accept-edits mode also lets shell commands such as touch through, so it is not used");
+  assert.equal(valueOf("--permission-prompts"), "none", "everything else that would ask is denied");
+  // The working directory is a repository's content: its own CLI settings, allow rules and hooks must not load.
+  assert.equal(valueOf("--setting-sources"), "");
+  assert.equal(args.filter((a) => a === "--setting-sources").length, 1);
+  assert.ok(args.includes("--strict-mcp-config"));
+  for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--settings", "--plugin-dir", "--bare", "--add-dir"]) {
+    assert.equal(args.includes(flag), false, `${flag} must not be passed`);
+  }
+  // Without the option nothing is allowed, as before.
+  assert.equal(claudeArgs({ model: "haiku" }).includes("--allowedTools"), false);
+  assert.equal(checkVersion("2.1.322").missingFlags.includes("--allowedTools"), false);
+  assert.ok(checkVersion("2.1.0").missingFlags.includes("--allowedTools"));
+});
+
+test("a permission the CLI denied becomes a permission_denied event naming the tool call", () => {
+  // The line Claude Code 2.1.322 printed on 2026-11-22 when a turn asked to run `sh make-marker.sh` with nobody to approve it
+  // (the trailing session_id field is left out).
+  const line =
+    '{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_01GZ1Xt2X9EptfvaCaRhaiuh","decision_reason_type":"asyncAgent","decision_reason":"no approval surface in this session; permission request denied automatically","message":"Permission for this tool use was denied. It requires approval, and this session has no approval surface — nobody can answer a permission prompt here — so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that requires approval, will be denied the same way for the rest of this session. Tell the user what was blocked and why you needed it, then continue with the parts of the task that do not require approval. What required approval: This command requires approval","uuid":"eb5a6d33-f4dc-4e09-ae39-62acfec51b0a"}';
+  assert.deepEqual(parseClaudeLine(line), [
+    { type: "permission_denied", id: "toolu_01GZ1Xt2X9EptfvaCaRhaiuh", name: "Bash", reason: "no approval surface in this session; permission request denied automatically" },
+  ]);
+  assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"permission_denied"}'), [{ type: "permission_denied", id: "", name: "", reason: null }]);
+  // Other system lines still carry nothing for the transcript.
+  assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"task_summary","summary":"x"}'), []);
+});

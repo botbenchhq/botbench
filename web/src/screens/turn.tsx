@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDriver, getTranscript, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
-import { Mark } from "../app/shell.tsx";
+import { Header } from "../components/header.tsx";
+import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
 const CONVERSATION_KEY = "smelt.conversation";
@@ -22,106 +23,12 @@ function saveConversation(ids: number[]): void {
   }
 }
 
-/** Add events to a list kept in id order, skipping any already there. */
-function merge(have: StoredEvent[], more: StoredEvent[]): StoredEvent[] {
-  if (more.length === 0) return have;
-  const byId = new Map(have.map((e) => [e.id, e]));
-  for (const event of more) byId.set(event.id, event);
-  return byId.size === have.length ? have : [...byId.values()].sort((a, b) => a.id - b.id);
-}
-
-const shorten = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
-
 function driverWords(driver: DriverState | null, failed: boolean): string {
   if (failed) return "Claude Code: state unknown";
   if (driver === null) return "Checking Claude Code";
   if (driver.problem !== null) return !driver.installed ? "Claude Code: not installed" : !driver.supported ? "Claude Code: unsupported version" : !driver.signedIn ? "Claude Code: signed out" : "Claude Code: unavailable";
   const billing = driver.billing === "subscription" ? "subscription" : driver.billing === "metered" ? "metered billing" : "billing unknown";
   return `Claude Code ${driver.version ?? ""} · signed in · ${billing}`;
-}
-
-function endWords(reason: "completed" | "interrupted" | "error", detail: string | null): string {
-  if (reason === "completed") return "Turn completed.";
-  if (reason === "interrupted") return "Turn stopped before it finished.";
-  return detail === null ? "Turn ended with an error." : `Turn ended with an error: ${detail}`;
-}
-
-/** A one-line row: a label in words, then what it says. */
-function Line({ kind, label, children }: { kind: string; label: string; children?: React.ReactNode }) {
-  return (
-    <li data-event={kind} className="flex gap-sm break-words px-md text-muted">
-      <span className="shrink-0 font-medium uppercase">{label}</span>
-      <span className="min-w-0">{children}</span>
-    </li>
-  );
-}
-
-/** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
-function Row({ event }: { event: StoredEvent }) {
-  const e = event.payload;
-  switch (e.type) {
-    case "user_prompt":
-      return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm bg-border p-md">
-          <span className="font-medium uppercase">You</span>
-          <span className="whitespace-pre-wrap break-words">{e.text}</span>
-        </li>
-      );
-    case "text":
-      return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border p-md">
-          <span className="font-medium uppercase text-muted">Claude Code</span>
-          <span className="whitespace-pre-wrap break-words">{e.text}</span>
-        </li>
-      );
-    case "session_started":
-      return (
-        <Line kind={e.type} label="Session">
-          {e.model === null ? "started" : `started on ${e.model}`}
-        </Line>
-      );
-    case "tool_call":
-      return (
-        <Line kind={e.type} label="Tool call">
-          {`${e.name} ${shorten(JSON.stringify(e.input) ?? "", 160)}`}
-        </Line>
-      );
-    case "tool_result":
-      return (
-        <Line kind={e.type} label={e.isError ? "Tool error" : "Tool result"}>
-          {shorten(e.output, 240)}
-        </Line>
-      );
-    case "usage":
-      return (
-        <Line kind={e.type} label="Tokens">
-          {`${e.inputTokens + e.cacheReadTokens + e.cacheWriteTokens} in, ${e.outputTokens} out`}
-        </Line>
-      );
-    case "rate_limit":
-      // Claude Code reports its limit on every turn; only reaching it is worth a row.
-      if (!e.limited) return null;
-      return (
-        <Line kind={e.type} label="Limit reached">
-          {e.resetsAt === null ? "Claude Code's usage limit was reached." : `Claude Code's usage limit was reached. It resets at ${new Date(e.resetsAt).toLocaleString()}.`}
-        </Line>
-      );
-    case "error":
-      return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
-          <span className="font-medium uppercase">Error</span>
-          <span className="whitespace-pre-wrap break-words">{e.message}</span>
-        </li>
-      );
-    case "turn_ended":
-      return (
-        <Line kind={e.type} label="End">
-          {endWords(e.reason, e.detail)}
-        </Line>
-      );
-    default:
-      return null;
-  }
 }
 
 export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
@@ -160,7 +67,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
       try {
         const transcript = await getTranscript(id);
         known.push(id);
-        setEvents((have) => merge(have, transcript.events));
+        setEvents((have) => mergeEvents(have, transcript.events));
         newest = Math.max(newest, transcript.events.at(-1)?.id ?? 0);
         if (id === ids.at(-1)) {
           const turn = Math.max(0, ...transcript.events.map((e) => e.turn));
@@ -187,7 +94,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     const open = (after: number): void => {
       if (cancelled) return;
       close = openEventStream(after, {
-        onEvent: (event) => setEvents((have) => merge(have, [event])),
+        onEvent: (event) => setEvents((have) => mergeEvents(have, [event])),
         onConnection: (isConnected) => {
           setConnected(isConnected);
           if (!isConnected) dropped = true;
@@ -243,12 +150,12 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         setStarting(false);
         setPrompt("");
         // Events stored before the attempt was known here may have been missed by a stream that was reconnecting.
-        getTranscript(attemptId).then((transcript) => setEvents((have) => merge(have, transcript.events)), () => {});
+        getTranscript(attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), () => {});
       },
       (err: unknown) => {
         setStarting(false);
         setStopping(false);
-          if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
         if (err instanceof ApiError && err.driver !== null) setDriver(err.driver);
         setError(err instanceof ApiError ? `The prompt was not sent. ${err.message}` : "The prompt was not sent: Smelt could not be reached.");
       },
@@ -291,17 +198,11 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
 
   return (
     <div className="mx-auto flex h-screen max-w-transcript flex-col">
-      <header className="flex flex-col gap-xs border-b px-lg py-md">
-        <div className="flex items-baseline gap-md">
-          <Mark />
-          <nav aria-label="Screens" className="font-mono text-mono text-muted">
-            <span aria-current="page">Turn</span>
-          </nav>
-        </div>
+      <Header current="turn">
         <p data-testid="driver-state" className="font-mono text-mono text-muted">
           {driverWords(driver, driverFailed)}
         </p>
-      </header>
+      </Header>
 
       {!connected && (
         <p role="status" data-testid="stream-banner" className="border-b bg-border px-lg py-sm font-medium">
@@ -313,16 +214,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         {shown.length === 0 ? (
           <p className="text-muted">No turns yet. A prompt goes to Claude Code, which works in an empty scratch directory inside Smelt's data directory.</p>
         ) : (
-          <ol role="log" aria-live="polite" className="flex flex-col gap-sm font-mono text-mono">
-            {shown.map((event) => (
-              <Row key={event.id} event={event} />
-            ))}
-            {running && (
-              <li role="status" className="px-md text-muted">
-                {stopping ? "Stopping the turn." : "Claude Code is working."}
-              </li>
-            )}
-          </ol>
+          <Transcript events={shown} working={running ? (stopping ? "Stopping the turn." : "Claude Code is working.") : null} />
         )}
       </main>
 
