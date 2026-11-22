@@ -4,6 +4,7 @@ import type http from "node:http";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "../store/atomic.ts";
+import { audioFormat } from "../dictation/dictation.ts";
 import { BodyError, json, readJsonBody, requestUrl } from "./router.ts";
 import { isShellRequest } from "./static.ts";
 
@@ -55,6 +56,8 @@ export const MAX_SIGN_IN_DELAY_MS = 10_000;
 /** Sign-in attempts allowed to wait their turn at once; further ones are turned away unchecked. */
 export const MAX_WAITING_SIGN_INS = 10;
 const SIGN_IN_PATH = "/api/sign-in";
+/** The one write route whose body is not JSON: a recording to transcribe, in one of the formats `audioFormat` takes. */
+export const TRANSCRIBE_PATH = "/api/voice/transcribe";
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** Compare without the time taken depending on where the two differ, or on their lengths. */
@@ -64,6 +67,14 @@ function sameSecret(a: string, b: string): boolean {
 }
 
 const isJson = (req: http.IncomingMessage): boolean => (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase() === "application/json";
+
+/**
+ * The session a request carries. Only for a request the gate has let through, which is how a route knows the session is
+ * valid; a route uses it to tell one signed-in device from another, never to decide whether it may answer.
+ */
+export function sessionOf(req: http.IncomingMessage): string | undefined {
+  return cookieValue(req, SESSION_COOKIE);
+}
 
 function cookieValue(req: http.IncomingMessage, name: string): string | undefined {
   for (const part of (req.headers.cookie ?? "").split(";")) {
@@ -167,7 +178,12 @@ export function createAuth(options: AuthOptions): Auth {
       json(res, 401, { error: "sign in required" });
       return false;
     }
-    if (write && !isJson(req)) {
+    if (write && req.method === "POST" && pathname === TRANSCRIBE_PATH) {
+      if (audioFormat(req.headers["content-type"]) === null) {
+        json(res, 415, { error: "body must be a recording: audio/mp4, audio/webm, audio/ogg or audio/wav" });
+        return false;
+      }
+    } else if (write && !isJson(req)) {
       json(res, 415, { error: "body must be application/json" });
       return false;
     }

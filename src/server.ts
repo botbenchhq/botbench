@@ -15,6 +15,7 @@ import { createConnect } from "./drivers/connect.ts";
 import type { SignInDefinition } from "./drivers/sign-in.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { defaultMode } from "./engine/modes.ts";
+import { createDictation, type DictationOptions } from "./dictation/dictation.ts";
 import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
 import { createPush, type Push } from "./push.ts";
@@ -70,6 +71,8 @@ export interface StartOptions {
   allowHttpPushEndpoints?: boolean;
   /** Sign-ins to run in place of an agent's own, by driver. Tests replay a captured sign-in through it. */
   signIns?: readonly SignInDefinition[];
+  /** Where dictation finds its programs and keeps its temporary files, and the largest recording, when not the defaults. */
+  dictation?: Omit<DictationOptions, "home"> & { maxBytes?: number };
 }
 
 
@@ -122,7 +125,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     }),
     onChange: stream.announceAgent,
   });
-  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
+  const dictation = createDictation({ home, ...dictationOptions });
+  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });

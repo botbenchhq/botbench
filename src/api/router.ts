@@ -4,6 +4,7 @@ import { schemaVersion } from "../store/db.ts";
 import type { Broker } from "../approvals/broker.ts";
 import type { Config } from "../config.ts";
 import type { Connect } from "../drivers/connect.ts";
+import type { Dictation } from "../dictation/dictation.ts";
 import { modelNameProblem, type Driver } from "../drivers/contract.ts";
 import type { Runs } from "../engine/run.ts";
 import type { Tasks } from "../engine/task.ts";
@@ -18,6 +19,7 @@ import { settingsRoutes } from "./settings.ts";
 import { isShellRequest, serveShell } from "./static.ts";
 import type { EventStream } from "./stream.ts";
 import { taskRoutes } from "./tasks.ts";
+import { voiceRoutes } from "./voice.ts";
 import type { Turns } from "./turns.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
@@ -36,6 +38,10 @@ export interface RouteContext {
   push: Push;
   /** Connecting and disconnecting agents from Settings. */
   connect: Connect;
+  /** Speech to text on this Mac, for the message box's microphone. */
+  dictation: Dictation;
+  /** The largest recording taken, when not the default (tests set a small one). */
+  maxRecordingBytes?: number;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -122,5 +128,6 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;
   if (await connectRoutes(req, res, ctx, url)) return;
+  if (await voiceRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }
