@@ -7,6 +7,7 @@ import { SOCKET_FILE } from "../../src/approvals/broker.ts";
 import type { Config } from "../../src/config.ts";
 import { runCommand } from "../../src/engine/stations.ts";
 import { startServer } from "../../src/server.ts";
+import { DB_FILE, openStore } from "../../src/store/db.ts";
 import { createWorktree } from "../../src/worktrees.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
 
@@ -54,6 +55,15 @@ test("a setup or check command reads and writes its own copy, and git works ther
     assert.equal(denied.outcome, "failed", command);
     assert.equal(denied.output.includes(DECOY), false, `${command} printed the decoy`);
     assert.match(denied.output, /Operation not permitted|EPERM/, command);
+  }
+  // The real database, which holds the signed-in devices' session hashes, and its write-ahead log are as unreadable.
+  const db = openStore(l.dataDir);
+  t.after(() => db.close());
+  for (const file of [DB_FILE, `${DB_FILE}-wal`]) {
+    assert.ok(fs.existsSync(path.join(l.dataDir, file)), file);
+    const denied = await run(l, `cat '${path.join(l.dataDir, file)}'`);
+    assert.equal(denied.outcome, "failed", file);
+    assert.match(denied.output, /Operation not permitted|EPERM/, file);
   }
 });
 

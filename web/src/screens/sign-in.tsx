@@ -38,6 +38,8 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
             {error}
           </Alert>
         )}
+        {/* Password managers save a username with a password: a fixed one names the entry, so the phone can fill the token. */}
+        <input type="text" name="username" autoComplete="username" value="Botbench" readOnly hidden />
         <div className="ds-field">
           <label htmlFor="token" className="ds-field__label">
             Login token <span className="ds-field__required">required</span>

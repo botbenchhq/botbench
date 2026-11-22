@@ -99,12 +99,11 @@ export function Shell() {
     };
   }, [session === "checking" || session === "unreachable"]);
 
-  const onSignedIn = useCallback(() => {
-    setNotice(null);
-    setSession("signed-in");
-  }, []);
+  // A real page load after signing in, not only a new screen: Safari offers to save a password for a form after the
+  // page that follows it loads, so the phone's password manager can keep the token. The address is kept.
+  const onSignedIn = useCallback(() => window.location.reload(), []);
   const onSignedOut = useCallback(() => {
-    setNotice("Your session ended, which happens when Botbench restarts. Sign in again.");
+    setNotice("This device was signed out. Sign in again.");
     setSession("signed-out");
   }, []);
 
