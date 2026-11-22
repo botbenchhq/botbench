@@ -15,7 +15,7 @@ execution: code
 - **Means:** Forge's own small codebase drives the vendor CLIs the person already uses, one git worktree per task, through a fixed line of stations, built as small real features test-first (KTD1, KTD3, KTD7, KTD15).
 - **Authority:** The Product Contract governs behavior. Key Technical Decisions govern mechanism inside the requirements they cite. A unit overrides neither.
 - **Stop conditions:** Stop and ask if a unit can only be finished by adding a mock, a fake, or a screen with nothing real behind it (R21). Stop and ask if a driver cannot be built without storing subscription credentials (R8), or if a CLI it needs is not signed in on the owner's machine.
-- **Execution profile:** One pull request per implementation unit, merged in order within each milestone. Each milestone ends with something the owner uses for real.
+- **Execution profile:** One pull request per implementation unit, merged in order within each milestone when its automated gates pass. Each milestone ends with something the owner uses for real.
 - **Who ships:** The implementer finishes each unit and opens its pull request. The owner reviews and merges.
 
 ---
@@ -45,8 +45,16 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 - **Four vendor CLIs: Claude Code, Codex, Gemini CLI, Grok.** (session-settled: user-directed — chosen over Claude Code plus one other.) Governs R7.
 - **Usable from a phone, including a phone app.** (session-settled: user-directed — chosen over Mac-only access.) Governs R19, R23.
 - **Runs can finish unattended on a pre-approved command list.** (session-settled: user-directed — chosen over attended runs only.) Governs R20.
-- **Drive existing CLIs, do not replace them.** From the owner's PRD. Governs R7, R8.
+- **Drive existing CLIs, do not replace them.** From the owner's PRD. The owner accepts running each vendor's CLI unattended on their own subscriptions: self-hosting on tools already paid for is the point. Governs R7, R8.
 - **A person approves before anything leaves the machine.** Forge itself pushes and posts nothing in this plan. Each CLI still sends prompts and code to its model provider under the owner's login. Governs R6, R10.
+
+### Guiding Principles
+
+These steer choices throughout the build. They are not requirements of this plan.
+
+- **Forge maintains Forge.** Once the line works (after U14), later units are run through Forge on its own repository wherever possible, and what that exposes is fixed first.
+- **Forge can be attached to a GitHub repository and fix reported bugs.** Issue intake and pull requests are the next plan. That plan keeps the self-hosted promise by having the owner's machine fetch issues and open pull requests itself, so no code passes through a Forge-run service.
+- **Every stage validates without the owner.** Automated gates decide whether a unit is done. Owner checks are collected per milestone and do not hold up the next unit. The exceptions need a person once: signing in to a vendor CLI, private-network and HTTPS setup, and checks on a physical phone.
 
 ### Requirements
 
@@ -149,7 +157,6 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 - **May captured real CLI sessions be replayed in tests? (owner decision, needed before U8)** A live model cannot be made to misbehave on demand. KTD15 proposes one exception to "no mocks": a session captured from a real CLI run may be stored and replayed through the driver contract. Without it, these scenarios have no automated test and rely on the owner's check alone: a re-issued request that does not match a stored approval (U8), an invalid plan sent back once (U11), a planner or reviewer edit attempt being refused (U11, U20), a metered login's running cost (U22), an expired push subscription (U23), and automatic rate-limit fallback (U21), which would ship only after a rate limit has been seen live.
 - **HTTPS on the private network (owner decision, blocks U23).** Phone notifications need a trusted HTTPS address for Forge. With Tailscale that means turning on HTTPS certificates for the tailnet, which publishes the Mac's machine name in public certificate logs. Whether Tailscale is installed on the Mac and phone was not checked.
 - **The name Forge is widely used (owner decision, does not block).** Laravel Forge, Atlassian Forge and Minecraft Forge are well known, several AI developer tools on GitHub use it, and the npm package name is taken. The repository and package would need a scope or suffix, such as `forge-factory`.
-- **Provider terms and billing for unattended CLI use (owner decision, does not block).** Whether each consumer subscription permits unattended use of its CLI, and whether headless turns draw on the same plan allowance as interactive ones, was not verified. R8 depends on the second. The owner should confirm for each subscription.
 - **Nexvyn UI licence (deferred, does not block).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`. U4 reads its licence file first and uses plain shadcn components if it does not allow use in an Apache-2.0 project.
 - **Sign-in to the new CLIs (owner action, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in"; Gemini CLI and Grok were not checked. Each needs the owner to sign in once.
 
@@ -650,6 +657,6 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 - Every requirement R1 to R24 in this plan is met, and every acceptance example AE1 to AE11 is covered by a passing test.
 - All gates in the Verification Contract pass.
-- Each milestone was used by the owner for real before the next began.
+- Each milestone's owner checks were done before the following milestone was declared finished. They never block starting the next unit.
 - `NOTICE` lists every copied file with its source and licence, and nothing originates from OpenMausBot's `enterprise/` directory.
 - Code from abandoned approaches is removed from the diff.
