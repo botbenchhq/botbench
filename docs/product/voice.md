@@ -38,7 +38,9 @@ The third column is the list the automated guard reads (`e2e/voice.ts`): every t
 | Smelt, "the permission check", "the safety rules", "live updates" | The broker, the gate, the safety floor and never-list, the hook, the event stream, the store | `broker`, `gate`, `floor`, `never-list`, `hook`, `stream`, `SSE`, `superseded`, `resume cursor`, `pgid`, `admission`, `schema`, `migration` |
 | Task, Run, Plan, Branch, Usage, Connect | The same | |
 
-Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): Checking (verifying), In review (reviewing), Accepted and Rejected (decided), and the paused state for a usage limit.
+On screen since the build and verify steps landed: Checking (the project's checks are running) and Cancelled (the owner stopped the run before this task started). Check results read "Checks passed", "Checks failed" or "No checks are set up for this repository", never a bare colour.
+
+Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): In review (reviewing), Accepted and Rejected (decided), and the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.
 
