@@ -31,7 +31,7 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   // Botbench stops and starts again. The device stays signed in across the restart, so the owner only reloads.
   await botbench.restart();
   await page.goto(botbench.base);
-  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");

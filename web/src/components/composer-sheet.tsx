@@ -143,7 +143,7 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
     return state.kind === "task" ? (
       <ModePicker name="run-mode" legend="Mode" hideLegend hint="A single task always runs in Manual. Plan a run to choose another mode." value="manual" onChange={() => {}} only="manual" />
     ) : (
-      <ModePicker name="run-mode" legend="Mode" hideLegend hint="How much the run does without you. It cannot be changed once the run starts." value={state.mode} onChange={state.setMode} />
+      <ModePicker name="run-mode" legend="Mode" hideLegend hint="Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right; the rest waits for you. The mode cannot be changed once the run starts." value={state.mode} onChange={state.setMode} />
     );
   if (row === "review") return <ReviewOptions state={state.review} />;
   if (row === "delivery")

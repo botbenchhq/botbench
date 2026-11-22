@@ -74,7 +74,9 @@ test("in the composer the model is picked from the CLI's own list, a name that i
   await other.fill(UNKNOWN);
   await closeContext(page);
 
-  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${UNKNOWN} Claude Code$`));
+  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${UNKNOWN} , Claude Code$`));
+  // The design system keeps a long value inside the chip (0.8.2): the page does not scroll sideways at 390px.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "the page does not scroll sideways").toBe(0);
   await checkDesign(page, "composer, a model name of 100 characters being named");
   expect(turnsSent).toEqual([]);
 });
@@ -100,8 +102,8 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   await expect(page.locator('[data-event="text"]')).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   expect(JSON.parse(turnsSent[0]!)).toMatchObject({ model: UNKNOWN });
-  // The session names the model it was started on; the screen does not claim that it answered.
-  await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${UNKNOWN} (no reply yet)`);
+  // The session echoes the model asked for, so the transcript adds no row for it.
+  await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
   await checkDesign(page, "chat, a model name of 100 characters");
 
   // Pick a cheap model from the list and send the prompt again: the conversation goes on, on that model.
@@ -110,11 +112,9 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="text"]').last()).toContainText(/lynx/i, { timeout: 120_000 });
   await expect(page.locator('[data-event="turn_ended"]').last().locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
-  // The model is named as Claude Code names it; the exact id is under the row.
-  await expect(page.locator('[data-event="session_started"]').last().locator("summary")).toHaveText(NAMED_ROW);
-  await expect(page.locator('[data-event="session_started"]').last()).toContainText(`Model id: ${CHEAP}`);
-  await expect(page.getByTestId("turn-model")).toHaveText(new RegExp(`^Model: ${NAME}$`));
-  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${NAME} Claude Code$`));
+  // The model that answered is the one asked for: it is named in the chip only, and the transcript has no row for it.
+  await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
+  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${NAME} , Claude Code$`));
   expect(JSON.parse(turnsSent[1]!)).toMatchObject({ model: CHEAP });
   // Send is the one primary action; New chat, which begins again, sits beside the title.
   expect(await primaries(page)).toEqual(["Send"]);
@@ -127,7 +127,6 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   await openModels(page);
   await expect(chosenModel(page)).toHaveValue(CHEAP);
   await closeContext(page);
-  await expect(page.getByTestId("turn-model")).toHaveText(new RegExp(`^Model: ${NAME}$`));
   await openNewTask(page);
   await openModels(page);
   await expect(chosenModel(page)).toHaveValue(CHEAP);

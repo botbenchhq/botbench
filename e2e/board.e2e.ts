@@ -306,7 +306,7 @@ test("in light mode, sign-in and Settings are drawn in the light colours", async
   await shot(page, "u16-light-sign-in.png");
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await openSettings(page);
   await checkDesign(page, "settings, light");
   await shot(page, "u16-light-settings.png");

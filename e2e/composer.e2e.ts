@@ -93,6 +93,11 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await closeContext(page);
     await expect(box).toHaveAttribute("aria-label", "Describe what to plan");
     await expect(page.getByTestId("composer-about")).toContainText("Building starts on the plan without your approval.");
+    // This repository has no check commands, so a fully autonomous run cannot start: Send says why before it is pressed.
+    await box.fill("Plan the work");
+    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+    await expect(page.getByTestId("composer-reason")).toHaveText(/^Fully autonomous needs a check command for this repository\./);
+    await box.fill("");
 
     // Remembered on this device: after a reload the next run is type and send.
     await page.reload();

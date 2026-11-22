@@ -3,12 +3,12 @@ import type { RunMode } from "../api/client.ts";
 
 /** Each mode in the order it is offered, with its name and what it does in one line. */
 export const MODES: { mode: RunMode; name: string; description: string; warning?: string }[] = [
-  { mode: "manual", name: "Manual", description: "You approve the plan, each command that is not allowed in advance, and the result." },
-  { mode: "semi", name: "Semi-autonomous", description: "You approve the plan and the result. Commands run without asking, kept away from your sign-ins and the network." },
+  { mode: "manual", name: "Manual", description: "Asks before every command and decision." },
+  { mode: "semi", name: "Semi-autonomous", description: "Runs commands on its own. You approve the plan and the result." },
   {
     mode: "full",
     name: "Fully autonomous",
-    description: "Builds without asking you, and refuses what would need you. Work whose every check passed, and that its reviewer, if any, said looks right, is accepted; the rest waits for you.",
+    description: "Plans, builds and accepts on its own when checks pass.",
     warning: "Accepts work without you",
   },
 ];

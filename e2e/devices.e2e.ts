@@ -7,7 +7,7 @@ test("a device stays signed in across a restart; Settings lists it as this devic
   await signIn(page, botbench);
   await botbench.restart();
   await page.reload();
-  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
 
   await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();

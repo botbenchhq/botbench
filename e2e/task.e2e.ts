@@ -134,7 +134,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   // The turn screen is still there and still works as the first screen.
   await nav.getByRole("link", { name: "Chat" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
-  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
 
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "all of it without a reload").toBe(true);
   expect(foreign, "requests to anything but Botbench").toEqual([]);

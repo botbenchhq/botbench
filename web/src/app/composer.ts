@@ -36,6 +36,8 @@ export interface Facts {
   buildModel: ModelRequest | null;
   /** A command typed in Allowed commands and not added. */
   commandTyped: boolean;
+  /** Whether the repository has a check command configured; null while that is not known. */
+  hasChecks: boolean | null;
 }
 
 /** What Send does. */
@@ -66,6 +68,7 @@ export function blocked(f: Facts): Blocked | null {
     if (run && f.mode === null) return say("Reading the default mode from Settings.");
     if (run && f.text.trim() !== "" && f.specPath.trim() !== "") return say("Give a message or a spec file, not both.");
   }
+  if (run && f.mode === "full" && f.hasChecks === false) return say("Fully autonomous needs a check command for this repository. Add one to Botbench's settings file, or choose Semi-autonomous.");
   if (!f.model.ok) return say(`Model: ${f.model.why}`);
   if (run && f.buildModel !== null && !f.buildModel.ok) return say(`Build model: ${f.buildModel.why}`);
   if (inRepository(f.repo) && f.commandTyped) return say("Add the command you typed to Allowed commands, or clear it: it is not on the list yet.");

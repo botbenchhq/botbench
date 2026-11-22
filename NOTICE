@@ -8,9 +8,8 @@ Copied files (stored in this repository)
 ----------------------------------------
 
 web/vendor/design-system/ is a copy of the owner's shared design system, from
-its repository https://github.com/jon-lange/design-system: version 0.8.1,
-source commit d8499b616912e11aff707b458ee5f7c668cf6218 (d8499b6, the merge of
-its pull request 22 into main), the `dist/` directory of that repository,
+its repository https://github.com/jon-lange/design-system: version 0.8.2,
+source commit cc180905ceb2743d510baef285682a8ba410b4cb (cc18090), the `dist/` directory of that repository,
 unmodified, written by its own `scripts/sync.mjs`. `hashes.json` in the copy
 holds the SHA-256 of every file. (Versions up to 0.5 were called Groundwork and
 were copied to web/vendor/groundwork/.)
