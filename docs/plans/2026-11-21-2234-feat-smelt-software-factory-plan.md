@@ -73,6 +73,8 @@ These steer choices throughout the build. They are not requirements of this plan
 
 - R7. Each role (planner, implementer, reviewer) is assigned a driver and model, changeable per run. Smelt supports Claude Code, Codex, Gemini CLI and Grok.
 - R8. Drivers use the login the owner already has in each CLI. Smelt never asks for, reads, or stores subscription credentials, and never causes a subscription session to be billed as metered API use.
+- R25. The owner chooses the model for a task, and for each role of a run, in the client. The choices offered are the ones that driver accepts, and the choice made is shown on the task.
+- R26. The owner connects a subscription from the client. Smelt starts that vendor CLI's own sign-in and shows the owner the link or code it gives; the owner signs in with the vendor (with Google or however that vendor does it), and the CLI keeps its own credentials. Smelt never sees, stores or forwards them.
 - R9. The owner can move a task to another driver mid-build. When a driver reports a rate limit, Smelt does this on its own using the role's next configured driver, and the run records the switch.
 
 **Control**
@@ -157,7 +159,7 @@ These steer choices throughout the build. They are not requirements of this plan
 ### Open Questions
 
 - **Nexvyn UI licence (deferred, does not block).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`. U4 reads its licence file first and uses plain shadcn components if it does not allow use in an Apache-2.0 project.
-- **Sign-in to the new CLIs (owner action, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in"; Gemini CLI and Grok were not checked. Each needs the owner to sign in once.
+- **Sign-in to the new CLIs (owner action until U26 ships, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in"; Gemini CLI and Grok were not checked. Each needs the owner to sign in once.
 
 ### Sources
 
@@ -175,7 +177,7 @@ These steer choices throughout the build. They are not requirements of this plan
 - KTD1. **New repository, Apache-2.0, written from the contracts and not copied wholesale.** OpenMausBot's driver layer is 39k lines importing 213 paths outside itself, so it cannot be lifted as a module. Small self-contained files may be copied, each recorded in `NOTICE` with its upstream notice, including the MIT notice on files OpenMausBot adapted from T3 Code (R18).
 - KTD2. **TypeScript on Node 24 or later, run directly with no server build step.** One process, `node:http`, one server-sent-events stream, `node:sqlite` in a single database under `~/.smelt`. This is what makes R16 reachable.
 - KTD3. **Drivers are stdio subprocesses speaking each CLI's structured headless protocol, behind one adapter contract.** The contract has `sendTurn`, `interruptTurn`, `respondToRequest`, `onEvent`, an opaque resume cursor, and capability flags, and every driver emits one normalized event union. Claude Code uses stream-json with a retained process. Codex uses its app-server protocol, typed from the schema the CLI generates. Gemini CLI uses `--acp`. Grok is started with `grok agent stdio`, which serves the same Agent Client Protocol. No pty and no vendor agent SDK.
-- KTD4. **Launch isolation protects the subscription and the approvals.** The child environment is built from an allowlist, and provider API-key variables are removed (AE7). Each CLI is started without the owner's personal settings, permission allow rules, hooks, plugins and MCP servers, while the repository's own instructions still load. For Claude Code that is `--setting-sources project` with `--strict-mcp-config`. Each driver unit finds the equivalent for its CLI. Smelt implements no in-app OAuth and calls no unofficial usage endpoints.
+- KTD4. **Launch isolation protects the subscription and the approvals.** The child environment is built from an allowlist, and provider API-key variables are removed (AE7). Each CLI is started without the owner's personal settings, permission allow rules, hooks, plugins and MCP servers, while the repository's own instructions still load. For Claude Code that is `--setting-sources project` with `--strict-mcp-config`. Each driver unit finds the equivalent for its CLI. Smelt implements no OAuth of its own and calls no unofficial usage endpoints. Connecting a subscription from the client (R26) runs the vendor CLI's own sign-in command as a child process and relays only what that command prints for the owner to act on: a link, a device code, or a prompt for a pasted code. The token exchange happens between the vendor and its CLI.
 - KTD5. **Tool-level approvals go through one permission broker.** Each driver routes its CLI's permission requests to an in-process broker that writes the approval row, emits the event, and blocks until answered. Any broker failure denies. A CLI only asks when it would otherwise prompt, so the broker alone misses commands the CLI treats as safe and commands allowed by rules committed in the repository. The Claude Code driver therefore also registers a Smelt pre-tool hook through `--settings`, which sends every shell and write call to the gate before the CLI's own rules apply. Each other driver states its equivalent interception point or reports the capability as missing, and a driver without it is offered for read-only roles only. The implementer may edit inside its worktree and asks for everything else. Planner and reviewer run read-only. The planner works in a detached worktree of the base commit, never in the owner's checkout (R3).
 - KTD6. **Grants are narrow, keyed on the repository, and capped by a safety floor.** A grant is an exact command plus the source repository plus the working directory relative to the worktree root, or a named tool, scoped to a role. Approval counts use the same key. A run's pre-approved list is stored as grants scoped to that run and matches a request whose leading words equal the entry and which contains no shell operators that chain, pipe, substitute or redirect (AE9). A never-list overrides every grant (AE6).
 - KTD7. **Isolation is one git worktree per task, on the host, and Smelt commits the work.** Worktrees live under `~/.smelt/worktrees/<run>/<task>` on branch `smelt/<run>/<task>`, from the repository's current `HEAD` commit. Setup commands configured per repository run in each new worktree. When an implementer's turn ends, Smelt stages and commits everything to the task branch. The diff is base commit to branch head.
@@ -257,6 +259,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 | U4 | Client shell: sign in, send a turn, watch it live | U2, U3 |
 | U5 | Worktree per task, Smelt commits the work | U1 |
 | U6 | Tasks in the client: start a task in a repository, see its diff | U4, U5 |
+| U25 | Choose the model for a task | U6 |
 | U7 | Permission broker and approval cards | U6 |
 | U8 | Approvals survive a restart | U7 |
 | U9 | Safety floor and pre-approved commands | U7 |
@@ -267,6 +270,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 | U14 | Decisions: accept and reject | U13 |
 | U15 | Run recovery after restart | U12, U8 |
 | U16 | Runs board | U14 |
+| U26 | Connect a subscription from the client | U16 |
 | U17 | Codex driver | U7 |
 | U18 | Gemini CLI driver | U7, U17 |
 | U19 | Grok driver | U18 |
@@ -372,6 +376,20 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - Live: a task told to run a script committed in the fixture repository, which writes a marker file, records the command as denied, and the marker file does not exist.
 - End to end at phone width: choose a repository, start a task, and expand a file's diff.
 **Verification:** The owner runs one small real task on one of their repositories and reads the diff on their phone.
+
+### U25. Choose the model for a task
+
+**Goal:** The owner picks which model does the work, from the phone, before starting it.
+**Requirements:** R7, R25, R21.
+**Dependencies:** U6.
+**Files:** `src/drivers/contract.ts`, `src/drivers/claude-code.ts`, `src/config.ts`, `src/api/routes.ts`, `src/engine/task.ts`, `web/src/screens/new-task.tsx`, `web/src/screens/turn.tsx`, `web/src/screens/task.tsx`, `test/api/models.test.ts`, `test/live/models.live.test.ts`, `e2e/models.e2e.ts`.
+**Approach:** Each driver reports the models it accepts. For Claude Code that is the list the CLI itself documents or reports, never a list invented by Smelt; where a CLI cannot report one, the choices come from the owner's configuration and the screen says so. The picker sits on the new-task and turn screens, defaults to the configured model for the role, and the model that actually answered is shown on the task from the driver's own session event.
+**Test scenarios:**
+- The models route returns the driver's list and the configured default, and needs a session.
+- A model that the driver does not offer is rejected before any worktree or attempt is created.
+- Live: a task started with a chosen model reports that model in its session event.
+- End to end at phone width: pick a model, start a turn, and the transcript names that model.
+**Verification:** The owner runs the same prompt on two models from their phone and sees each named.
 
 ### U7. Permission broker and approval cards
 
@@ -526,6 +544,26 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Verification:** The owner's real runs appear correctly on their phone.
 
 ### Milestone 4: Every subscription
+
+### U26. Connect a subscription from the client
+
+**Goal:** Adding Codex, Gemini or Grok is something the owner does from the settings screen, not in a terminal.
+**Requirements:** R8, R26, R21, R24.
+**Dependencies:** U16.
+**Files:** `src/drivers/connect.ts`, `src/drivers/contract.ts`, `src/api/routes.ts`, `web/src/screens/settings.tsx`, `web/src/components/connect-sheet.tsx`, `test/drivers/connect.test.ts`, `test/live/connect.live.test.ts`, `e2e/connect.e2e.ts`, `docs/security/threat-model.md`.
+**Approach:**
+1. Each driver names its CLI's sign-in command and the kind of flow it gives. Checked on the installed CLIs: Codex and Grok offer device-code sign-in (`--device-auth`), which works from a phone. Claude Code's `auth login` gives a link. Gemini CLI's flow has to be established on the real CLI first.
+2. Smelt runs that command as a child process with the same launch isolation as a turn, reads the link and code it prints, and shows them in a sheet with one action: open the vendor's sign-in page. It then waits for the CLI to report success and re-probes the driver.
+3. A CLI whose sign-in can only finish in a browser on the Mac itself is shown as "sign in on the Mac", with the exact command. Smelt does not work around it.
+4. Smelt stores nothing from the flow. The link and code are held in memory for the sheet and never written to the database or the log.
+5. Disconnecting runs the CLI's own sign-out command.
+**Test scenarios:**
+- Parsing the link and device code is tested on output captured from each real CLI's sign-in command, stored with its version and date.
+- Live: starting the flow for a signed-out CLI (an empty configuration directory) returns a real link and code from the vendor, and cancelling leaves no child process.
+- Nothing from the flow appears in the database, the event log or the server log.
+- The connect routes need a session, and only one flow per driver runs at a time.
+- End to end: settings shows a signed-out driver with Connect, the sheet shows the vendor's link and code, and after the CLI reports success the driver shows as available without a reload. The success step uses a session captured from one real completed sign-in, since a test cannot sign in to a vendor.
+**Verification:** The owner connects Codex from their phone and then runs a turn on it.
 
 ### U17. Codex driver
 
