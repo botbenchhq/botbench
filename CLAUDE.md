@@ -25,7 +25,7 @@ Done = tests pass. Owner checks batched per milestone.
 
 ## Hard rules
 - Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract for scenarios a live model cannot produce on demand.
-- Drive existing CLIs. Never store or read credentials/API keys. Never force metered billing on a subscription session.
+- Drive existing CLIs. Never store or read credentials/API keys. Never force metered billing on a subscription session. Connecting a subscription from the client means running the vendor CLI's own sign-in and relaying its link or code; the credentials stay with the CLI.
 - One git worktree per task. Never modify owner's checkout or current branch. Smelt commits.
 - Approvals required before anything leaves the machine. Dangerous actions always ask. Broker failure = deny.
 - Local only. No data leaves owner's machine. No push, no PRs this plan.
