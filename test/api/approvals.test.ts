@@ -142,9 +142,9 @@ test("a pending approval is listed with what the card shows, answering it resolv
   const approval = listed[0]!;
   assert.deepEqual(
     { ...approval, id: 0, createdAt: "" },
-    { id: 0, taskId: api.taskId, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null },
+    { id: 0, taskId: api.taskId, runId: null, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null },
   );
-  assert.deepEqual(announced[0], { approvalId: approval.id, taskId: api.taskId, status: "pending" });
+  assert.deepEqual(announced[0], { approvalId: approval.id, taskId: api.taskId, runId: null, status: "pending" });
   // The task says it is waiting on the owner, in its own description and in the list.
   assert.equal((await get(api, `/api/tasks/${api.taskId}`)).body.waitingOnApproval, true);
   assert.equal((await get(api, `/api/tasks/${api.taskId}`)).body.status, "building", "waiting is not a station of its own");
@@ -157,7 +157,7 @@ test("a pending approval is listed with what the card shows, answering it resolv
   await waiting;
   assert.deepEqual(answer, { decision: "allow", note: null, approvalId: approval.id, refused: null });
   await until("the answer to be announced", () => announced.length === 2);
-  assert.deepEqual(announced[1], { approvalId: approval.id, taskId: api.taskId, status: "allowed" });
+  assert.deepEqual(announced[1], { approvalId: approval.id, taskId: api.taskId, runId: null, status: "allowed" });
   assert.deepEqual((await get(api, "/api/approvals?status=pending")).body, { approvals: [] });
   assert.deepEqual(((await get(api, "/api/approvals?status=allowed")).body.approvals as Record<string, unknown>[]).map((a) => a.id), [approval.id]);
   assert.deepEqual(((await get(api, "/api/approvals")).body.approvals as Record<string, unknown>[]).map((a) => a.status), ["allowed"]);

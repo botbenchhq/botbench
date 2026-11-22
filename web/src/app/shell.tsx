@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { hasSession } from "../api/client.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
 import { Alert, Frame, Page } from "../components/header.tsx";
+import { NewRunScreen } from "../screens/new-run.tsx";
 import { NewTaskScreen } from "../screens/new-task.tsx";
+import { RunScreen } from "../screens/run.tsx";
+import { RunsScreen } from "../screens/runs.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
 import { TaskScreen } from "../screens/task.tsx";
 import { TasksScreen } from "../screens/tasks.tsx";
@@ -11,7 +14,7 @@ import { TurnScreen } from "../screens/turn.tsx";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn" } | { screen: "tasks" } | { screen: "new-task" } | { screen: "trust" } | { screen: "task"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn" } | { screen: "tasks" } | { screen: "new-task" } | { screen: "trust" } | { screen: "task"; id: number } | { screen: "runs" } | { screen: "new-run" } | { screen: "run"; id: number } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -20,8 +23,10 @@ function parseRoute(hash: string): Route {
   if (at === "/tasks") return { screen: "tasks" };
   if (at === "/tasks/new") return { screen: "new-task" };
   if (at === "/trust") return { screen: "trust" };
-  const task = /^\/tasks\/([1-9]\d{0,14})$/.exec(at);
-  return task ? { screen: "task", id: Number(task[1]) } : { screen: "none", what: at };
+  if (at === "/runs") return { screen: "runs" };
+  if (at === "/runs/new") return { screen: "new-run" };
+  const one = /^\/(tasks|runs)\/([1-9]\d{0,14})$/.exec(at);
+  return one ? { screen: one[1] === "runs" ? "run" : "task", id: Number(one[2]) } : { screen: "none", what: at };
 }
 
 function useRoute(): Route {
@@ -39,6 +44,9 @@ function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "tasks") return <TasksScreen onSignedOut={onSignedOut} />;
   if (route.screen === "new-task") return <NewTaskScreen onSignedOut={onSignedOut} />;
   if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "runs") return <RunsScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "new-run") return <NewRunScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   return (

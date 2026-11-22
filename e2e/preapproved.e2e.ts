@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
 import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
 
 // Pre-approved commands in the real client, at a phone's size: a real Smelt process whose settings list commands
@@ -38,7 +38,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await signIn(page, smelt);
   await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
   const tray = page.getByTestId("approval-tray");
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
 
   // Until a repository is named there is nothing to offer, and no control for it.
   await expect(page.getByRole("heading", { name: HEADING })).toHaveCount(0);
@@ -129,7 +129,7 @@ test("a repository with nothing configured offers an empty list that says every 
   const other = path.join(smelt.home, "..", "other-repo");
   initRepo(other);
   await signIn(page, smelt);
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   await page.getByLabel("Repository path").fill(other);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await expect(page.getByRole("heading", { name: HEADING })).toBeVisible();

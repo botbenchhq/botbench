@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
 import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Smelt process whose settings offer standing
@@ -32,7 +32,7 @@ const test = base.extend<{ repo: string }>({
 });
 
 async function startTask(page: Page, repo: string, prompt: string, id: number): Promise<void> {
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await page.getByLabel("Prompt").fill(prompt);
@@ -62,7 +62,7 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   const tray = page.getByTestId("approval-tray");
 
   // Trust is a screen of its own in the navigation. With nothing granted and nothing logged it says so in words.
-  await expect(nav.getByRole("link")).toHaveText(["Turn", "Tasks", "New task", "Trust"]);
+  await expect(nav.getByRole("link")).toHaveText(["Turn", "Runs", "Tasks", "Trust"]);
   await nav.getByRole("link", { name: "Trust" }).click();
   await expect(page.getByRole("heading", { name: "Trust", level: 1 })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Trust" })).toHaveAttribute("aria-current", "page");
@@ -89,7 +89,8 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   await expect(offer).toBeVisible();
   await expect(offer).toContainText("You have allowed this command once.");
   await expect(card.getByRole("button")).toHaveText(["Allow", "Decline", "Stop asking for this command"]);
-  expect(await primaries(page), "Allow stays the one primary action").toEqual(["Allow"]);
+  // The button has just come alive, and its colour takes the system's transition time to settle: the check waits for it.
+  await expect.poll(() => primaries(page), { message: "Allow stays the one primary action" }).toEqual(["Allow"]);
   const look = (el: Element): { background: string; text: string; border: string } => {
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };

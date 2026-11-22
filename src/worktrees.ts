@@ -341,3 +341,48 @@ export async function removeWorktree(o: { repo: string; path: string; deleteBran
   if (o.deleteBranch) await git(repo, ["branch", "--quiet", "-D", branch]);
   removeIfEmpty(path.dirname(dir));
 }
+
+/** Where a run's planner works: one folder per run under the Smelt home, beside where that run's task worktrees go. */
+export const planningDir = (home: string, run: string): string => path.join(path.resolve(home), "worktrees", run, "planner");
+
+/**
+ * Create the worktree a run's planner reads in, at `<home>/worktrees/<run>/planner`: a detached checkout of `commit`,
+ * on no branch, so nothing a planner did could ever be on one. Nothing in the repository's own working folder, index
+ * or current branch is written. A folder left there by a Smelt that stopped while planning is removed first.
+ */
+export async function createPlanningWorktree(o: { repo: string; home: string; run: string; commit: string }): Promise<string> {
+  if (!SLUG.test(o.run)) throw new Error(`Invalid run id ${JSON.stringify(o.run)}: use 1 to 64 letters, digits, "-" or "_", starting with a letter or digit.`);
+  if (!COMMIT_ID.test(o.commit)) throw new Error(`${JSON.stringify(o.commit)} is not a commit id.`);
+  const repo = path.resolve(o.repo);
+  await sourceHead(repo);
+  const dir = planningDir(o.home, o.run);
+  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The planning folder ${dir} would be inside the repository ${repo}. Smelt's home must be somewhere else.`);
+  await removePlanningWorktree({ repo, home: o.home, run: o.run });
+  fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
+  try {
+    await git(repo, ["worktree", "add", "--quiet", "--detach", dir, o.commit]);
+  } catch (err) {
+    removeIfEmpty(path.dirname(dir));
+    throw err;
+  }
+  return dir;
+}
+
+/**
+ * Remove a run's planning worktree, whatever is in it: a planner's worktree holds no work to keep. Only the folder
+ * Smelt itself names for that run under its home is ever removed, so this cannot reach the owner's checkout.
+ * A folder that is not there is fine; git's own record of it is pruned either way.
+ */
+export async function removePlanningWorktree(o: { repo: string; home: string; run: string }): Promise<void> {
+  if (!SLUG.test(o.run)) throw new Error(`Invalid run id ${JSON.stringify(o.run)}.`);
+  const repo = path.resolve(o.repo);
+  const dir = planningDir(o.home, o.run);
+  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The planning folder ${dir} is inside the repository ${repo}; it was not removed.`);
+  if (fs.existsSync(dir)) {
+    // Git removes its own record with the folder. If the folder is not a worktree git knows, it is removed as a folder.
+    await git(repo, ["worktree", "remove", "--force", dir]).catch((err: unknown) => unlessTimeout(err));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  await git(repo, ["worktree", "prune"]).catch((err: unknown) => unlessTimeout(err));
+  removeIfEmpty(path.dirname(dir));
+}

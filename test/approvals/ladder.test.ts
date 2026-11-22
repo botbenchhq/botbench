@@ -256,7 +256,7 @@ test("declines, requests that ended unanswered and pre-approved runs do not adva
   assert.equal((await decide(r, a, "npm test", "toolu_8"))?.approvals, 3);
 
   // The count is read from the approvals and the log, and nothing else holds it.
-  assert.deepEqual(r.db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name), ["action_log", "approvals", "attempts", "events", "grant_revocations", "grants", "schema_version", "task_events", "tasks"]);
+  assert.deepEqual(r.db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name), ["action_log", "approvals", "attempts", "events", "grant_revocations", "grants", "plan_tasks", "run_events", "runs", "schema_version", "task_events", "tasks"]);
   // An approval marked allowed with no decision of the owner's in the log is not counted.
   assert.equal(approvalCount(r.db, { ...key, words: ["npm", "run", "lint"] }), 0);
   const { answer } = await a.ask("npm run lint", "toolu_9");
@@ -708,8 +708,8 @@ test("a database at schema version 7 gains revocations, the standing log rules a
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 8);
-  assert.equal(MIGRATIONS.length, 8);
+  assert.equal(schemaVersion(db), 9);
+  assert.equal(MIGRATIONS.length, 9);
   assert.deepEqual({ ...db.prepare("SELECT id, run_id, repo_path, prompt, requested_model, status FROM tasks").get() }, { id: 1, run_id: 1, repo_path: "/r", prompt: "p", requested_model: "haiku", status: "awaiting_decision" });
   assert.deepEqual(listApprovals(db).map((a) => [a.id, a.status, a.command, a.resolvedAt]), [[1, "allowed", "ls", "t2"]]);
   assert.deepEqual({ ...db.prepare("SELECT id, kind, role, repo_path, cwd, words, run_id, task_id, created_at FROM grants").get() }, { id: 1, kind: "preapproved", role: "implementer", repo_path: "/r", cwd: ".", words: '["npm","test"]', run_id: 1, task_id: 1, created_at: "t0" });

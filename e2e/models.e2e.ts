@@ -1,7 +1,7 @@
 import path from "node:path";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
 import fs from "node:fs";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
 import { startSmelt } from "./smelt.ts";
 
 // Choosing the model in the real client, at a phone's size, against a real Smelt process and the owner's Claude Code.
@@ -77,7 +77,7 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   await page.reload();
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue(CHEAP);
   await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${CHEAP}`);
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue(CHEAP);
 
   // The CLI's own default can be chosen too, and is remembered the same way.
@@ -92,7 +92,7 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
   initRepo(repo);
   const before = checkoutState(repo);
   await signIn(page, smelt);
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
 
   const picker = page.getByLabel("Model", { exact: true });
   await expect(picker).toHaveValue(CONFIGURED);
@@ -140,7 +140,7 @@ test("where Claude Code reports no list, the picker offers the configured models
     await page.getByLabel("Login token").fill(smelt.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");
-    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+    await openNewTask(page);
     const picker = page.getByLabel("Model", { exact: true });
     await expect(picker).toHaveValue("sonnet");
     await expect(page.getByTestId("model-source")).toHaveText("The list comes from Smelt's configuration: Claude Code reported none.");

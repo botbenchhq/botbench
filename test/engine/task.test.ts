@@ -72,7 +72,7 @@ test("a database at the previous schema version gains the task tables and keeps 
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 8);
+  assert.equal(schemaVersion(db), 9);
   assert.deepEqual({ ...db.prepare("SELECT * FROM attempts").get() }, {
     id: 1, driver: "claude-code", model: "haiku", resume_cursor: "cursor-abc", status: "ended", pgid: null,
     created_at: "2026-11-21T10:00:00.000Z", updated_at: "2026-11-21T10:05:00.000Z",

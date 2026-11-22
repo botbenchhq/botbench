@@ -45,6 +45,11 @@ export type AttemptStatus = "running" | "interrupted" | "failed" | "ended";
 /** The permission rule for the file-editing tools on every path below the working directory. */
 const EDITS_BELOW_CWD = "Edit(./**)";
 
+/** The only tools a read-only attempt has: reading and searching files, and the shell, every command of which asks. */
+const READ_ONLY_TOOLS = "Read,Glob,Grep,Bash";
+/** Named as denied as well, should a CLI version hand a tool out in spite of the list above. */
+const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
+
 const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
 
 /** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Smelt one question and never waits for a person. */
@@ -87,21 +92,31 @@ function gateSettings(): string {
  * permission prompts come to the driver on stdout to be answered on stdin.
  * `instructionsFile` is the repository's instructions as text, which the CLI
  * no longer reads itself once settings files are off.
+ *
+ * With `readOnly` the attempt changes nothing. Seen on 2.1.322: `--tools` leaves the CLI
+ * with the listed tools and no other, so the model has no tool that writes a file, starts
+ * an agent or fetches a page; the writing tools are also named as denied. It works on a
+ * repository's content like an attempt that may edit, so no settings file is loaded, and
+ * with `gated` every shell command asks through the gate. `readOnly` wins over `allowEdits`.
  */
-export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; gated?: boolean; instructionsFile?: string } = {}): string[] {
-  const gated = options.gated === true && options.allowEdits === true;
+export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string } = {}): string[] {
+  const readOnly = options.readOnly === true;
+  const allowEdits = options.allowEdits === true && !readOnly;
+  const inWorktree = allowEdits || readOnly;
+  const gated = options.gated === true && inWorktree;
   const args = [
     "-p",
     "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--verbose",
-    "--setting-sources", options.allowEdits ? "" : "project",
+    "--setting-sources", inWorktree ? "" : "project",
     "--strict-mcp-config",
     "--mcp-config", JSON.stringify({ mcpServers: {} }),
   ];
   if (gated) args.push("--permission-prompt-tool", "stdio", "--settings", gateSettings());
   else args.push("--permission-prompts", "none");
-  if (options.allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
+  if (allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
+  if (readOnly) args.push("--tools", READ_ONLY_TOOLS, "--disallowedTools", WRITING_TOOLS);
   if (gated && options.instructionsFile) args.push("--append-system-prompt-file", options.instructionsFile);
   if (options.model !== undefined) {
     // The name is an argument of its own, and one that could be read as a flag never gets this far.
@@ -683,8 +698,9 @@ export class ClaudeCodeDriver implements Driver {
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
 
     // The gate is for an attempt in a worktree. Its secret travels in the child's environment, never on the command line.
-    const gate = options.allowEdits ? options.gate : undefined;
-    const instructions = gate ? repositoryInstructions(options.cwd) : null;
+    const gate = options.allowEdits || options.readOnly ? options.gate : undefined;
+    // A read-only attempt is handed no instructions from the repository: what it needs of them it reads as a file.
+    const instructions = gate && !options.readOnly ? repositoryInstructions(options.cwd) : null;
     let instructionsDir: string | null = null;
     if (instructions !== null) {
       // An owner-only directory for the one file; it goes when the CLI process does.
@@ -699,6 +715,7 @@ export class ClaudeCodeDriver implements Driver {
       ...(options.model ? { model: options.model } : {}),
       ...(options.resumeCursor ? { resumeCursor: options.resumeCursor } : {}),
       ...(options.allowEdits ? { allowEdits: true } : {}),
+      ...(options.readOnly ? { readOnly: true } : {}),
       ...(instructionsDir === null ? {} : { instructionsFile: path.join(instructionsDir, "instructions.md") }),
     });
     const extraEnv = gate ? { ...this.extraEnv, [SOCKET_ENV]: gate.socketPath, [SECRET_ENV]: gate.secret } : this.extraEnv;

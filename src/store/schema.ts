@@ -301,4 +301,163 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // Runs. `runs` holds one row per run id: a planned run (a prompt or a spec file, a plan, the tasks approved from
+    // it) with its state, or `single`, the run of one that a task started on its own is, which has no state of its
+    // own. Ids go on from the highest `tasks.run_id` in use and are never used twice, so every grant and task from
+    // before keeps the run it named. `plan_tasks` is a run's plan, fixed once the plan is approved; `run_events` is
+    // the history of a run's states, only ever added to. A task names a run that exists and stays in it.
+    // A planner asks for permission with no task, so an approval and a log entry may now name a run in a task's
+    // place. A column's NOT NULL cannot be altered, so both tables are made again with every row kept, ids included.
+    name: "runs",
+    sql: `
+CREATE TABLE runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('planned', 'single')),
+  repo_path TEXT NOT NULL,
+  prompt TEXT,
+  spec_path TEXT,
+  spec_text TEXT,
+  status TEXT CHECK (status IN ('planning', 'awaiting_plan_approval', 'running', 'awaiting_decision', 'done', 'cancelled', 'failed')),
+  reason TEXT,
+  requested_model TEXT,
+  planner_model TEXT,
+  base_commit TEXT,
+  attempt_id INTEGER REFERENCES attempts (id),
+  plan_version INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK ((kind = 'planned') = (status IS NOT NULL)),
+  CHECK (kind <> 'planned' OR (prompt IS NULL) <> (spec_text IS NULL)),
+  CHECK ((spec_path IS NULL) = (spec_text IS NULL))
+);
+INSERT INTO runs (id, kind, repo_path, prompt, created_at, updated_at)
+  SELECT run_id, 'single', repo_path, prompt, created_at, updated_at FROM tasks
+  WHERE id IN (SELECT MIN(id) FROM tasks WHERE run_id IS NOT NULL GROUP BY run_id) ORDER BY run_id;
+CREATE TRIGGER runs_no_delete BEFORE DELETE ON runs
+BEGIN SELECT RAISE(ABORT, 'a run is never removed'); END;
+CREATE TRIGGER runs_end_is_end BEFORE UPDATE OF status ON runs
+WHEN NEW.status IS NOT OLD.status AND (OLD.status IN ('cancelled', 'failed', 'done') OR (OLD.status IN ('running', 'awaiting_decision') AND NEW.status IN ('planning', 'awaiting_plan_approval')))
+BEGIN SELECT RAISE(ABORT, 'a run that has ended stays ended, and an approved plan is not reopened'); END;
+CREATE TRIGGER runs_fixed BEFORE UPDATE OF id, kind, repo_path, prompt, spec_path, spec_text, base_commit, created_at ON runs
+BEGIN SELECT RAISE(ABORT, 'what a run was started with is never changed'); END;
+CREATE TABLE run_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES runs (id),
+  ts TEXT NOT NULL,
+  status TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX run_events_run ON run_events (run_id, id);
+CREATE TRIGGER run_events_no_update BEFORE UPDATE ON run_events
+BEGIN SELECT RAISE(ABORT, 'run_events is append-only'); END;
+CREATE TRIGGER run_events_no_delete BEFORE DELETE ON run_events
+BEGIN SELECT RAISE(ABORT, 'run_events is append-only'); END;
+CREATE TABLE plan_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES runs (id),
+  position INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  criteria TEXT NOT NULL,
+  depends_on TEXT NOT NULL DEFAULT '',
+  task_id INTEGER REFERENCES tasks (id),
+  UNIQUE (run_id, position)
+);
+CREATE TRIGGER plan_tasks_open_insert BEFORE INSERT ON plan_tasks
+WHEN (SELECT status FROM runs WHERE id = NEW.run_id) IS NOT 'planning' AND (SELECT status FROM runs WHERE id = NEW.run_id) IS NOT 'awaiting_plan_approval'
+BEGIN SELECT RAISE(ABORT, 'a plan is changed only before it is approved'); END;
+CREATE TRIGGER plan_tasks_open_update BEFORE UPDATE ON plan_tasks
+WHEN (SELECT status FROM runs WHERE id = OLD.run_id) IS NOT 'planning' AND (SELECT status FROM runs WHERE id = OLD.run_id) IS NOT 'awaiting_plan_approval'
+BEGIN SELECT RAISE(ABORT, 'a plan is changed only before it is approved'); END;
+CREATE TRIGGER plan_tasks_open_delete BEFORE DELETE ON plan_tasks
+WHEN (SELECT status FROM runs WHERE id = OLD.run_id) IS NOT 'planning' AND (SELECT status FROM runs WHERE id = OLD.run_id) IS NOT 'awaiting_plan_approval'
+BEGIN SELECT RAISE(ABORT, 'a plan is changed only before it is approved'); END;
+CREATE TRIGGER tasks_run_exists BEFORE INSERT ON tasks WHEN NEW.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM runs WHERE id = NEW.run_id)
+BEGIN SELECT RAISE(ABORT, 'a task belongs to a run that exists'); END;
+CREATE TRIGGER tasks_run_fixed BEFORE UPDATE OF run_id ON tasks WHEN NEW.run_id IS NOT OLD.run_id
+BEGIN SELECT RAISE(ABORT, 'a task stays in its run'); END;
+CREATE INDEX tasks_run ON tasks (run_id, id);
+
+ALTER TABLE approvals RENAME TO approvals_before_runs;
+CREATE TABLE approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER NOT NULL REFERENCES attempts (id),
+  role TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  reason TEXT,
+  tool_call_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'allowed', 'declined', 'superseded')),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  parked_at TEXT,
+  stored_decision TEXT CHECK (stored_decision IN ('allow', 'decline')),
+  stored_at TEXT,
+  run_id INTEGER REFERENCES runs (id),
+  CHECK ((task_id IS NULL) <> (run_id IS NULL))
+);
+INSERT INTO approvals (id, task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, note, created_at, resolved_at, parked_at, stored_decision, stored_at)
+  SELECT id, task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, note, created_at, resolved_at, parked_at, stored_decision, stored_at FROM approvals_before_runs ORDER BY id;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_runs;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id FROM action_log_before_runs ORDER BY id;
+DROP TABLE action_log_before_runs;
+DROP TABLE approvals_before_runs;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+
+CREATE INDEX approvals_status ON approvals (status, id);
+CREATE INDEX approvals_task ON approvals (task_id, status);
+CREATE INDEX approvals_run ON approvals (run_id, status);
+CREATE TRIGGER approvals_answered_once BEFORE UPDATE ON approvals WHEN OLD.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'this approval is already answered'); END;
+CREATE TRIGGER approvals_request_fixed BEFORE UPDATE OF id, task_id, run_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, created_at ON approvals
+BEGIN SELECT RAISE(ABORT, 'what an approval asks for cannot be changed'); END;
+CREATE TRIGGER approvals_no_delete BEFORE DELETE ON approvals
+BEGIN SELECT RAISE(ABORT, 'approvals are never deleted'); END;
+CREATE TRIGGER approvals_parked_once BEFORE UPDATE OF parked_at ON approvals WHEN OLD.parked_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'an approval is parked once'); END;
+CREATE TRIGGER approvals_stored_once BEFORE UPDATE OF stored_decision, stored_at ON approvals
+WHEN OLD.stored_decision IS NOT NULL OR OLD.parked_at IS NULL OR NEW.stored_decision IS NULL OR NEW.stored_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'an answer is stored once, and only for an approval asked before a restart'); END;
+CREATE TRIGGER approvals_parked_outcome BEFORE UPDATE OF status ON approvals
+WHEN OLD.parked_at IS NOT NULL AND NEW.status <> 'superseded'
+  AND NEW.status IS NOT (CASE OLD.stored_decision WHEN 'allow' THEN 'allowed' WHEN 'decline' THEN 'declined' END)
+BEGIN SELECT RAISE(ABORT, 'a parked approval ends as its stored answer or as superseded'); END;
+CREATE TRIGGER approvals_asked_plain BEFORE INSERT ON approvals
+WHEN NEW.parked_at IS NOT NULL OR NEW.stored_decision IS NOT NULL OR NEW.stored_at IS NOT NULL OR NEW.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'an approval is first written as pending, neither parked nor answered'); END;
+CREATE TRIGGER approvals_stored_note_fixed BEFORE UPDATE OF note ON approvals WHEN OLD.stored_decision IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'the note of a stored answer cannot be changed'); END;
+`,
+  },
 ];

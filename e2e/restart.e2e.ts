@@ -1,6 +1,6 @@
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, test, openNewTask } from "./helpers.ts";
 
 // An approval across a restart, in the real client at a phone's size: a real Smelt process that is stopped and
 // started again on the same data, and the owner's Claude Code on its cheapest model asking for real.
@@ -17,7 +17,7 @@ test("LIVE: a task waits on an approval, Smelt is restarted, and after signing i
   await signIn(page, smelt);
 
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await nav.getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await page.getByLabel("Prompt").fill(PROMPT);

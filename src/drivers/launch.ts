@@ -200,6 +200,8 @@ export const VERSION_TABLE = {
     { flag: "--mcp-config", since: "2.1.322" },
     { flag: "--permission-prompts", since: "2.1.322" },
     { flag: "--allowedTools", since: "2.1.322" },
+    { flag: "--tools", since: "2.1.322" },
+    { flag: "--disallowedTools", since: "2.1.322" },
     { flag: "--settings", since: "2.1.322" },
     { flag: "--permission-prompt-tool", since: "2.1.322" },
     { flag: "--append-system-prompt-file", since: "2.1.322" },

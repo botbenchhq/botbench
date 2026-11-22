@@ -81,6 +81,12 @@ export interface StartAttemptOptions {
    */
   allowEdits?: boolean;
   /**
+   * The attempt changes nothing: the CLI is started without any tool that writes a file, and with `gate` every shell
+   * command asks. For a role that only reads, in a worktree whose content comes from a repository, so the
+   * repository's own CLI settings, rules and hooks are not loaded. Wins over `allowEdits`.
+   */
+  readOnly?: boolean;
+  /**
    * Send this attempt's tool calls through the permission gate: the broker's socket and the secret that is this
    * attempt's alone. With it, what the CLI would ask a person arrives as `permission_request` events to be answered
    * with `respondToRequest`. Without it, everything the CLI would ask is denied.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, listTasks, openEventStream, type TaskSummary } from "../api/client.ts";
-import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
+import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
@@ -31,7 +31,7 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <Frame current="tasks">
       <Page>
-        <PageHeader title="Tasks" />
+        <PageHeader title="Tasks" action={<NewLink href="#/tasks/new">New task</NewLink>} />
         {failed !== null && (
           <Alert tone="error" role="alert">
             {failed}
@@ -48,7 +48,7 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
             <h2 data-testid="task-list-state" className="gw-empty-state__title">
               No tasks yet
             </h2>
-            <p className="gw-empty-state__body">A task you start from New task is listed here with its state.</p>
+            <p className="gw-empty-state__body">A task you start with New task, and each task of a run whose plan you approved, is listed here with its state.</p>
           </div>
         ) : (
           <ul data-testid="task-list" className="gw-list">

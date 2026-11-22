@@ -10,6 +10,8 @@ import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
 import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, floorEntries, loadConfig, offerStandingAfter, ROOT, smeltHome, type Config } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
+import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
+import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
 import { openStore } from "./store/db.ts";
 
@@ -58,11 +60,6 @@ export interface StartOptions {
   idleCloseMs?: number;
 }
 
-/** The configured model for turns and tasks: the implementer role's own, else its driver's, when that driver is Claude Code. */
-function turnModel(config: Config): string | undefined {
-  const role = config.roles.implementer;
-  return role === undefined || role.driver === CLAUDE_CODE ? (role?.model ?? config.drivers[CLAUDE_CODE]?.model) : undefined;
-}
 
 /** Open the store under `home` and serve on every configured address. */
 export async function startServer(options: StartOptions): Promise<SmeltServer> {
@@ -70,7 +67,9 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   const db = openStore(home);
   const login = loadOrCreateLoginToken(home);
   const stream = createEventStream(db, options.heartbeatMs);
-  const model = turnModel(config);
+  // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
+  const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
+  const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
   const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
   let broker: Broker;
   try {
@@ -91,7 +90,8 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), onEvent: stream.notify, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, turns, tasks, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
+  const ctx = { db, config, driver, turns, tasks, runs, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -116,7 +116,7 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
-    await Promise.allSettled([turns.close(), tasks.close()]);
+    await Promise.allSettled([turns.close(), tasks.close(), runs.close()]);
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
     db.close();
