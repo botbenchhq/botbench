@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Confinement } from "../confinement.ts";
 import type { DriverEvent, TurnEndReason } from "./events.ts";
+import type { SignInDefinition } from "./sign-in.ts";
 
 /**
  * Where a later attempt picks a session up again. Only the driver that made it
@@ -127,6 +128,8 @@ export interface Driver {
   /** The value stored in `attempts.driver`. */
   readonly name: string;
   readonly capabilities: DriverCapabilities;
+  /** The CLI's own sign-in and sign-out, run when the owner connects or disconnects the agent from Settings (U26). */
+  readonly signIn?: SignInDefinition;
   probe(): Promise<DriverProbe>;
   /** The models the owner can choose from. Starts no turn. Never rejects: a CLI that reports nothing leaves the configured list. */
   models(): Promise<DriverModels>;

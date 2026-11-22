@@ -1,6 +1,6 @@
 # Botbench threat model (STRIDE)
 
-Scope: Botbench as built through units 1 to 13 and unit 27, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
+Scope: Botbench as built through units 1 to 13, unit 26 and unit 27, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
 
 ## What is being protected
 
@@ -22,6 +22,7 @@ Scope: Botbench as built through units 1 to 13 and unit 27, plus the boundaries 
 | B7 | Permission broker socket `broker.sock` in the data directory (U7) | Botbench process | The pre-tool hook the CLI runs, every command an agent runs, any other process of the owner's account |
 | B8 | The confinement of commands (U27): Claude Code's sandbox, and macOS `sandbox-exec` for the commands Botbench runs itself | The owner's account outside the sandbox: Botbench, the CLI process, its hook | Every shell command an agent runs, every setup and check command, and every process they start |
 | B9 | The Codex reviewer (U17 and U20 in part): `codex exec` as a second vendor's CLI child, and its own sandbox | Botbench process, the task's copy, the owner's Codex sign-in | The Codex CLI, its model's output, every command it runs, and the repository text and diff it reads |
+| B10 | A vendor CLI's own sign-in, started from Settings (U26) | Botbench process, the owner's session | The client that asks for it, the CLI's output, the vendor's page |
 
 ### How a tool call is decided (U7)
 
@@ -234,6 +235,18 @@ The product was called Smelt. On start, before anything opens the store, an inst
 - **Nothing is lost or duplicated (tampering, denial of service).** The folder and the database (journal files first) are renamed, never copied or deleted; a rename is atomic on one file system and keeps the owner-only modes. Only when no variable names the data folder is the old default a candidate, so a test or a second instance with its own `BOTBENCH_HOME` can never move the owner's data. If both folders exist the new one is used and the old one is left as it is. A move that fails stops the start and says what to do; a start stopped half-way is finished by the next one (a marker holding the old path moves with the folder).
 - **Git's links follow the folder.** Stored worktree paths under the old folder are rewritten to the new one, and `git worktree repair` points each source repository's record and each worktree's `.git` file at the new place; until that has succeeded the marker stays and each start tries again, because a `git worktree prune` against a stale record would cut a task's copy off from its repository.
 - **Old names for one release.** `SMELT_HOME`, `SMELT_PORT`, `SMELT_CONFIG` and a git-ignored `smelt.local.json` are read when the new names are absent, each with a line on stdout; the new names win. The old `smelt_session` cookie is not a session: a browser that holds only it is signed out.
+
+### Connecting an agent (U26)
+
+From Settings the owner can connect a signed-out agent and disconnect a signed-in one. Botbench starts the CLI's own sign-in (`claude auth login --claudeai`; for Codex, ready to register, `codex login --device-auth`) through `launch`, with the same allowlisted environment as a turn, key variables removed, `BROWSER=/usr/bin/true` so no window opens on the Mac, in its own process group. It reads the vendor link (only `https` on the definition's own hosts, no user, password or port) and, for a device code, the code from what the CLI prints, and returns them only in answers to the session-protected connect routes. Claude Code's page shows a code after sign-in that the CLI reads on its input; the owner pastes it in the sheet and Botbench writes it, checked as one line of code characters, to that input and keeps nothing. The CLI exchanges it and keeps its own credentials. Success is the CLI ending with exit 0 and its probe then saying signed in; no output is read to decide it. Disconnect runs the CLI's own sign-out (`claude auth logout`).
+
+STRIDE for B10:
+- **Spoofing.** Every connect route needs the owner's session (tested, 401 for each). A link the CLI prints that is not on the vendor's hosts is not shown (tested), so output steered elsewhere cannot send the owner to another page through Botbench.
+- **Tampering.** The driver name in the path is a slug, matched against the agents Botbench knows (404 otherwise). The pasted code cannot carry a line break, a blank or a shell character, and goes to the CLI's input, never a command line or a shell. The commands and arguments are fixed in code.
+- **Repudiation.** Connecting and disconnecting are not in the action log: the log is for what agents do, and writing a sign-in there is what this unit must not do. Accepted.
+- **Information disclosure.** The link, code and pasted code are in memory only, dropped from the answer when the sign-in ends, never in the database, the event log, Botbench's log or the live updates (the update says only the agent and the state). Tested by searching every file of the data folder, every table and the process's output for the sign-in's unique value. The code is a short-lived secret visible to whoever holds a session, which can already do far more. The pasted code passes through Botbench on its way to the CLI: it is bound to the CLI's own PKCE verifier and useless without it, and it is the "relay its code" the hard rule allows; Botbench never sees the credential the CLI gets for it.
+- **Denial of service.** One sign-in per agent at a time (409 for a second start, and for a sign-out while one runs); the CLI has 30 seconds to print its link and the owner 15 minutes to finish, after which its process group is killed; output kept is capped at 64 KB; a cancel, the time limits, the end of the process and Botbench's close each kill the whole group (tested with real processes, live with the real CLIs: nothing is left).
+- **Elevation of privilege.** A stolen session could disconnect the owner's agent and connect it to a vendor account of its own, so the owner's later tasks would run on that account, or just disconnect the owner's agent (the confirm dialog is the only extra step). Accepted, as for the other routes of a stolen session. A sign-in that can only finish in a browser on the Mac is shown as "Sign in on the Mac" with the command; Botbench does not work around it.
 
 ## Threats and current state
 

@@ -8,6 +8,7 @@ import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent, TurnEndReason } from "./events.ts";
 import { buildChildEnv, checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type CliChild } from "./launch.ts";
+import { codexSignIn, type SignInDefinition } from "./sign-in.ts";
 
 /*
  * Codex, driven for one thing only: a read-only review turn (U17 in part, for U20). Seen on 0.171.0:
@@ -366,6 +367,8 @@ const MODELS_FRESH_MS = 60_000;
 export class CodexDriver implements Driver {
   readonly name = CODEX;
   readonly capabilities = CODEX_CAPABILITIES;
+  /** Codex's own device-code sign-in, for Connect in Settings (U26). A moved CODEX_HOME reaches it through the allowlist. */
+  readonly signIn: SignInDefinition = codexSignIn();
   private readonly configured: { models: readonly string[]; defaultModel: string | null };
   private listing: { at: number; answer: Promise<DriverModels> } | null = null;
 

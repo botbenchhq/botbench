@@ -1,7 +1,8 @@
-import { useEffect, useId, useState } from "react";
-import { ApiError, getAgents, type AgentState } from "../api/client.ts";
+import { useCallback, useEffect, useId, useState } from "react";
+import { ApiError, getAgents, openEventStream, type AgentState } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { NotificationSettings } from "../app/notification-settings.tsx";
+import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Frame, Page, PageHeader } from "../components/header.tsx";
 
 /** An agent's state in a word or two, from the probe: what the CLI itself reported. */
@@ -49,12 +50,24 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const { choice } = useAppearance();
   const id = useId();
 
-  useEffect(() => {
-    getAgents().then(setAgents, (err: unknown) => {
-      if (err instanceof ApiError && err.status === 401) return onSignedOut();
-      setProblem(err instanceof ApiError ? `The agents could not be checked. ${err.message}` : "The agents could not be checked: Botbench could not be reached.");
-    });
+  /** How often the agents were read: each row's Connect reads its sign-in again with them. */
+  const [version, setVersion] = useState(0);
+
+  const refresh = useCallback((): void => {
+    getAgents().then(
+      (found) => (setAgents(found), setVersion((v) => v + 1)),
+      (err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setProblem(err instanceof ApiError ? `The agents could not be checked. ${err.message}` : "The agents could not be checked: Botbench could not be reached.");
+      },
+    );
   }, [onSignedOut]);
+
+  useEffect(() => {
+    refresh();
+    // An agent connected or disconnected, here or in another tab, is told over the live updates; the agents are then read again.
+    return openEventStream(0, { onEvent: () => {}, onConnection: () => {}, onSignedOut, onAgent: (a) => a.state !== "starting" && a.state !== "waiting" && refresh() });
+  }, [refresh, onSignedOut]);
 
   return (
     <Frame current={null}>
@@ -79,6 +92,7 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
                     <p data-testid="agent-state" role="status" className="ds-settings-row__status">
                       {agent !== null ? agentState(agent) : problem !== null ? "Could not be checked" : agents === null ? "Checking" : "Not offered"}
                     </p>
+                    {agent !== null && <AgentConnection agent={key} product={name} installed={agent.installed} supported={agent.supported} signedIn={agent.signedIn} version={version} onChanged={refresh} />}
                   </div>
                 </div>
               );

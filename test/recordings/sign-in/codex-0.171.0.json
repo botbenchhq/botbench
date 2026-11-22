@@ -1,0 +1,12 @@
+{
+  "cli": "codex",
+  "version": "0.171.0",
+  "captured": "2026-11-22",
+  "command": "codex login --device-auth",
+  "conditions": "CODEX_HOME set to a new empty directory, BROWSER=/usr/bin/true, stdin, stdout and stderr are pipes (no terminal). Stopped with SIGTERM after the code appeared.",
+  "placeholders": "The one-time code is replaced by X of the same shape. Nothing else was changed; the colour escapes are the CLI's own.",
+  "stdout": "\nWelcome to Codex [v\u001b[90m0.171.0\u001b[0m]\n\u001b[90mOpenAI's command-line coding agent\u001b[0m\n\nFollow these steps to sign in with ChatGPT using device code authorization:\n\n1. Open this link in your browser and sign in to your account\n   \u001b[94mhttps://auth.openai.com/codex/device\u001b[0m\n\n2. Enter this one-time code \u001b[90m(expires in 15 minutes)\u001b[0m\n   \u001b[94mXXXX-XXXXX\u001b[0m\n\n\u001b[90mContinue only if you started this login in Codex. If a website or another person gave you this code, cancel.\u001b[0m\n\n",
+  "stderr": "",
+  "exitCode": null,
+  "signal": "SIGTERM"
+}
