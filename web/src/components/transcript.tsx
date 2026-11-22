@@ -10,7 +10,8 @@ export function mergeEvents(have: StoredEvent[], more: StoredEvent[]): StoredEve
 }
 
 const shorten = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
-const callWords = (name: string, input: unknown): string => `${name} ${shorten(JSON.stringify(input) ?? "", 160)}`;
+const argumentWords = (input: unknown): string => shorten(JSON.stringify(input) ?? "", 160);
+const callWords = (name: string, input: unknown): string => `${name} ${argumentWords(input)}`;
 
 function endWords(reason: "completed" | "interrupted" | "error", detail: string | null): string {
   if (reason === "completed") return "Turn completed.";
@@ -18,15 +19,26 @@ function endWords(reason: "completed" | "interrupted" | "error", detail: string 
   return detail === null ? "Turn ended with an error." : `Turn ended with an error: ${detail}`;
 }
 
-/** A one-line row: a label in words, then what it says. */
-function Line({ kind, label, children }: { kind: string; label: string; children?: ReactNode }) {
+/** What a row's look says about it. The label in words carries the kind; the look only repeats it. */
+const LOOK = {
+  agent: "gw-message",
+  user: "gw-message gw-message--user",
+  refused: "gw-message gw-message--denied",
+  quiet: "gw-message gw-message--usage",
+  end: "gw-message gw-message--turn-end",
+} as const;
+
+/** A row of the transcript: its kind in words, then what it says, one paragraph for each part. */
+function Line({ kind, look, label, children }: { kind: string; look: keyof typeof LOOK; label: string; children: ReactNode }) {
   return (
-    <li data-event={kind} className="flex gap-sm break-words px-md text-muted">
-      <span className="shrink-0 font-medium uppercase">{label}</span>
-      <span className="min-w-0">{children}</span>
+    <li data-event={kind} className={LOOK[look]}>
+      <span className="gw-message__label">{label}</span>
+      {children}
     </li>
   );
 }
+
+const Body = ({ children }: { children: string }) => <p className="gw-message__body">{children}</p>;
 
 /** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
 function Row({ event, calls, preapproved }: { event: StoredEvent; calls: Map<string, string>; preapproved: Set<string> }) {
@@ -34,43 +46,41 @@ function Row({ event, calls, preapproved }: { event: StoredEvent; calls: Map<str
   switch (e.type) {
     case "user_prompt":
       return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm bg-border p-md">
-          <span className="font-medium uppercase">You</span>
-          <span className="whitespace-pre-wrap break-words">{e.text}</span>
-        </li>
+        <Line kind={e.type} look="user" label="You">
+          <Body>{e.text}</Body>
+        </Line>
       );
     case "text":
       return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border p-md">
-          <span className="font-medium uppercase text-muted">Claude Code</span>
-          <span className="whitespace-pre-wrap break-words">{e.text}</span>
-        </li>
+        <Line kind={e.type} look="agent" label="Claude Code">
+          <Body>{e.text}</Body>
+        </Line>
       );
     case "session_started":
       return (
-        <Line kind={e.type} label="Session">
-          {e.model === null ? "started" : `started on ${e.model}`}
+        <Line kind={e.type} look="quiet" label="Session">
+          <Body>{e.model === null ? "started" : `started on ${e.model}`}</Body>
         </Line>
       );
     case "tool_call":
       return (
-        <Line kind={e.type} label="Tool call">
-          {callWords(e.name, e.input)}
-        </Line>
+        <li data-event={e.type} className="gw-message gw-message--tool-call">
+          <span className="gw-message__label">Tool call</span>
+          <span className="gw-message__tool">{e.name}</span> <code className="gw-message__command">{argumentWords(e.input)}</code>
+        </li>
       );
     case "permission_denied":
       return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
-          <span className="font-medium uppercase">Denied</span>
-          <span className="whitespace-pre-wrap break-words">{`${calls.get(e.id) ?? e.name} was not run. It needed an approval, and this turn had no way to ask you for one.`}</span>
-        </li>
+        <Line kind={e.type} look="refused" label="Denied">
+          <Body>{`${calls.get(e.id) ?? e.name} was not run. It needed an approval, and this turn had no way to ask you for one.`}</Body>
+        </Line>
       );
     case "permission_request":
       // A request Smelt answered itself, from the pre-approved list or a standing permission, never waited for the owner: its outcome row says what happened.
       if (preapproved.has(e.toolCallId)) return null;
       return (
-        <Line kind={e.type} label="Asked you">
-          {`${calls.get(e.toolCallId) ?? e.name} needs your answer before it runs.`}
+        <Line kind={e.type} look="agent" label="Asked you">
+          <Body>{`${calls.get(e.toolCallId) ?? e.name} needs your answer before it runs.`}</Body>
         </Line>
       );
     case "permission_resolved": {
@@ -84,45 +94,45 @@ function Row({ event, calls, preapproved }: { event: StoredEvent; calls: Map<str
         cancelled: `The request for ${what} ended without an answer. It was not run.`,
       }[e.decision];
       const label = { allowed: "Allowed", preapproved: "Pre-approved", standing: "Standing permission", declined: "Declined", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
+      const ran = e.decision === "allowed" || e.decision === "preapproved" || e.decision === "standing";
       return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
-          <span className="font-medium uppercase">{label}</span>
-          <span className="whitespace-pre-wrap break-words">{said}</span>
-          {e.note !== null && <span className="whitespace-pre-wrap break-words">{e.decision === "denied" ? `Why: ${e.note}` : `Your note: ${e.note}`}</span>}
-        </li>
+        <Line kind={e.type} look={ran ? "agent" : "refused"} label={label}>
+          <Body>{said}</Body>
+          {e.note !== null && <Body>{e.decision === "denied" ? `Why: ${e.note}` : `Your note: ${e.note}`}</Body>}
+        </Line>
       );
     }
     case "tool_result":
       return (
-        <Line kind={e.type} label={e.isError ? "Tool error" : "Tool result"}>
-          {shorten(e.output, 240)}
-        </Line>
+        <li data-event={e.type} className="gw-message gw-message--tool-result">
+          <span className="gw-message__label">{e.isError ? "Tool error" : "Tool result"}</span>
+          <pre className="gw-message__code">{shorten(e.output, 240)}</pre>
+        </li>
       );
     case "usage":
       return (
-        <Line kind={e.type} label="Tokens">
-          {`${e.inputTokens + e.cacheReadTokens + e.cacheWriteTokens} in, ${e.outputTokens} out`}
+        <Line kind={e.type} look="quiet" label="Tokens">
+          <Body>{`${e.inputTokens + e.cacheReadTokens + e.cacheWriteTokens} in, ${e.outputTokens} out`}</Body>
         </Line>
       );
     case "rate_limit":
       // Claude Code reports its limit on every turn; only reaching it is worth a row.
       if (!e.limited) return null;
       return (
-        <Line kind={e.type} label="Limit reached">
-          {e.resetsAt === null ? "Claude Code's usage limit was reached." : `Claude Code's usage limit was reached. It resets at ${new Date(e.resetsAt).toLocaleString()}.`}
+        <Line kind={e.type} look="refused" label="Limit reached">
+          <Body>{e.resetsAt === null ? "Claude Code's usage limit was reached." : `Claude Code's usage limit was reached. It resets at ${new Date(e.resetsAt).toLocaleString()}.`}</Body>
         </Line>
       );
     case "error":
       return (
-        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
-          <span className="font-medium uppercase">Error</span>
-          <span className="whitespace-pre-wrap break-words">{e.message}</span>
-        </li>
+        <Line kind={e.type} look="refused" label="Error">
+          <Body>{e.message}</Body>
+        </Line>
       );
     case "turn_ended":
       return (
-        <Line kind={e.type} label="End">
-          {endWords(e.reason, e.detail)}
+        <Line kind={e.type} look="end" label="End">
+          <Body>{endWords(e.reason, e.detail)}</Body>
         </Line>
       );
     default:
@@ -140,13 +150,13 @@ export function Transcript({ events, working }: { events: StoredEvent[]; working
   }, [events]);
   const preapproved = useMemo(() => new Set(events.flatMap(({ payload }) => (payload.type === "permission_resolved" && (payload.decision === "preapproved" || payload.decision === "standing") ? [payload.toolCallId] : []))), [events]);
   return (
-    <ol role="log" aria-live="polite" className="flex flex-col gap-sm font-mono text-mono">
+    <ol role="log" aria-live="polite" aria-label="Transcript" className="gw-stack gw-gap-sm">
       {events.map((event) => (
         <Row key={event.id} event={event} calls={calls} preapproved={preapproved} />
       ))}
       {working !== null && (
-        <li role="status" className="px-md text-muted">
-          {working}
+        <li className="gw-streaming gw-streaming--row">
+          <span role="status">{working}</span>
         </li>
       )}
     </ol>

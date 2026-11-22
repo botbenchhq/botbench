@@ -16,6 +16,16 @@ const resuming = (task: Pick<TaskSummary, "status" | "resuming">): boolean => ta
 /** A task's station in a word or two, for lists. */
 export const statusWord = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "Waiting on you" : resuming(task) ? "Resuming" : STATUS_WORD[task.status]);
 
+/** The badge a station is drawn as. The word says the station; the tone only repeats it. */
+const STATUS_LOOK: Record<TaskStatus, string> = {
+  queued: "gw-badge",
+  building: "gw-badge gw-badge--info",
+  awaiting_decision: "gw-badge gw-badge--success",
+  interrupted: "gw-badge gw-badge--danger",
+  failed: "gw-badge gw-badge--danger",
+};
+export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "gw-badge gw-badge--warning" : STATUS_LOOK[task.status]);
+
 /** A task's station as a sentence that says only what is so. */
 export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "waitingOnApproval" | "parked" | "resuming">): string {
   if (waiting(task)) {

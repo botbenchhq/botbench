@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, listTasks, openEventStream, type TaskSummary } from "../api/client.ts";
-import { Header } from "../components/header.tsx";
-import { statusWord } from "../components/task-status.ts";
+import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
+import { statusLook, statusWord } from "../components/task-status.ts";
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
 
@@ -29,42 +29,45 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
   }, [load, onSignedOut]);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-transcript flex-col">
-      <Header current="tasks" />
-      <main className="flex flex-col gap-lg p-lg">
-        <h1 className="font-semibold">Tasks</h1>
+    <Frame current="tasks">
+      <Page>
+        <PageHeader title="Tasks" />
         {failed !== null && (
-          <p role="alert" className="break-words font-medium">
+          <Alert tone="error" role="alert">
             {failed}
-          </p>
+          </Alert>
         )}
         {tasks === null ? (
           failed === null && (
-            <p role="status" data-testid="task-list-state" className="text-muted">
+            <p role="status" data-testid="task-list-state" className="gw-spinner">
               Reading tasks.
             </p>
           )
         ) : tasks.length === 0 ? (
-          <p data-testid="task-list-state" className="text-muted">
-            No tasks yet.
-          </p>
+          <div className="gw-empty-state">
+            <h2 data-testid="task-list-state" className="gw-empty-state__title">
+              No tasks yet
+            </h2>
+            <p className="gw-empty-state__body">A task you start from New task is listed here with its state.</p>
+          </div>
         ) : (
-          <ul data-testid="task-list" className="flex flex-col">
+          <ul data-testid="task-list" className="gw-list">
             {tasks.map((task) => (
-              <li key={task.id} className="border-b">
-                <a href={`#/tasks/${task.id}`} className="flex min-h-touch flex-col gap-xs py-md">
-                  <span className="font-mono text-mono">
-                    <span className="font-semibold">{`Task ${task.id}`}</span>
-                    {` · ${statusWord(task)}`}
+              <li key={task.id} className="gw-list__row">
+                <a href={`#/tasks/${task.id}`} className="gw-list__link">
+                  <span className="gw-run-status">
+                    <span className="gw-run-status__title">{firstLine(task.prompt)}</span>
+                    <span className="gw-run-status__station">
+                      <span className={statusLook(task)}>{statusWord(task)}</span>
+                    </span>
+                    <span className="gw-run-status__facts">{`Task ${task.id} · ${task.repo}`}</span>
                   </span>
-                  <span className="break-words">{firstLine(task.prompt)}</span>
-                  <span className="break-all font-mono text-mono text-muted">{task.repo}</span>
                 </a>
               </li>
             ))}
           </ul>
         )}
-      </main>
-    </div>
+      </Page>
+    </Frame>
   );
 }

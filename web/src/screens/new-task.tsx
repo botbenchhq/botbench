@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, getRepoSettings, startTask, timedOut, type RepoCheck } from "../api/client.ts";
-import { Header } from "../components/header.tsx";
+import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { ModelPicker, useModelChoice } from "../components/model-picker.tsx";
 
 const CHECK_DELAY_MS = 250;
@@ -124,71 +124,60 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-transcript flex-col">
-      <Header current="new-task" />
-      <main className="p-lg">
-        <form onSubmit={submit} className="flex flex-col gap-lg" noValidate>
-          <h1 className="font-semibold">New task</h1>
-          <div className="flex flex-col gap-xs">
-            <label htmlFor="repo" className="font-mono text-mono text-muted">
-              Repository path
+    <Frame current="new-task">
+      <Page>
+        <PageHeader title="New task" />
+        <form onSubmit={submit} className="gw-stack gw-gap-lg" noValidate>
+          <div className="gw-field">
+            <label htmlFor="repo" className="gw-field__label">
+              Repository path <span className="gw-field__required">required</span>
             </label>
-            <input
-              id="repo"
-              name="repo"
-              type="text"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              aria-describedby="repo-state"
-              aria-invalid={refused}
-              className="min-h-touch rounded-sm border bg-surface px-md font-mono text-mono"
-            />
-            <p id="repo-state" data-testid="repo-state" role="status" className={`break-words ${refused ? "font-medium" : "text-muted"}`}>
+            <input id="repo" name="repo" type="text" required autoCapitalize="none" autoCorrect="off" spellCheck={false} value={repo} onChange={(e) => setRepo(e.target.value)} aria-describedby="repo-state" aria-invalid={refused} className="gw-field__control" />
+            <p id="repo-state" data-testid="repo-state" role="status" className={refused ? "gw-field__error sm-wrap" : "gw-field__description sm-wrap"}>
               {repoWords(repoState)}
             </p>
           </div>
-          <div className="flex flex-col gap-xs">
-            <label htmlFor="task-prompt" className="font-mono text-mono text-muted">
-              Prompt
+          <div className="gw-field">
+            <label htmlFor="task-prompt" className="gw-field__label">
+              Prompt <span className="gw-field__required">required</span>
             </label>
-            <textarea id="task-prompt" name="prompt" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} className="min-h-touch rounded-sm border bg-surface p-md" />
+            <textarea id="task-prompt" name="prompt" required value={prompt} onChange={(e) => setPrompt(e.target.value)} className="gw-field__control gw-textarea" />
           </div>
           <ModelPicker state={models} />
           {listed !== null && (
-            <section aria-labelledby="preapproved-heading" className="flex flex-col gap-sm">
-              <h2 id="preapproved-heading" className="font-semibold">
-                Runs without asking in this task
-              </h2>
-              <p data-testid="preapproved-about" className="text-muted">
+            <section aria-labelledby="preapproved-heading" className="gw-stack gw-gap-sm">
+              <h2 id="preapproved-heading">Runs without asking in this task</h2>
+              <p data-testid="preapproved-about">
                 Claude Code may run these commands in this task without a card, with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones on Smelt's never-list, such as git push, sudo and deleting outside the worktree, and anything chained, piped or redirected.
               </p>
               {listed.note !== null && (
-                <p role="status" className="break-words font-medium">
+                <Alert tone="warning" role="status">
                   {listed.note}
-                </p>
+                </Alert>
               )}
               {listed.commands.length === 0 ? (
-                <p data-testid="preapproved-none" className="text-muted">
-                  No command is listed, so every shell command asks.
-                </p>
+                <p data-testid="preapproved-none">No command is listed, so every shell command asks.</p>
               ) : (
-                <ul data-testid="preapproved-list" className="flex flex-col border-t">
+                <ul data-testid="preapproved-list" className="gw-list">
                   {listed.commands.map((command) => (
-                    <li key={command} className="flex items-center gap-md border-b py-xs">
-                      <code className="min-w-0 flex-1 break-all font-mono text-mono">{command}</code>
-                      <button type="button" aria-label={`Remove ${command}`} onClick={() => removeCommand(command)} className="min-h-touch min-w-touch shrink-0 rounded-sm border px-md font-medium">
-                        Remove
-                      </button>
+                    <li key={command} className="gw-list__row">
+                      <div className="gw-list__content">
+                        <span className="gw-list__body">
+                          <code className="gw-list__primary">{command}</code>
+                        </span>
+                      </div>
+                      <div className="gw-list__action">
+                        <button type="button" aria-label={`Remove ${command}`} onClick={() => removeCommand(command)} className="gw-button gw-button--quiet gw-button--small">
+                          Remove
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
               )}
-              <div className="flex items-end gap-md">
-                <div className="flex min-w-0 flex-1 flex-col gap-xs">
-                  <label htmlFor="preapproved-add" className="font-mono text-mono text-muted">
+              <div className="flex items-end gap-sm">
+                <div className="gw-field min-w-0 flex-1">
+                  <label htmlFor="preapproved-add" className="gw-field__label">
                     Add a command
                   </label>
                   <input
@@ -205,28 +194,26 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
                       e.preventDefault();
                       addCommand();
                     }}
-                    className="min-h-touch min-w-0 rounded-sm border bg-surface px-md font-mono text-mono"
+                    className="gw-field__control"
                   />
                 </div>
-                <button type="button" onClick={addCommand} className="min-h-touch min-w-touch shrink-0 rounded-sm border px-md font-medium">
+                <button type="button" onClick={addCommand} className="gw-button">
                   Add
                 </button>
               </div>
             </section>
           )}
           {error !== null && (
-            <p role="alert" className="break-words font-medium">
+            <Alert tone="error" role="alert">
               {error}
-            </p>
+            </Alert>
           )}
-          <button type="submit" className="min-h-touch rounded-sm border border-accent bg-accent px-lg font-medium uppercase tracking-wide text-surface">
+          <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
             {busy ? "Starting" : "Start task"}
           </button>
-          <p className="text-muted">
-            Smelt builds the task in its own worktree on a new branch, from the repository's current commit. Your checkout and your branch are not touched.
-          </p>
+          <p>Smelt builds the task in its own worktree on a new branch, from the repository's current commit. Your checkout and your branch are not touched.</p>
         </form>
-      </main>
-    </div>
+      </Page>
+    </Frame>
   );
 }

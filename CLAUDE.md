@@ -22,6 +22,7 @@ Done = tests pass. Owner checks batched per milestone.
 - After any correction from the owner: update this file or `docs/lessons.md` with the pattern so it does not repeat.
 - Complex or parallel research: use subagents. Keep main context clean.
 - Read DESIGN.md before any UI work.
+- UI work follows the vendored design system: read `web/vendor/groundwork/rules/core.md` first, and never edit `web/vendor/groundwork/`.
 
 ## Hard rules
 - Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract for scenarios a live model cannot produce on demand.

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, signIn } from "../api/client.ts";
-import { Mark } from "../components/header.tsx";
+import { Alert } from "../components/header.tsx";
 
 export function SignInScreen({ notice, onSignedIn }: { notice: string | null; onSignedIn: () => void }) {
   const [token, setToken] = useState("");
@@ -21,14 +21,26 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-column flex-col gap-xl p-lg">
-      <Mark />
-      <form onSubmit={submit} className="flex flex-col gap-md">
-        <h1 className="font-semibold">Sign in</h1>
-        {notice !== null && <p role="status">{notice}</p>}
-        <div className="flex flex-col gap-xs">
-          <label htmlFor="token" className="font-mono text-mono text-muted">
-            Login token
+    <main className="gw-sign-in p-lg">
+      <p className="gw-sign-in__product">Smelt</p>
+      <div className="gw-stack gw-gap-sm">
+        <h1>Sign in</h1>
+        <p id="token-help">Smelt printed the token the first time it started. It is also in the file named login-token in Smelt's data directory on your Mac.</p>
+      </div>
+      <form onSubmit={submit} className="gw-stack gw-gap-lg">
+        {notice !== null && (
+          <Alert tone="note" role="status">
+            {notice}
+          </Alert>
+        )}
+        {error !== null && (
+          <Alert tone="error" role="alert" id="token-error">
+            {error}
+          </Alert>
+        )}
+        <div className="gw-field">
+          <label htmlFor="token" className="gw-field__label">
+            Login token <span className="gw-field__required">required</span>
           </label>
           <input
             id="token"
@@ -43,20 +55,12 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
             onChange={(e) => setToken(e.target.value)}
             aria-describedby={error === null ? "token-help" : "token-help token-error"}
             aria-invalid={error !== null}
-            className="min-h-touch rounded-sm border bg-surface px-md font-mono text-mono"
+            className="gw-field__control"
           />
         </div>
-        {error !== null && (
-          <p id="token-error" role="alert" className="font-medium">
-            {error}
-          </p>
-        )}
-        <button type="submit" className="min-h-touch rounded-sm border border-accent bg-accent px-lg font-medium uppercase tracking-wide text-surface">
+        <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
           {busy ? "Signing in" : "Sign in"}
         </button>
-        <p id="token-help" className="text-muted">
-          Smelt printed the token the first time it started. It is also in the file named login-token in Smelt's data directory on your Mac.
-        </p>
       </form>
     </main>
   );

@@ -1,8 +1,54 @@
 Smelt
 Copyright 2026 Jon Lange
 
-Nothing in this repository has been copied from other projects yet.
-When a file is copied, it is listed here with its source and licence notice.
+Files copied from other projects are listed here with their source and
+licence notice.
+
+Copied files (stored in this repository)
+----------------------------------------
+
+web/vendor/groundwork/ is a copy of Groundwork, the owner's shared design
+system: version 0.3.0, source commit af0a11f7896afd015a5fd332888c9fd11881ce7d
+(branch feat/2026-11-22-0412-feat-shared-design-system-plan-pr6), the `dist/`
+directory of that repository, unmodified, written by its own
+`scripts/sync.mjs`. `hashes.json` in the copy holds the SHA-256 of every file.
+
+  Groundwork
+  Copyright 2026 Jon Lange
+  Licensed under the Apache License, Version 2.0, the same licence as Smelt;
+  its text is the LICENSE file at the top of this repository. The copy itself
+  carries no LICENSE or NOTICE file of Groundwork's own, so what Groundwork's
+  NOTICE says about the files in the copy is repeated here.
+
+The copy contains these files from other projects, as Groundwork's NOTICE
+lists them:
+
+- IBM Plex Sans, variable weight, Latin subset.
+  Copyright 2019 IBM Corp. All rights reserved.
+  SIL Open Font License, Version 1.1.
+  File: web/vendor/groundwork/fonts/ibm-plex-sans-latin-wght-normal.woff2,
+  unmodified, from the npm package @fontsource-variable/ibm-plex-sans 5.3.0.
+  Licence text: web/vendor/groundwork/fonts/OFL-IBM-Plex-Sans.txt.
+- IBM Plex Mono, weights 400, 500 and 600, Latin subset.
+  Copyright 2017 IBM Corp. All rights reserved.
+  SIL Open Font License, Version 1.1.
+  Files: web/vendor/groundwork/fonts/ibm-plex-mono-latin-*-normal.woff2,
+  unmodified, from the npm package @fontsource/ibm-plex-mono 5.3.0.
+  Licence text: web/vendor/groundwork/fonts/OFL-IBM-Plex-Mono.txt.
+- Lucide icons, a subset.
+  Copyright (c) 2026 Lucide Icons and Contributors. ISC License.
+  Some of these icons derive from Feather.
+  Copyright (c) 2013-present Cole Bemis. MIT License.
+  Files: web/vendor/groundwork/icons/*.svg, unmodified, from the npm package
+  lucide-static 1.77.0. web/vendor/groundwork/icons.svg is generated from them.
+  Licence text: web/vendor/groundwork/icons/LICENSE.
+- The reset in web/vendor/groundwork/groundwork.css is written for Groundwork.
+  It keeps the same element defaults as the preflight stylesheet of Tailwind
+  CSS (Copyright (c) Tailwind Labs, Inc., MIT License).
+
+To update the copy, run Groundwork's sync script again (docs: web/vendor/
+groundwork/rules/core.md and Groundwork's consumer guide) and record the new
+version and commit here.
 
 Licence checks
 --------------
@@ -23,8 +69,8 @@ Bundled at build time (not stored in this repository)
 
 The built client (web/dist, produced by `npm run build --prefix web`) contains:
 
-- Geist and Geist Mono font files, from the npm packages
-  @fontsource-variable/geist and @fontsource-variable/geist-mono.
-  Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font).
-  SIL Open Font License 1.1.
+- From the copy of Groundwork listed above: its stylesheet, the IBM Plex Sans
+  and IBM Plex Mono font files, the Lucide icon sprite and the Lucide icons its
+  stylesheet draws. Their notices are above. The gallery pages, the checker,
+  the rules and the hook in the copy are not part of the built client.
 - React and React DOM. Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.

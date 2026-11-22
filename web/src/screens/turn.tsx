@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDriver, getTranscript, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
-import { Header } from "../components/header.tsx";
+import { Alert, Frame, PageHeader, StreamBanner } from "../components/header.tsx";
 import { ModelPicker, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
@@ -189,8 +189,8 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
 
   const submit = (event: FormEvent): void => {
     event.preventDefault();
-    if (running) stop();
-    else send();
+    // While a turn runs the form holds Stop, a button of its own, and sends nothing.
+    if (!running) send();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -203,71 +203,86 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const session = useMemo(() => sessionModel(shown), [shown]);
 
   return (
-    <div className="mx-auto flex h-screen max-w-transcript flex-col">
-      <Header current="turn">
-        <p data-testid="driver-state" className="font-mono text-mono text-muted">
-          {driverWords(driver, driverFailed)}
-        </p>
-        {session !== null && (
-          <p data-testid="turn-model" className="break-all font-mono text-mono text-muted">
-            {modelWords(session)}
-          </p>
-        )}
-      </Header>
+    <Frame current="turn" fill banner={connected ? undefined : <StreamBanner />}>
+      <main className="flex min-h-0 min-w-0 flex-col">
+        <div className="gw-container py-md">
+          <PageHeader title="Turn">
+            <p data-testid="driver-state" className="gw-page-header__description">
+              {driverWords(driver, driverFailed)}
+            </p>
+            {session !== null && (
+              <p data-testid="turn-model" className="gw-page-header__description sm-wrap">
+                {modelWords(session)}
+              </p>
+            )}
+          </PageHeader>
+        </div>
 
-      {!connected && (
-        <p role="status" data-testid="stream-banner" className="border-b bg-border px-lg py-sm font-medium">
-          Live updates are disconnected. Reconnecting.
-        </p>
-      )}
+        <div ref={logRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
+          <div className="gw-container pb-lg">
+            {shown.length === 0 ? (
+              <div className="gw-empty-state gw-empty-state--compact">
+                <h2 className="gw-empty-state__title">No turns yet</h2>
+                <p className="gw-empty-state__body">A prompt goes to Claude Code, which works in an empty scratch directory inside Smelt's data directory.</p>
+              </div>
+            ) : (
+              <Transcript events={shown} working={running ? (stopping ? "Stopping the turn." : "Claude Code is working.") : null} />
+            )}
+          </div>
+        </div>
 
-      <main ref={logRef} className="min-h-0 flex-1 overflow-y-auto p-lg" tabIndex={0} aria-label="Transcript">
-        {shown.length === 0 ? (
-          <p className="text-muted">No turns yet. A prompt goes to Claude Code, which works in an empty scratch directory inside Smelt's data directory.</p>
-        ) : (
-          <Transcript events={shown} working={running ? (stopping ? "Stopping the turn." : "Claude Code is working.") : null} />
-        )}
-      </main>
-
-      <footer className="flex flex-col gap-sm border-t p-lg">
-        {error !== null && (
-          <p role="alert" className="font-medium">
-            {error}
-          </p>
-        )}
         {canSend ? (
-          <form onSubmit={submit} className="flex flex-col gap-sm">
+          <form onSubmit={submit} aria-busy={running && error === null} className="gw-composer gw-composer--sticky">
             <ModelPicker state={models} />
-            <label htmlFor="prompt" className="font-mono text-mono text-muted">
+            <label htmlFor="prompt" className="gw-composer__label">
               Prompt
             </label>
-            <textarea
-              id="prompt"
-              ref={promptRef}
-              rows={2}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={onKeyDown}
-              className="max-h-input min-h-touch resize-none rounded-sm border bg-surface p-md"
-            />
-            <button type="submit" className="min-h-touch rounded-sm border border-accent bg-accent px-lg font-medium uppercase tracking-wide text-surface">
-              {running ? "Stop" : "Send"}
-            </button>
+            <div className="gw-composer__row">
+              <textarea id="prompt" name="prompt" ref={promptRef} rows={1} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="gw-composer__input" />
+              {running ? (
+                <button type="button" onClick={stop} aria-busy={stopping} className="gw-button">
+                  Stop
+                </button>
+              ) : (
+                <button type="submit" className="gw-button gw-button--primary">
+                  Send
+                </button>
+              )}
+            </div>
+            {error !== null && (
+              <p id="prompt-error" role="alert" className="gw-composer__error">
+                {error}
+              </p>
+            )}
           </form>
-        ) : driver !== null || driverFailed ? (
-          <div className="flex flex-col gap-sm" data-testid="driver-problem">
-            <p className="font-medium">{driverFailed ? "Smelt could not check Claude Code." : driver!.problem}</p>
-            <p className="text-muted">Prompts cannot be sent until this is fixed.</p>
-            <button type="button" onClick={checkDriver} className="min-h-touch self-start text-left underline underline-offset-xs">
-              Check again
-            </button>
-          </div>
         ) : (
-          <p role="status" className="text-muted">
-            Checking that Claude Code can be driven.
-          </p>
+          <div className="gw-container gw-stack py-md">
+            {error !== null && (
+              <Alert tone="error" role="alert">
+                {error}
+              </Alert>
+            )}
+            {driver !== null || driverFailed ? (
+              <Alert
+                tone="warning"
+                testId="driver-problem"
+                title={driverFailed ? "Smelt could not check Claude Code." : (driver!.problem ?? undefined)}
+                action={
+                  <button type="button" onClick={checkDriver} className="gw-button gw-button--small">
+                    Check again
+                  </button>
+                }
+              >
+                Prompts cannot be sent until this is fixed.
+              </Alert>
+            ) : (
+              <p role="status" className="gw-spinner">
+                Checking that Claude Code can be driven.
+              </p>
+            )}
+          </div>
         )}
-      </footer>
-    </div>
+      </main>
+    </Frame>
   );
 }

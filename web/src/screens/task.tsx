@@ -2,8 +2,9 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type FileChange, type StoredEvent, type TaskDetail } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
-import { Header } from "../components/header.tsx";
-import { modelWords, sessionModel } from "../components/model-picker.tsx";
+import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
+import { Icon } from "../components/icon.tsx";
+import { modelState, sessionModel } from "../components/model-picker.tsx";
 import { statusSentence } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
@@ -18,34 +19,85 @@ function lineKind(line: string): "added" | "removed" | "hunk" | "header" | "cont
   if (line.startsWith("-")) return "removed";
   return "context";
 }
-const LINE_CLASS = { added: "bg-border font-medium", removed: "text-muted", hunk: "text-muted", header: "text-muted", context: "" } as const;
 
-/** A unified diff as text, in a block that scrolls sideways on its own so the page never does. */
-function Diff({ state }: { state: DiffState }) {
-  if (state.kind === "loading") return <p role="status" className="px-md pb-md text-muted">Reading the diff.</p>;
-  if (state.kind === "failed") return <p role="alert" className="break-words px-md pb-md font-medium">{`The diff could not be read. ${state.why}`}</p>;
-  const lines = state.diff.replace(/\n$/, "").split("\n");
+/** One line of a diff: its sign in one cell and its text in the next, as an insertion, a deletion or neither. */
+function DiffLine({ line }: { line: string }) {
+  const kind = lineKind(line);
+  if (kind === "added" || kind === "removed") {
+    const cells = (
+      <>
+        <span className="gw-diff__sign">{line[0]}</span>
+        <span className="gw-diff__text">{line.slice(1)}</span>
+      </>
+    );
+    return kind === "added" ? (
+      <ins data-line={kind} className="gw-diff__line gw-diff__line--added">
+        {cells}
+      </ins>
+    ) : (
+      <del data-line={kind} className="gw-diff__line gw-diff__line--removed">
+        {cells}
+      </del>
+    );
+  }
+  // A context line starts with the space that is its sign. Git's own header lines, hunk headers and notes have none of their own.
+  const context = kind === "context";
   return (
-    <div className="flex flex-col gap-sm pb-md">
-      <div data-testid="diff-scroll" tabIndex={0} aria-label="Diff" className="overflow-x-auto rounded-sm border">
-        <pre data-testid="diff" className="w-max p-md font-mono text-mono">
-          {lines.map((line, i) => {
-            const kind = lineKind(line);
-            return (
-              <span key={i} data-line={kind} className={`block ${LINE_CLASS[kind]}`}>
-                {line === "" ? " " : line}
-              </span>
-            );
-          })}
-        </pre>
-      </div>
-      {state.truncated && <p className="text-muted">This diff is longer than Smelt shows here. The whole of it is on the branch.</p>}
-    </div>
+    <span data-line={kind} className={context ? "gw-diff__line" : "gw-diff__line gw-diff__line--hunk"}>
+      <span className="gw-diff__sign"> </span>
+      <span className="gw-diff__text">{context && line.startsWith(" ") ? line.slice(1) : line}</span>
+    </span>
   );
 }
 
-function countWords(file: FileChange): string {
-  return file.binary ? "binary" : `+${file.added} −${file.removed}`;
+/** A unified diff as text, in a block that scrolls sideways on its own so the page never does. */
+function Diff({ path, state }: { path: string; state: DiffState }) {
+  if (state.kind === "loading") {
+    return (
+      <figure className="gw-diff" aria-busy="true">
+        <p role="status" className="gw-diff__note">
+          Reading the diff.
+        </p>
+      </figure>
+    );
+  }
+  if (state.kind === "failed") {
+    return (
+      <figure className="gw-diff">
+        <p role="alert" className="gw-diff__note sm-wrap">{`The diff could not be read. ${state.why}`}</p>
+      </figure>
+    );
+  }
+  const lines = state.diff.replace(/\n$/, "").split("\n");
+  return (
+    <figure className="gw-diff">
+      <pre data-testid="diff-scroll" tabIndex={0} role="group" aria-label={`Diff of ${path}`} className="gw-diff__body">
+        <code data-testid="diff" className="gw-diff__lines">
+          {lines.map((line, i) => (
+            <DiffLine key={i} line={line} />
+          ))}
+        </code>
+      </pre>
+      {state.truncated && <p className="gw-diff__note">This diff is longer than Smelt shows here. The whole of it is on the branch.</p>}
+    </figure>
+  );
+}
+
+/** A file's line counts: each a sign and a number, finished in words for a screen reader. */
+function Counts({ file }: { file: FileChange }) {
+  if (file.binary) return <>binary</>;
+  return (
+    <span className="gw-diff__counts">
+      <span className="gw-diff__added">
+        {`+${file.added}`}
+        <span className="gw-diff__label">{file.added === 1 ? " line added" : " lines added"}</span>
+      </span>
+      <span className="gw-diff__removed">
+        {`−${file.removed}`}
+        <span className="gw-diff__label">{file.removed === 1 ? " line removed" : " lines removed"}</span>
+      </span>
+    </span>
+  );
 }
 
 export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () => void }) {
@@ -115,8 +167,10 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   // The model that answered is the one the driver's own session event names; what was asked for is on the task.
   const session = useMemo(() => sessionModel(shown), [shown]);
 
-  const toggle = (file: string): void => {
-    if (open.includes(file)) return setOpen(open.filter((f) => f !== file));
+  /** Follows a file's disclosure as the browser opens and closes it; the diff is read the first time it opens. */
+  const toggled = (file: string, isOpen: boolean): void => {
+    if (isOpen === open.includes(file)) return;
+    if (!isOpen) return setOpen(open.filter((f) => f !== file));
     setOpen([...open, file]);
     if (diffs[file]?.kind === "loaded") return;
     setDiffs((have) => ({ ...have, [file]: { kind: "loading" } }));
@@ -142,51 +196,54 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : asking.parkedAt === null ? "Claude Code is paused until you answer." : "Claude Code is stopped until you answer.") : null;
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-transcript flex-col">
-      <Header current={null} />
-      {!connected && (
-        <p role="status" data-testid="stream-banner" className="border-b bg-border px-lg py-sm font-medium">
-          Live updates are disconnected. Reconnecting.
-        </p>
-      )}
-      <main className="flex flex-col gap-xl p-lg">
+    <Frame current={null} banner={connected ? undefined : <StreamBanner />}>
+      <Page>
         {problem !== null && (
-          <p role="alert" className="break-words font-medium">
+          <Alert tone="error" role="alert">
             {problem}
-          </p>
+          </Alert>
         )}
         {task === null ? (
           problem === null && (
-            <p role="status" className="text-muted">
+            <p role="status" className="gw-spinner">
               Reading the task.
             </p>
           )
         ) : (
           <>
-            <section className="flex flex-col gap-xs">
-              <h1 className="font-semibold">{`Task ${task.id}`}</h1>
-              <p data-testid="task-status" role="status" className="break-words font-medium">
+            <PageHeader title={`Task ${task.id}`}>
+              <p data-testid="task-status" role="status" className="gw-page-header__description sm-wrap">
                 {statusSentence(task)}
               </p>
-              <p data-testid="task-model" className="break-all font-mono text-mono text-muted">
-                {`${modelWords(session)}. Requested: ${task.requestedModel ?? "the CLI default"}.`}
-              </p>
-              <p data-testid="task-repo" className="break-all font-mono text-mono text-muted">
-                {task.repo}
-              </p>
-            </section>
+            </PageHeader>
+            <dl className="gw-key-value">
+              <div className="gw-key-value__item">
+                <dt className="gw-key-value__label">Model</dt>
+                <dd data-testid="task-model" className="gw-key-value__value">{`${modelState(session)}. Requested: ${task.requestedModel ?? "the CLI default"}.`}</dd>
+              </div>
+              <div className="gw-key-value__item">
+                <dt className="gw-key-value__label">Repository</dt>
+                <dd data-testid="task-repo" className="gw-key-value__value gw-key-value__value--mono">
+                  {task.repo}
+                </dd>
+              </div>
+            </dl>
 
             {task.preapproved.length > 0 && (
-              <section className="flex flex-col gap-sm">
-                <h2 className="font-semibold">Pre-approved for this task</h2>
-                <ul data-testid="task-preapproved" className="flex flex-col gap-xs">
+              <section className="gw-stack gw-gap-sm">
+                <h2>Pre-approved for this task</h2>
+                <ul data-testid="task-preapproved" className="gw-list gw-list--dense">
                   {task.preapproved.map((command) => (
-                    <li key={command} className="break-all font-mono text-mono">
-                      {command}
+                    <li key={command} className="gw-list__row">
+                      <div className="gw-list__content">
+                        <span className="gw-list__body">
+                          <code className="gw-list__primary">{command}</code>
+                        </span>
+                      </div>
                     </li>
                   ))}
                 </ul>
-                <p className="text-muted">You listed these when you started the task. They run without asking, with further arguments too, unless they are on Smelt's never-list (git push, sudo, deleting outside the worktree and the like) or are chained, piped or redirected: those still ask.</p>
+                <p>You listed these when you started the task. They run without asking, with further arguments too, unless they are on Smelt's never-list (git push, sudo, deleting outside the worktree and the like) or are chained, piped or redirected: those still ask.</p>
               </section>
             )}
 
@@ -198,39 +255,42 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               </section>
             ) : (
               attemptId === null && (
-                <p data-testid="task-prompt" className="whitespace-pre-wrap break-words rounded-sm bg-border p-md font-mono text-mono">
-                  {task.prompt}
-                </p>
+                <ol className="gw-stack gw-gap-sm">
+                  <li className="gw-message gw-message--user">
+                    <span className="gw-message__label">You</span>
+                    <p data-testid="task-prompt" className="gw-message__body">
+                      {task.prompt}
+                    </p>
+                  </li>
+                </ol>
               )
             )}
 
             {task.filesProblem !== null && (
-              <p role="alert" className="break-words font-medium">
+              <Alert tone="error" role="alert">
                 {task.filesProblem}
-              </p>
+              </Alert>
             )}
             {task.files !== null && (
-              <section className="flex flex-col gap-sm">
-                <h2 className="font-semibold">Changed files</h2>
+              <section className="gw-stack gw-gap-sm">
+                <h2>Changed files</h2>
                 {task.files.length === 0 ? (
-                  <p data-testid="no-changes" className="text-muted">
-                    No file was changed, so the branch is still at the commit it started from.
-                  </p>
+                  <p data-testid="no-changes">No file was changed, so the branch is still at the commit it started from.</p>
                 ) : (
-                  <ul data-testid="changed-files" className="flex flex-col border-t">
+                  <ul data-testid="changed-files" className="gw-list">
                     {task.files.map((file) => {
                       const expanded = open.includes(file.path);
                       return (
-                        <li key={file.path} className="border-b">
-                          <button type="button" aria-expanded={expanded} onClick={() => toggle(file.path)} className="flex min-h-touch w-full items-center gap-md py-sm text-left font-mono text-mono">
-                            <span aria-hidden="true" className="shrink-0">
-                              {expanded ? "−" : "+"}
-                            </span>
-                            <span className="min-w-0 flex-1 break-all">{file.path}</span>
-                            <span className="shrink-0 text-muted">{file.status}</span>
-                            <span className="shrink-0">{countWords(file)}</span>
-                          </button>
-                          {expanded && <Diff state={diffs[file.path] ?? { kind: "loading" }} />}
+                        <li key={file.path} className="gw-list__row">
+                          <details open={expanded} onToggle={(e) => toggled(file.path, e.currentTarget.open)} className="gw-disclosure gw-disclosure--row">
+                            <summary className="gw-disclosure__summary">
+                              <code>{file.path}</code>
+                              <span className="gw-disclosure__meta">
+                                {file.status} <Counts file={file} />
+                              </span>
+                            </summary>
+                            <div className="gw-disclosure__content">{expanded && <Diff path={file.path} state={diffs[file.path] ?? { kind: "loading" }} />}</div>
+                          </details>
                         </li>
                       );
                     })}
@@ -240,29 +300,30 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             )}
 
             {task.branch !== null && (
-              <section className="flex flex-col gap-sm">
-                <h2 className="font-semibold">Branch</h2>
-                <div className="flex items-center gap-md">
-                  <code data-testid="branch" className="min-w-0 flex-1 break-all font-mono text-mono">
-                    {task.branch}
-                  </code>
-                  <button type="button" aria-label="Copy branch name" onClick={() => copyBranch(task.branch!)} className="min-h-touch min-w-touch shrink-0 rounded-sm border px-md font-medium">
-                    Copy
-                  </button>
+              <section className="gw-stack gw-gap-sm">
+                <div className="gw-field">
+                  <label htmlFor="branch" className="gw-field__label">
+                    Branch
+                  </label>
+                  <div className="gw-copy-field">
+                    <input id="branch" data-testid="branch" type="text" readOnly value={task.branch} className="gw-copy-field__value basis-full" />
+                    <button type="button" aria-label="Copy branch name" onClick={() => copyBranch(task.branch!)} className="gw-button">
+                      <Icon name="copy" className="gw-button__icon" />
+                      Copy
+                    </button>
+                    <p data-testid="copy-state" role="status" className="gw-copy-field__status">
+                      {copied}
+                    </p>
+                  </div>
                 </div>
-                {copied !== null && (
-                  <p data-testid="copy-state" role="status" className="text-muted">
-                    {copied}
-                  </p>
-                )}
-                <p data-testid="not-merged" className="text-muted">
+                <p data-testid="not-merged">
                   {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you gave standing permission (see Trust), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you gave it standing permission (see Trust)"}, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or pre-approve" : ""} runs with your account's rights.`}
                 </p>
               </section>
             )}
           </>
         )}
-      </main>
-    </div>
+      </Page>
+    </Frame>
   );
 }

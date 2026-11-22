@@ -13,7 +13,7 @@ function newest(target: string): number {
   return Math.max(0, ...fs.readdirSync(target).map((name) => newest(path.join(target, name))));
 }
 
-const sources = ["src", "index.html", "package.json", "package-lock.json", "tailwind.config.ts", "vite.config.ts", "postcss.config.js"].map((name) => path.join(web, name));
+const sources = ["src", "vendor", "index.html", "package.json", "package-lock.json", "tailwind.config.ts", "vite.config.ts", "postcss.config.js"].map((name) => path.join(web, name));
 if (!fs.existsSync(built) || Math.max(...sources.map(newest)) > fs.statSync(built).mtimeMs) {
   console.log("Building the client.");
   execFileSync("npm", ["run", "build", "--prefix", web], { stdio: "inherit" });

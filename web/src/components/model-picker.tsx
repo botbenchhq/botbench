@@ -109,40 +109,47 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
   const value = choice === null ? CONFIGURED : choice.other ? OTHER : (choice.model ?? "");
   const cliDefault = list?.cliDefault ?? null;
   return (
-    <div className="flex flex-col gap-xs">
-      <label htmlFor="model" className="font-mono text-mono text-muted">
-        Model
-      </label>
-      <select
-        id="model"
-        name="model"
-        value={ready ? value : ""}
-        disabled={!ready}
-        onChange={(e) => {
-          if (e.target.value === CONFIGURED) return;
-          state.choose(e.target.value === OTHER ? { model: "", other: true } : { model: e.target.value === "" ? null : e.target.value, other: false });
-        }}
-        aria-describedby="model-source"
-        className="min-h-touch rounded-sm border bg-surface px-md font-mono text-mono"
-      >
-        {ready ? (
-          <>
-            {choice === null && <option value={CONFIGURED}>Configured model</option>}
-            <option value="">{cliDefault === null ? "CLI default" : `CLI default (${cliDefault})`}</option>
-            {(list?.models ?? []).map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label === undefined || model.label === model.id ? model.id : `${model.label} · ${model.id}`}
-              </option>
-            ))}
-            <option value={OTHER}>Other…</option>
-          </>
-        ) : (
-          <option value="">Reading the models.</option>
-        )}
-      </select>
+    <div className="gw-stack gw-gap-sm">
+      <div className="gw-field">
+        <label htmlFor="model" className="gw-field__label">
+          Model
+        </label>
+        <div className="gw-select">
+          <select
+            id="model"
+            name="model"
+            value={ready ? value : ""}
+            disabled={!ready}
+            onChange={(e) => {
+              if (e.target.value === CONFIGURED) return;
+              state.choose(e.target.value === OTHER ? { model: "", other: true } : { model: e.target.value === "" ? null : e.target.value, other: false });
+            }}
+            aria-describedby="model-source"
+            className="gw-field__control gw-select__control"
+          >
+            {ready ? (
+              <>
+                {choice === null && <option value={CONFIGURED}>Configured model</option>}
+                <option value="">{cliDefault === null ? "CLI default" : `CLI default (${cliDefault})`}</option>
+                {(list?.models ?? []).map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label === undefined || model.label === model.id ? model.id : `${model.label} · ${model.id}`}
+                  </option>
+                ))}
+                <option value={OTHER}>Other…</option>
+              </>
+            ) : (
+              <option value="">Reading the models.</option>
+            )}
+          </select>
+        </div>
+        <p id="model-source" data-testid="model-source" role="status" className="gw-field__description sm-wrap">
+          {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
+        </p>
+      </div>
       {ready && choice?.other === true && (
-        <>
-          <label htmlFor="model-other" className="font-mono text-mono text-muted">
+        <div className="gw-field">
+          <label htmlFor="model-other" className="gw-field__label">
             Model name
           </label>
           <input
@@ -155,13 +162,10 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
             value={choice.model ?? ""}
             onChange={(e) => state.choose({ model: e.target.value, other: true })}
             aria-describedby="model-source"
-            className="min-h-touch rounded-sm border bg-surface px-md font-mono text-mono"
+            className="gw-field__control"
           />
-        </>
+        </div>
       )}
-      <p id="model-source" data-testid="model-source" role="status" className="break-words text-muted">
-        {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
-      </p>
     </div>
   );
 }
@@ -181,5 +185,7 @@ export function sessionModel(events: readonly StoredEvent[]): { model: string; a
 }
 
 /** The session's model in words that claim an answer only when a turn completed. */
-export const modelWords = (session: { model: string; answered: boolean } | null): string =>
-  session === null ? "Model: no session yet" : session.answered ? `Model: ${session.model}` : `Model: ${session.model} (session started, no completed turn)`;
+export const modelState = (session: { model: string; answered: boolean } | null): string =>
+  session === null ? "no session yet" : session.answered ? session.model : `${session.model} (session started, no completed turn)`;
+/** The same, as a line that stands alone. */
+export const modelWords = (session: { model: string; answered: boolean } | null): string => `Model: ${modelState(session)}`;

@@ -29,7 +29,7 @@ test("LIVE: a task waits on an approval, Smelt is restarted, and after signing i
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
   // A card asked in this run of Smelt says nothing about a restart.
   await expect(card.getByTestId("approval-parked")).toHaveCount(0);
-  const branch = (await page.getByTestId("branch").textContent())!;
+  const branch = await page.getByTestId("branch").inputValue();
   const worktree = path.join(smelt.home, "worktrees", branch.split("/")[1]!, "task-1");
 
   // Smelt stops and starts again. The session ended with the old process, so the owner signs in again.
@@ -38,7 +38,7 @@ test("LIVE: a task waits on an approval, Smelt is restarted, and after signing i
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Task 1 · Waiting on you/);
+  await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Waiting on you.*Task 1 · /);
   await tray.getByRole("link").click();
   await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
 
@@ -63,7 +63,7 @@ test("LIVE: a task waits on an approval, Smelt is restarted, and after signing i
   await expect(page.getByTestId("task-status")).toHaveText("Built. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 150_000 });
   const files = page.getByTestId("changed-files");
   await expect(files.getByRole("listitem")).toHaveCount(1);
-  await expect(files.getByRole("button", { name: /marker\.txt/ })).toHaveText(/marker\.txt.*added.*\+1.*−0/);
+  await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added.*\+1 line added.*−0 lines removed/);
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   // No second card was ever raised: one approval exists, and it is the one that was allowed.
   await expect(card).toHaveCount(0);
