@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, smeltHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, smeltHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -163,6 +163,34 @@ test("a repository's settings are keyed by its full path: lists of plain command
     [{ floor: [{ name: "", command: "npm publish" }] }, /"floor".*"name" and a "command"/],
     [{ floor: [{ name: "git-push", command: "npm publish" }] }, /"floor".*"git-push".*built-in/],
     [{ floor: [{ name: "x", command: "npm publish | cat" }] }, /"floor".*"x".*one plain command/],
+  ];
+  for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, ...(over as object) })), words, JSON.stringify(over));
+});
+
+test("the number of approvals after which a card offers standing permission is 3 as shipped, can be set by the owner, and must be a whole number of at least 1", (t) => {
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3 });
+  assert.equal(offerStandingAfter(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 3);
+  // A config that says nothing of it still means 3.
+  const silent = loadConfig(configFiles(t, BASE));
+  assert.equal(silent.autonomy, undefined);
+  assert.equal(offerStandingAfter(silent), 3);
+  assert.equal(offerStandingAfter(loadConfig(configFiles(t, { ...BASE, autonomy: {} }))), 3);
+  // The owner's local file sets it and keeps everything else.
+  const local = loadConfig(configFiles(t, { ...BASE, autonomy: { offerStandingAfter: 3 } }, { autonomy: { offerStandingAfter: 5 } }));
+  assert.equal(offerStandingAfter(local), 5);
+  assert.equal(local.port, 4780);
+  assert.equal(offerStandingAfter(loadConfig(configFiles(t, { ...BASE, autonomy: { offerStandingAfter: 1 } }))), 1);
+
+  const refused: [unknown, RegExp][] = [
+    [{ autonomy: [] }, /"autonomy" must be an object/],
+    [{ autonomy: 3 }, /"autonomy" must be an object/],
+    [{ autonomy: { offerStandingAfter: 0 } }, /"autonomy.offerStandingAfter" must be a whole number of at least 1/],
+    [{ autonomy: { offerStandingAfter: -2 } }, /"autonomy.offerStandingAfter" must be a whole number of at least 1/],
+    [{ autonomy: { offerStandingAfter: 1.5 } }, /"autonomy.offerStandingAfter" must be a whole number of at least 1/],
+    [{ autonomy: { offerStandingAfter: "3" } }, /"autonomy.offerStandingAfter" must be a whole number of at least 1/],
+    [{ autonomy: { offerStandingAfter: null } }, /"autonomy.offerStandingAfter" must be a whole number of at least 1/],
+    [{ autonomy: { offerStandingAfter: 1e21 } }, /"autonomy.offerStandingAfter" must be a whole number of at least 1/],
+    [{ autonomy: { offerStandingAfte: 3 } }, /"autonomy" has unknown setting "offerStandingAfte"/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, ...(over as object) })), words, JSON.stringify(over));
 });

@@ -256,7 +256,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   </p>
                 )}
                 <p data-testid="not-merged" className="text-muted">
-                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. ${task.preapproved.length > 0 ? "The commands listed above run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first"}, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or pre-approve" : ""} runs with your account's rights.`}
+                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you gave standing permission (see Trust), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you gave it standing permission (see Trust)"}, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or pre-approve" : ""} runs with your account's rights.`}
                 </p>
               </section>
             )}

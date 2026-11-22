@@ -3,7 +3,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
-import { insertPreapproved } from "../approvals/grants.ts";
+import { insertPreapproved, realRepo } from "../approvals/grants.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
@@ -108,8 +108,11 @@ export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; 
     const at = now();
     // Runs have no table of their own yet: a new run takes the next number after the highest in use.
     const runId = Number(db.prepare("SELECT COALESCE(MAX(run_id), 0) + 1 AS next FROM tasks").get()!.next);
-    const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(runId, o.repo, o.prompt, o.requestedModel ?? null, at, at).lastInsertRowid);
-    insertPreapproved(db, { role: IMPLEMENTER, repo: o.repo, runId, taskId: id, commands: o.preapproved ?? [] });
+    // The repository is kept by its real path as it is now. Grants and counts compare this stored path, so a link
+    // that is pointed elsewhere later does not carry one repository's trust to another.
+    const repo = realRepo(o.repo);
+    const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(runId, repo, o.prompt, o.requestedModel ?? null, at, at).lastInsertRowid);
+    insertPreapproved(db, { role: IMPLEMENTER, repo, runId, taskId: id, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "queued", null);
     return getTask(db, id)!;
   });
@@ -312,7 +315,7 @@ export function createTasks(options: TasksOptions): Tasks {
         void broker
           .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined }) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));
       }
       if (event.type === "permission_resolved") {

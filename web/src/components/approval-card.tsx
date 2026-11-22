@@ -1,6 +1,7 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { answerApproval, ApiError, type Approval } from "../api/client.ts";
+import { answerApproval, ApiError, grantStanding, type Approval } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
+import { ConfirmAction } from "./confirm.tsx";
 
 /** The tray's last "open" a card has answered by taking the focus. Kept across screens, so one open moves the focus once. */
 let focusedFor = 0;
@@ -12,6 +13,9 @@ let focusedFor = 0;
 export function visible(text: string): string {
   return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
 }
+
+/** A count as it is said: "once", "3 times". */
+export const times = (n: number): string => (n === 1 ? "once" : `${n} times`);
 
 /** Where the agent stood, in words. The path is relative to the task's worktree. */
 function directoryWords(cwd: string): string {
@@ -45,6 +49,9 @@ export function ApprovalTray() {
  * task, and the agent's reason when it gave one. Allow is the one primary
  * action. Decline is set apart below it, with an optional note for the agent.
  * `more` is how many further requests of the same task wait behind this one.
+ * When the server says this command has been allowed often enough, the card also
+ * offers standing permission, between the two: a secondary step that states the
+ * grant's scope and does nothing until it is confirmed.
  */
 export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approval; more: number; onSignedOut: () => void }) {
   const { refresh, opened } = useContext(ApprovalsContext);
@@ -84,8 +91,23 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
     );
   };
 
+  const offer = approval.standingOffer;
+  const grant = (): void => {
+    setSending(true);
+    setProblem(null);
+    grantStanding(approval.id).then(
+      () => refresh(),
+      (err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setSending(false);
+        setProblem(err instanceof ApiError ? `Standing permission was not given, and nothing was allowed. ${err.message}` : "Standing permission was not given: Smelt could not be reached. Nothing was allowed.");
+        refresh();
+      },
+    );
+  };
+
   return (
-    <section ref={card} tabIndex={-1} data-testid="approval-card" aria-labelledby={heading} className="flex flex-col gap-md rounded-md border border-accent p-lg">
+    <section ref={card} tabIndex={-1} data-testid="approval-card" data-approval-id={approval.id} aria-labelledby={heading} className="flex flex-col gap-md rounded-md border border-accent p-lg">
       <h2 id={heading} className="font-semibold">
         {approval.tool === "Bash" ? "Claude Code asks to run a command" : `Claude Code asks to use ${approval.tool}`}
       </h2>
@@ -130,6 +152,40 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       <button type="button" disabled={sending || !settled} onClick={() => send("allow")} className="min-h-touch rounded-sm border border-accent bg-accent px-lg font-medium uppercase tracking-wide text-surface">
         Allow
       </button>
+      {offer !== undefined && (
+        <div data-testid="standing-offer" className="mt-xl flex flex-col gap-sm border-t pt-lg">
+          <p className="text-muted">{`You have allowed this command ${times(offer.approvals)}.`}</p>
+          <ConfirmAction label="Stop asking for this command" confirmLabel="Give standing permission" cancelLabel="Cancel" disabled={sending || !settled} testId="standing-confirm" onConfirm={grant}>
+            <p className="break-words">
+              Standing permission: from now on Smelt will run exactly this command without asking you, each time this role asks for it from this directory in a task of this repository. A different argument still asks, and dangerous commands always ask. If the command runs a script or a test, it runs whatever those files hold at the time, with your account's rights. It allows this request too. You can take it back on the Trust screen.
+            </p>
+            <dl className="flex flex-col gap-xs">
+              <div className="flex gap-sm">
+                <dt className="shrink-0 text-muted">Command</dt>
+                <dd data-testid="standing-command" className="min-w-0 whitespace-pre-wrap break-all font-mono text-mono">
+                  {visible(offer.command)}
+                </dd>
+              </div>
+              <div className="flex gap-sm">
+                <dt className="shrink-0 text-muted">Repository</dt>
+                <dd data-testid="standing-repo" className="min-w-0 break-all">
+                  {visible(offer.repo)}
+                </dd>
+              </div>
+              <div className="flex gap-sm">
+                <dt className="shrink-0 text-muted">Directory</dt>
+                <dd data-testid="standing-directory" className="min-w-0 break-all">
+                  {directoryWords(offer.cwd)}
+                </dd>
+              </div>
+              <div className="flex gap-sm">
+                <dt className="shrink-0 text-muted">Role</dt>
+                <dd data-testid="standing-role">{offer.role}</dd>
+              </div>
+            </dl>
+          </ConfirmAction>
+        </div>
+      )}
       <div className="mt-xl flex flex-col gap-sm border-t pt-lg">
         <label htmlFor={noteField} className="font-mono text-mono text-muted">
           Note to the agent if you decline (optional)

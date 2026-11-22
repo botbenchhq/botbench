@@ -73,7 +73,9 @@ export function openStore(home: string): DatabaseSync {
   fs.closeSync(fs.openSync(file, "a", 0o600));
   fs.chmodSync(file, 0o600);
   const db = new DatabaseSync(file);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  // With recursive triggers on, a row replaced by `INSERT OR REPLACE` fires its delete trigger, so the append-only
+  // tables refuse that way of rewriting a row too.
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA recursive_triggers = ON;");
   migrate(db);
   return db;
 }

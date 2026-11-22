@@ -2,6 +2,13 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: a standing permission was wider than its card, four ways (unit 10)
+Found by the critique pass, before merge. Tests were written first in every layer this time and all passed; the critic still got: `cat '~/x'` allowed three times earning a grant that ran `cat ~/x` (the word reader drops quotes, and a leading `~` is the one plain word a shell rewrites); `curl -d @.env …`, `npm publish` and `python3 -c …` offered standing permission, against "approvals before anything leaves the machine"; one repository's approvals counting for another after a link was re-pointed (the path was resolved again at every request); and a directory that was a link out of the worktree recorded by its name. Rules going forward:
+- A fact that scopes trust (repository, directory) is resolved once, stored, and compared as stored. Resolving it again at use time lets whatever changed in between inherit the trust.
+- When a reader throws information away (quotes, case, links), list what the thrown-away part could have changed, and refuse those cases where the result becomes lasting.
+- A permission that outlives its task is checked against the hard rules as if nobody were watching: what could it send, publish or start, forever, with no card?
+- Append-only is tested with `INSERT OR REPLACE` as well as `UPDATE` and `DELETE`.
+
 ## 2026-11-22: the first safety floor passed its own table and was walked round fourteen ways (unit 9)
 Found by the critique pass, before merge. The floor's tests listed the dangerous commands as their author would type them, and the rules passed. A critic acting as the agent got past `rm -r` with an operand that starts with a dash (`rm -rf sub -x/../../outside`, checked against the real `rm`), reached guarded files through `~user`, `~+` and option values (`--output=/path`, `-o/path`, `of=/path`), pushed with `git subtree push` and a `git config alias`, and hid a command inside one quoted argument (`env -S 'sudo ls'`). Also: the server code was written before the live and browser tests, so their failing lines had to be taken against a copy of the previous source. Rules going forward:
 - A rule that reads a command line is tested by someone trying to get round it, in a fresh context, running the real functions: not by its author's table alone. Every way round becomes a row in the table.

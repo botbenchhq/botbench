@@ -544,7 +544,7 @@ test("a database from before this unit gains the parked-approval columns and the
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 7);
+  assert.equal(schemaVersion(db), 8);
   assert.equal(db.prepare("SELECT requested_model FROM tasks").get()!.requested_model, "haiku");
   assert.deepEqual(listApprovals(db).map((a) => [a.id, a.status, a.command, a.parkedAt, a.storedDecision]), [[1, "allowed", "ls", null, null]]);
   assert.deepEqual(actionLog(db).map((e) => [e.id, e.ts, e.rule, e.approvalId, e.detail]), [[1, "t1", "asked_owner", 1, null], [2, "t2", "owner_allowed", 1, "kept"]]);

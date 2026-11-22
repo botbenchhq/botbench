@@ -8,7 +8,7 @@ import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, floorEntries, loadConfig, ROOT, smeltHome, type Config } from "./config.ts";
+import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, floorEntries, loadConfig, offerStandingAfter, ROOT, smeltHome, type Config } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { createTasks } from "./engine/task.ts";
 import { openStore } from "./store/db.ts";
@@ -72,7 +72,15 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   const stream = createEventStream(db, options.heartbeatMs);
   const model = turnModel(config);
   const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
-  const broker = createBroker({ db, home, onChange: stream.announceApproval, floor: floorEntries(config) });
+  let broker: Broker;
+  try {
+    // A number that is no count is refused here too: a config handed over in code has not been through the loader.
+    broker = createBroker({ db, home, onChange: stream.announceApproval, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config) });
+  } catch (err) {
+    stream.close();
+    db.close();
+    throw err;
+  }
   try {
     // Without its socket the gate could only refuse, so Smelt does not start half-working.
     await broker.listen();
