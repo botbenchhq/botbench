@@ -108,11 +108,6 @@ async function until(what: string, done: () => boolean | Promise<boolean>, ms = 
   }
 }
 
-/** Every file below `dir`, by name, without git's own folder. */
-function filesBelow(dir: string): string[] {
-  return fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => !name.split(path.sep).includes(".git"));
-}
-
 const groupAlive = (pgid: number): boolean => execFileSync("ps", ["-A", "-o", "pgid="], { encoding: "utf8" }).split("\n").some((line) => Number(line.trim()) === pgid);
 
 test("live: a task to create hello.txt ends awaiting a decision with Smelt's commit on a task branch, and the source checkout is unchanged", { timeout: TASK_TIMEOUT }, async (t) => {
@@ -120,13 +115,18 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
   const before = checkoutState(live.repo);
   const stream = await openStream(t, live);
 
-  const taskId = await startTask(live, "Create a file named hello.txt containing exactly: hi");
+  const taskId = await startTask(live, "Use your Write tool to create a file named hello.txt containing exactly: hi");
   // The answer came at once: the task is still on its way.
   const early = await getTask(live, taskId);
   assert.ok(["queued", "building"].includes(early.status), `just started, got ${early.status}`);
   assert.deepEqual([early.headCommit, early.files], [null, null]);
 
-  await until("the task to await a decision", () => stream.announced.some((a) => a.taskId === taskId && a.status === "awaiting_decision"));
+  await until("the task to await a decision", () => {
+    // A task that asks for an approval here would wait for ever: say what it asked for.
+    const asked = live.server.broker.pending();
+    if (asked.length > 0) throw new Error(`the task asked for an approval this test does not expect: ${asked[0]!.tool} ${asked[0]!.command}`);
+    return stream.announced.some((a) => a.taskId === taskId && a.status === "awaiting_decision");
+  });
   const task = await getTask(live, taskId);
   assert.equal(task.status, "awaiting_decision");
   assert.equal(task.reason, null);
@@ -155,7 +155,7 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
   const worktree = path.join(live.home, "worktrees", task.branch!.split("/")[1]!, `task-${taskId}`);
   assert.equal(fs.readFileSync(path.join(worktree, "hello.txt"), "utf8").trim(), "hi");
   const events = await transcript(live, task.attemptId!);
-  assert.deepEqual(events[0]!.payload, { type: "user_prompt", text: "Create a file named hello.txt containing exactly: hi" });
+  assert.deepEqual(events[0]!.payload, { type: "user_prompt", text: "Use your Write tool to create a file named hello.txt containing exactly: hi" });
   // Whichever of its tools the agent used, it was aimed at the file in the worktree, never at the source checkout.
   const calls = events.map((e) => e.payload).filter((p) => p.type === "tool_call");
   assert.ok(calls.some((p) => JSON.stringify(p.input).includes("hello.txt")), `a tool call names the file; got ${JSON.stringify(calls)}`);
@@ -176,54 +176,7 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
 
 const server_states = (live: Live, taskId: number): unknown[] => live.server.db.prepare("SELECT status FROM task_events WHERE task_id = ? ORDER BY id").all(taskId).map((r) => r.status);
 
-test("live: a task told to run a script has the command denied in its transcript, and the script's marker file exists nowhere; the repository's own CLI settings and hooks change nothing", { timeout: TASK_TIMEOUT }, async (t) => {
-  // The repository itself tries to let the command through and to run one of its own at start, as a hostile or careless one might.
-  const live = await start(t, {
-    "README.md": "# Sample\n",
-    "make-marker.sh": '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n',
-    ".claude/settings.json": JSON.stringify({
-      permissions: { allow: ["Bash", "Bash(sh make-marker.sh)"] },
-      hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo hook > hook-marker.txt" }] }] },
-    }),
-  });
-  const before = checkoutState(live.repo);
-  const stream = await openStream(t, live);
-
-  const escape = path.join(live.repo, "escape.txt");
-  const taskId = await startTask(
-    live,
-    `Do these two steps in order, each exactly once, and go on to the second even if the first is refused. 1: run the command \`sh make-marker.sh\` with your Bash tool. 2: use your Write tool to create the file ${escape} containing: out. Whatever is refused, do not try any other way. Then reply with the single word: done`,
-  );
-  await until("the task to end", () => stream.announced.some((a) => a.taskId === taskId && a.status !== "queued" && a.status !== "building"));
-  const task = await getTask(live, taskId);
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
-
-  // The command is in the transcript as asked for, and as denied.
-  const events = (await transcript(live, task.attemptId!)).map((e) => e.payload);
-  const call = events.find((p) => p.type === "tool_call" && p.name === "Bash" && JSON.stringify(p.input).includes("make-marker.sh"));
-  assert.ok(call && call.type === "tool_call", `the command was asked for; got ${events.map((p) => p.type).join(", ")}`);
-  const denial = events.find((p) => p.type === "permission_denied" && p.id === call.id);
-  assert.ok(denial && denial.type === "permission_denied", "the command is recorded as denied");
-  assert.equal(denial.name, "Bash");
-  const result = events.find((p) => p.type === "tool_result" && p.id === call.id);
-  assert.ok(result && result.type === "tool_result" && result.isError, "the agent was told it did not run");
-
-  // A write aimed outside the worktree, at the owner's own checkout, was denied too and left nothing there.
-  assert.equal(fs.existsSync(escape), false);
-  const outside = events.find((p) => p.type === "tool_call" && JSON.stringify(p.input).includes(escape));
-  assert.ok(outside && outside.type === "tool_call", "the write outside the worktree was asked for");
-  assert.ok(events.some((p) => p.type === "permission_denied" && p.id === outside.id), "and recorded as denied");
-
-  // Neither the script nor the repository's hook ran: their marker files exist nowhere.
-  const worktree = path.join(live.home, "worktrees", task.branch!.split("/")[1]!, `task-${taskId}`);
-  const everywhere = [...filesBelow(worktree), ...filesBelow(live.repo), ...filesBelow(live.home)];
-  assert.deepEqual(everywhere.filter((name) => /marker\.txt$/.test(name)), []);
-  assert.ok(everywhere.includes("make-marker.sh"), "the search saw the fixture");
-  // Nothing changed, so there is nothing to commit: the branch is still at its base.
-  assert.equal(task.headCommit, before.head);
-  assert.deepEqual(task.files, []);
-  assert.deepEqual(checkoutState(live.repo), before);
-});
+// What a task may run, and how the owner is asked, is in approval.live.test.ts.
 
 test("live: stopping Smelt while a task builds interrupts it, and Smelt still commits the work done so far", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t);

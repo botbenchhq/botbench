@@ -13,6 +13,8 @@ export type DriverEvent =
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; output: string; isError: boolean }
   | { type: "permission_denied"; id: string; name: string; reason: string | null }
+  | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -121,6 +123,8 @@ export interface TaskSummary {
   baseCommit: string | null;
   headCommit: string | null;
   attemptId: number | null;
+  /** The task's agent asked for permission and is paused until the owner answers. */
+  waitingOnApproval: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,6 +163,42 @@ export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
+export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
+
+/** One request an agent made that the owner answers. */
+export interface Approval {
+  id: number;
+  taskId: number;
+  /** The first line of the task's prompt. */
+  taskTitle: string;
+  attemptId: number;
+  role: string;
+  tool: string;
+  /** The shell command in full, or what the tool was aimed at. */
+  command: string;
+  /** Relative to the task's worktree: "." is its top, "" when it is not known. */
+  cwd: string;
+  /** The agent's own account of why, when there is one. */
+  reason: string | null;
+  toolCallId: string;
+  status: ApprovalStatus;
+  note: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+/** The approvals waiting for an answer, oldest first. */
+export const listPendingApprovals = async (): Promise<Approval[]> => (await request<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals;
+export const answerApproval = (id: number, decision: "allow" | "decline", note?: string): Promise<{ approval: Approval }> =>
+  request("POST", `/api/approvals/${id}`, note === undefined || note.trim() === "" ? { decision } : { decision, note }, 30_000);
+
+/** An approval was asked for or answered. The approvals themselves are read from their route. */
+export interface ApprovalAnnouncement {
+  approvalId: number;
+  taskId: number;
+  status: ApprovalStatus;
+}
+
 /** A task reached a state. The task itself is read from its route. */
 export interface TaskAnnouncement {
   taskId: number;
@@ -175,6 +215,8 @@ export interface StreamHandlers {
   onSignedOut(): void;
   /** Called when a task reached a state. */
   onTask?(announcement: TaskAnnouncement): void;
+  /** Called when an approval was asked for or answered. */
+  onApproval?(announcement: ApprovalAnnouncement): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -224,6 +266,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("task", (message) => {
       alive();
       handlers.onTask?.(JSON.parse((message as MessageEvent<string>).data) as TaskAnnouncement);
+    });
+    source.addEventListener("approval", (message) => {
+      alive();
+      handlers.onApproval?.(JSON.parse((message as MessageEvent<string>).data) as ApprovalAnnouncement);
     });
     source.onmessage = (message) => {
       alive();

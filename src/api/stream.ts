@@ -40,6 +40,8 @@ export interface EventStream {
   notify(): void;
   /** Tell every client that a task reached a state. Clients read the task itself from its route. */
   announceTask(task: { id: number; status: string; attemptId: number | null }): void;
+  /** Tell every client that an approval was asked for or answered. Clients read the approvals from their route. */
+  announceApproval(approval: { id: number; taskId: number; status: string }): void;
   clients(): number;
   /** End every open stream. */
   close(): void;
@@ -52,9 +54,10 @@ export interface EventStream {
  * reconnects with `Last-Event-ID` (or `?after=` on its first connection, where
  * a browser cannot set the header) is sent every row after that id from the
  * database and then stays live, so it sees no gap and no repeat. Stored events
- * are unnamed SSE messages. The named events are `heartbeat` and `task`: a
- * task announcement says which task changed and carries no id, so it never
- * moves a client's place. A client that was away reads the task from its route.
+ * are unnamed SSE messages. The named events are `heartbeat`, `task` and
+ * `approval`: an announcement says which task or approval changed and carries
+ * no id, so it never moves a client's place. A client that was away reads the
+ * task or the pending approvals from their routes.
  */
 export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTBEAT_MS): EventStream {
   const cursors = new Map<http.ServerResponse, number>();
@@ -105,10 +108,16 @@ export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTB
     for (const res of cursors.keys()) res.write(frame);
   };
 
+  const announceApproval = (approval: { id: number; taskId: number; status: string }): void => {
+    // Which approval and where it stands, and nothing of the command: the card is read from its route.
+    const frame = `event: approval\ndata: ${JSON.stringify({ approvalId: approval.id, taskId: approval.taskId, status: approval.status })}\n\n`;
+    for (const res of cursors.keys()) res.write(frame);
+  };
+
   const close = (): void => {
     for (const res of [...cursors.keys()]) res.destroy();
     cursors.clear();
   };
 
-  return { handle, notify, announceTask, clients: () => cursors.size, close };
+  return { handle, notify, announceTask, announceApproval, clients: () => cursors.size, close };
 }

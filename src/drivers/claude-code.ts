@@ -1,19 +1,28 @@
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 import type { DatabaseSync } from "node:sqlite";
+import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../approvals/permission-proxy.ts";
 import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, type BillingKind, type Driver, type DriverCapabilities, type DriverProbe, type DriverSession, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
-import type { DriverEvent, TurnEndReason } from "./events.ts";
+import type { DriverEvent, PermissionResponse, TurnEndReason } from "./events.ts";
 import { checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type CliChild } from "./launch.ts";
 
 /*
  * Claude Code, driven over its stream-json protocol (seen on 2.1.322):
  *   stdin   one JSON object per line: {"type":"user","message":{"role":"user","content":"..."}}
  *           or {"type":"control_request","request_id":"...","request":{"subtype":"interrupt"}}
+ *           or, answering a permission prompt:
+ *              {"type":"control_response","response":{"subtype":"success","request_id":"...","response":
+ *                {"behavior":"allow","updatedInput":{...}} or {"behavior":"deny","message":"..."}}}
  *   stdout  one JSON object per line, per turn:
  *           system/init (session_id, model), assistant (message.content blocks),
  *           user (tool results), rate_limit_event, then result (usage, is_error, terminal_reason)
+ *           and, with --permission-prompt-tool stdio, whenever the CLI would ask a person:
+ *              {"type":"control_request","request_id":"...","request":{"subtype":"can_use_tool",
+ *                "tool_name":"Bash","input":{...},"tool_use_id":"toolu_..."}}
+ *           The CLI was seen to wait seven minutes for that answer and then carry on; no limit was found.
  * The process stays up between turns and exits when stdin closes.
  */
 
@@ -26,27 +35,51 @@ export type AttemptStatus = "running" | "interrupted" | "failed" | "ended";
 /** The permission rule for the file-editing tools on every path below the working directory. */
 const EDITS_BELOW_CWD = "Edit(./**)";
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: false };
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
+
+/** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Smelt one question and never waits for a person. */
+const HOOK_TIMEOUT_S = 20;
+const shellQuote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
+
+/**
+ * The one settings object a gated attempt is given, on the command line. Seen on 2.1.322:
+ * - The pre-tool hook runs before every tool call, also for the shell commands the CLI would run unasked
+ *   (`ls`, `printf hi > x`) and for edits. When it prints "ask" the CLI asks for permission whatever its own
+ *   rules say; when it prints "deny" the call does not run; when it prints nothing the CLI's rules decide.
+ * - A hook that fails (it crashes, prints something else, or runs out of time) counts as having said nothing.
+ *   So that a shell command still cannot run unasked then, the ask rule makes the CLI ask about every one.
+ *   A hook's "allow" does not get past that rule, and Smelt's hook never prints one.
+ */
+function gateSettings(): string {
+  return JSON.stringify({
+    permissions: { ask: ["Bash"] },
+    hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `${shellQuote(process.execPath)} ${shellQuote(PROXY_SCRIPT)}`, timeout: HOOK_TIMEOUT_S }] }] },
+  });
+}
 
 /**
  * The arguments every Claude Code attempt is started with. Only the project's
  * own settings load, and the only MCP servers are the ones named here, which is
  * none: the owner's personal settings, allow rules, hooks, plugins and MCP
- * servers stay out. Nothing can answer a permission prompt until the permission
- * broker exists, so anything that would ask is denied.
+ * servers stay out. Without the permission gate nothing can answer a permission
+ * prompt, so anything that would ask is denied.
  *
  * With `allowEdits` the one rule added allows the file-editing tools on paths
  * below the working directory. Seen on 2.1.322 with that rule: a file written
  * there lands; `sh script.sh`, `touch x`, a write outside the directory and a
- * write to `.claude/settings.json` are denied. The CLI still runs, unasked,
- * shell commands it classes as read-only (`ls`, `cat`) and ones that only write
- * below the directory with its own builtins (`printf hi > x`): closing that is
- * the permission broker's pre-tool hook. The accept-edits permission mode is
- * not used because it lets more through (`touch`, `mkdir`, `rm`).
+ * write to `.claude/settings.json` need permission. The accept-edits permission
+ * mode is not used because it lets more through (`touch`, `mkdir`, `rm`).
  * Such an attempt works on a repository's content, and 2.1.322 runs a
  * repository's own hooks without asking, so no settings file is loaded at all.
+ *
+ * With `gated` as well, the attempt goes through the permission gate: Smelt's
+ * own settings object carries the pre-tool hook and the ask rule, and the CLI's
+ * permission prompts come to the driver on stdout to be answered on stdin.
+ * `instructionsFile` is the repository's instructions as text, which the CLI
+ * no longer reads itself once settings files are off.
  */
-export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean } = {}): string[] {
+export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; gated?: boolean; instructionsFile?: string } = {}): string[] {
+  const gated = options.gated === true && options.allowEdits === true;
   const args = [
     "-p",
     "--input-format", "stream-json",
@@ -55,12 +88,43 @@ export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCurso
     "--setting-sources", options.allowEdits ? "" : "project",
     "--strict-mcp-config",
     "--mcp-config", JSON.stringify({ mcpServers: {} }),
-    "--permission-prompts", "none",
   ];
+  if (gated) args.push("--permission-prompt-tool", "stdio", "--settings", gateSettings());
+  else args.push("--permission-prompts", "none");
   if (options.allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
+  if (gated && options.instructionsFile) args.push("--append-system-prompt-file", options.instructionsFile);
   if (options.model) args.push("--model", options.model);
   if (options.resumeCursor) args.push("--resume", options.resumeCursor);
   return args;
+}
+
+const INSTRUCTIONS_FILE = "CLAUDE.md";
+const MAX_INSTRUCTIONS = 64 * 1024;
+
+/**
+ * The repository's own instructions for an agent, as text to hand the CLI. With
+ * settings files off the CLI does not read `CLAUDE.md` itself. Only an ordinary
+ * file at the top of the worktree counts: a link is not followed, so a
+ * repository cannot have a file from elsewhere on the machine sent along.
+ * Files it refers to are not pulled in. Null when there is nothing to hand over.
+ */
+export function repositoryInstructions(worktree: string): string | null {
+  const file = path.join(worktree, INSTRUCTIONS_FILE);
+  let fd: number;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    return null;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_INSTRUCTIONS) return null;
+    return `This repository's ${INSTRUCTIONS_FILE} file says:\n\n${fs.readFileSync(fd, "utf8")}`;
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -75,6 +139,49 @@ function toolOutput(content: unknown): string {
     return content.map((block) => (isObject(block) && typeof block.text === "string" ? block.text : JSON.stringify(block))).join("\n");
   }
   return content === undefined ? "" : JSON.stringify(content);
+}
+
+/**
+ * Read a permission prompt the CLI printed. Null when it is not one, or is not whole: no id to answer,
+ * no tool, no tool call, or an input that is not an object.
+ */
+export function parsePermissionRequest(parsed: Record<string, unknown>): Extract<DriverEvent, { type: "permission_request" }> | null {
+  const request = parsed.request;
+  if (parsed.type !== "control_request" || typeof parsed.request_id !== "string" || parsed.request_id === "" || !isObject(request) || request.subtype !== "can_use_tool") return null;
+  const { tool_name: name, tool_use_id: toolCallId, input } = request;
+  if (typeof name !== "string" || name === "" || typeof toolCallId !== "string" || toolCallId === "" || !isObject(input)) return null;
+  // For a shell command the agent says in its own words what the command is for. Other tools carry no such account.
+  const reason = name === "Bash" && typeof input.description === "string" && input.description.trim() !== "" ? shorten(input.description.trim()) : null;
+  return { type: "permission_request", id: parsed.request_id, toolCallId, name, input, reason };
+}
+
+/**
+ * Watches one gated attempt's events for a shell command that ran with no allow from the owner. The returned
+ * function is given each event in order and answers true for a result that shows such a command ran. That cannot
+ * happen while the CLI honours Smelt's settings (the ask rule alone makes every shell command ask); it would
+ * if a CLI version silently dropped them, and then the attempt must not go on.
+ */
+export function shellWatch(): (event: DriverEvent) => boolean {
+  const shellCalls = new Set<string>();
+  const allowed = new Set<string>();
+  return (event) => {
+    if (event.type === "tool_call" && event.name === "Bash") shellCalls.add(event.id);
+    else if (event.type === "permission_resolved" && event.decision === "allowed") allowed.add(event.toolCallId);
+    else if (event.type === "tool_result" && !event.isError) return shellCalls.has(event.id) && !allowed.has(event.id);
+    return false;
+  };
+}
+
+/** The event with every occurrence of `secret` blanked, so it reaches neither the store nor a client. */
+export function blank<E extends DriverEvent>(event: E, secret: string): E {
+  const text = JSON.stringify(event);
+  return text.includes(secret) ? (JSON.parse(text.replaceAll(secret, "[the attempt's gate secret, removed by Smelt]")) as E) : event;
+}
+
+/** What the agent is told when the owner declines. */
+function declineMessage(note: string | null): string {
+  const base = "The owner declined this request, so it was not run. Do not try to get the same thing done another way.";
+  return note === null ? base : `${base} The owner's note: ${note}`;
 }
 
 /**
@@ -179,13 +286,25 @@ class ClaudeCodeSession implements DriverSession {
   private status: AttemptStatus = "running";
   private cursor: ResumeCursor | null;
   private stderrTail = "";
+  /** Permission prompts the CLI is waiting on, by request id. */
+  private readonly asking = new Map<string, Extract<DriverEvent, { type: "permission_request" }>>();
+  private readonly gated: boolean;
+  private readonly ranUnasked: ((event: DriverEvent) => boolean) | null;
+  private readonly cleanUp: () => void;
+  /** The attempt's gate secret. A command the owner allowed can print its environment; the secret is blanked before anything is stored. */
+  private readonly secret: string | null;
 
-  constructor(db: DatabaseSync, attemptId: number, child: CliChild, pgid: number, cursor: ResumeCursor | null) {
+  constructor(db: DatabaseSync, attemptId: number, child: CliChild, pgid: number, cursor: ResumeCursor | null, gateSecret: string | null = null, cleanUp: () => void = () => {}) {
+    const gated = gateSecret !== null;
+    this.secret = gateSecret;
     this.db = db;
     this.attemptId = attemptId;
     this.child = child;
     this.pgid = pgid;
     this.cursor = cursor;
+    this.gated = gated;
+    this.ranUnasked = gated ? shellWatch() : null;
+    this.cleanUp = cleanUp;
 
     readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => this.onLine(line));
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (this.stderrTail = (this.stderrTail + chunk).slice(-2000)));
@@ -233,8 +352,59 @@ class ClaudeCodeSession implements DriverSession {
     await this.stopProcess();
   }
 
-  respondToRequest(_requestId: string, _response: unknown): Promise<void> {
-    return Promise.reject(new Error("Claude Code requests are not supported until the permission broker exists."));
+  respondToRequest(requestId: string, response: unknown): Promise<void> {
+    const request = this.asking.get(requestId);
+    if (!request) return Promise.reject(new Error(`No permission request ${requestId} is waiting in this attempt: it was answered already, or the CLI stopped waiting for it.`));
+    // An answer that cannot reach the CLI is not recorded as given.
+    if (this.hasExited || !this.child.stdin.writable) return Promise.reject(new Error(`The answer to permission request ${requestId} could not be delivered: Claude Code is no longer running. Nothing was run.`));
+    this.asking.delete(requestId);
+    const given: Partial<PermissionResponse> = isObject(response) ? response : {};
+    const words = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+    // Only the exact word allows. Anything else, a malformed answer included, declines.
+    if (given.decision === "allow") {
+      // An allow runs the input the owner was shown, unchanged.
+      this.answerControl(requestId, { behavior: "allow", updatedInput: request.input });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "allowed", note: null });
+    } else if (words(given.refused) !== null) {
+      const why = words(given.refused)!;
+      this.answerControl(requestId, { behavior: "deny", message: `Smelt's permission gate denied this request without asking the owner: ${why} Nothing was run.` });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "denied", note: why });
+    } else {
+      const note = words(given.note);
+      this.answerControl(requestId, { behavior: "deny", message: declineMessage(note) });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "declined", note });
+    }
+    return Promise.resolve();
+  }
+
+  private answerControl(requestId: string, response: Record<string, unknown>): void {
+    this.write({ type: "control_response", response: { subtype: "success", request_id: requestId, response } });
+  }
+
+  /**
+   * The CLI asked its host for something. The one thing Smelt answers is a permission prompt of a gated attempt
+   * with a turn running; it becomes a `permission_request` event. Everything else is refused on the spot.
+   */
+  private onControlRequest(parsed: Record<string, unknown>): void {
+    const request = parsePermissionRequest(parsed);
+    if (request && this.gated && this.running && !this.asking.has(request.id)) {
+      this.asking.set(request.id, request);
+      return this.record(request);
+    }
+    const subtype = isObject(parsed.request) ? str(parsed.request.subtype) : null;
+    this.record({ type: "error", message: `The CLI asked for something Smelt does not answer (${subtype ?? "unreadable"}); it was refused.`, raw: shorten(JSON.stringify(parsed)) });
+    if (typeof parsed.request_id !== "string") return;
+    if (subtype === "can_use_tool") this.answerControl(parsed.request_id, { behavior: "deny", message: "Smelt could not read this permission request, so it was denied. Nothing was run." });
+    else this.write({ type: "control_response", response: { subtype: "error", request_id: parsed.request_id, error: "Smelt does not answer this request." } });
+  }
+
+  /** The CLI no longer waits for these requests (all of them when none is named): say so in the transcript. */
+  private cancelAsking(requestId?: string): void {
+    for (const [id, request] of [...this.asking]) {
+      if (requestId !== undefined && id !== requestId) continue;
+      this.asking.delete(id);
+      this.record({ type: "permission_resolved", id, toolCallId: request.toolCallId, decision: "cancelled", note: null });
+    }
   }
 
   async close(): Promise<void> {
@@ -261,6 +431,17 @@ class ClaudeCodeSession implements DriverSession {
   }
 
   private onLine(line: string): void {
+    // Requests from the CLI to its host are not transcript lines; they are answered here.
+    if (line.includes('"control_request"') || line.includes('"control_cancel_request"')) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        parsed = null;
+      }
+      if (isObject(parsed) && parsed.type === "control_request") return this.onControlRequest(parsed);
+      if (isObject(parsed) && parsed.type === "control_cancel_request") return this.cancelAsking(str(parsed.request_id) ?? "");
+    }
     for (const event of parseClaudeLine(line)) {
       if (event.type === "session_started") {
         // A repository's own settings can hand the CLI an API key, which would bill a subscription
@@ -290,6 +471,8 @@ class ClaudeCodeSession implements DriverSession {
   private endTurn(reason: TurnEndReason, detail: string | null, status?: AttemptStatus): void {
     const running = this.running;
     if (!running) return;
+    // A turn that is over waits for no answer. Its end stays the last event of the turn.
+    this.cancelAsking();
     this.running = null;
     if (reason === "interrupted") status = "interrupted";
     if (status) this.status = status;
@@ -317,10 +500,12 @@ class ClaudeCodeSession implements DriverSession {
       change.status = this.status;
     }
     this.updateAttempt(change);
+    this.cleanUp();
   }
 
   /** Append the event, apply the attempt change it causes in the same transaction, then tell listeners. */
-  private record(event: DriverEvent, change?: AttemptChange): void {
+  private record(given: DriverEvent, change?: AttemptChange): void {
+    const event = this.secret === null ? given : blank(given, this.secret);
     const insert = (): void => {
       this.db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, ?, ?, ?, ?)").run(this.attemptId, this.turn, now(), event.type, JSON.stringify(event));
     };
@@ -333,6 +518,15 @@ class ClaudeCodeSession implements DriverSession {
       insert();
     }
     for (const listener of this.listeners) listener(event);
+    if (this.ranUnasked?.(event)) this.stopUngated();
+  }
+
+  /** The CLI ran a shell command the owner never allowed, so it is not keeping to the gate: nothing more runs in this attempt. */
+  private stopUngated(): void {
+    const detail = "Stopped: Claude Code ran a shell command without asking, so it is not keeping to Smelt's permission settings. Nothing more is run in this attempt.";
+    this.record({ type: "error", message: detail, raw: null });
+    if (this.running) this.endTurn("error", detail, "failed");
+    void killProcessGroup(this.pgid).catch(() => {});
   }
 
   private updateAttempt(change: AttemptChange): void {
@@ -400,9 +594,30 @@ export class ClaudeCodeDriver implements Driver {
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
 
-    const { child, pgid } = launch(COMMAND, claudeArgs(options), { cwd: options.cwd, extraEnv: this.extraEnv });
+    // The gate is for an attempt in a worktree. Its secret travels in the child's environment, never on the command line.
+    const gate = options.allowEdits ? options.gate : undefined;
+    const instructions = gate ? repositoryInstructions(options.cwd) : null;
+    let instructionsDir: string | null = null;
+    if (instructions !== null) {
+      // An owner-only directory for the one file; it goes when the CLI process does.
+      instructionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-instructions-"));
+      fs.writeFileSync(path.join(instructionsDir, "instructions.md"), instructions, { mode: 0o600 });
+    }
+    const cleanUp = (): void => {
+      if (instructionsDir !== null) fs.rmSync(instructionsDir, { recursive: true, force: true });
+    };
+    const args = claudeArgs({
+      gated: gate !== undefined,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.resumeCursor ? { resumeCursor: options.resumeCursor } : {}),
+      ...(options.allowEdits ? { allowEdits: true } : {}),
+      ...(instructionsDir === null ? {} : { instructionsFile: path.join(instructionsDir, "instructions.md") }),
+    });
+    const extraEnv = gate ? { ...this.extraEnv, [SOCKET_ENV]: gate.socketPath, [SECRET_ENV]: gate.secret } : this.extraEnv;
+    const { child, pgid } = launch(COMMAND, args, { cwd: options.cwd, extraEnv });
     if (!pgid) {
       child.on("error", () => {});
+      cleanUp();
       throw new Error("Claude Code could not be started.");
     }
     let attemptId: number;
@@ -415,8 +630,9 @@ export class ClaudeCodeDriver implements Driver {
     } catch (err) {
       // A process nobody has a record of must not be left behind.
       await killProcessGroup(pgid);
+      cleanUp();
       throw err;
     }
-    return new ClaudeCodeSession(options.db, attemptId, child, pgid, options.resumeCursor ?? null);
+    return new ClaudeCodeSession(options.db, attemptId, child, pgid, options.resumeCursor ?? null, gate?.secret ?? null, cleanUp);
   }
 }

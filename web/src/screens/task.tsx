@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type FileChange, type StoredEvent, type TaskDetail } from "../api/client.ts";
+import { ApprovalsContext } from "../app/approvals.tsx";
+import { ApprovalCard } from "../components/approval-card.tsx";
 import { Header } from "../components/header.tsx";
 import { statusSentence } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -99,6 +101,13 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
     });
   }, [id, load, onSignedOut]);
 
+  // This task's requests that wait for an answer, oldest first. One card at a time: the oldest.
+  const { pending } = useContext(ApprovalsContext);
+  const waiting = useMemo(() => (pending ?? []).filter((approval) => approval.taskId === id), [pending, id]);
+  const asking = waiting[0];
+  // The task starts and stops waiting as its requests come and go, so it is read again when they do.
+  useEffect(() => load(), [load, asking?.id]);
+
   const attemptId = task?.attemptId ?? null;
   const shown = useMemo(() => events.filter((e) => e.attemptId === attemptId), [events, attemptId]);
 
@@ -126,7 +135,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   };
 
   // Between the end of the turn and Smelt's commit the task is still building, but Claude Code is no longer working.
-  const working = task?.status === "building" && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? "Claude Code is working." : null;
+  const working = task?.status === "building" && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "Claude Code is paused until you answer.") : null;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-transcript flex-col">
@@ -159,6 +168,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 {task.repo}
               </p>
             </section>
+
+            {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
 
             {shown.length > 0 || working !== null ? (
               <section aria-label="Transcript">
@@ -224,7 +235,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   </p>
                 )}
                 <p data-testid="not-merged" className="text-muted">
-                  Nothing has been merged or pushed. Claude Code was allowed to change files only inside this task's worktree. Commands it treats as read-only, and ones that only write files there, could run; every command that needs approval was denied. Approvals for commands arrive in a later version.
+                  Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.
                 </p>
               </section>
             )}

@@ -48,6 +48,12 @@ export interface StartAttemptOptions {
    * content comes from a repository, so the repository's own CLI settings, rules and hooks are not loaded.
    */
   allowEdits?: boolean;
+  /**
+   * Send this attempt's tool calls through the permission gate: the broker's socket and the secret that is this
+   * attempt's alone. With it, what the CLI would ask a person arrives as `permission_request` events to be answered
+   * with `respondToRequest`. Without it, everything the CLI would ask is denied.
+   */
+  gate?: { socketPath: string; secret: string };
 }
 
 /** One CLI process working on one attempt. */
@@ -61,7 +67,7 @@ export interface DriverSession {
   sendTurn(prompt: string): Promise<TurnEndReason>;
   /** Stop the running turn. Resolves once the turn has ended as interrupted and no process is left. Does nothing when no turn is running. */
   interruptTurn(): Promise<void>;
-  /** Answer a request the CLI is waiting on, such as a permission prompt. */
+  /** Answer a `permission_request` by its id with a `PermissionResponse`. Rejects when no such request is waiting. */
   respondToRequest(requestId: string, response: unknown): Promise<void>;
   /** Receive every event after it is stored. Returns a function that stops delivery. */
   onEvent(listener: (event: DriverEvent) => void): () => void;

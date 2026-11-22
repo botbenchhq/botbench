@@ -7,6 +7,7 @@ import { createAuth, loadOrCreateLoginToken, LOGIN_TOKEN_FILE } from "./api/auth
 import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
+import { createBroker, type Broker } from "./approvals/broker.ts";
 import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, loadConfig, ROOT, smeltHome, type Config } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { createTasks } from "./engine/task.ts";
@@ -17,6 +18,8 @@ export interface SmeltServer {
   port: number;
   addresses: string[];
   db: DatabaseSync;
+  /** The permission broker every task's requests wait in. */
+  broker: Broker;
   /** The owner's login token, present only on the start that created it, so the entry point can show it once. */
   newLoginToken?: string;
   /** How many clients have the event stream open. */
@@ -69,9 +72,18 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   const stream = createEventStream(db, options.heartbeatMs);
   const model = turnModel(config);
   const driver = new ClaudeCodeDriver();
+  const broker = createBroker({ db, home, onChange: stream.announceApproval });
+  try {
+    // Without its socket the gate could only refuse, so Smelt does not start half-working.
+    await broker.listen();
+  } catch (err) {
+    stream.close();
+    db.close();
+    throw err;
+  }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
-  const tasks = createTasks({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, onTaskChange: stream.announceTask });
-  const ctx = { db, turns, tasks, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), onEvent: stream.notify, onTaskChange: stream.announceTask });
+  const ctx = { db, turns, tasks, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -97,6 +109,8 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
     await Promise.allSettled([turns.close(), tasks.close()]);
+    // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
+    await broker.close();
     db.close();
   };
 
@@ -111,7 +125,7 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
     await close();
     throw err;
   }
-  return { port, addresses: [...config.listen], db, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
+  return { port, addresses: [...config.listen], db, broker, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
 }
 
 const runDirectly = process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === import.meta.filename;
