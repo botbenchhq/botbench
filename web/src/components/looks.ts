@@ -18,6 +18,8 @@ export const LOOKS = {
   accepted: { tone: "success", icon: "check" },
   rejected: { tone: "neutral", icon: "x" },
   done: { tone: "success", icon: "circle-check" },
+  // A run that ended with no task ever ready for review: nothing was built to decide on. Drawn as an end that is not a success.
+  nothingToReview: { tone: "neutral", icon: "circle-slash" },
 } as const satisfies Record<string, { tone: Tone; icon: string }>;
 // Each icon is checked against the sprite's names where it is drawn, in status.tsx.
 

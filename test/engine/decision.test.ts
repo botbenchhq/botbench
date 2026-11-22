@@ -4,12 +4,12 @@ import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker } from "../../src/approvals/broker.ts";
-import { decideTask, LeftoversError, taskDecision, taskLeftovers } from "../../src/engine/decision.ts";
+import { decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains } from "../../src/engine/decision.ts";
 import type { PlanTask } from "../../src/engine/roles.ts";
-import { createRun, createRuns, getRun, storePlan } from "../../src/engine/run.ts";
+import { approvePlan, createRun, createRuns, getRun, storePlan } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
-import { createTask, createTasks, getTask, moveTask, TaskError, type Task } from "../../src/engine/task.ts";
-import { migrate, openStore, schemaVersion } from "../../src/store/db.ts";
+import { createTask, createTasks, getTask, moveTask, settleRunIn, TaskError, type Task, type TaskStatus } from "../../src/engine/task.ts";
+import { migrate, openStore, schemaVersion, transaction } from "../../src/store/db.ts";
 import { MIGRATIONS } from "../../src/store/schema.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver, type BuildTurn } from "../support/replay-build.ts";
@@ -206,12 +206,12 @@ const TWO: PlanTask[] = [
   { title: "Add a farewell file", criteria: ["bye.txt exists"] },
 ];
 
-async function line(t: T, script: BuildTurn[], checks: StationCommand[], files?: Record<string, string>) {
+async function line(t: T, script: BuildTurn[], checks: StationCommand[], files?: Record<string, string>, setup: StationCommand[] = []) {
   const s = store(t, files);
   const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(script);
-  const tasks = createTasks({ db: s.db, home: s.home, driver, broker, model: "haiku", repoCommands: () => ({ setup: [], checks }), onEvent: () => {}, onTaskChange: () => {} });
+  const tasks = createTasks({ db: s.db, home: s.home, driver, broker, model: "haiku", repoCommands: () => ({ setup, checks }), onEvent: () => {}, onTaskChange: () => {} });
   const runs = createRuns({ db: s.db, home: s.home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();
@@ -334,4 +334,201 @@ test("a copy already removed by hand: the decision forgets only that copy, leave
   assert.match(git(s.repo, "worktree", "list", "--porcelain"), /owner-worktree/, "the owner's record is kept");
   assert.doesNotMatch(git(s.repo, "worktree", "list", "--porcelain"), new RegExp(`task-${task.id}`));
   assert.match(actionLog(s.db, task.id).find((e) => e.rule === "owner_rejected")!.detail!, /already gone/);
+});
+
+// Unit 16: a run with nothing left to decide ends, and a task that failed or was stopped can be cleaned up by the owner.
+
+test("a run whose every task failed or was stopped does not wait for a decision: it is done, with nothing to review, and its history says why", async (t) => {
+  const failing: StationCommand = { command: "echo preparing the copy; exit 1", limitMs: 10_000 };
+  const e = await line(t, [], [], undefined, [failing]);
+  const planned = storePlan(e.db, createRun(e.db, { repo: e.repo, prompt: "Add two files", baseCommit: e.base }).id, TWO);
+  const { run, tasks } = e.runs.approve(planned.id, planned.planVersion);
+  await e.tasks.idle();
+  assert.deepEqual(tasks.map((made) => statusOf(e.db, made.id)), ["failed", "failed"]);
+  assert.equal(getRun(e.db, run.id)!.status, "done", "nothing is ready for review, so the run does not sit at Ready for review");
+  const last = e.db.prepare("SELECT status, detail FROM run_events WHERE run_id = ? ORDER BY id DESC LIMIT 1").get(run.id)!;
+  assert.deepEqual([last.status, last.detail], ["done", "every task ended and none was ready for review"]);
+  assert.equal(Number(e.db.prepare("SELECT count(*) AS n FROM decisions").get()!.n), 0, "no decision is recorded for work that was never ready for review");
+});
+
+test("a run with one task decided and the other failed is done once the decided one is decided; one with a task still ready for review waits", async (t) => {
+  const s = store(t);
+  const planned = storePlan(s.db, createRun(s.db, { repo: s.repo, prompt: "Add two files", baseCommit: s.base }).id, TWO);
+  const { tasks } = approvePlan(s.db, planned.id, planned.planVersion);
+  // The first task is built and committed by Botbench's own functions; the second fails before it is built.
+  const worktree = await createWorktree({ repo: s.repo, home: s.home, run: `run-${planned.id}`, task: `task-${tasks[0]!.id}` });
+  moveTask(s.db, tasks[0]!.id, "building", { worktree });
+  write(worktree.path, "hello.txt", "hi\n");
+  const committed = await commitWork({ path: worktree.path, message: "Botbench task" });
+  assert.ok(committed.committed);
+  moveTask(s.db, tasks[0]!.id, "awaiting_decision", { headCommit: committed.commit, checks: "none" });
+  moveTask(s.db, tasks[1]!.id, "failed", { reason: "it broke" });
+  assert.deepEqual(transaction(s.db, () => settleRunIn(s.db, planned.id)), { id: planned.id, status: "awaiting_decision" }, "one task is ready for review");
+  const decided = await decideTask(s.db, { taskId: tasks[0]!.id, decision: "accept" });
+  assert.deepEqual(decided.run, { id: planned.id, status: "done" });
+});
+
+test("a run an older Botbench left at Ready for review with nothing to decide is ended when Botbench starts", async (t) => {
+  const s = store(t);
+  const planned = storePlan(s.db, createRun(s.db, { repo: s.repo, prompt: "Add two files", baseCommit: s.base }).id, TWO);
+  const { tasks } = approvePlan(s.db, planned.id, planned.planVersion);
+  for (const task of tasks) moveTask(s.db, task.id, "interrupted", { reason: "Botbench stopped before this task started." });
+  // What a Botbench from before unit 16 wrote for such a run. Written here directly: no Botbench since can write it.
+  s.db.prepare("UPDATE runs SET status = 'awaiting_decision' WHERE id = ?").run(planned.id);
+  const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
+  await broker.listen();
+  const changes: string[] = [];
+  const engine = createTasks({ db: s.db, home: s.home, driver: buildReplayDriver([]), broker, onEvent: () => {}, onTaskChange: () => {}, onRunChange: (run) => changes.push(`${run.id}:${run.status}`) });
+  t.after(async () => {
+    await engine.close();
+    await broker.close();
+  });
+  await engine.idle();
+  assert.equal(getRun(s.db, planned.id)!.status, "done");
+  assert.deepEqual(changes, [`${planned.id}:done`]);
+});
+
+/** A task Botbench started in its own copy that then ended as `status` before it was ready for review: its copy, its branch, and a file it wrote that is not committed. */
+async function endedTask(s: Store, status: Extract<TaskStatus, "failed" | "interrupted" | "cancelled">, o: { commit?: boolean } = {}): Promise<Task> {
+  const task = createTask(s.db, { repo: s.repo, prompt: "create hello.txt" });
+  const worktree = await createWorktree({ repo: s.repo, home: s.home, run: `run-${task.runId}`, task: `task-${task.id}` });
+  moveTask(s.db, task.id, "building", { worktree });
+  if (o.commit === true) {
+    write(worktree.path, "committed.txt", "committed by Botbench\n");
+    const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
+    assert.ok(committed.committed);
+    return moveTask(s.db, task.id, status, { reason: "Botbench stopped while this task was on its way. The work done up to then is committed.", headCommit: committed.commit });
+  }
+  write(worktree.path, "setup-output.txt", "written by a setup command\n");
+  return moveTask(s.db, task.id, status, { reason: "The setup command failed." });
+}
+
+test("Discard removes a failed task's copy and Botbench's branch once the owner confirmed the files that are not on the branch; it is logged, no decision is recorded, and the task stays failed", async (t) => {
+  const s = store(t);
+  const before = checkoutState(s.repo);
+  const task = await endedTask(s, "failed");
+  assert.deepEqual(await taskRemains(s.db, task), { copy: true, branch: true, files: ["setup-output.txt"], discardedAt: null });
+
+  // Unconfirmed, or confirmed with another list: refused, the files listed, nothing removed.
+  for (const removeFiles of [undefined, [], ["other.txt"]]) {
+    const err = await refused(discardTask(s.db, { taskId: task.id, removeFiles }), 409, /not on the branch/);
+    assert.ok(err instanceof LeftoversError);
+    assert.deepEqual(err.leftovers, ["setup-output.txt"]);
+  }
+  assert.equal(fs.existsSync(path.join(task.worktreePath!, "setup-output.txt")), true, "nothing was deleted unasked");
+
+  const discarded = await discardTask(s.db, { taskId: task.id, removeFiles: ["setup-output.txt"] });
+  assert.equal(discarded.status, "failed", "the task keeps its state and its reason");
+  assert.equal(discarded.reason, "The setup command failed.");
+  assert.equal(fs.existsSync(task.worktreePath!), false, "the copy is gone");
+  assert.equal(worktreeCount(s.repo), 1);
+  assert.deepEqual(botbenchBranches(s.repo), [], "Botbench's branch is gone");
+  assert.deepEqual(checkoutState(s.repo), before, "the owner's checkout is as it was");
+  assert.equal(taskDecision(s.db, task.id), null, "it was never ready for review, so it has no decision");
+  const logged = actionLog(s.db, task.id).filter((entry) => String(entry.rule) === "owner_discarded");
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0]!.command, task.branch);
+  assert.equal(logged[0]!.cwd, s.repo);
+  assert.match(logged[0]!.detail!, /setup-output\.txt/);
+  const remains = (await taskRemains(s.db, getTask(s.db, task.id)!))!;
+  assert.deepEqual({ ...remains, discardedAt: remains.discardedAt === null ? null : "set" }, { copy: false, branch: false, files: [], discardedAt: "set" });
+
+  // Once discarded there is nothing left to discard.
+  await refused(discardTask(s.db, { taskId: task.id, removeFiles: [] }), 409, /nothing left to discard/i);
+});
+
+test("Discard of a stopped task deletes the branch Botbench committed to, and of a cancelled one too; a copy already removed by hand is forgotten", async (t) => {
+  const s = store(t);
+  const stopped = await endedTask(s, "interrupted", { commit: true });
+  assert.deepEqual((await taskRemains(s.db, stopped))!.files, [], "everything it did is committed");
+  await discardTask(s.db, { taskId: stopped.id });
+  assert.equal(fs.existsSync(stopped.worktreePath!), false);
+  assert.equal(statusOf(s.db, stopped.id), "interrupted");
+
+  const cancelled = await endedTask(s, "cancelled", { commit: true });
+  fs.rmSync(cancelled.worktreePath!, { recursive: true, force: true });
+  assert.deepEqual(await taskRemains(s.db, cancelled), { copy: false, branch: true, files: [], discardedAt: null });
+  await discardTask(s.db, { taskId: cancelled.id });
+  assert.deepEqual(botbenchBranches(s.repo), []);
+  assert.doesNotMatch(git(s.repo, "worktree", "list", "--porcelain"), new RegExp(`task-${cancelled.id}`));
+  assert.match(actionLog(s.db, cancelled.id).find((entry) => String(entry.rule) === "owner_discarded")!.detail!, /already gone/);
+});
+
+test("Discard is refused, with nothing removed, for a task that can still be decided or is at work, for a branch with commits Botbench did not make, and for a branch checked out elsewhere", async (t) => {
+  const s = store(t);
+  const ready = await readyTask(s);
+  await refused(discardTask(s.db, { taskId: ready.id }), 409, /ready for review/i);
+  assert.equal(fs.existsSync(ready.worktreePath!), true);
+  const queued = createTask(s.db, { repo: s.repo, prompt: "never started" });
+  await refused(discardTask(s.db, { taskId: queued.id }), 409, /only a task that failed, was stopped or was cancelled/i);
+  await refused(discardTask(s.db, { taskId: 999 }), 404, /no such task/i);
+  const decided = await readyTask(s, { name: "two" });
+  await decideTask(s.db, { taskId: decided.id, decision: "accept" });
+  await refused(discardTask(s.db, { taskId: decided.id }), 409, /accepted/i);
+  // Never started: no copy and no branch were ever made.
+  const never = moveTask(s.db, createTask(s.db, { repo: s.repo, prompt: "fails early" }).id, "failed", { reason: "it broke" });
+  await refused(discardTask(s.db, { taskId: never.id }), 409, /nothing left to discard/i);
+
+  const owned = await endedTask(s, "interrupted", { commit: true });
+  write(owned.worktreePath!, "mine.txt", "the owner's own work\n");
+  ownerCommit(owned.worktreePath!, "the owner's commit");
+  await refused(discardTask(s.db, { taskId: owned.id }), 409, /commits Botbench did not make/);
+  assert.equal(fs.existsSync(owned.worktreePath!), true, "the copy was not removed");
+  assert.ok(botbenchBranches(s.repo).includes(owned.branch!));
+
+  const out = await endedTask(s, "failed", { commit: true });
+  const mine = path.join(s.dir, "owner-copy");
+  git(s.repo, "worktree", "add", "--quiet", "--force", mine, out.branch!);
+  await refused(discardTask(s.db, { taskId: out.id }), 409, /checked out at/);
+  assert.equal(fs.existsSync(out.worktreePath!), true);
+  assert.equal(actionLog(s.db).filter((entry) => String(entry.rule) === "owner_discarded").length, 0, "nothing refused was logged as discarded");
+});
+
+test("the action log before discards is migrated forward: its rows are kept, a discard needs a task, and the log stays append-only", (t) => {
+  const dir = tempDir("botbench-discard-migrate-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = new DatabaseSync(path.join(dir, "old.sqlite"));
+  t.after(() => db.close());
+  const before = MIGRATIONS.findIndex((m) => m.name === "discards");
+  assert.ok(before > 0, "a migration named discards exists");
+  migrate(db, MIGRATIONS.slice(0, before));
+  db.exec("INSERT INTO action_log (id, ts, task_id, rule, tool, command, cwd, detail) VALUES (41, 't', NULL, 'asked_owner', 'Bash', 'ls', '.', 'kept')");
+  assert.throws(() => db.exec("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd) VALUES ('t', NULL, 'owner_discarded', 'Branch', 'b', '/r')"), /CHECK/);
+  migrate(db);
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
+  assert.deepEqual({ ...db.prepare("SELECT id, rule, command, detail FROM action_log").get() }, { id: 41, rule: "asked_owner", command: "ls", detail: "kept" });
+  assert.throws(() => db.exec("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd) VALUES ('t', NULL, 'owner_discarded', 'Branch', 'b', '/r')"), /CHECK/, "a discard names its task");
+  assert.throws(() => db.prepare("DELETE FROM action_log").run(), /append-only/);
+  assert.throws(() => db.prepare("UPDATE action_log SET detail = 'x'").run(), /append-only/);
+});
+
+test("a discard whose branch cannot be deleted after the copy went still logs what it removed, says so, and a second discard deletes the branch", async (t) => {
+  const s = store(t);
+  const task = await endedTask(s, "failed");
+  // git holds a lock on the branch, as a git command running at the same moment would.
+  const lock = path.join(s.repo, ".git", "refs", "heads", `${task.branch!}.lock`);
+  fs.writeFileSync(lock, "");
+  await refused(discardTask(s.db, { taskId: task.id, removeFiles: ["setup-output.txt"] }), 409, /could not be deleted/);
+  assert.equal(fs.existsSync(task.worktreePath!), false, "the copy went");
+  assert.deepEqual(botbenchBranches(s.repo), [task.branch]);
+  const first = actionLog(s.db, task.id).filter((entry) => String(entry.rule) === "owner_discarded");
+  assert.equal(first.length, 1, "what was removed is in the log");
+  assert.match(first[0]!.detail!, /setup-output\.txt/);
+  assert.match(first[0]!.detail!, /could not be deleted/);
+  assert.deepEqual({ ...(await taskRemains(s.db, getTask(s.db, task.id)!))!, discardedAt: null }, { copy: false, branch: true, files: [], discardedAt: null }, "the branch is still offered for discarding");
+
+  fs.rmSync(lock);
+  await discardTask(s.db, { taskId: task.id });
+  assert.deepEqual(botbenchBranches(s.repo), []);
+  assert.equal(actionLog(s.db, task.id).filter((entry) => String(entry.rule) === "owner_discarded").length, 2);
+});
+
+test("two discards sent at once for one task: one is made, the other is refused", async (t) => {
+  const s = store(t);
+  const task = await endedTask(s, "interrupted", { commit: true });
+  const outcomes = await Promise.allSettled([discardTask(s.db, { taskId: task.id }), discardTask(s.db, { taskId: task.id })]);
+  assert.deepEqual(outcomes.map((o) => o.status).sort(), ["fulfilled", "rejected"]);
+  const lost = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
+  assert.ok(lost.reason instanceof TaskError && lost.reason.status === 409, String(lost.reason));
+  assert.equal(actionLog(s.db, task.id).filter((entry) => String(entry.rule) === "owner_discarded").length, 1);
 });

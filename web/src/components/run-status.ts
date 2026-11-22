@@ -3,8 +3,13 @@ import { LOOKS, type Look } from "./looks.ts";
 
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
+/** A run that is done although no task of it was ever ready for review: each failed, was stopped or was cancelled. */
+const nothingReviewed = (run: { status: RunStatus; tasks: readonly { status: string }[] }): boolean => run.status === "done" && !run.tasks.some((task) => task.status === "accepted" || task.status === "rejected");
+const summaryNothingReviewed = (run: Pick<RunSummary, "status" | "decidedCount">): boolean => run.status === "done" && run.decidedCount === 0;
+
 /** A run's state in a word or two, for lists. */
-export function runWord(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId">): string {
+export function runWord(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId" | "decidedCount">): string {
+  if (summaryNothingReviewed(run)) return "Nothing to review";
   if (run.status === "planning") return run.waitingOnApproval ? "Needs input" : run.attemptId === null ? "Queued" : "Planning";
   if (run.status === "running" && run.waitingOnApproval) return "Needs input";
   const words: Record<Exclude<RunStatus, "planning">, string> = { awaiting_plan_approval: "Plan ready for review", running: "Working", awaiting_decision: "Ready for review", done: "Done", cancelled: "Cancelled", failed: "Failed" };
@@ -12,7 +17,8 @@ export function runWord(run: Pick<RunSummary, "status" | "waitingOnApproval" | "
 }
 
 /** The look of a run's state, from the status set. The word says the state; the icon and tone only repeat it. */
-export function runLook(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId">): Look {
+export function runLook(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId" | "decidedCount">): Look {
+  if (summaryNothingReviewed(run)) return LOOKS.nothingToReview;
   if (run.status === "planning") return run.waitingOnApproval ? LOOKS.needsInput : run.attemptId === null ? LOOKS.queued : LOOKS.working;
   if (run.status === "running" && run.waitingOnApproval) return LOOKS.needsInput;
   const looks: Record<Exclude<RunStatus, "planning">, Look> = { awaiting_plan_approval: LOOKS.needsInput, running: LOOKS.working, awaiting_decision: LOOKS.readyForReview, done: LOOKS.done, cancelled: LOOKS.cancelled, failed: LOOKS.failed };
@@ -24,7 +30,7 @@ const finished = (tasks: readonly { status: string }[]): number => tasks.filter(
 
 /** What a list says under a run's title. */
 export function runFacts(run: RunSummary): string {
-  const count = run.status === "running" ? `${run.finishedCount} of ${tasksWord(run.taskCount)} finished` : run.taskCount > 0 ? `${tasksWord(run.taskCount)} planned` : "No plan yet";
+  const count = run.readyCount > 0 ? `${tasksWord(run.readyCount)} ready for review` : run.status === "running" ? `${run.finishedCount} of ${tasksWord(run.taskCount)} finished` : run.taskCount > 0 ? `${tasksWord(run.taskCount)} planned` : "No plan yet";
   return `Run ${run.id} · ${count} · ${run.repo}`;
 }
 
@@ -46,6 +52,7 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
     case "awaiting_decision":
       return `Ready for review. Every task has been built or has stopped; each says how it went.${run.tasks.some((task) => task.status === "awaiting_decision") ? " Accept or reject each task that is ready for review." : ""}`;
     case "done":
+      if (nothingReviewed(run)) return "Nothing to review. Every task failed, was stopped or was cancelled before it was ready for review, so there is nothing to decide. Each task's own screen says why, and can discard what it left.";
       return "Done. Every task that was built has your decision. Nothing has been merged or pushed.";
     case "cancelled":
       return run.tasks.length === 0 ? "Cancelled. Nothing was built, and no task was made from this run." : "Cancelled. Tasks that had finished keep their branches; the task being built was stopped and what it did is committed; the rest were not built.";
@@ -102,8 +109,10 @@ export function stations(run: Pick<RunDetail, "status" | "attemptId" | "waitingO
         current: ready > 0 ? 2 : null,
       };
     }
-    case "done":
+    case "done": {
+      if (decided === 0) return { stations: [{ name: "Plan", state: "done", words: "Done" }, { name: "Build", state: "failed", words: "No task was ready for review" }, notStarted("Decide")], current: null };
       return { stations: [{ name: "Plan", state: "done", words: "Done" }, { name: "Build", state: "done", words: "Done" }, { name: "Decide", state: "done", words: `Done · ${decided} of ${tasksWord(run.tasks.length)} decided` }], current: null };
+    }
     case "cancelled":
       return null;
   }

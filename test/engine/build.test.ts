@@ -176,7 +176,10 @@ test("a failing setup command fails its task with the reason and its output befo
   }
   assert.equal(e.driver.started.length, 0, "no agent turn started for either task");
   assert.equal(Number(e.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n), 0);
-  assert.equal(getRun(e.db, run.id)!.status, "awaiting_decision", "the run went on past the failed task and reached its end");
+  // Changed in unit 16: this test pinned "awaiting_decision" here, a run waiting for a decision when no task was ready
+  // for review. With every task failed there is nothing to decide, so the run went on past the failed task and ended.
+  assert.equal(getRun(e.db, run.id)!.status, "done", "the run went on past the failed task and reached its end: done, with nothing to review");
+  assert.deepEqual(e.runChanges.at(-1), `${run.id}:done`);
 });
 
 test("a setup command that passes its time limit is killed with its child processes and recorded as timed out; a stand-alone task runs setup commands too", { timeout: 30_000 }, async (t) => {

@@ -188,6 +188,9 @@ test("a committed task is described with its changed files, and each file's diff
     decision: null,
     // Written after Botbench's commit: not on the branch, and a decision would remove it with the task's copy.
     leftovers: ["later.txt"],
+    // It is ready for review, so it has nothing a Discard would remove (unit 16).
+    remains: null,
+    remainsProblem: null,
   });
   assert.equal(described.body.worktreePath, undefined, "the worktree's location is not part of the answer");
 

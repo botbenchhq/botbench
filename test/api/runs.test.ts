@@ -248,7 +248,8 @@ test("a plan edit is validated and stored; approving creates one queued task per
 
   // The run is built, one task after the other: each in its own worktree, where the setup command failed, so each failed with its output and no builder started.
   const built = await untilRun(api, run.id, (body) => body.status !== "running");
-  assert.equal(built.status, "awaiting_decision");
+  // Changed in unit 16: this pinned "awaiting_decision". Both tasks failed, so nothing is ready for review and the run is done.
+  assert.equal(built.status, "done");
   const rows = built.tasks as Body[];
   assert.deepEqual(rows.map((task) => [task.status, task.attemptId]), [["failed", null], ["failed", null]]);
   for (const task of rows) {

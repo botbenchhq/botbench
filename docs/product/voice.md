@@ -43,6 +43,8 @@ On screen since the build and verify steps landed: Checking (the project's check
 
 On screen since decisions landed: Accept and Reject (the buttons), and Accepted and Rejected (decided). Reject asks "Keep the branch" or "Delete the branch". Files the checks left in a task's copy read "These files were left by the checks and are not on the branch". A decided run reads Done.
 
+On screen since the runs board landed: the board's groups Needs you, Running and Finished; Nothing to review (a run whose every task failed, was stopped or was cancelled, so there is nothing to decide); Discard (the button that removes what such a task left, its separate copy and its branch; never a decision) and "You discarded" in Activity; Settings, with Agents (each agent as Available, Signed out, Unsupported version or Not installed) and Appearance (Mode: Dark, Light, Match device).
+
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): In review (reviewing), and the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.

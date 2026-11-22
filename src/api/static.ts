@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import type http from "node:http";
 import path from "node:path";
@@ -31,6 +32,16 @@ const CONTENT_TYPES: Record<string, string> = {
 
 /** The page may load from Botbench itself and nowhere else, and nothing may frame it. */
 const CONTENT_SECURITY_POLICY = "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+/**
+ * The policy for one page: the base policy, and when the page holds inline scripts (the one that applies the owner's
+ * appearance choice before the first paint), each allowed by the SHA-256 of its exact text and nothing else: no
+ * 'unsafe-inline'. The page is Botbench's own build, read from the client folder, so a script is allowed only as built.
+ */
+function policyFor(page: string): string {
+  const hashes = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => `'sha256-${createHash("sha256").update(match[1]!).digest("base64")}'`);
+  return hashes.length === 0 ? CONTENT_SECURITY_POLICY : `${CONTENT_SECURITY_POLICY}; script-src 'self' ${hashes.join(" ")}`;
+}
 
 function plain(res: http.ServerResponse, status: number, text: string): void {
   res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "content-length": Buffer.byteLength(text), "cache-control": "no-store", "x-content-type-options": "nosniff" });
@@ -81,7 +92,7 @@ export function serveShell(req: http.IncomingMessage, res: http.ServerResponse, 
     "cache-control": isPage ? "no-cache" : "public, max-age=31536000, immutable",
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
-    ...(isPage ? { "content-security-policy": CONTENT_SECURITY_POLICY } : {}),
+    ...(isPage ? { "content-security-policy": policyFor(body.toString("utf8")) } : {}),
   });
   res.end(req.method === "HEAD" ? undefined : body);
 }

@@ -39,8 +39,8 @@ export interface TaskDecision {
 /** A decision refused because the checks left files in the task's copy that the owner has not agreed to remove. */
 export class LeftoversError extends TaskError {
   readonly leftovers: string[];
-  constructor(leftovers: string[]) {
-    super(409, `These files were left by the checks and are not on the branch: ${listed(leftovers)}. They go when the task's copy is removed. Confirm that they may go, or copy them out of the task's copy first.`);
+  constructor(leftovers: string[], what = "These files were left by the checks and are not on the branch") {
+    super(409, `${what}: ${listed(leftovers)}. They go when the task's copy is removed. Confirm that they may go, or copy them out of the task's copy first.`);
     this.leftovers = leftovers;
   }
 }
@@ -202,4 +202,130 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
     appendLog(db, { taskId: task.id, runId: task.runId, attemptId: task.attemptId, rule: decision === "accept" ? "owner_accepted" : "owner_rejected", tool: "Branch", command: branch, cwd: task.repo, detail });
     return { task: decided, run: task.runId === null ? null : settleRunIn(db, task.runId) };
   });
+}
+
+/*
+ * Discards (unit 16). A task that failed, was stopped or was cancelled was never ready for review, so nothing about it is
+ * decided; but its copy of the project and Botbench's branch for it may still be there. Discard removes both, under the
+ * same safety rules as a Reject that deletes the branch: the branch goes only while it holds just what Botbench put on
+ * it, never while it is checked out anywhere else, and files in the copy that are not on the branch go only once the
+ * owner has seen and confirmed exactly those. The task keeps its state and its reason; the discard is an entry in the
+ * action log, which also says it happened.
+ */
+
+/** The states a task ends in without ever being ready for review. */
+const ENDED_UNREVIEWED: ReadonlySet<TaskStatus> = new Set(["failed", "interrupted", "cancelled"]);
+
+/** The rule a discard is logged under. */
+const DISCARDED = "owner_discarded" as const;
+
+/** When the owner discarded what the task left, from the action log; null when they have not. */
+function discardedAt(db: DatabaseSync, taskId: number): string | null {
+  const row = db.prepare("SELECT ts FROM action_log WHERE task_id = ? AND rule = ? ORDER BY id LIMIT 1").get(taskId, DISCARDED);
+  return row ? String(row.ts) : null;
+}
+
+/** What a task that ended without being ready for review still has: its copy, Botbench's branch, and the files in the copy not on the branch. */
+export interface TaskRemains {
+  copy: boolean;
+  branch: boolean;
+  files: string[];
+  /** When the owner discarded them; null when they have not. */
+  discardedAt: string | null;
+}
+
+/**
+ * What a task that failed, was stopped or was cancelled left behind, read from the disk and the repository as they are
+ * now; null for a task in any other state. Rejects when the copy or the branch cannot be read.
+ */
+export async function taskRemains(db: DatabaseSync, task: Task): Promise<TaskRemains | null> {
+  if (!ENDED_UNREVIEWED.has(task.status)) return null;
+  const copy = task.worktreePath !== null && fs.existsSync(task.worktreePath);
+  const branch = task.branch !== null && (await branchCommit(task.repo, task.branch)) !== null;
+  return { copy, branch, files: copy ? await leftoverFiles(task.worktreePath!) : [], discardedAt: discardedAt(db, task.id) };
+}
+
+export interface DiscardInput {
+  taskId: number;
+  /** The files in the copy that are not on the branch, exactly as the owner saw and confirmed them. */
+  removeFiles?: unknown;
+}
+
+/**
+ * Remove the copy and Botbench's branch of a task that failed, was stopped or was cancelled, and log it. Throws a
+ * TaskError, with nothing changed, for a task in another state, one with nothing left, a branch with commits Botbench
+ * did not make or checked out elsewhere, and files in the copy the owner has not confirmed.
+ */
+export async function discardTask(db: DatabaseSync, input: DiscardInput): Promise<Task> {
+  const { removeFiles } = input;
+  if (removeFiles !== undefined && !(Array.isArray(removeFiles) && removeFiles.length <= 100_000 && removeFiles.every((f) => typeof f === "string"))) throw new TaskError(400, '"removeFiles" must be the list of files the owner confirmed may be removed with the task\'s copy.');
+  const task = getTask(db, input.taskId);
+  if (!task) throw new TaskError(404, "No such task.");
+  if (task.status === "awaiting_decision") throw new TaskError(409, `Task ${task.id} is ready for review: accept or reject it instead.`);
+  if (task.status === "accepted" || task.status === "rejected") throw new TaskError(409, `Task ${task.id} was already ${task.status}, and its copy was removed then.`);
+  if (!ENDED_UNREVIEWED.has(task.status)) throw new TaskError(409, `Task ${task.id} ${NOT_READY[task.status as keyof typeof NOT_READY]}. Only a task that failed, was stopped or was cancelled can be discarded.`);
+  if (deciding.has(task.id)) throw new TaskError(409, `Task ${task.id} is being discarded already.`);
+  deciding.add(task.id);
+  try {
+    return await discard(db, task, (removeFiles as string[] | undefined) ?? []);
+  } finally {
+    deciding.delete(task.id);
+  }
+}
+
+async function discard(db: DatabaseSync, task: Task, confirmed: readonly string[]): Promise<Task> {
+  const dir = task.worktreePath;
+  const branch = task.branch;
+  const present = dir !== null && fs.existsSync(dir);
+  let at: string | null;
+  let files: string[];
+  try {
+    at = branch === null ? null : await branchCommit(task.repo, branch);
+    files = present ? await leftoverFiles(dir) : [];
+  } catch (err) {
+    throw new TaskError(409, `The task's copy or its branch could not be read, so nothing was discarded: ${words(err)}`);
+  }
+  if (!present && at === null) throw new TaskError(409, `Task ${task.id} has nothing left to discard: its copy of the project and its branch are not there.`);
+  const same = files.length === confirmed.length && files.every((file) => confirmed.includes(file));
+  if (files.length > 0 && !same) throw new LeftoversError(files, "These files are in the task's copy and are not on the branch");
+
+  // Everything that could refuse is checked before anything is removed, so a refused discard changes nothing.
+  if (at !== null) {
+    // What Botbench put on the branch: its own commit, or, before it committed anything, the commit the branch started from.
+    const ours = task.headCommit ?? task.baseCommit;
+    if (at !== ours) throw new TaskError(409, `The branch ${branch} has commits Botbench did not make, so nothing was discarded. Remove those commits first, or keep the branch.`);
+    const own = new Set(dir === null ? [] : [dir]);
+    if (dir !== null) {
+      try {
+        own.add(path.join(fs.realpathSync(path.dirname(dir)), path.basename(dir)));
+      } catch {
+        // Its parent folder is gone too: the stored path is the only name it has.
+      }
+    }
+    const elsewhere = (await branchCheckedOutAt(task.repo, branch!)).filter((where) => !own.has(where));
+    if (elsewhere.length > 0) throw new TaskError(409, `The branch ${branch} is checked out at ${elsewhere.join(", ")}, so nothing was discarded. Switch that folder to another branch first.`);
+  }
+
+  if (dir !== null) {
+    try {
+      if (present) await removeWorktree({ repo: task.repo, path: dir, deleteBranch: false, removeLeftovers: files.length > 0 });
+      else await forgetMissingWorktree({ repo: task.repo, path: dir });
+    } catch (err) {
+      throw new TaskError(409, `The task's copy at ${dir} could not be removed, so nothing was discarded: ${words(err)}`);
+    }
+  }
+  const copy = dir === null ? "" : present ? "removed the task's copy" : "found the task's copy already gone";
+  const kept = files.length === 0 ? "" : ` The copy held ${files.length === 1 ? "1 file" : `${files.length} files`} not on the branch, removed with it as you confirmed: ${listed(files)}.`;
+  const log = (detail: string): void => appendLog(db, { taskId: task.id, runId: task.runId, attemptId: task.attemptId, rule: DISCARDED, tool: "Branch", command: branch ?? "", cwd: task.repo, detail });
+  if (at !== null) {
+    try {
+      await deleteTaskBranch({ repo: task.repo, branch: branch!, commit: at });
+    } catch (err) {
+      // The copy, and the files the owner confirmed, are gone already: that is logged before the refusal says the rest.
+      if (copy !== "") log(`${copy[0]!.toUpperCase()}${copy.slice(1)}, but the branch ${branch} could not be deleted: ${words(err)}${kept}`);
+      throw new TaskError(409, `The task's copy was removed, but its branch ${branch} could not be deleted: ${words(err)} Discard it again to try once more.`);
+    }
+  }
+  log(`${at === null ? "Found the branch already gone" : `Deleted the branch ${branch}`}${copy === "" ? "" : ` and ${copy}`}. Nothing was merged or pushed.${kept}`);
+  return getTask(db, task.id)!;
 }

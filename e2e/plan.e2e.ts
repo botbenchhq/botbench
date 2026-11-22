@@ -44,7 +44,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await nav.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Runs");
-  await expect(page.getByTestId("run-list-state")).toHaveText("No runs yet");
+  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
   await checkDesign(page, "runs, none yet");
   await page.getByRole("link", { name: "New run" }).click();
   await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
@@ -174,9 +174,10 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\.$/);
   await checkDesign(page, "task of a cancelled run");
 
-  // The runs list and the tasks list both know it.
+  // The runs board and the tasks list both know it: the board under Finished, the one group that holds anything.
   await nav.getByRole("link", { name: "Runs", exact: true }).click();
-  const listed = page.getByTestId("run-list").getByRole("listitem");
+  await expect(page.getByRole("group", { name: "Show" }).getByLabel(/^Finished/)).toBeChecked();
+  const listed = page.getByTestId("board-group").getByRole("listitem");
   await expect(listed).toHaveCount(1);
   await expect(listed).toContainText("Add three files");
   await expect(listed).toContainText("Cancelled");
@@ -219,7 +220,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
 
   // Nothing started: no run is listed, and no planner was launched.
   await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page.getByTestId("run-list-state")).toHaveText("No runs yet");
+  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
   const runs = (await (await page.request.get(`${botbench.base}/api/runs`)).json()) as { runs: unknown[] };
   expect(runs.runs).toEqual([]);
   expect(worktreeCount(repo)).toBe(1);

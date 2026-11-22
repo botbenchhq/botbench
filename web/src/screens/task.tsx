@@ -6,6 +6,7 @@ import { DiffLine } from "../components/diff.tsx";
 import { CHECKS_RISK, ChecksResult, CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
+import { DiscardSection } from "../components/discard.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { statusSentence } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -283,7 +284,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <DecisionOutcome decision={task.decision} repo={task.repo} />
               </section>
             ) : (
-              task.branch !== null && (
+              task.branch !== null && task.remains?.discardedAt == null && (
                 <section className="ds-stack ds-gap-sm">
                   <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />
                   <p data-testid="not-merged">
@@ -292,6 +293,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 </section>
               )
             )}
+
+            <DiscardSection task={task} onDiscarded={load} onSignedOut={onSignedOut} />
 
             {task.status === "awaiting_decision" && (
               <section aria-labelledby="decide-heading" className="ds-stack ds-gap-sm">

@@ -543,7 +543,8 @@ test("after a restart: a run left planning is failed with the reason and its wor
   // the repository's setup command, which fails. Planning's recovery itself did nothing to them.
   await e.line.idle();
   assert.deepEqual(tasks.map((task) => getTask(e.db, task.id)!.status), ["failed", "failed", "failed"]);
-  assert.equal(getRun(e.db, queuedRun.id)!.status, "awaiting_decision");
+  // Changed in unit 16: this pinned "awaiting_decision". Every task failed, so nothing is ready for review and the run is done.
+  assert.equal(getRun(e.db, queuedRun.id)!.status, "done");
 });
 
 test("a spec file is read only when it is a full path to a regular text file of a readable size, and never hangs", async (t) => {

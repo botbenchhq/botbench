@@ -2,6 +2,16 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: the expensive tests were run as if they were the cheap ones (owner correction)
+Every unit ran the full browser suite at least twice (once by its builder, once again before merge), and 23 of its 41 tests start a real model turn. A unit cost about an hour, most of it waiting. The owner's correction: test constantly, but with cheap, fast tests; keep the big browser tests for the end, as the safety net. Rules going forward:
+- **Shape.** Most tests are unit tests (pure functions, no process) and integration tests (real SQLite, real temporary git repository, real HTTP server, no model). They run in seconds and are the only tests run while building.
+- **Lowest layer that can prove it.** A scenario is tested at the lowest layer that can fail for the right reason. Wording, ordering, state rules, validation and refusals are unit or API tests. A browser test exists only for what needs a browser: a journey across screens, live updates, focus, layout at phone width.
+- **Live model turns are the smallest layer.** A live test proves one thing about the real CLI (a turn runs, a permission is asked, a sandbox blocks). It never carries assertions that a cheaper test could carry.
+- **When each layer runs.** While building: the tests for the files being changed. Before a unit's commit: type checks, all unit and integration tests, and only the browser and live tests for what the unit touched. Once per batch of merged units, on `main`: the full browser and live suites, and any failure is fixed before the next batch.
+- **No second full run.** A branch already on the latest `main` whose builder ran a layer is not run through that layer again by the reviewer; the reviewer reads the diff and runs the fast tests.
+- **Spec to test.** Each acceptance example in the plan names the one test that proves it and that test's layer, before code is written.
+- **Guard against hollow tests.** A fast test must be seen failing first, and its assertion must be on behaviour, not on the test's own setup.
+
 ## 2026-11-22: two ways a run could stand still for good, found by the critique (units 12 and 13)
 The tests covered a cancel and a resume of the task at work, but not of a task parked on an answer across a restart: a cancel left it at building with nothing to end it, and a resume that gave up returned before the tasks behind it were started, so the run stayed running. Also, a command's time limit could still fire in the moment after it had ended by itself, recording a pass as timed out. Rules going forward:
 - Every way a station can be left (done, failed, given up, cancelled, stopped, thrown) is followed to the line's next step; a `finally` carries the "go on" step, not the happy path.

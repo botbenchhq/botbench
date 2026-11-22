@@ -203,7 +203,7 @@ export function moveTaskIn(db: DatabaseSync, id: number, to: TaskStatus, change:
 
 /**
  * A running run whose tasks have all reached an end (built, failed, stopped or cancelled) waits for the owner's
- * decisions, and is done once at least one task is decided and none is left to decide. Written with its event, and
+ * decisions while a task is ready for review, and is done once none is: each decided, failed, stopped or cancelled. Written with its event, and
  * only from `running` or `awaiting_decision`: a run cancelled meanwhile stays so. Returns the run's new state, or null
  * when it did not change.
  */
@@ -217,12 +217,15 @@ export function settleRunIn(db: DatabaseSync, runId: number): { id: number; stat
   if (run?.status !== "running" && run?.status !== "awaiting_decision") return null;
   const has = (statuses: string): boolean => db.prepare(`SELECT 1 FROM tasks WHERE run_id = ? AND status IN (${statuses}) LIMIT 1`).get(runId) !== undefined;
   if (has("'queued', 'building', 'verifying'")) return null;
-  const to = !has("'awaiting_decision'") && has("'accepted', 'rejected'") ? "done" : "awaiting_decision";
+  // A task that is ready for review keeps the run waiting. With none, nothing is left to decide and the run is done,
+  // also when no task was ever ready for review because each failed or was stopped.
+  const to = has("'awaiting_decision'") ? "awaiting_decision" : "done";
   if (to === run.status) return null;
   const at = now();
   db.prepare("UPDATE runs SET status = ?, updated_at = ? WHERE id = ?").run(to, at, runId);
+  const detail = to === "awaiting_decision" ? "every task has reached an end" : has("'accepted', 'rejected'") ? "every task is decided or ended" : "every task ended and none was ready for review";
   // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-  db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, ?, ?)").run(runId, at, to, to === "done" ? "every task is decided or ended" : "every task has reached an end");
+  db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, ?, ?)").run(runId, at, to, detail);
   return { id: runId, status: to };
 }
 
@@ -673,6 +676,8 @@ export function createTasks(options: TasksOptions): Tasks {
     for (const row of db.prepare("SELECT DISTINCT a.task_id AS id FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'pending' AND t.status <> 'building'").all()) {
       broker.endParked(Number(row.id), "Its task was no longer being built when Botbench started.");
     }
+    // A run an older Botbench left waiting for decisions with no task ready for review has nothing left to decide.
+    for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status = 'awaiting_decision' ORDER BY id").all()) settle(Number(row.id));
   };
 
   /** The runs that were building when the last Botbench stopped go on: their tasks not started yet are built, in plan order. */

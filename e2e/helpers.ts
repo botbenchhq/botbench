@@ -51,27 +51,39 @@ const APP_PREFIX = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname,
 
 /**
  * The Botbench theme's tokens, as the vendored copy has them: the light values, and the dark ones under the system's extension.
- * The client loads the theme in its default mode, dark, so the dark colours and the radii are the only ones a screen may draw.
+ * The client shows the theme's default mode, dark, unless the owner chose Light or Match device in Settings: a screen is
+ * judged by the colours of the mode it is drawn in.
  */
 type Colour = { hex: string };
 const THEME = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "themes", "botbench.tokens.json"), "utf8")) as {
   color: Record<string, { $value: Colour; $extensions?: { "design-system"?: { dark?: Colour } } }>;
   radius: Record<string, { $value: { value: number; unit: string } }>;
 };
+/** The browser-bar colour of each mode, as the theme gives it. */
+export const THEME_COLOR = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "web", "vendor", "design-system", "themes", "botbench.json"), "utf8")) as { themeColor: Record<Mode, string> }).themeColor;
 const rgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(", ")})`;
 
+export type Mode = "light" | "dark";
+
 /**
- * A colour token as the browser reports it in the mode the client shows, which is the theme's default, dark: the root
- * carries no data-theme. For assertions on a colour a component draws, such as the primary button's background.
+ * A colour token as the browser reports it in `mode`, dark unless said: for assertions on a colour a component draws,
+ * such as the primary button's background.
  */
-export function token(name: string): string {
+export function token(name: string, mode: Mode = "dark"): string {
   const entry = THEME.color[name];
   if (entry === undefined) throw new Error(`The Botbench theme has no colour token "${name}".`);
-  return rgb(entry.$extensions?.["design-system"]?.dark?.hex ?? entry.$value.hex);
+  return rgb(mode === "light" ? entry.$value.hex : (entry.$extensions?.["design-system"]?.dark?.hex ?? entry.$value.hex));
 }
 
-// The colours of the mode the client shows, dark: a light value drawn on the dark page is off the palette.
-const PALETTE = Object.keys(THEME.color).map(token);
+/** The mode the page is drawn in, from the root's data-theme as the theme reads it: none or "dark" is dark, "auto" follows the device. */
+export const pageMode = (page: Page): Promise<Mode> =>
+  page.evaluate(() => {
+    const theme = document.documentElement.getAttribute("data-theme");
+    return theme === "light" || (theme === "auto" && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+  });
+
+// The colours of each mode: a light value drawn on the dark page is off the palette, and a dark one on the light page.
+const PALETTE: Record<Mode, string[]> = { dark: Object.keys(THEME.color).map((name) => token(name, "dark")), light: Object.keys(THEME.color).map((name) => token(name, "light")) };
 const RADII = Object.values(THEME.radius).map(({ $value }) => `${$value.value}${$value.unit}`);
 
 /** The badge's status set, as the vendored catalogue has it: one icon and one tone for each state. */
@@ -101,13 +113,15 @@ export async function checkStatuses(page: Page, screen: string): Promise<void> {
   }
 }
 
-/** The primary button's look and a secondary button's, from the theme's tokens. */
+/** The primary button's look and a secondary button's, from the theme's tokens, in the default mode. */
 export const PRIMARY_LOOK = { background: token("accent"), text: token("on-accent"), border: token("accent") };
 export const SECONDARY_LOOK = { background: token("surface-raised"), text: token("on-surface"), border: token("border") };
 
-/** The buttons drawn as the primary action: filled with the theme's accent colour. */
-export const primaries = (page: Page): Promise<(string | null)[]> =>
-  page.getByRole("button").evaluateAll((buttons, accent) => buttons.filter((b) => getComputedStyle(b).backgroundColor === accent).map((b) => b.textContent), token("accent"));
+/** The buttons drawn as the primary action: filled with the theme's accent colour in the mode the page is drawn in. */
+export const primaries = async (page: Page): Promise<(string | null)[]> => {
+  const accent = token("accent", await pageMode(page));
+  return page.getByRole("button").evaluateAll((buttons, accent) => buttons.filter((b) => getComputedStyle(b).backgroundColor === accent).map((b) => b.textContent), accent);
+};
 
 /**
  * The design system, checked on the rendered page: its structural rules (one primary action per view, disclosure
@@ -193,8 +207,9 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(found.h2.filter((size) => size !== "20px"), `${screen}: plain h2 headings are 20px`).toEqual([]);
   expect(found.h3.filter((size) => size !== "16px"), `${screen}: plain h3 headings are 16px`).toEqual([]);
   expect(found.offSystem, `${screen}: inline styles`).toEqual([]);
-  const offPalette = Object.entries(found.colours).filter(([colour]) => !PALETTE.includes(colour) && colour !== "rgba(0, 0, 0, 0)" && colour !== "transparent");
-  expect(offPalette, `${screen}: colours that are not tokens of the design system`).toEqual([]);
+  const mode = await pageMode(page);
+  const offPalette = Object.entries(found.colours).filter(([colour]) => !PALETTE[mode].includes(colour) && colour !== "rgba(0, 0, 0, 0)" && colour !== "transparent");
+  expect(offPalette, `${screen}: colours that are not tokens of the design system in ${mode} mode`).toEqual([]);
   expect(Object.keys(found.colours).length, `${screen}: the check saw colours`).toBeGreaterThan(2);
   expect(found.decorations, `${screen}: gradients, blur, or a shadow on anything but a dialog or a toast`).toEqual([]);
   expect(Object.entries(found.radii).filter(([radius]) => radius !== "0px" && !RADII.includes(radius)), `${screen}: corners off the radius scale`).toEqual([]);
