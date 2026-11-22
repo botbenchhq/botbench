@@ -12,11 +12,14 @@ export type IconName =
   | "circle-pause"
   | "circle-slash"
   | "circle-stop"
+  | "circle-x"
   | "copy"
   | "eye"
   | "git-branch"
   | "loader"
   | "search"
+  | "settings"
+  | "thumbs-up"
   | "check"
   | "x";
 

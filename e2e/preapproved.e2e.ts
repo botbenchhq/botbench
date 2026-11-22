@@ -9,7 +9,6 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done";
-const NONE_WAITING = "No approvals are waiting.";
 const HEADING = "Allowed for this task";
 
 /** A Botbench whose settings name the commands its sample repository offers for pre-approval. The repository must exist before Botbench reads its settings. */
@@ -40,10 +39,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   const tray = page.getByTestId("approval-tray");
   await openNewTask(page);
 
-  // Until a repository is named there is nothing to offer, and no control for it.
-  await expect(page.getByRole("heading", { name: HEADING })).toHaveCount(0);
-  await expect(page.getByLabel("Add a command")).toHaveCount(0);
-
+  // The field starts with the configured repository, the one Botbench knows of.
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await expect(page.getByRole("heading", { name: HEADING })).toBeVisible();
@@ -96,7 +92,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   // It finishes with nobody answering: no card, the tray never counts one.
   await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.", { timeout: 120_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   const resolved = page.locator('[data-event="permission_resolved"]');
   await expect(resolved).toHaveCount(1);
   await expect(resolved).toContainText("Allowed for this task");

@@ -23,7 +23,8 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   });
   await signIn(page, botbench);
 
-  // The picker: the configured model is preselected, and the list is the one Claude Code reports.
+  // The picker, behind the model control under the chat box: the configured model is preselected, and the list is the one Claude Code reports.
+  await page.getByRole("button", { name: /^Model: / }).click();
   const picker = page.getByLabel("Model", { exact: true });
   await expect(picker).toHaveValue(CONFIGURED);
   await expect(page.getByTestId("model-source")).toHaveText("The list is what Claude Code reports on this Mac.");
@@ -33,13 +34,13 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   expect(options.at(-1)!.text).toBe("Other…");
   expect(options.map((o) => o.value)).toEqual(expect.arrayContaining([CONFIGURED, CHEAP, "sonnet"]));
   await expect(page.getByLabel("Model name")).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveCount(1);
+  await expect(page.getByRole("button")).toHaveCount(2);
 
   // "Other…" reveals a field for a name the list does not hold. A value that is no model name is not sent at all.
   await picker.selectOption({ label: "Other…" });
   const other = page.getByLabel("Model name");
   await expect(other).toBeVisible();
-  await page.getByLabel("Prompt").fill("Reply with exactly the word: lynx");
+  await page.getByLabel("Message Claude Code").fill("Reply with exactly the word: lynx");
   await other.fill("--dangerously-skip-permissions");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByRole("alert")).toContainText("The prompt was not sent. A model name starts with a letter or a digit");
@@ -65,7 +66,7 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   // Pick a cheap model from the list and send the prompt again: the conversation goes on, on that model.
   await picker.selectOption(CHEAP);
   await expect(page.getByLabel("Model name")).toHaveCount(0);
-  await page.getByLabel("Prompt").fill("Reply with exactly the word: lynx");
+  await page.getByLabel("Message Claude Code").fill("Reply with exactly the word: lynx");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="text"]').last()).toContainText(/lynx/i, { timeout: 120_000 });
   await expect(page.locator('[data-event="turn_ended"]').last().locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
@@ -75,7 +76,7 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   await expect(page.getByTestId("turn-model")).toHaveText(new RegExp(`^Model: ${NAME}$`));
   expect(JSON.parse(turnsSent[1]!)).toMatchObject({ model: CHEAP });
   // Send is the one primary action; New chat, which begins again, sits beside the title.
-  await expect(page.getByRole("button")).toHaveText(["New chat", "Send"]);
+  await expect(page.getByRole("button")).toHaveText(["New chat", "Send", /^Model: /]);
   await checkDesign(page, "turn, with the model that answered");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u25-turn-model.png") });
 

@@ -31,7 +31,9 @@ export function stepWord(role: string): string {
 
 /**
  * The pending count, in words, on every signed-in screen. With something
- * waiting it is a link to the oldest request's task, where its card is.
+ * waiting it is a link to the oldest request's task, where its card is. With
+ * nothing waiting it is empty, and stays in the page as the live region that
+ * announces the next one. When the approvals could not be read, it says so.
  */
 export function ApprovalTray() {
   const { pending, problem, open } = useContext(ApprovalsContext);
@@ -39,7 +41,7 @@ export function ApprovalTray() {
   return (
     <div data-testid="approval-tray" aria-live="polite" aria-atomic="true" className="ds-pending-tray">
       {oldest === undefined ? (
-        <span className="ds-pending-tray__text">{pending === null ? (problem ?? "Checking for approvals.") : "No approvals are waiting."}</span>
+        pending === null && problem !== null && <span className="ds-pending-tray__text">{problem}</span>
       ) : (
         <a href={oldest.taskId === null ? `#/runs/${oldest.runId}` : `#/tasks/${oldest.taskId}`} onClick={open} className="ds-pending-tray__link">
           <span className="ds-pending-tray__count">{pending!.length}</span>

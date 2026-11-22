@@ -104,6 +104,15 @@ function sourceWords(state: ModelChoiceState): string {
     : "Claude Code reported no list and none is configured. Use Claude Code's default, or name a model.";
 }
 
+/** The model the next prompt goes to, in a few words, for a control that opens the picker. */
+export function choiceName(state: ModelChoiceState): string {
+  const { list, problem, choice } = state;
+  if (list === null && problem === null) return "Reading the models";
+  if (choice === null) return "The configured model";
+  if (choice.other) return choice.model?.trim() || "Other…";
+  return choice.model === null ? "Claude Code's default" : modelName(list, choice.model);
+}
+
 /** A labelled select of the driver's models, the CLI's own default, and "Other…" with a field for any other name. */
 export function ModelPicker({ state }: { state: ModelChoiceState }) {
   const { list, problem, choice } = state;

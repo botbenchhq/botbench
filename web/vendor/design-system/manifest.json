@@ -99,7 +99,8 @@
     "size": [
       "--ds-size-touch",
       "--ds-size-column",
-      "--ds-size-transcript"
+      "--ds-size-transcript",
+      "--ds-size-wide"
     ],
     "breakpoint": [
       "--ds-breakpoint"
@@ -217,7 +218,8 @@
     "size": [
       "44px",
       "480px",
-      "720px"
+      "720px",
+      "1200px"
     ],
     "breakpoint": [
       "768px"
@@ -318,6 +320,7 @@
       "touch",
       "column",
       "transcript",
+      "wide",
       "auto",
       "full",
       "screen",
@@ -501,6 +504,7 @@
     "ds-confirm-dialog__loss",
     "ds-confirm-dialog__losses",
     "ds-container",
+    "ds-container--wide",
     "ds-container-narrow",
     "ds-context-menu",
     "ds-context-menu__button",
@@ -719,6 +723,22 @@
     "ds-number-field__input",
     "ds-number-field__step",
     "ds-number-field__unit",
+    "ds-option-picker",
+    "ds-option-picker__body",
+    "ds-option-picker__description",
+    "ds-option-picker__end",
+    "ds-option-picker__error",
+    "ds-option-picker__hint",
+    "ds-option-picker__input",
+    "ds-option-picker__legend",
+    "ds-option-picker__name",
+    "ds-option-picker__option",
+    "ds-option-picker__path",
+    "ds-option-picker__reveal",
+    "ds-option-picker__start",
+    "ds-option-picker__state",
+    "ds-option-picker__state--warning",
+    "ds-option-picker__text",
     "ds-otp-input",
     "ds-page-header",
     "ds-page-header--compact",

@@ -113,6 +113,19 @@ async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ct
   json(res, 200, { taskId: task.id });
 }
 
+/** How many repositories used before the list offers. */
+const RECENT_REPOS = 10;
+
+/**
+ * The repositories New task and New run offer: the ones used before (a task or a run started in them), the most
+ * recently used first and at most ten, then the ones the settings file names that are not already listed.
+ */
+function knownRepositories(ctx: RouteContext): { name: string; path: string }[] {
+  const used = ctx.db.prepare("SELECT repo_path FROM runs GROUP BY repo_path ORDER BY MAX(id) DESC LIMIT ?").all(RECENT_REPOS).map((row) => String(row.repo_path));
+  const configured = Object.keys(ctx.config.repositories ?? {}).map(realRepo);
+  return [...new Set([...used, ...configured])].map((repo) => ({ name: path.basename(repo), path: repo }));
+}
+
 async function diff(db: DatabaseSync, res: http.ServerResponse, task: Task, url: URL): Promise<void> {
   const given = url.searchParams.getAll("file");
   if (given.length !== 1) throw new TaskError(400, 'Give one "file": the path of one of the task\'s changed files.');
@@ -147,6 +160,8 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       await startTask(req, res, ctx);
     } else if (method === "GET" && pathname === "/api/tasks") {
       json(res, 200, { tasks: listTasks(ctx.db).map((task) => summary(ctx.db, task)) });
+    } else if (method === "GET" && pathname === "/api/repos") {
+      json(res, 200, { repositories: knownRepositories(ctx) });
     } else if (method === "GET" && pathname === "/api/repos/check") {
       const given = url.searchParams.getAll("path");
       if (given.length !== 1) throw new TaskError(400, 'Give one "path".');

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDriver, getTranscript, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
 import { Alert, Frame, PageHeader, StreamBanner } from "../components/header.tsx";
-import { ModelPicker, modelName, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
+import { follow, jumpCount, nearBottom, type Follow, type FollowEvent } from "../components/follow.ts";
+import { choiceName, ModelPicker, modelName, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
@@ -52,6 +53,18 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
   conversationRef.current = conversation;
   const logRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  /** The model picker is out of the way until the owner opens it. */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /** Whether the transcript follows its newest row, and how many rows arrived since the owner scrolled up. */
+  const followRef = useRef<Follow>({ following: true, unseen: 0 });
+  const [unseen, setUnseen] = useState(0);
+  const rowsRef = useRef(0);
+  /** The jump button stays while it holds the focus, so a press from the keyboard does not drop the focus. */
+  const [jumpFocused, setJumpFocused] = useState(false);
+  const onFollow = useCallback((event: FollowEvent): void => {
+    followRef.current = follow(followRef.current, event);
+    setUnseen(followRef.current.following ? 0 : followRef.current.unseen);
+  }, []);
 
   const checkDriver = useCallback((): void => {
     setDriver(null);
@@ -132,19 +145,34 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     }
   }, [activeEnded]);
 
-  useEffect(() => {
+  // Follow the newest row only while the owner is at the bottom; otherwise count the rows that arrive.
+  useLayoutEffect(() => {
+    const log = logRef.current;
+    if (!log) return;
+    const rows = log.querySelector('ol[role="log"]')?.querySelectorAll(":scope > li:not(.ds-streaming)").length ?? 0;
+    onFollow({ kind: "rows", added: rows - rowsRef.current });
+    rowsRef.current = rows;
+    if (followRef.current.following) log.scrollTop = log.scrollHeight;
+  }, [shown, running, onFollow]);
+  const jump = (): void => {
     const log = logRef.current;
     if (log) log.scrollTop = log.scrollHeight;
-  }, [shown.length, running]);
+    onFollow({ kind: "jumped" });
+  };
 
   const send = (): void => {
     const text = prompt.trim();
     if (running) return;
     if (text === "") return promptRef.current?.focus();
     const model = models.request();
-    if (!model.ok) return setError(`The prompt was not sent. ${model.why}`);
+    if (!model.ok) {
+      setPickerOpen(true);
+      return setError(`The prompt was not sent. ${model.why}`);
+    }
     setError(null);
     setStarting(true);
+    // Whoever sends wants to see the answer: the transcript follows again.
+    jump();
     // A model other than the one the conversation is on continues it in a new attempt on that model.
     const started = startTurn(text, conversation.at(-1), model.model);
     startRef.current = started;
@@ -208,6 +236,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     saveConversation([]);
     setActive(null);
     setError(null);
+    onFollow({ kind: "jumped" });
     promptRef.current?.focus();
   };
 
@@ -240,7 +269,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </PageHeader>
         </div>
 
-        <div ref={logRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={logRef} role="region" aria-label="Transcript" tabIndex={0} onScroll={(e) => onFollow({ kind: "scrolled", nearBottom: nearBottom(e.currentTarget) })} className="min-h-0 flex-1 overflow-y-auto">
           <div className="ds-container pb-lg">
             {shown.length === 0 ? (
               <div className="ds-empty-state ds-empty-state--compact">
@@ -253,14 +282,23 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </div>
         </div>
 
+        {/* Left out, not hidden, while there is nothing new: the system's display rule for the block outranks the hidden attribute. */}
+        {(unseen > 0 || jumpFocused) && (
+          <div className="ds-jump-to-latest">
+            <button type="button" onClick={jump} onFocus={() => setJumpFocused(true)} onBlur={() => setJumpFocused(false)} className="ds-jump-to-latest__button">
+              <span className="ds-jump-to-latest__count">{jumpCount(unseen)}</span> Jump to latest
+            </button>
+          </div>
+        )}
+
         {canSend ? (
           <form onSubmit={submit} aria-busy={running && error === null} className="ds-composer ds-composer--sticky">
-            <ModelPicker state={models} />
-            <label htmlFor="prompt" className="ds-composer__label">
-              Prompt
+            {/* Named for assistive technology only: the box's placeholder says the same for the eye. */}
+            <label htmlFor="prompt" className="ds-visually-hidden">
+              Message Claude Code
             </label>
             <div className="ds-composer__row">
-              <textarea id="prompt" name="prompt" ref={promptRef} rows={1} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="ds-composer__input" />
+              <textarea id="prompt" name="prompt" ref={promptRef} rows={1} placeholder="Message Claude Code…" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="ds-composer__input" />
               {running ? (
                 <button type="button" onClick={stop} aria-busy={stopping} className="ds-button">
                   Stop
@@ -276,6 +314,14 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 {error}
               </p>
             )}
+            <div className="ds-composer__controls">
+              <button type="button" aria-expanded={pickerOpen} aria-controls="model-picker" onClick={() => setPickerOpen((open) => !open)} className="ds-button ds-button--quiet ds-button--small">
+                {`Model: ${choiceName(models)}`}
+              </button>
+            </div>
+            <div id="model-picker" hidden={!pickerOpen}>
+              <ModelPicker state={models} />
+            </div>
           </form>
         ) : (
           <div className="ds-container ds-stack py-md">

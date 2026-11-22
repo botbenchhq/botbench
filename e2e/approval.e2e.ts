@@ -9,7 +9,6 @@ import type { Botbench } from "./botbench.ts";
 
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done";
-const NONE_WAITING = "No approvals are waiting.";
 
 /** A real repository beside the test's Botbench home, with a script that leaves a marker file where it lies. */
 function scriptRepo(botbench: Botbench): string {
@@ -35,17 +34,17 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await signIn(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
-  // The tray is on every screen and says in words that nothing waits. It is not a control until something does.
+  // The tray is on every screen and empty while nothing waits. It is not a control until something does.
   const tray = page.getByTestId("approval-tray");
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   await expect(tray.getByRole("link")).toHaveCount(0);
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   await checkDesign(page, "tasks, tray with nothing waiting");
 
   await startTask(page, repo);
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
 
   // The request arrives by itself: the tray counts it in words and the task says what it is waiting for.
@@ -131,7 +130,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(allow).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(card).toHaveCount(0);
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   await expect(page.locator('[data-event="permission_resolved"]')).toContainText("You allowed");
   await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.", { timeout: 120_000 });
   const files = page.getByTestId("changed-files");
@@ -152,7 +151,7 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   const repo = scriptRepo(botbench);
   await signIn(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
-  await expect(page.getByTestId("approval-tray")).toHaveText(NONE_WAITING);
+  await expect(page.getByTestId("approval-tray")).toBeEmpty();
   await startTask(page, repo);
 
   // The card appears in place on the task's own screen, without the tray being touched.
@@ -169,7 +168,7 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny", "Deny and send"]);
   await card.getByRole("button", { name: "Deny and send" }).click();
   await expect(card).toHaveCount(0);
-  await expect(page.getByTestId("approval-tray")).toHaveText(NONE_WAITING);
+  await expect(page.getByTestId("approval-tray")).toBeEmpty();
 
   // The transcript says it was declined, with the note as text, and shows what the agent was told.
   const resolved = page.locator('[data-event="permission_resolved"]');

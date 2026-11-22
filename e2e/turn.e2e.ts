@@ -21,7 +21,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.keyboard.press("Enter");
 
   await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code \d+\.\d+\.\d+ · signed in · subscription$/);
-  await expect(page.getByRole("button")).toHaveCount(1);
+  await expect(page.getByRole("button")).toHaveText(["Send", /^Model: /]);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("stream-banner")).toHaveCount(0);
   await checkDesign(page, "turn, empty");
@@ -29,7 +29,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   // A mark on the page that a reload would wipe out.
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const prompt = "Reply with exactly the word: marmot";
-  await page.getByLabel("Prompt").fill(prompt);
+  await page.getByLabel("Message Claude Code").fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
   // The one button is Stop while the turn runs.
   await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
@@ -51,7 +51,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await expect(session).toContainText(/Model id: claude-haiku-/);
   await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
-  await expect(page.getByLabel("Prompt")).toHaveValue("");
+  await expect(page.getByLabel("Message Claude Code")).toHaveValue("");
   // The transcript is in order: prompt, reply, end.
   expect(await page.locator("[data-event]").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-event")).filter((k) => ["user_prompt", "text", "turn_ended"].includes(k!)))).toEqual(["user_prompt", "text", "turn_ended"]);
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
@@ -75,7 +75,7 @@ test("LIVE: a chat reply that used a tool shows what the agent did as one plain 
   // A real file in the folder a chat works in, for the agent to read.
   fs.writeFileSync(path.join(botbench.home, "scratch", "notes.txt"), "The word is heron.\n");
   await signIn(page, botbench);
-  await page.getByLabel("Prompt").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
+  await page.getByLabel("Message Claude Code").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
   await page.getByRole("button", { name: "Send" }).click();
   // The action is in the transcript as soon as it is made: nothing the agent did is hidden. It is the design system's
   // tool call, as a transcript row, whose state the stylesheet draws from data-state: running, then succeeded.
@@ -118,7 +118,7 @@ test("LIVE: a chat reply that used a tool shows what the agent did as one plain 
 test("LIVE: three tool calls in a row are one step group: a line that counts them in plain words, open, with every call a row inside it", async ({ page, botbench }) => {
   for (const [name, word] of [["a.txt", "otter"], ["b.txt", "badger"], ["c.txt", "stoat"]]) fs.writeFileSync(path.join(botbench.home, "scratch", name!), `The word is ${word}.\n`);
   await signIn(page, botbench);
-  await page.getByLabel("Prompt").fill("Use your Read tool three times, on a.txt, b.txt and c.txt in the current directory, before you write anything. Then reply with only the three words those files name.");
+  await page.getByLabel("Message Claude Code").fill("Use your Read tool three times, on a.txt, b.txt and c.txt in the current directory, before you write anything. Then reply with only the three words those files name.");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="turn_ended"]')).toBeVisible({ timeout: 120_000 });
   const group = page.locator("details.ds-step-group");
@@ -142,7 +142,7 @@ test("LIVE: words the owner or the agent wrote are never judged, and the same wo
   await signIn(page, botbench);
   // A prompt and a reply full of the words Botbench itself never shows.
   const words = "turn attempt worktree driver broker gate floor hook stream role grant blocked declined rate limit";
-  await page.getByLabel("Prompt").fill(`Reply with exactly this line and nothing else: ${words}`);
+  await page.getByLabel("Message Claude Code").fill(`Reply with exactly this line and nothing else: ${words}`);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(reply(page).last()).toContainText("broker gate floor hook", { timeout: 120_000 });
   await expect(page.locator('[data-event="turn_ended"]')).toBeVisible();
@@ -162,7 +162,7 @@ test("LIVE: words the owner or the agent wrote are never judged, and the same wo
 
 test("LIVE: a dropped event stream shows a banner, recovers, and the next reply still arrives; a reload shows the transcript again", async ({ page, botbench }) => {
   await signIn(page, botbench);
-  await page.getByLabel("Prompt").fill("Reply with exactly the word: otter");
+  await page.getByLabel("Message Claude Code").fill("Reply with exactly the word: otter");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(reply(page)).toContainText(/otter/i, { timeout: 120_000 });
   await expect(page.getByTestId("stream-banner")).toHaveCount(0);
@@ -177,7 +177,7 @@ test("LIVE: a dropped event stream shows a banner, recovers, and the next reply 
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
 
   // The recovered stream delivers a new turn, continued in the same session: it knows the first word.
-  await page.getByLabel("Prompt").fill("Which word did I ask you for? Reply with only that word, twice.");
+  await page.getByLabel("Message Claude Code").fill("Which word did I ask you for? Reply with only that word, twice.");
   await page.keyboard.press("ControlOrMeta+Enter");
   await expect(reply(page)).toHaveCount(2, { timeout: 120_000 });
   await expect(reply(page).nth(1)).toContainText(/otter/i);
@@ -196,7 +196,7 @@ test("LIVE: a dropped event stream shows a banner, recovers, and the next reply 
 test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as markup", async ({ page, botbench }) => {
   await signIn(page, botbench);
   const prompt = 'Write a 1500 word essay about rivers. <img src=x onerror="window.botbenchXss=1"><b id="injected">bold</b>';
-  await page.getByLabel("Prompt").fill(prompt);
+  await page.getByLabel("Message Claude Code").fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="session_started"]')).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "Stop" }).click();
@@ -207,6 +207,42 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
   await expect(page.locator("#injected, [role=log] img, [role=log] b")).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { botbenchXss?: number }).botbenchXss)).toBeUndefined();
+});
+
+test("the chat box names the agent in its placeholder and keeps its label for assistive technology; the model sits behind a small control; nothing idle shows in the header", async ({ page, botbench }) => {
+  // The real Claude Code is asked whether it is signed in and which models it offers; no prompt is sent.
+  await signIn(page, botbench);
+  await expect(page.getByTestId("driver-state")).toHaveText(/ · signed in · /);
+  const box = page.getByRole("textbox", { name: "Message Claude Code" });
+  await expect(box).toHaveAttribute("placeholder", "Message Claude Code…");
+  // The label is in the page for a screen reader, and takes no room on the screen.
+  const label = await page.locator('label[for="prompt"]').boundingBox();
+  expect(label!.width * label!.height, "the label is not drawn").toBeLessThanOrEqual(1);
+  await expect(page.getByText("Prompt", { exact: true })).toHaveCount(0);
+
+  // The model is one small control under the box, showing the current choice; the picker and its helper line are behind it.
+  const control = page.getByRole("button", { name: /^Model: / });
+  await expect(page.getByRole("button")).toHaveText(["Send", /^Model: /]);
+  await expect(control).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByLabel("Model", { exact: true })).toBeHidden();
+  await expect(page.getByText("The list is what Claude Code reports on this Mac.")).toBeHidden();
+  // Nothing has arrived, so there is nothing to jump to.
+  await expect(page.getByRole("button", { name: /Jump to latest/ })).toHaveCount(0);
+  // With no approval waiting the header shows no approvals line, and Settings is an icon with a name.
+  await expect(page.getByTestId("approval-tray")).toBeEmpty();
+  await expect(page.getByText("No approvals are waiting.")).toHaveCount(0);
+  const settings = page.getByRole("banner").getByRole("link", { name: "Settings" });
+  await expect(settings).toBeVisible();
+  await expect(settings).toHaveText("");
+  await checkDesign(page, "chat, empty, model closed");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat.png") });
+
+  await control.click();
+  await expect(control).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("model-source")).toHaveText("The list is what Claude Code reports on this Mac.");
+  await checkDesign(page, "chat, model picker open");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat-model.png") });
 });
 
 test("with Claude Code signed out, the screen says so and offers no send control", async ({ page }) => {
@@ -245,7 +281,7 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, botbenc
   await expect(page.getByRole("alert")).toHaveText("ErrorWrong token. Check it and try again.");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toBeVisible();
-  await expect(page.getByLabel("Prompt")).toHaveCount(0);
+  await expect(page.getByLabel("Message Claude Code")).toHaveCount(0);
   await checkDesign(page, "sign-in, with an error");
   // No session came of it: the API still refuses this browser.
   expect((await page.request.get(`${botbench.base}/api/session`)).status()).toBe(401);

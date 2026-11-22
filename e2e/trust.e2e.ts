@@ -13,7 +13,6 @@ const MARKER_SCRIPT = '#!/bin/sh\necho ran >> "$(dirname "$0")/marker.txt"\n';
 const COMMAND = "sh make-marker.sh";
 const SCRIPT_PROMPT = `Run the command \`${COMMAND}\` with your Bash tool three times, one call at a time: wait for each result before you make the next call, and never put two in one command. Then reply with the single word: done`;
 const PUSH_PROMPT = "Run the command `git push` with your Bash tool two times, one call at a time. It is expected to fail or be refused the first time: make the second call anyway, exactly the same. Do not try any other command. Then reply with the single word: done";
-const NONE_WAITING = "No approvals are waiting.";
 const BUILT = "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.";
 
 const test = base.extend<{ repo: string }>({
@@ -70,7 +69,7 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
   await expect(page.getByTestId("action-log")).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(0);
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   await checkDesign(page, "trust, empty");
 
   // The first card for the command: nothing was allowed before, so it offers nothing.
@@ -145,7 +144,7 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   await card.getByRole("button", { name: "Always allow", exact: true }).click();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(page.getByTestId("task-status")).toHaveText(BUILT, { timeout: 120_000 });
-  await expect(tray).toHaveText(NONE_WAITING);
+  await expect(tray).toBeEmpty();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   const resolved = page.locator('[data-event="permission_resolved"]');
   await expect(resolved).toHaveCount(3);
