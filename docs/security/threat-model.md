@@ -1,6 +1,6 @@
 # Smelt threat model (STRIDE)
 
-Scope: Smelt as built through units 1, 2, 3 and 5, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
+Scope: Smelt as built through units 1 to 5, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
 
 ## What is being protected
 
@@ -41,6 +41,7 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | A repository hook runs with Smelt's actions | B3 | Hooks disabled on every git call; commits skip verification and signing | Done (U5) |
 | A repository's CLI settings allow commands silently | B3 | Pre-tool hook sends every shell and write call to the gate before the CLI's own rules | Planned (U7) |
 | The transcript or action log is edited | B4 | Append-only tables enforced by triggers | Done for events (U1); action log Planned (U7) |
+| Text from a model or a repository is rendered as markup in the client | B1, B2 | All transcript text is rendered as text, tested with markup in a prompt | Done (U4) |
 | Crafted run or task ids reach git or the filesystem | B1 | Ids must be slugs; arguments passed as arrays, file names after `--` | Done (U5) |
 
 ### Repudiation
@@ -58,6 +59,8 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | The owner's personal CLI settings, hooks and MCP servers leak into a run | B2 | `--setting-sources project`, `--strict-mcp-config` | Done (U3) |
 | Code and prompts go to the model provider | B5 | Inherent to driving a vendor CLI. Stated plainly in the README; local-model drivers deferred | Accepted |
 | Commands or code pass through a push relay | B6 | Notifications carry only "an approval is waiting" and the run name | Planned (U23) |
+| The client shell and its assets are served without a session | B1 | They hold no data; every `/api/*` route except sign-in still needs the session; static paths are confined to the built client directory, tested | Done (U4) |
+| The client loads fonts or scripts from a third party | B1 | Fonts are self-hosted; the client makes no request to any other origin | Done (U4) |
 | The login token appears in logs or responses | B1 | Printed once on the start that created it; never returned | Done (U2) |
 | Traffic between phone and Mac is read | B1 | Private network with HTTPS; `Secure` cookie on the HTTPS name | Partial (U2 sets the cookie; network setup is the owner's) |
 
@@ -68,6 +71,8 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | Wrong-token attempts delay the owner's own sign-in | Global delay capped at 10 s, at most 10 waiting | Partial (U2): not per address. Acceptable on a private network, not for public exposure |
 | A CLI process outlives its turn or a restart | Own process group, killed on interrupt and close; survivors stopped on start | Kill Done (U3); stop-on-start Planned (U15) |
 | An agent or a check fills the disk or runs forever | Per-command time limits | Planned (U13). No disk quota: Accepted |
+| A malformed request line crashes the server | A request target that cannot be parsed is answered with an error | Done (U4) |
+| Idle CLI sessions pile up | Sessions close after 15 minutes idle and resume from their cursor; all close with the server | Done (U4) |
 | A vendor rate limit stalls a run | Handoff to another driver, resume at reset time | Planned (U21) |
 
 ### Elevation of privilege
@@ -85,4 +90,5 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 1. Checks run agent-written code on the host with the owner's privileges. Until a sandbox exists, the README must say so, and the owner should point Smelt only at repositories they trust.
 2. The stop-on-API-key guard is untested on its failing path.
 3. Sign-in slow-down is global, sessions never expire, and there is no sign-out.
+5. Any signed-in client can start turns in Smelt's scratch directory with every tool prompt denied. That is safe as built; it must be revisited when the approval broker (U7) lets turns run commands.
 4. Interception for Codex, Gemini CLI and Grok is unproven; a driver without it is limited to read-only roles.

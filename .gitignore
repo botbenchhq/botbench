@@ -1,2 +1,5 @@
 node_modules
 smelt.local.json
+web/dist
+test-results
+playwright-report

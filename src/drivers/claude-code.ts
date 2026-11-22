@@ -196,6 +196,8 @@ class ClaudeCodeSession implements DriverSession {
     let resolve!: (reason: TurnEndReason) => void;
     const done = new Promise<TurnEndReason>((r) => (resolve = r));
     this.running = { done, resolve };
+    // The CLI does not echo the prompt back, so the transcript gets it here.
+    this.record({ type: "user_prompt", text: prompt });
     this.write({ type: "user", message: { role: "user", content: prompt } });
     return done;
   }

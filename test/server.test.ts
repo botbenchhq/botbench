@@ -50,7 +50,8 @@ test("the server answers nothing else: other paths and other methods get 404", a
   const { server, home } = await start(t);
   const base = `http://127.0.0.1:${server.port}`;
   const headers = { ...(await signIn(server.port, home)), "content-type": "application/json" };
-  for (const p of ["/", "/health/", "/healthz", "/health/db", "/api/health", "/index.html", "/favicon.ico"]) {
+  // "/" and "/index.html" are the client shell since unit 4, covered in test/api/turns.test.ts.
+  for (const p of ["/health/", "/healthz", "/health/db", "/api/health", "/index.htm", "/assets", "/favicon.ico"]) {
     const res = await fetch(base + p, { headers });
     assert.equal(res.status, 404, `GET ${p}`);
     assert.deepEqual(await res.json(), { error: "not found" });

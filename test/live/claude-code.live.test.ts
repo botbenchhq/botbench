@@ -76,7 +76,9 @@ test("live: a one-word turn yields text, usage and turn-end events in order, sto
   assert.equal(reason, "completed");
 
   const types = events.map((e) => e.type);
-  assert.equal(types[0], "session_started");
+  assert.equal(types[0], "user_prompt", "the prompt is the first event of its turn");
+  assert.deepEqual(events[0], { type: "user_prompt", text: "Reply with exactly the word: pong" });
+  assert.equal(types[1], "session_started");
   const text = types.indexOf("text");
   const usage = types.indexOf("usage");
   const ended = types.indexOf("turn_ended");
@@ -95,7 +97,7 @@ test("live: a one-word turn yields text, usage and turn-end events in order, sto
   assert.deepEqual(rows.map((r) => JSON.parse(String(r.payload))), events);
   assert.ok(rows.every((r) => r.turn === 1));
 
-  const started = events[0];
+  const started = events[1];
   assert.ok(started?.type === "session_started" && started.resumeCursor.length > 0);
   const after = attemptRow(db, session.attemptId);
   assert.equal(after.resume_cursor, started.resumeCursor);

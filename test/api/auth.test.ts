@@ -80,8 +80,9 @@ test("AE10: without a session every route but sign-in is refused, on the loopbac
   const port = server.port;
   const routes: Array<[string, string]> = [
     ["GET", "/health"],
-    ["GET", "/"],
-    ["GET", "/index.html"],
+    // "/" and "/index.html" are the client shell since unit 4: open, and covered in turns.test.ts.
+    ["GET", "/src/server.ts"],
+    ["GET", "/assets"],
     ["GET", "/api/sign-in"],
     ["GET", "/api/runs"],
     ["GET", `/${LOGIN_TOKEN_FILE}`],
