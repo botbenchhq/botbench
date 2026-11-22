@@ -109,7 +109,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await expect(files.getByRole("button", { name: /marker\.txt/ })).toHaveText(/marker\.txt.*added/);
   const branch = (await page.getByTestId("branch").textContent())!;
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
-  await expect(page.getByTestId("not-merged")).toContainText("The commands listed above run without asking; every other shell command waits for your answer first");
+  await expect(page.getByTestId("not-merged")).toContainText("The commands listed above, and those you gave standing permission (see Trust), run without asking; every other shell command waits for your answer first");
   await expect(page.getByRole("button", { name: /always|standing|every time|remember/i })).toHaveCount(0);
   await checkDesign(page, "task, finished on a pre-approved command");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-task.png"), fullPage: true });

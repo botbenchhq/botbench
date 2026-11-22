@@ -9,5 +9,6 @@
     "planner": { "driver": "claude-code" },
     "implementer": { "driver": "claude-code" },
     "reviewer": { "driver": "claude-code" }
-  }
+  },
+  "autonomy": { "offerStandingAfter": 3 }
 }

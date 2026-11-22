@@ -25,7 +25,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The navigation lists the screens that exist, and gets to each.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Turn", "Tasks", "New task"]);
+  await expect(nav.getByRole("link")).toHaveText(["Turn", "Tasks", "New task", "Trust"]);
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Turn");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
@@ -99,7 +99,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
   await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.",
+    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, unless you gave it standing permission (see Trust), and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.",
   );
   // No primary action on this screen, and nothing that claims to accept, reject, merge or push.
   await expect(page.getByRole("button", { name: /accept|reject|merge|push|approve|stop/i })).toHaveCount(0);

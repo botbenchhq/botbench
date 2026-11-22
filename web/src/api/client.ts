@@ -14,7 +14,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean }
   | { type: "permission_denied"; id: string; name: string; reason: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -222,6 +222,61 @@ export interface Approval {
   parkedAt: string | null;
   /** The owner's answer to such a request, stored until the resumed task asks again. The status stays pending until then. */
   storedDecision: "allow" | "decline" | null;
+  /** Present when this card may offer standing permission: the scope the grant would have. The server decides this, and decides again when it is asked for. */
+  standingOffer?: StandingOffer;
+}
+
+/** The scope of a standing permission a card offers. */
+export interface StandingOffer {
+  /** The exact command that would run without asking. */
+  command: string;
+  /** The repository, by its full path. */
+  repo: string;
+  /** Relative to a task's worktree: "." is its top. */
+  cwd: string;
+  role: string;
+  /** How many times the owner has allowed exactly this. */
+  approvals: number;
+}
+
+/** A standing permission in force. */
+export interface StandingGrant {
+  id: number;
+  role: string;
+  repo: string;
+  cwd: string;
+  command: string;
+  /** The task whose card it was given from. */
+  taskId: number | null;
+  grantedAt: string;
+  timesUsed: number;
+  lastUsedAt: string | null;
+}
+
+export type LogRule =
+  | "asked_owner"
+  | "owner_allowed"
+  | "owner_declined"
+  | "ended_unanswered"
+  | "auto_worktree_edit"
+  | "broker_failure_denied"
+  | "stored_answer_applied"
+  | "stored_answer_discarded"
+  | "preapproved"
+  | "standing"
+  | "standing_granted"
+  | "standing_revoked";
+
+/** One entry of the action log: what was asked, decided or run, and by which rule. */
+export interface LogEntry {
+  id: number;
+  ts: string;
+  taskId: number | null;
+  rule: LogRule;
+  tool: string;
+  command: string;
+  cwd: string;
+  detail: string | null;
 }
 
 /** The approvals waiting for the owner's answer, oldest first. One whose answer is already stored no longer waits for the owner. */
@@ -229,6 +284,15 @@ export const listPendingApprovals = async (): Promise<Approval[]> =>
   (await request<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals.filter((approval) => approval.storedDecision === null);
 export const answerApproval = (id: number, decision: "allow" | "decline", note?: string): Promise<{ approval: Approval }> =>
   request("POST", `/api/approvals/${id}`, note === undefined || note.trim() === "" ? { decision } : { decision, note }, 30_000);
+
+/** Allow this request and give its command standing permission, with the scope its card offered. The server refuses a card that may not offer one. */
+export const grantStanding = (id: number): Promise<{ approval: Approval; grant: StandingGrant }> => request("POST", `/api/approvals/${id}`, { decision: "allow", standing: true }, 30_000);
+/** The standing permissions in force, and after how many approvals a card offers one. */
+export const listGrants = (): Promise<{ grants: StandingGrant[]; offerStandingAfter: number }> => request("GET", "/api/grants", undefined, 30_000);
+export const revokeGrant = (id: number): Promise<{ revoked: StandingGrant }> => request("POST", `/api/grants/${id}/revoke`, {}, 30_000);
+/** One page of the action log, newest first: the entries older than `before`, or the newest. `older` says whether more remain. */
+export const getActionLog = (limit: number, before?: number): Promise<{ entries: LogEntry[]; older: boolean }> =>
+  request("GET", `/api/action-log?limit=${limit}${before === undefined ? "" : `&before=${before}`}`, undefined, 30_000);
 
 /** An approval was asked for or answered. The approvals themselves are read from their route. */
 export interface ApprovalAnnouncement {

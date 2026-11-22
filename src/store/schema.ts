@@ -247,4 +247,58 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // Standing permissions. A standing grant is a row of `grants` with no run; it is taken back by a row of
+    // `grant_revocations`, which like the grant itself is never changed or removed, so what was granted and when it
+    // was taken back both stay on record. The action log gains three rules: a command that ran on a standing grant,
+    // the owner giving one, and the owner taking one back; each names its grant. A check cannot be altered in place,
+    // so the table is made again with every row kept, its ids included. The log is also indexed by grant, for how
+    // often a grant was used, and by approval, for counting the owner's approvals.
+    name: "standing permissions",
+    sql: `
+CREATE TRIGGER grants_standing_has_no_run BEFORE INSERT ON grants WHEN NEW.kind = 'standing' AND NEW.run_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a standing grant belongs to no run'); END;
+CREATE TABLE grant_revocations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  grant_id INTEGER NOT NULL UNIQUE REFERENCES grants (id),
+  revoked_at TEXT NOT NULL
+);
+CREATE TRIGGER grant_revocations_standing_only BEFORE INSERT ON grant_revocations
+WHEN (SELECT kind FROM grants WHERE id = NEW.grant_id) IS NOT 'standing'
+BEGIN SELECT RAISE(ABORT, 'only a standing grant is taken back'); END;
+CREATE TRIGGER grant_revocations_no_update BEFORE UPDATE ON grant_revocations
+BEGIN SELECT RAISE(ABORT, 'a revocation is never changed'); END;
+CREATE TRIGGER grant_revocations_no_delete BEFORE DELETE ON grant_revocations
+BEGIN SELECT RAISE(ABORT, 'a revocation is never removed'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+ALTER TABLE action_log RENAME TO action_log_before_standing;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id FROM action_log_before_standing ORDER BY id;
+DROP TABLE action_log_before_standing;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

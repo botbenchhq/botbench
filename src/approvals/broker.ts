@@ -6,8 +6,9 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
-import { gate, summarize, type FloorSettings } from "./gate.ts";
-import { realRepo, runGrants, showWords, type Grant } from "./grants.ts";
+import { gate, real, summarize, type FloorSettings } from "./gate.ts";
+import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
+import { splitPlain } from "./shell.ts";
 
 /*
  * The permission broker. Everything an agent wants to do that is not an edit
@@ -23,10 +24,15 @@ import { realRepo, runGrants, showWords, type Grant } from "./grants.ts";
  *               cannot answer an approval.
  * Whatever goes wrong on either way, the outcome is a refusal.
  *
- * Grants are read in request() only. A command on its run's pre-approved list is allowed there without an
- * approval, after the safety floor had its say, and logged with the grant it ran on. The socket is never told
- * of a grant: for every shell command, pre-approved or not, the hook hears "ask", and the CLI's request that
- * follows is what request() answers.
+ * Grants are read in request() only. A command on its run's pre-approved list, or one the owner gave standing
+ * permission, is allowed there without an approval, after the safety floor had its say, and logged with the grant
+ * it ran on. The socket is never told of a grant: for every shell command, granted or not, the hook hears "ask",
+ * and the CLI's request that follows is what request() answers.
+ *
+ * Standing permission is earned: once the owner has allowed the same command for the same role, repository and
+ * directory the configured number of times, the next card for it may offer one. How often that was is counted
+ * from the approvals and the log each time it is asked; nothing else holds the number. Only the owner's answer,
+ * through the signed-in API, turns an offer into a grant, and only the owner takes one back.
  *
  * Across a restart: an approval that was pending when Smelt stopped stays pending and is marked parked. Nothing
  * waits for it in this process, so the owner's answer cannot be handed to anyone: it is stored on the approval.
@@ -51,7 +57,35 @@ export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 export const APPROVAL_STATUSES: readonly ApprovalStatus[] = ["pending", "allowed", "declined", "superseded"];
 export type Decision = "allow" | "decline";
 /** Why something ran or did not: the rule that decided. */
-export type LogRule = "asked_owner" | "owner_allowed" | "owner_declined" | "ended_unanswered" | "auto_worktree_edit" | "broker_failure_denied" | "stored_answer_applied" | "stored_answer_discarded" | "preapproved";
+export type LogRule =
+  | "asked_owner"
+  | "owner_allowed"
+  | "owner_declined"
+  | "ended_unanswered"
+  | "auto_worktree_edit"
+  | "broker_failure_denied"
+  | "stored_answer_applied"
+  | "stored_answer_discarded"
+  | "preapproved"
+  /** A command ran on a standing permission; the owner gave one; the owner took one back. Each entry names its grant. */
+  | "standing"
+  | "standing_granted"
+  | "standing_revoked";
+/** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
+export const OFFER_STANDING_AFTER = 3;
+
+/** What a card offers when its command has been allowed often enough: the scope a standing permission would have, in the grant's own terms. */
+export interface StandingOffer {
+  /** The command, as one line that splits into the words that would be granted. */
+  command: string;
+  /** The source repository's real path. */
+  repo: string;
+  /** Relative to the worktree's top. */
+  cwd: string;
+  role: string;
+  /** How many times the owner has allowed exactly this so far. */
+  approvals: number;
+}
 
 export interface Approval {
   id: number;
@@ -85,7 +119,7 @@ export interface LogEntry {
   taskId: number | null;
   attemptId: number | null;
   approvalId: number | null;
-  /** The grant a pre-approved command ran on. */
+  /** The grant a pre-approved or standing command ran on, or the standing grant that was given or taken back. */
   grantId: number | null;
   rule: LogRule;
   tool: string;
@@ -117,6 +151,8 @@ export interface Answer {
   refused: string | null;
   /** Set when the request was allowed on the run's pre-approved list and the owner was not asked: the grant it ran on. */
   preapproved?: { grantId: number };
+  /** Set when the request was allowed on a standing permission and the owner was not asked: the grant it ran on. */
+  standing?: { grantId: number };
 }
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
@@ -156,6 +192,22 @@ export interface Broker {
    * For a parked approval the answer is stored, the approval stays pending, and the listeners of `onStoredAnswer` are told.
    */
   answer(id: number, decision: Decision, note?: string | null): Approval;
+  /** How many approvals of the same command earn the offer of standing permission. */
+  readonly offerStandingAfter: number;
+  /**
+   * What the card of a pending approval may offer as standing permission, or null when it may offer none: the
+   * request is not one plain shell command, the floor always asks about it, its directory is not known, it was
+   * asked before a restart, it already has standing permission, or it was not allowed often enough yet.
+   */
+  standingOffer(id: number): StandingOffer | null;
+  /**
+   * The owner's answer "allow, and stop asking for this": the approval is allowed and a standing grant with the
+   * offered scope is stored, with both log entries, in one write. Throws `ApprovalError` for an unknown approval
+   * (404) and for one that is not pending or may not be offered standing permission (409); nothing is written then.
+   */
+  grantStanding(id: number): { approval: Approval; grant: StandingGrant };
+  /** The owner takes a standing permission back. Throws `ApprovalError`: 404 when there is none with this id, 409 when it was already taken back. */
+  revokeStanding(id: number): StandingGrant;
   /** Be told when the owner's answer to a parked approval was stored, so its task can be re-driven. */
   onStoredAnswer(listener: (approval: Approval) => void): void;
   /** End every pending approval of a task that cannot go on, with the reason for the log. Stored answers among them are discarded. */
@@ -218,22 +270,40 @@ export function pendingApprovals(db: DatabaseSync, taskId: number): Approval[] {
   return db.prepare(`SELECT ${APPROVAL_COLUMNS} WHERE a.task_id = ? AND a.status = 'pending' ORDER BY a.id`).all(taskId).map(toApproval);
 }
 
+const toLogEntry = (row: Record<string, unknown>): LogEntry => ({
+  id: Number(row.id),
+  ts: String(row.ts),
+  taskId: int(row.task_id),
+  attemptId: int(row.attempt_id),
+  approvalId: int(row.approval_id),
+  grantId: int(row.grant_id),
+  rule: String(row.rule) as LogRule,
+  tool: String(row.tool),
+  command: String(row.command),
+  cwd: String(row.cwd),
+  detail: text(row.detail),
+});
+
 /** The action log, oldest first; everything or one task's. The log is only ever read here and added to by the broker. */
 export function actionLog(db: DatabaseSync, taskId?: number): LogEntry[] {
   const rows = taskId === undefined ? db.prepare("SELECT * FROM action_log ORDER BY id").all() : db.prepare("SELECT * FROM action_log WHERE task_id = ? ORDER BY id").all(taskId);
-  return rows.map((row) => ({
-    id: Number(row.id),
-    ts: String(row.ts),
-    taskId: int(row.task_id),
-    attemptId: int(row.attempt_id),
-    approvalId: int(row.approval_id),
-    grantId: int(row.grant_id),
-    rule: String(row.rule) as LogRule,
-    tool: String(row.tool),
-    command: String(row.command),
-    cwd: String(row.cwd),
-    detail: text(row.detail),
-  }));
+  return rows.map(toLogEntry);
+}
+
+/** The most entries one page of the action log holds, and how many it holds when the reader does not say. */
+export const MAX_LOG_PAGE = 200;
+export const LOG_PAGE = 50;
+
+/**
+ * One page of the action log, newest first: at most `limit` entries older than the entry `before` (the newest
+ * when left out), everything or one task's. `older` says whether entries older than the page exist. Entries are
+ * only ever added, with rising ids, so a page named by `before` holds the same entries whenever it is read.
+ */
+export function actionLogPage(db: DatabaseSync, o: { before?: number; limit?: number; taskId?: number }): { entries: LogEntry[]; older: boolean } {
+  const limit = Math.min(o.limit ?? LOG_PAGE, MAX_LOG_PAGE);
+  const where = ["id < ?", ...(o.taskId === undefined ? [] : ["task_id = ?"])].join(" AND ");
+  const rows = db.prepare(`SELECT * FROM action_log WHERE ${where} ORDER BY id DESC LIMIT ?`).all(o.before ?? Number.MAX_SAFE_INTEGER, ...(o.taskId === undefined ? [] : [o.taskId]), limit + 1);
+  return { entries: rows.slice(0, limit).map(toLogEntry), older: rows.length > limit };
 }
 
 interface LogWrite {
@@ -272,8 +342,18 @@ interface Reply {
 const hashOf = (secret: string): string => createHash("sha256").update(secret).digest("hex");
 const shorten = (s: string, max = 500): string => (s.length > max ? `${s.slice(0, max)}…` : s);
 
-export function createBroker(options: { db: DatabaseSync; home: string; onChange: (approval: Approval) => void; /** Entries the owner's config adds to the safety floor. */ floor?: readonly FloorEntry[] }): Broker {
+export function createBroker(options: {
+  db: DatabaseSync;
+  home: string;
+  onChange: (approval: Approval) => void;
+  /** Entries the owner's config adds to the safety floor. */
+  floor?: readonly FloorEntry[];
+  /** How many approvals of the same command earn the offer of standing permission: a whole number of at least 1. */
+  offerStandingAfter?: number;
+}): Broker {
   const { db } = options;
+  const offerStandingAfter = options.offerStandingAfter ?? OFFER_STANDING_AFTER;
+  if (!Number.isSafeInteger(offerStandingAfter) || offerStandingAfter < 1) throw new Error(`offerStandingAfter must be a whole number of at least 1, not ${String(options.offerStandingAfter)}.`);
   const floorSettings: FloorSettings = { home: os.homedir(), dataDir: options.home, ...(options.floor ? { extra: options.floor } : {}) };
   const socketPath = path.join(options.home, SOCKET_FILE);
   /** Admissions by the hash of their secret: the secret itself is held only by the admission and the CLI child. */
@@ -333,7 +413,7 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
     }
   };
 
-  type RequestVerdict = { verdict: "ask"; floor?: string } | { verdict: "deny"; reason: string } | { verdict: "allow"; rule: "preapproved"; grant: Grant };
+  type RequestVerdict = { verdict: "ask"; floor?: string } | { verdict: "deny"; reason: string } | { verdict: "allow"; rule: "preapproved" | "standing"; grant: Grant };
 
   /**
    * The gate's word on a permission request of the CLI. Only a shell command can come out allowed, and only when
@@ -350,11 +430,16 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
       const input = known ? r.input : { command: r.command };
       const task = db.prepare("SELECT repo_path, run_id FROM tasks WHERE id = ?").get(r.taskId);
       const runId = known && task && typeof task.run_id === "number" ? task.run_id : null;
-      const grants = runId === null ? [] : runGrants(db, runId);
-      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, ...(task && runId !== null ? { scope: { role: r.role, repo: realRepo(String(task.repo_path)), runId } } : {}) }, grants, floorSettings);
+      // Who asks and where: only then can a grant apply. The repository is the task's, by the real path stored when
+      // the task was started, so a standing permission earned in one task's worktree is the same one in the next task's.
+      const scope = known && task ? { role: r.role, repo: String(task.repo_path), runId } : undefined;
+      // Read from the store for this request: a standing permission taken back a moment ago is not among them.
+      const grants = scope === undefined ? [] : [...(runId === null ? [] : runGrants(db, runId)), ...standingGrants(db, scope)];
+      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, ...(scope === undefined ? {} : { scope }) }, grants, floorSettings);
       if (verdict.verdict !== "allow") return verdict;
-      const grant = verdict.rule === "preapproved" ? grants.find((g) => g.id === verdict.grantId) : undefined;
-      return grant ? { verdict: "allow", rule: "preapproved", grant } : { verdict: "ask" };
+      if (verdict.rule !== "preapproved" && verdict.rule !== "standing") return { verdict: "ask" };
+      const grant = grants.find((g) => g.id === verdict.grantId);
+      return grant ? { verdict: "allow", rule: verdict.rule, grant } : { verdict: "ask" };
     } catch (err) {
       // The gate could not be asked: nothing is allowed on it, and the owner decides.
       console.error(`The gate could not decide about a request of task ${r.taskId}: ${words(err)}`);
@@ -404,18 +489,20 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
         supersedeWhere(`After the restart the agent asked for something else first (${shorten(r.tool, 100)}: ${shorten(r.command, 300)}), so the owner's stored answer was not used.`, stillCarried, ticket.taskId, ticket.resumes);
       }
     }
-    // What Smelt itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list.
+    // What Smelt itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
-    if (verdict.verdict === "allow" && verdict.rule === "preapproved") {
+    if (verdict.verdict === "allow") {
       const grant = verdict.grant;
+      const standing = verdict.rule === "standing";
       try {
         // What cannot be logged does not run.
-        appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, grantId: grant.id, rule: "preapproved", tool: r.tool, command: r.command, cwd, detail: `Pre-approved for this task's run when it was started: ${showWords(grant.words)}` });
+        const detail = standing ? `Standing permission ${grant.id}, given from a card of task ${grant.taskId ?? "?"}: ${showWords(grant.words)}` : `Pre-approved for this task's run when it was started: ${showWords(grant.words)}`;
+        appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, grantId: grant.id, rule: verdict.rule, tool: r.tool, command: r.command, cwd, detail });
       } catch (err) {
-        return deny(`This pre-approved command could not be recorded, so it was not let through: ${words(err)}`);
+        return deny(`This ${standing ? "command with standing permission" : "pre-approved command"} could not be recorded, so it was not let through: ${words(err)}`);
       }
-      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, preapproved: { grantId: grant.id } });
+      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, ...(standing ? { standing: { grantId: grant.id } } : { preapproved: { grantId: grant.id } }) });
     }
     const always = verdict.verdict === "ask" && verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null;
     let id: number;
@@ -478,6 +565,91 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
     return approval;
   };
 
+  const whereWords = (cwd: string): string => (cwd === "." ? "the top of the worktree" : cwd);
+
+  /**
+   * Whether a pending approval may be offered standing permission, decided from Smelt's own records and never from
+   * what a client sends: the approval's row, its task, its attempt's admission, the floor, the grants and the log.
+   * Answers the offer and the words to grant, or, as text, why there is none. Anything that cannot be read is a no.
+   */
+  const eligibility = (approval: Approval): { offer: StandingOffer; granted: string[] } | string => {
+    if (approval.status !== "pending") return `it is already ${approval.status}`;
+    // Asked before a restart: nothing waits for the answer here, and the task is resumed by an ordinary answer.
+    if (approval.parkedAt !== null || approval.storedDecision !== null || !waiters.has(approval.id)) return "it was asked before Smelt restarted";
+    // A grant for a tool's name would allow that tool with any input, and the floor reads command lines only.
+    if (approval.tool !== "Bash") return "only a shell command can have one";
+    const ticket = [...tickets.values()].find((t) => t.attemptId === approval.attemptId);
+    if (!ticket || ticket.taskId !== approval.taskId || ticket.role !== approval.role) return "its attempt is no longer running";
+    // The directory must be written the one way a directory inside the worktree is written, and be inside it with links followed.
+    const outside = (relative: string): boolean => relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    if (approval.cwd === "" || path.normalize(approval.cwd) !== approval.cwd || outside(approval.cwd) || outside(path.relative(ticket.worktree, real(path.resolve(ticket.worktree, approval.cwd))))) {
+      return "the directory it was asked from is not known to be inside the task's worktree";
+    }
+    try {
+      const split = splitPlain(approval.command);
+      // The floor is asked with the command as the card shows it: the same reading that makes it always ask.
+      const verdict = gate({ tool: "Bash", input: { command: approval.command }, worktree: ticket.worktree, cwd: path.resolve(ticket.worktree, approval.cwd) }, [], floorSettings);
+      if (verdict.verdict !== "ask" || verdict.floor !== undefined) return verdict.verdict === "ask" ? `Smelt always asks about it (${verdict.floor})` : "it is not a command Smelt asks about";
+      if (split === null) return "it is not one plain command";
+      const problem = standingProblem(split);
+      if (problem !== null) return problem;
+      const task = db.prepare("SELECT repo_path FROM tasks WHERE id = ?").get(approval.taskId);
+      if (!task) return "its task is not known";
+      const repo = String(task.repo_path);
+      const same = JSON.stringify(split);
+      if (standingGrants(db, { role: approval.role, repo }).some((grant) => grant.cwd === approval.cwd && JSON.stringify(grant.words) === same)) return "it already has one";
+      const approvals = approvalCount(db, { role: approval.role, repo, cwd: approval.cwd, tool: approval.tool, words: split });
+      if (approvals < offerStandingAfter) return `you have allowed it ${approvals} of the ${offerStandingAfter} times that earn one`;
+      return { offer: { command: showWords(split), repo, cwd: approval.cwd, role: approval.role, approvals }, granted: split };
+    } catch (err) {
+      console.error(`Whether approval ${approval.id} may be offered standing permission could not be decided: ${words(err)}`);
+      return "Smelt could not check it";
+    }
+  };
+
+  const standingOffer = (id: number): StandingOffer | null => {
+    const approval = getApproval(db, id);
+    if (!approval) return null;
+    const found = eligibility(approval);
+    return typeof found === "string" ? null : found.offer;
+  };
+
+  const grantStanding = (id: number): { approval: Approval; grant: StandingGrant } => {
+    // The answer, the grant and their log entries are one write: none exists without the others.
+    const grantId = transaction(db, () => {
+      const current = getApproval(db, id);
+      if (!current) throw new ApprovalError(404, "No such approval.");
+      if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
+      const found = eligibility(current);
+      if (typeof found === "string") throw new ApprovalError(409, `This request cannot be given standing permission: ${found}. Nothing was allowed; answer it with Allow or Decline.`);
+      const answered = db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ? AND status = 'pending'").run(now(), id);
+      if (Number(answered.changes) !== 1) throw new ApprovalError(409, "This approval is no longer waiting for an answer.");
+      const about = { taskId: current.taskId, attemptId: current.attemptId, approvalId: id, tool: current.tool, command: current.command, cwd: current.cwd };
+      appendLog(db, { ...about, rule: "owner_allowed" });
+      const granted = insertStanding(db, { role: found.offer.role, repo: found.offer.repo, cwd: found.offer.cwd, words: found.granted, taskId: current.taskId });
+      appendLog(db, { ...about, grantId: granted, rule: "standing_granted", detail: `For the ${found.offer.role} in ${found.offer.repo}, from ${whereWords(found.offer.cwd)}, after ${found.offer.approvals} approval${found.offer.approvals === 1 ? "" : "s"}: ${found.offer.command}` });
+      return granted;
+    });
+    waiters.get(id)!({ decision: "allow", note: null, approvalId: id, refused: null });
+    waiters.delete(id);
+    announce(id);
+    return { approval: getApproval(db, id)!, grant: listStanding(db).find((grant) => grant.id === grantId)! };
+  };
+
+  const revokeStanding = (id: number): StandingGrant =>
+    transaction(db, () => {
+      const found = findStanding(db, id);
+      if (!found) throw new ApprovalError(404, "No such standing permission.");
+      if (found.revoked) throw new ApprovalError(409, "This standing permission was already taken back.");
+      const { grant } = found;
+      const listed = listStanding(db).find((g) => g.id === id);
+      const command = showWords(grant.words);
+      insertRevocation(db, id);
+      // Taken back and on record together. No request is being decided in between: this process does one thing at a time.
+      appendLog(db, { taskId: null, attemptId: null, grantId: id, rule: "standing_revoked", tool: "Bash", command, cwd: grant.cwd, detail: `Was for the ${grant.role} in ${grant.repo}, from ${whereWords(grant.cwd)}.` });
+      return listed ?? { id, role: grant.role, repo: grant.repo, cwd: grant.cwd, command, taskId: grant.taskId, grantedAt: grant.createdAt, timesUsed: 0, lastUsedAt: null };
+    });
+
   /** Answer one message from the socket. Everything that is not a well-formed question from a live attempt is denied. */
   const decide = (line: string): Reply => {
     const denied = (reason: string, about: Partial<LogWrite> = {}): Reply => {
@@ -503,10 +675,11 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
     // Asked without grants: nothing a grant allows is ever said over the socket. A shell command hears "ask" here, and
     // the CLI's own request for it is then decided in request(), with the grants, inside this process.
     const verdict = gate({ tool, input, worktree: ticket.worktree, cwd }, [], floorSettings);
-    const relative = path.relative(ticket.worktree, cwd);
+    // With links followed: a directory that is a link out of the worktree is recorded as where it leads.
+    const relative = path.relative(ticket.worktree, real(cwd));
     const from = relative === "" ? "." : relative;
     if (verdict.verdict === "deny") return denied(`Smelt's permission gate refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
-    if (verdict.verdict === "ask" || verdict.rule === "preapproved") {
+    if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing") {
       if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
       ticket.seen.set(toolCallId, from);
       return { verdict: "ask", reason: "Smelt asks the owner before this runs." };
@@ -686,5 +859,5 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
 
   const endParked = (taskId: number, why: string): void => supersedeWhere(why, "task_id = ?", taskId);
 
-  return { socketPath, listen, admit, request, answer, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
+  return { socketPath, offerStandingAfter, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
 }

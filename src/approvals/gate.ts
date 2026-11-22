@@ -9,8 +9,8 @@ import { splitPlain } from "./shell.ts";
  * The gate: what Smelt itself decides about a tool call before anyone is asked. It is a function of the
  * request, the grants and the safety floor: it writes nothing and asks nobody, and reads the file system only to
  * follow the links in a path.
- *   allow   the call may run, and `rule` says why: an edit or a read inside the worktree, or a command the
- *           owner pre-approved for this run
+ *   allow   the call may run, and `rule` says why: an edit or a read inside the worktree, a command the
+ *           owner pre-approved for this run, or one the owner gave standing permission
  *   ask     the owner decides; `floor` names the floor rule when it is the floor that says so
  *   deny    the call cannot be put to anyone as it is
  * The floor is asked before any grant, so no grant gets past it.
@@ -41,6 +41,8 @@ export type GateVerdict =
   | { verdict: "allow"; rule: "auto_worktree_edit" | "worktree_read" }
   /** A command on the run's pre-approved list. */
   | { verdict: "allow"; rule: "preapproved"; grantId: number }
+  /** A command the owner gave standing permission: the whole command, for this role, repository and directory. */
+  | { verdict: "allow"; rule: "standing"; grantId: number }
   /** The owner decides. `floor` is the floor rule that makes this always ask, when one does. */
   | { verdict: "ask"; floor?: string }
   /** Refused without asking anyone. */
@@ -103,7 +105,7 @@ const reachesOut = (pattern: unknown): boolean => typeof pattern === "string" &&
 /** The fields of a shell call that say nothing about what runs beyond the command itself. */
 const PLAIN_SHELL_FIELDS = new Set(["command", "description"]);
 
-/** Decide about a shell command: the floor first, then the run's pre-approved list. */
+/** Decide about a shell command: the floor first, then the grants (the run's pre-approved list and the standing permissions). */
 function shellVerdict(request: GateRequest, input: Record<string, unknown>, grants: readonly Grant[], settings: FloorSettings): GateVerdict {
   const { command } = input;
   if (typeof command !== "string" || command === "") return { verdict: "ask" };
@@ -116,7 +118,7 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
   if (words === null || request.scope === undefined) return { verdict: "ask" };
   const relative = path.relative(request.worktree, request.cwd);
   const grant = matchGrant({ ...request.scope, cwd: relative === "" ? "." : relative, words }, grants);
-  return grant === null ? { verdict: "ask" } : { verdict: "allow", rule: "preapproved", grantId: grant.id };
+  return grant === null ? { verdict: "ask" } : { verdict: "allow", rule: grant.kind === "standing" ? "standing" : "preapproved", grantId: grant.id };
 }
 
 /**

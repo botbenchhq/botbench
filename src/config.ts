@@ -64,6 +64,19 @@ export interface Config {
   repositories?: Record<string, RepositoryConfig>;
   /** Entries added to the safety floor. The built-in rules cannot be removed or changed from here. */
   floor?: FloorConfig[];
+  /** How trust is earned. */
+  autonomy?: AutonomyConfig;
+}
+export interface AutonomyConfig {
+  /** After the owner has allowed the same command this many times, its next card offers standing permission. A whole number of at least 1; 3 when absent. */
+  offerStandingAfter?: number;
+}
+const OFFER_STANDING_AFTER = 3;
+const AUTONOMY_SETTINGS = ["offerStandingAfter"] as const;
+
+/** How many approvals of the same command earn the offer of standing permission. */
+export function offerStandingAfter(config: Config): number {
+  return config.autonomy?.offerStandingAfter ?? OFFER_STANDING_AFTER;
 }
 
 type Json = Record<string, unknown>;
@@ -104,7 +117,7 @@ function validate(c: Json, where: string): Config {
   const fail = (message: string): never => {
     throw new Error(`${where}: ${message}`);
   };
-  const { port, listen, publicHosts, drivers, roles, repositories, floor } = c;
+  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy } = c;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) fail(`"port" must be a whole number from 0 to 65535.`);
   if (!Array.isArray(listen) || listen.length === 0 || !listen.every((a) => typeof a === "string" && a !== "")) {
     fail(`"listen" must be a non-empty list of addresses.`);
@@ -146,6 +159,14 @@ function validate(c: Json, where: string): Config {
       if (FLOOR_RULES.some((rule) => rule.name === entry.name)) fail(`"floor" has an entry named "${entry.name}", which is the name of a built-in rule. Built-in rules cannot be replaced; give the entry its own name.`);
       if (splitPlain(entry.command) === null) fail(`"floor" entry "${entry.name}": its command must be one plain command, such as "npm publish".`);
     }
+  }
+  if (autonomy !== undefined) {
+    if (!isObject(autonomy)) return fail(`"autonomy" must be an object, such as { "offerStandingAfter": 3 }.`);
+    for (const setting of Object.keys(autonomy)) {
+      if (!(AUTONOMY_SETTINGS as readonly string[]).includes(setting)) fail(`"autonomy" has unknown setting "${setting}". Known settings: ${AUTONOMY_SETTINGS.join(", ")}.`);
+    }
+    const after = autonomy.offerStandingAfter;
+    if (after !== undefined && !(typeof after === "number" && Number.isSafeInteger(after) && after >= 1)) fail(`"autonomy.offerStandingAfter" must be a whole number of at least 1: how many times you allow the same command before its card offers standing permission.`);
   }
   return c as unknown as Config;
 }

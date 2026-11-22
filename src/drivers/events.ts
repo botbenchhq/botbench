@@ -28,10 +28,11 @@ export type DriverEvent =
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
   /**
    * A permission request ended: the owner allowed or declined it (`note` is the owner's, for the agent), Smelt let it
-   * run on the run's pre-approved list without asking the owner (`preapproved`), Smelt refused it without asking the
-   * owner (`denied`, `note` says why), or the CLI stopped waiting (`cancelled`).
+   * run on the run's pre-approved list without asking the owner (`preapproved`) or on a standing permission the owner
+   * gave earlier (`standing`), Smelt refused it without asking the owner (`denied`, `note` says why), or the CLI
+   * stopped waiting (`cancelled`).
    */
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "declined" | "denied" | "cancelled"; note: string | null }
   /** Tokens one turn used. No money: whether a turn costs dollars depends on the login, not on the CLI's printout. */
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   /** The CLI reported where the login stands against its limit. `limited` means the limit was hit. */
@@ -52,4 +53,6 @@ export interface PermissionResponse {
   refused?: string | null;
   /** True when an allow comes from the run's pre-approved list and the owner was not asked. The transcript then says so, and not that the owner allowed. */
   preapproved?: boolean;
+  /** True when an allow comes from a standing permission and the owner was not asked this time. The transcript then says so, and not that the owner allowed. */
+  standing?: boolean;
 }

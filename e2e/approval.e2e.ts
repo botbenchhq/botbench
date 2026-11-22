@@ -126,7 +126,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(files.getByRole("button", { name: /marker\.txt/ })).toHaveText(/marker\.txt.*added.*\+1.*−0/);
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.",
+    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, unless you gave it standing permission (see Trust), and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.",
   );
   await checkDesign(page, "task, finished after an approval");
 

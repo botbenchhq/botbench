@@ -11,6 +11,7 @@ const SCREENS = [
   { name: "turn", label: "Turn", href: "#/turn" },
   { name: "tasks", label: "Tasks", href: "#/tasks" },
   { name: "new-task", label: "New task", href: "#/tasks/new" },
+  { name: "trust", label: "Trust", href: "#/trust" },
 ] as const;
 type ScreenName = (typeof SCREENS)[number]["name"];
 

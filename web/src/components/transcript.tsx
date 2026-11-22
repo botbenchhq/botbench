@@ -66,7 +66,7 @@ function Row({ event, calls, preapproved }: { event: StoredEvent; calls: Map<str
         </li>
       );
     case "permission_request":
-      // A request Smelt answered itself from the pre-approved list never waited for the owner: its outcome row says what happened.
+      // A request Smelt answered itself, from the pre-approved list or a standing permission, never waited for the owner: its outcome row says what happened.
       if (preapproved.has(e.toolCallId)) return null;
       return (
         <Line kind={e.type} label="Asked you">
@@ -78,11 +78,12 @@ function Row({ event, calls, preapproved }: { event: StoredEvent; calls: Map<str
       const said = {
         allowed: `You allowed ${what}.`,
         preapproved: `${what} ran without asking you: it is on this task's pre-approved list.`,
+        standing: `${what} ran without asking you: you gave it standing permission. Trust lists it, and takes it back.`,
         declined: `You declined ${what}. It was not run.`,
         denied: `Smelt denied ${what} without asking you. It was not run.`,
         cancelled: `The request for ${what} ended without an answer. It was not run.`,
       }[e.decision];
-      const label = { allowed: "Allowed", preapproved: "Pre-approved", declined: "Declined", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
+      const label = { allowed: "Allowed", preapproved: "Pre-approved", standing: "Standing permission", declined: "Declined", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
       return (
         <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
           <span className="font-medium uppercase">{label}</span>
@@ -137,7 +138,7 @@ export function Transcript({ events, working }: { events: StoredEvent[]; working
     for (const { payload } of events) if (payload.type === "tool_call") byId.set(payload.id, callWords(payload.name, payload.input));
     return byId;
   }, [events]);
-  const preapproved = useMemo(() => new Set(events.flatMap(({ payload }) => (payload.type === "permission_resolved" && payload.decision === "preapproved" ? [payload.toolCallId] : []))), [events]);
+  const preapproved = useMemo(() => new Set(events.flatMap(({ payload }) => (payload.type === "permission_resolved" && (payload.decision === "preapproved" || payload.decision === "standing") ? [payload.toolCallId] : []))), [events]);
   return (
     <ol role="log" aria-live="polite" className="flex flex-col gap-sm font-mono text-mono">
       {events.map((event) => (

@@ -217,7 +217,7 @@ export function shellWatch(): (event: DriverEvent) => boolean {
   const allowed = new Set<string>();
   return (event) => {
     if (event.type === "tool_call" && event.name === "Bash") shellCalls.add(event.id);
-    else if (event.type === "permission_resolved" && (event.decision === "allowed" || event.decision === "preapproved")) allowed.add(event.toolCallId);
+    else if (event.type === "permission_resolved" && (event.decision === "allowed" || event.decision === "preapproved" || event.decision === "standing")) allowed.add(event.toolCallId);
     else if (event.type === "tool_result" && !event.isError) return shellCalls.has(event.id) && !allowed.has(event.id);
     return false;
   };
@@ -417,7 +417,7 @@ class ClaudeCodeSession implements DriverSession {
     if (given.decision === "allow") {
       // An allow runs the input the owner was shown, unchanged.
       this.answerControl(requestId, { behavior: "allow", updatedInput: request.input });
-      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : "allowed", note: null });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
       this.answerControl(requestId, { behavior: "deny", message: `Smelt's permission gate denied this request without asking the owner: ${why} Nothing was run.` });
