@@ -2,8 +2,9 @@ import type http from "node:http";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
-import { entryProblem, MAX_ENTRIES, realRepo, runGrants, showWords } from "../approvals/grants.ts";
+import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
+import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
@@ -20,6 +21,7 @@ export const MAX_DIFF = 400_000;
  * `waitingOnApproval`: a request of its agent waits for the owner's answer. `parked`: such a request was asked before a
  * restart, so the agent is stopped and the answer will resume the task. `resuming`: the owner's answer to such a request
  * is stored and the task is being started again to receive it.
+ * `ofPlan`: the run it belongs to when it was queued by approving that run's plan, else null. Nothing builds such a task yet.
  * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
@@ -31,6 +33,7 @@ function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,
+    ofPlan: task.runId !== null && getRun(db, task.runId) !== null ? task.runId : null,
     preapproved: task.runId === null ? [] : runGrants(db, task.runId).map((grant) => showWords(grant.words)),
     createdAt, updatedAt,
   };
@@ -46,18 +49,6 @@ async function changedFiles(task: Task): Promise<{ files: FileChange[] | null; f
   }
 }
 
-/**
- * The commands a request pre-approves for its task's run: only what the request itself lists, each one plain command.
- * Anything else is refused with the reason, before a task exists.
- */
-function preapprovedList(given: unknown): string[] {
-  if (given === undefined) return [];
-  if (!Array.isArray(given)) throw new TaskError(400, '"preapproved" must be a list of commands.');
-  if (given.length > MAX_ENTRIES) throw new TaskError(400, `"preapproved" may hold ${MAX_ENTRIES} commands at most.`);
-  const problem = given.map(entryProblem).find((p) => p !== null);
-  if (problem) throw new TaskError(400, problem);
-  return given as string[];
-}
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
@@ -122,7 +113,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       return false;
     }
   } catch (err) {
-    if (err instanceof BodyError || err instanceof TaskError) json(res, err.status, { error: err.message });
+    if (err instanceof BodyError || err instanceof TaskError || err instanceof RunError) json(res, err.status, { error: err.message });
     else throw err;
   }
   return true;

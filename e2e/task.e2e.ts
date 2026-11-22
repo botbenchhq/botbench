@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
 import { startSmelt, tempDir } from "./smelt.ts";
 
 // Tasks in the real client, at a phone's size, against a real Smelt process and real temporary repositories.
@@ -25,15 +25,16 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The navigation lists the screens that exist, and gets to each.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Turn", "Tasks", "New task", "Trust"]);
+  await expect(nav.getByRole("link")).toHaveText(["Turn", "Runs", "Tasks", "Trust"]);
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Turn");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
   await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
   await checkDesign(page, "tasks, none yet");
-  await nav.getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("New task");
+  // New task is an action of the Tasks view, not a destination: no destination is marked while it is open.
+  await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(1);
   await expect(page.getByTestId("repo-state")).toHaveText("Enter the full path of a git repository on this Mac.");
   await checkDesign(page, "new task, empty");
@@ -145,7 +146,7 @@ test("a repository path that cannot be used is reported in words, and Start task
     page.on("request", (request) => {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/tasks") starts.push(request.url());
     });
-    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+    await openNewTask(page);
     const state = page.getByTestId("repo-state");
     const field = page.getByLabel("Repository path");
     await page.getByLabel("Prompt").fill("Create hello.txt");
@@ -210,7 +211,7 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await signIn(page, smelt);
     await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
     const nav = page.getByRole("navigation", { name: "Screens" });
-    await nav.getByRole("link", { name: "New task" }).click();
+    await openNewTask(page);
     await page.getByLabel("Repository path").fill(repo);
     await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
     await page.getByLabel("Prompt").fill("Create hello.txt\nand a second line");
@@ -253,7 +254,7 @@ test("a repository git cannot read in time: the screen leaves Checking and says 
       const url = new URL(request.url());
       if (url.pathname === "/api/repos/check") dropped.push(url.searchParams.get("path") ?? "");
     });
-    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+    await openNewTask(page);
     const state = page.getByTestId("repo-state");
     const field = page.getByLabel("Repository path");
     await page.getByLabel("Prompt").fill("Create hello.txt");
@@ -291,7 +292,7 @@ test("a repository git cannot read in time: the screen leaves Checking and says 
 test("a check Smelt does not answer ends at the client's own time limit, in words", async ({ page, smelt }) => {
   const repo = sourceRepo(smelt.home);
   await signIn(page, smelt);
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   const state = page.getByTestId("repo-state");
   smelt.freeze();
   try {

@@ -9,6 +9,7 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sourceHead, type Worktree } from "../worktrees.ts";
 import { RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
+import { IMPLEMENTER } from "./roles.ts";
 
 /**
  * The stations a task can be at so far. `awaiting_decision` means Smelt has
@@ -49,8 +50,6 @@ export interface Task {
   updatedAt: string;
 }
 
-/** The role a task's one attempt works in. Other roles arrive with the stations that need them. */
-const IMPLEMENTER = "implementer";
 
 /** A request about a task that cannot be met; `status` is the HTTP answer for it. */
 export class TaskError extends Error {
@@ -99,6 +98,17 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: TaskStatu
 };
 
 /**
+ * Write one queued task of a run, with its first event, and return its id. Call it inside the transaction that
+ * creates the run or approves its plan, so the task exists only together with what it belongs to.
+ */
+export function insertQueuedTask(db: DatabaseSync, o: { runId: number; repo: string; prompt: string; requestedModel: string | null }): number {
+  const at = now();
+  const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(o.runId, o.repo, o.prompt, o.requestedModel, at, at).lastInsertRowid);
+  insertEvent(db, id, at, "queued", null);
+  return id;
+}
+
+/**
  * Store a new task as queued, as a run of its own. The row, the grants for the commands the owner pre-approved for
  * that run, and the task's first event are written together: none exists without the others.
  * Throws for a pre-approved command that cannot be a grant, and then nothing is written.
@@ -106,14 +116,13 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: TaskStatu
 export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null; preapproved?: readonly string[] }): Task {
   return transaction(db, () => {
     const at = now();
-    // Runs have no table of their own yet: a new run takes the next number after the highest in use.
-    const runId = Number(db.prepare("SELECT COALESCE(MAX(run_id), 0) + 1 AS next FROM tasks").get()!.next);
     // The repository is kept by its real path as it is now. Grants and counts compare this stored path, so a link
     // that is pointed elsewhere later does not carry one repository's trust to another.
     const repo = realRepo(o.repo);
-    const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(runId, repo, o.prompt, o.requestedModel ?? null, at, at).lastInsertRowid);
+    // A task started on its own is a run of one: it takes the next run id, which no other run or task ever gets.
+    const runId = Number(db.prepare("INSERT INTO runs (kind, repo_path, prompt, created_at, updated_at) VALUES ('single', ?, ?, ?, ?)").run(repo, o.prompt, at, at).lastInsertRowid);
+    const id = insertQueuedTask(db, { runId, repo, prompt: o.prompt, requestedModel: o.requestedModel ?? null });
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId, taskId: id, commands: o.preapproved ?? [] });
-    insertEvent(db, id, at, "queued", null);
     return getTask(db, id)!;
   });
 }
@@ -427,7 +436,8 @@ export function createTasks(options: TasksOptions): Tasks {
     for (const row of db.prepare("SELECT id FROM attempts WHERE pgid IS NOT NULL AND created_at < ? ORDER BY id").all(began)) {
       await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
     }
-    const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building') ORDER BY id").all();
+    // The queued tasks of an approved plan are not on their way anywhere yet: they are their run's to build, and stay queued.
+    const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building') AND NOT (status = 'queued' AND EXISTS (SELECT 1 FROM runs r WHERE r.id = tasks.run_id AND r.kind = 'planned')) ORDER BY id").all();
     for (const row of stale) {
       const task = getTask(db, Number(row.id))!;
       const parked = pendingApprovals(db, task.id);
@@ -460,7 +470,10 @@ export function createTasks(options: TasksOptions): Tasks {
 
   // An answer stored for a parked approval re-drives its task, in its turn like any other work.
   broker.onStoredAnswer((approval) => {
-    chain = chain.then(() => redrive(approval.taskId)).catch(report(`Resuming task ${approval.taskId}`));
+    // A planner's request belongs to no task; a run that was planning when Smelt stopped is ended by the runs engine.
+    const taskId = approval.taskId;
+    if (taskId === null) return;
+    chain = chain.then(() => redrive(taskId)).catch(report(`Resuming task ${taskId}`));
   });
 
   const start = async (repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task> => {

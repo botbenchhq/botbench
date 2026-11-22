@@ -50,6 +50,8 @@ export type GateVerdict =
 
 /** The tools that change a file, and the field of their input that names it. */
 const EDIT_TOOLS: Record<string, string> = { Edit: "file_path", Write: "file_path", NotebookEdit: "notebook_path" };
+/** All a read-only role may use: reading and searching files, and the shell, every command of which asks. */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "Bash"]);
 /** The tools that only read, and the field that names where. A search may leave it out and then means the directory it stands in. */
 const READ_TOOLS: Record<string, string> = { Read: "file_path", Glob: "path", Grep: "path" };
 /** In a worktree these are git's own entry and the CLI's settings: a change to either is not an ordinary edit. */

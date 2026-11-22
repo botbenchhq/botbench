@@ -2,14 +2,18 @@ import type { ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
 import { Icon, type IconName } from "./icon.tsx";
 
-/** The screens the navigation lists. Every one of them exists. */
+/**
+ * The destinations the navigation lists. Every one of them exists. Starting something new is an action, not a
+ * destination: New run and New task are buttons in the Runs and Tasks views, as the design system has it, which
+ * also keeps the phone's tab bar within the five it holds.
+ */
 const SCREENS: readonly { name: string; label: string; href: string; icon: IconName }[] = [
   { name: "turn", label: "Turn", href: "#/turn", icon: "terminal" },
+  { name: "runs", label: "Runs", href: "#/runs", icon: "git-branch" },
   { name: "tasks", label: "Tasks", href: "#/tasks", icon: "file" },
-  { name: "new-task", label: "New task", href: "#/tasks/new", icon: "plus" },
   { name: "trust", label: "Trust", href: "#/trust", icon: "circle-check" },
 ];
-export type ScreenName = "turn" | "tasks" | "new-task" | "trust";
+export type ScreenName = "turn" | "runs" | "tasks" | "trust";
 
 /**
  * What every signed-in screen stands in: the app header with the approvals tray, the banner when there is one, the
@@ -85,14 +89,25 @@ export function Alert({ tone, role, id, testId, title, action, children }: { ton
   );
 }
 
-/** The top of a view: its one h1 and, under it, what the view adds. */
-export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+/** The top of a view: its one h1 and, under it, what the view adds. `action` is the view's own action, beside the title. */
+export function PageHeader({ title, action, children }: { title: string; action?: ReactNode; children?: ReactNode }) {
   return (
     <header className="gw-page-header">
       <div className="gw-page-header__text">
         <h1 className="gw-page-header__title">{title}</h1>
         {children}
       </div>
+      {action !== undefined && <div className="gw-page-header__action">{action}</div>}
     </header>
+  );
+}
+
+/** A list view's one main action: the link to the screen that starts a new one. */
+export function NewLink({ href, children }: { href: string; children: string }) {
+  return (
+    <a href={href} className="gw-button gw-button--primary">
+      <Icon name="plus" className="gw-button__icon" />
+      {children}
+    </a>
   );
 }

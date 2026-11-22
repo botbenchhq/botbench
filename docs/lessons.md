@@ -2,6 +2,14 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: a cancelled run came back, and two screens promised a start nobody would make (unit 11)
+Found by the critique pass, before merge. Start-up recovery read a run, awaited git, then wrote its state without reading it again, so a cancel in between was undone and the run could be approved. A planning worktree outlived a cancel followed by a kill, because recovery looked only at runs still planning. A queued task of an approved plan said "It starts when the tasks before it have finished" on its own screen, and a run waiting its turn said a planner was reading. A criterion could hold line breaks that the owner's screen folded away and the builder's prompt kept. Also: a live test of "the planner cannot write" passed nothing, because the model obeyed the prompt and never tried. Rules going forward:
+- A state read before an `await` is read again, inside the write's transaction, before it is changed; ends are also made ends in the store.
+- Clean-up at start goes by what is on disk, not only by what the rows say.
+- When a unit adds a new way to reach an old state (a queued task nothing builds), every screen that shows that state is read again for sentences that are no longer true.
+- Text the owner approves is the text that is sent: what a screen would fold or hide is refused at validation.
+- A live test of an enforcement asks for the forbidden thing outright, through the same launch path, without the product's own prompt telling the model not to.
+
 ## 2026-11-22: a standing permission was wider than its card, four ways (unit 10)
 Found by the critique pass, before merge. Tests were written first in every layer this time and all passed; the critic still got: `cat '~/x'` allowed three times earning a grant that ran `cat ~/x` (the word reader drops quotes, and a leading `~` is the one plain word a shell rewrites); `curl -d @.env …`, `npm publish` and `python3 -c …` offered standing permission, against "approvals before anything leaves the machine"; one repository's approvals counting for another after a link was re-pointed (the path was resolved again at every request); and a directory that was a link out of the worktree recorded by its name. Rules going forward:
 - A fact that scopes trust (repository, directory) is resolved once, stored, and compared as stored. Resolving it again at use time lets whatever changed in between inherit the trust.

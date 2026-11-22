@@ -60,7 +60,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
   const signals = [...(timeoutMs === undefined ? [] : [AbortSignal.timeout(timeoutMs)]), ...(giveUp ? [giveUp] : [])];
   const res = await fetch(path, {
     method,
@@ -147,6 +147,8 @@ export interface TaskSummary {
   parked: boolean;
   /** The owner's answer to such a request is stored, and the task is being started again to receive it. */
   resuming: boolean;
+  /** The run whose approved plan queued this task, or null for a task started on its own. Nothing builds such a task in this version. */
+  ofPlan: number | null;
   /** The commands this task may run without asking, as the owner listed them when starting it. */
   preapproved: string[];
   createdAt: string;
@@ -196,13 +198,76 @@ export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
+export type RunStatus = "planning" | "awaiting_plan_approval" | "running" | "awaiting_decision" | "done" | "cancelled" | "failed";
+
+/** One task of a plan: what to build, and how to tell it is built. Both are text a planner or the owner wrote. */
+export interface PlanTask {
+  title: string;
+  criteria: string[];
+}
+
+/** A run as the list shows it. */
+export interface RunSummary {
+  id: number;
+  repo: string;
+  /** The first line of what the run was given. */
+  title: string;
+  status: RunStatus;
+  reason: string | null;
+  /** The newest planner attempt; null until a planner has been started for the run. */
+  attemptId: number | null;
+  /** How many tasks its plan holds. */
+  taskCount: number;
+  /** Its planner asked for permission and is paused until the owner answers. */
+  waitingOnApproval: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RunDetail extends Omit<RunSummary, "taskCount"> {
+  prompt: string | null;
+  specPath: string | null;
+  specText: string | null;
+  /** The model asked for the planner; null is the CLI's own default. */
+  requestedModel: string | null;
+  plannerModel: string | null;
+  baseCommit: string;
+  /** The plan's version. A decision names the version it was made on, and is refused when the plan has changed since. */
+  planVersion: number;
+  plan: PlanTask[];
+  /** The tasks queued when the plan was approved. */
+  tasks: { id: number; status: TaskStatus; title: string }[];
+  /** The commands the run's builders may use without asking, as the owner listed them when starting it. */
+  preapproved: string[];
+}
+
+/** A run reached a state or its plan changed. The run itself is read from its route. */
+export interface RunAnnouncement {
+  runId: number;
+  status: RunStatus;
+}
+
+/** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[] }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved }, 30_000);
+export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
+export const getRun = (id: number): Promise<RunDetail> => request("GET", `/api/runs/${id}`, undefined, 30_000);
+/** The whole plan as it should be: how a task is edited, added and deleted. */
+export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Promise<RunDetail> => request("PATCH", `/api/runs/${id}/plan`, { planVersion, tasks }, 30_000);
+export const approvePlan = (id: number, planVersion: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/approve`, { planVersion }, 30_000);
+export const requestPlanChanges = (id: number, planVersion: number, feedback: string): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/request-changes`, { planVersion, feedback }, 30_000);
+export const cancelRun = (id: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/cancel`, {}, 30_000);
+
 export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 
 /** One request an agent made that the owner answers. */
 export interface Approval {
   id: number;
-  taskId: number;
-  /** The first line of the task's prompt. */
+  /** The task whose agent asks; null when a run's planner asks. */
+  taskId: number | null;
+  /** The run whose planner asks, when no task does. */
+  runId: number | null;
+  /** The first line of the task's prompt, or of what the run was given. */
   taskTitle: string;
   attemptId: number;
   role: string;
@@ -297,7 +362,8 @@ export const getActionLog = (limit: number, before?: number): Promise<{ entries:
 /** An approval was asked for or answered. The approvals themselves are read from their route. */
 export interface ApprovalAnnouncement {
   approvalId: number;
-  taskId: number;
+  taskId: number | null;
+  runId: number | null;
   status: ApprovalStatus;
 }
 
@@ -319,6 +385,8 @@ export interface StreamHandlers {
   onTask?(announcement: TaskAnnouncement): void;
   /** Called when an approval was asked for or answered. */
   onApproval?(announcement: ApprovalAnnouncement): void;
+  /** Called when a run reached a state or its plan changed. */
+  onRun?(announcement: RunAnnouncement): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -368,6 +436,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("task", (message) => {
       alive();
       handlers.onTask?.(JSON.parse((message as MessageEvent<string>).data) as TaskAnnouncement);
+    });
+    source.addEventListener("run", (message) => {
+      alive();
+      handlers.onRun?.(JSON.parse((message as MessageEvent<string>).data) as RunAnnouncement);
     });
     source.addEventListener("approval", (message) => {
       alive();

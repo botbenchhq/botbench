@@ -125,7 +125,7 @@ export function runGrants(db: DatabaseSync, runId: number): Grant[] {
  * grant. Call it inside the transaction that writes the task, so neither exists without the other.
  * The same command listed twice is stored once.
  */
-export function insertPreapproved(db: DatabaseSync, o: { role: string; repo: string; runId: number; taskId: number; commands: readonly string[] }): void {
+export function insertPreapproved(db: DatabaseSync, o: { role: string; repo: string; runId: number; /** The task whose start created them; null for a planned run's, which exist before its tasks. */ taskId: number | null; commands: readonly string[] }): void {
   const seen = new Set<string>();
   const insert = db.prepare("INSERT INTO grants (kind, role, repo_path, cwd, words, run_id, task_id, created_at) VALUES ('preapproved', ?, ?, '.', ?, ?, ?, ?)");
   for (const command of o.commands) {

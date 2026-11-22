@@ -36,7 +36,7 @@ export function ApprovalTray() {
       {oldest === undefined ? (
         <span className="gw-pending-tray__text">{pending === null ? (problem ?? "Checking for approvals.") : "No approvals are waiting."}</span>
       ) : (
-        <a href={`#/tasks/${oldest.taskId}`} onClick={open} className="gw-pending-tray__link">
+        <a href={oldest.taskId === null ? `#/runs/${oldest.runId}` : `#/tasks/${oldest.taskId}`} onClick={open} className="gw-pending-tray__link">
           <span className="gw-pending-tray__count">{pending!.length}</span>
           {pending!.length === 1 ? " approval is waiting. Open it." : " approvals are waiting. Open the oldest."}
         </a>
@@ -135,7 +135,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
         <Fact term="Role" testId="approval-role">
           {approval.role}
         </Fact>
-        <Fact term="Task" testId="approval-task">{`Task ${approval.taskId} · ${approval.taskTitle}`}</Fact>
+        <Fact term={approval.taskId === null ? "Run" : "Task"} testId="approval-task">{`${approval.taskId === null ? `Run ${approval.runId}` : `Task ${approval.taskId}`} · ${approval.taskTitle}`}</Fact>
         {approval.reason !== null && (
           <Fact term="Its reason" testId="approval-reason">
             {visible(approval.reason)}

@@ -4,9 +4,11 @@ import { schemaVersion } from "../store/db.ts";
 import type { Broker } from "../approvals/broker.ts";
 import type { Config } from "../config.ts";
 import { modelNameProblem, type Driver } from "../drivers/contract.ts";
+import type { Runs } from "../engine/run.ts";
 import type { Tasks } from "../engine/task.ts";
 import { approvalRoutes } from "./approvals.ts";
 import { turnRoutes } from "./routes.ts";
+import { runRoutes } from "./runs.ts";
 import { isShellRequest, serveShell } from "./static.ts";
 import type { EventStream } from "./stream.ts";
 import { taskRoutes } from "./tasks.ts";
@@ -19,6 +21,7 @@ export interface RouteContext {
   driver: Driver;
   turns: Turns;
   tasks: Tasks;
+  runs: Runs;
   broker: Broker;
   stream: EventStream;
   /** Where the built client is. */
@@ -101,6 +104,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   }
   if (await turnRoutes(req, res, ctx, url)) return;
   if (await taskRoutes(req, res, ctx, url)) return;
+  if (await runRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }

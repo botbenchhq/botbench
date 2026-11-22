@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
 import type { Smelt } from "./smelt.ts";
 
 // Approvals in the real client, at a phone's size: a real Smelt process, a real temporary repository,
@@ -22,7 +22,7 @@ function scriptRepo(smelt: Smelt): string {
 
 async function startTask(page: Page, repo: string): Promise<void> {
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await nav.getByRole("link", { name: "New task" }).click();
+  await openNewTask(page);
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await page.getByLabel("Prompt").fill(PROMPT);

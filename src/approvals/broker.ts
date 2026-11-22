@@ -6,7 +6,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
-import { gate, real, summarize, type FloorSettings } from "./gate.ts";
+import { gate, READ_ONLY_TOOLS, real, summarize, type FloorSettings } from "./gate.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
 
@@ -89,8 +89,11 @@ export interface StandingOffer {
 
 export interface Approval {
   id: number;
-  taskId: number;
-  /** The first line of the task's prompt, so a card can say which task is asking. */
+  /** The task whose agent asks. Null when a run's planner asks: then `runId` names the run. */
+  taskId: number | null;
+  /** The run whose planner asks, when no task does. */
+  runId: number | null;
+  /** The first line of the task's prompt, or of what the run was given, so a card can say who is asking. */
   taskTitle: string;
   attemptId: number;
   role: string;
@@ -117,6 +120,8 @@ export interface LogEntry {
   id: number;
   ts: string;
   taskId: number | null;
+  /** The run whose planner the entry is about, when it is about no task. */
+  runId: number | null;
   attemptId: number | null;
   approvalId: number | null;
   /** The grant a pre-approved or standing command ran on, or the standing grant that was given or taken back. */
@@ -129,7 +134,10 @@ export interface LogEntry {
 }
 
 export interface ApprovalRequest {
-  taskId: number;
+  /** The task whose agent asks, or null when a run's planner does. */
+  taskId: number | null;
+  /** The run whose planner asks. Left out for a task's request. */
+  runId?: number | null;
   attemptId: number;
   role: string;
   tool: string;
@@ -184,7 +192,11 @@ export interface Broker {
   /** Open the socket. Rejects when it cannot be opened; requests through it are then refused by the hook itself. */
   listen(): Promise<void>;
   /** `resumes` names the attempt this one continues after a restart: only then can it be given that attempt's stored answers. */
-  admit(o: { taskId: number; role: string; worktree: string; resumes?: number }): Admission;
+  /**
+   * Admit an attempt of a task, or of a run's planner (`runId` and no `taskId`). `readOnly` is for a role that changes
+   * nothing: the gate then refuses every edit, also inside the worktree, and no grant lets a command through.
+   */
+  admit(o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean }): Admission;
   /** Record a pending approval and wait for the owner. Never rejects: any failure is a decline. */
   request(request: ApprovalRequest): Promise<Answer>;
   /**
@@ -212,6 +224,8 @@ export interface Broker {
   onStoredAnswer(listener: (approval: Approval) => void): void;
   /** End every pending approval of a task that cannot go on, with the reason for the log. Stored answers among them are discarded. */
   endParked(taskId: number, why: string): void;
+  /** End every pending approval of a run's planner, with the reason for the log. */
+  endRunApprovals(runId: number, why: string): void;
   pending(): Approval[];
   /** Close the socket and end everything still pending as superseded. Safe to call twice. */
   close(): Promise<void>;
@@ -229,7 +243,8 @@ const firstLine = (s: string, max = 60): string => {
 function toApproval(row: Record<string, unknown>): Approval {
   return {
     id: Number(row.id),
-    taskId: Number(row.task_id),
+    taskId: int(row.task_id),
+    runId: int(row.run_id),
     taskTitle: firstLine(String(row.prompt ?? "")),
     attemptId: Number(row.attempt_id),
     role: String(row.role),
@@ -247,7 +262,8 @@ function toApproval(row: Record<string, unknown>): Approval {
   };
 }
 
-const APPROVAL_COLUMNS = "a.*, t.prompt AS prompt FROM approvals a JOIN tasks t ON t.id = a.task_id";
+/** An approval with what its card is titled by: its task's prompt, or what its run was given (the prompt, or the spec file's path). */
+const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path) AS prompt FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs r ON r.id = a.run_id";
 
 /** Approvals, oldest first; all of them or those with one status. */
 export function listApprovals(db: DatabaseSync, status?: ApprovalStatus): Approval[] {
@@ -274,6 +290,7 @@ const toLogEntry = (row: Record<string, unknown>): LogEntry => ({
   id: Number(row.id),
   ts: String(row.ts),
   taskId: int(row.task_id),
+  runId: int(row.run_id),
   attemptId: int(row.attempt_id),
   approvalId: int(row.approval_id),
   grantId: int(row.grant_id),
@@ -308,6 +325,7 @@ export function actionLogPage(db: DatabaseSync, o: { before?: number; limit?: nu
 
 interface LogWrite {
   taskId: number | null;
+  runId?: number | null;
   attemptId: number | null;
   approvalId?: number | null;
   grantId?: number | null;
@@ -319,11 +337,14 @@ interface LogWrite {
 }
 
 function appendLog(db: DatabaseSync, e: LogWrite): void {
-  db.prepare("INSERT INTO action_log (ts, task_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null);
+  db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null);
 }
 
 interface Ticket {
-  taskId: number;
+  taskId: number | null;
+  runId: number | null;
+  /** The attempt changes nothing: every edit is refused and no grant applies. */
+  readOnly: boolean;
   role: string;
   worktree: string;
   attemptId: number | null;
@@ -366,7 +387,7 @@ export function createBroker(options: {
 
   /** A refusal goes on record. If the record itself cannot be written, the refusal still stands and the reason is printed. */
   const refuse = (e: Omit<LogWrite, "rule">): void => {
-    for (const ids of [{ taskId: e.taskId, attemptId: e.attemptId }, { taskId: null, attemptId: null }]) {
+    for (const ids of [{ taskId: e.taskId, runId: e.runId ?? null, attemptId: e.attemptId }, { taskId: null, runId: null, attemptId: null }]) {
       try {
         appendLog(db, { ...e, ...ids, rule: "broker_failure_denied", tool: shorten(e.tool, 200), command: shorten(e.command, 2000) });
         return;
@@ -399,7 +420,7 @@ export function createBroker(options: {
         db.prepare(`UPDATE approvals SET status = 'superseded', resolved_at = ? WHERE status = 'pending' AND ${where}`).run(now(), ...values);
         // The asking is in the log, so its end is too.
         for (const row of rows) {
-          appendLog(db, { taskId: Number(row.task_id), attemptId: Number(row.attempt_id), approvalId: Number(row.id), rule: row.stored_decision === null ? "ended_unanswered" : "stored_answer_discarded", tool: String(row.tool), command: String(row.command), cwd: String(row.cwd), detail: why });
+          appendLog(db, { taskId: int(row.task_id), runId: int(row.run_id), attemptId: Number(row.attempt_id), approvalId: Number(row.id), rule: row.stored_decision === null ? "ended_unanswered" : "stored_answer_discarded", tool: String(row.tool), command: String(row.command), cwd: String(row.cwd), detail: why });
         }
         return rows.map((row) => Number(row.id));
       });
@@ -421,11 +442,12 @@ export function createBroker(options: {
    * would let run, and the task's run and repository. Anything missing or unreadable means the owner is asked.
    */
   const decideRequest = (r: ApprovalRequest, ticket: Ticket | undefined, cwd: string): RequestVerdict => {
-    if (r.tool !== "Bash" || !ticket || ticket.taskId !== r.taskId || ticket.role !== r.role) return { verdict: "ask" };
+    if (r.tool !== "Bash" || !ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return { verdict: "ask" };
     try {
       // Grants are looked up only when the directory was reported and the input is the one the card would show.
       // Without them the gate still asks the floor, at the worktree's top, so that the record says why this asks.
-      const known = cwd !== "" && isObject(r.input) && summarize(r.tool, r.input) === r.command;
+      // A read-only attempt, and one that belongs to no task, is never looked up: every command of a planner asks.
+      const known = !ticket.readOnly && r.taskId !== null && cwd !== "" && isObject(r.input) && summarize(r.tool, r.input) === r.command;
       const at = path.resolve(ticket.worktree, cwd === "" ? "." : cwd);
       const input = known ? r.input : { command: r.command };
       const task = db.prepare("SELECT repo_path, run_id FROM tasks WHERE id = ?").get(r.taskId);
@@ -451,20 +473,23 @@ export function createBroker(options: {
     const ticket = [...tickets.values()].find((t) => t.attemptId === r.attemptId);
     const stillCarried = "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL";
     const deny = (detail: string): Promise<Answer> => {
-      refuse({ taskId: r.taskId, attemptId: r.attemptId, tool: String(r.tool), command: String(r.command), cwd: typeof r.cwd === "string" ? r.cwd : "", detail });
+      refuse({ taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, tool: String(r.tool), command: String(r.command), cwd: typeof r.cwd === "string" ? r.cwd : "", detail });
       // A request Smelt refuses is still the resuming attempt's request: stored answers do not wait for a later one.
-      if (ticket && ticket.resumes !== null) supersedeWhere("After the restart the agent's first request was one Smelt refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
+      if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Smelt refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
       return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: detail });
     };
     if (closed) return deny("The broker is closed.");
+    if ((r.taskId === null) === (r.runId === undefined || r.runId === null)) return deny("The request names neither a task nor a run, or both.");
     if (typeof r.tool !== "string" || r.tool === "" || typeof r.toolCallId !== "string" || r.toolCallId === "" || typeof r.command !== "string" || r.command === "" || typeof r.role !== "string" || r.role === "") {
       return deny("The request does not say what it is for.");
     }
     if (r.command.length > MAX_COMMAND) return deny(`The request is ${r.command.length} characters long, too long to show the owner in full.`);
+    // Also when the CLI asks without its hook having been heard: a read-only attempt's request for any other tool is never the owner's to allow.
+    if (ticket?.readOnly && !READ_ONLY_TOOLS.has(r.tool)) return deny(`The ${ticket.role} is read-only and may not use ${shorten(r.tool, 100)}.`);
     const cwd = r.cwd ?? ticket?.seen.get(r.toolCallId) ?? "";
     ticket?.seen.delete(r.toolCallId);
     // An attempt that resumes one from before a restart: the owner's stored answers to that attempt's requests are its to use.
-    if (ticket && ticket.resumes !== null && ticket.taskId === r.taskId) {
+    if (ticket && ticket.resumes !== null && ticket.taskId !== null && ticket.taskId === r.taskId) {
       const carried = db.prepare(`SELECT ${APPROVAL_COLUMNS} WHERE a.task_id = ? AND a.attempt_id = ? AND a.status = 'pending' AND a.stored_decision IS NOT NULL ORDER BY a.id`).all(ticket.taskId, ticket.resumes).map(toApproval);
       // The same thing asked again: same role, tool, command and directory. A directory nobody reported is not known to be the same.
       const match = cwd === "" ? undefined : carried.find((a) => a.role === r.role && a.tool === r.tool && a.command === r.command && a.cwd === cwd);
@@ -509,10 +534,10 @@ export function createBroker(options: {
     try {
       id = transaction(db, () => {
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)")
-          .run(r.taskId, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now());
+          .prepare("INSERT INTO approvals (task_id, run_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)")
+          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now());
         const approvalId = Number(inserted.lastInsertRowid);
-        appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
       });
     } catch (err) {
@@ -533,7 +558,7 @@ export function createBroker(options: {
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
       if (current.storedDecision !== null) throw new ApprovalError(409, `This approval already has your answer (${current.storedDecision}); Smelt is resuming its task.`);
-      const entry = { taskId: current.taskId, attemptId: current.attemptId, approvalId: id, rule: decision === "allow" ? "owner_allowed" : "owner_declined", tool: current.tool, command: current.command, cwd: current.cwd, detail: kept } as const;
+      const entry = { taskId: current.taskId, runId: current.runId, attemptId: current.attemptId, approvalId: id, rule: decision === "allow" ? "owner_allowed" : "owner_declined", tool: current.tool, command: current.command, cwd: current.cwd, detail: kept } as const;
       if (waiters.has(id)) {
         db.prepare("UPDATE approvals SET status = ?, note = ?, resolved_at = ? WHERE id = ? AND status = 'pending'").run(status, kept, now(), id);
         appendLog(db, entry);
@@ -578,6 +603,8 @@ export function createBroker(options: {
     if (approval.parkedAt !== null || approval.storedDecision !== null || !waiters.has(approval.id)) return "it was asked before Smelt restarted";
     // A grant for a tool's name would allow that tool with any input, and the floor reads command lines only.
     if (approval.tool !== "Bash") return "only a shell command can have one";
+    // A planner's request belongs to no task, and a planner is read-only: what it asks is asked every time.
+    if (approval.taskId === null) return "only a task's request can have one";
     const ticket = [...tickets.values()].find((t) => t.attemptId === approval.attemptId);
     if (!ticket || ticket.taskId !== approval.taskId || ticket.role !== approval.role) return "its attempt is no longer running";
     // The directory must be written the one way a directory inside the worktree is written, and be inside it with links followed.
@@ -626,7 +653,7 @@ export function createBroker(options: {
       if (Number(answered.changes) !== 1) throw new ApprovalError(409, "This approval is no longer waiting for an answer.");
       const about = { taskId: current.taskId, attemptId: current.attemptId, approvalId: id, tool: current.tool, command: current.command, cwd: current.cwd };
       appendLog(db, { ...about, rule: "owner_allowed" });
-      const granted = insertStanding(db, { role: found.offer.role, repo: found.offer.repo, cwd: found.offer.cwd, words: found.granted, taskId: current.taskId });
+      const granted = insertStanding(db, { role: found.offer.role, repo: found.offer.repo, cwd: found.offer.cwd, words: found.granted, taskId: current.taskId! });
       appendLog(db, { ...about, grantId: granted, rule: "standing_granted", detail: `For the ${found.offer.role} in ${found.offer.repo}, from ${whereWords(found.offer.cwd)}, after ${found.offer.approvals} approval${found.offer.approvals === 1 ? "" : "s"}: ${found.offer.command}` });
       return granted;
     });
@@ -666,8 +693,8 @@ export function createBroker(options: {
     // Looked up by hash, so the secret itself is never compared a byte at a time.
     const ticket = tickets.get(hashOf(message.secret));
     if (!ticket) return denied("Smelt's permission gate does not know this attempt.");
-    if (ticket.attemptId === null) return denied("Smelt's permission gate has no attempt for this secret yet.", { taskId: ticket.taskId });
-    const about = { taskId: ticket.taskId, attemptId: ticket.attemptId };
+    if (ticket.attemptId === null) return denied("Smelt's permission gate has no attempt for this secret yet.", { taskId: ticket.taskId, runId: ticket.runId });
+    const about = { taskId: ticket.taskId, runId: ticket.runId, attemptId: ticket.attemptId };
     const { tool, input, toolCallId, cwd } = message;
     if (typeof tool !== "string" || tool === "" || typeof toolCallId !== "string" || toolCallId === "" || typeof cwd !== "string" || !path.isAbsolute(cwd) || !isObject(input)) {
       return denied("Smelt's permission gate was sent a tool call it cannot read.", { ...about, tool: typeof tool === "string" ? tool : "" });
@@ -679,6 +706,8 @@ export function createBroker(options: {
     const relative = path.relative(ticket.worktree, real(cwd));
     const from = relative === "" ? "." : relative;
     if (verdict.verdict === "deny") return denied(`Smelt's permission gate refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
+    // A read-only attempt has reading and the shell and nothing else: any other tool is refused, not asked about.
+    if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Smelt's permission gate refused this call: the ${ticket.role} is read-only and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
     if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing") {
       if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
       ticket.seen.set(toolCallId, from);
@@ -784,7 +813,8 @@ export function createBroker(options: {
     });
   };
 
-  const admit = (o: { taskId: number; role: string; worktree: string; resumes?: number }): Admission => {
+  const admit = (o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean }): Admission => {
+    if ((o.taskId === undefined) === (o.runId === undefined)) throw new Error("An attempt is admitted for a task or for a run's planner, one of the two.");
     const secret = randomBytes(32).toString("hex");
     const key = hashOf(secret);
     // The CLI reports directories with links followed, so the worktree is kept the same way.
@@ -794,7 +824,7 @@ export function createBroker(options: {
     } catch {
       // A worktree that is not there yet is compared as written.
     }
-    const ticket: Ticket = { taskId: o.taskId, role: o.role, worktree, attemptId: null, resumes: o.resumes ?? null, seen: new Map() };
+    const ticket: Ticket = { taskId: o.taskId ?? null, runId: o.runId ?? null, readOnly: o.readOnly === true, role: o.role, worktree, attemptId: null, resumes: o.resumes ?? null, seen: new Map() };
     tickets.set(key, ticket);
     const supersede = (toolCallId?: string): void => {
       if (ticket.attemptId === null) return;
@@ -834,7 +864,7 @@ export function createBroker(options: {
         tickets.delete(key);
         supersede();
         // Stored answers this attempt was to use and never asked for are not kept for anyone else.
-        if (ticket.resumes !== null) supersedeWhere("The resumed turn ended without asking for this again, so the owner's stored answer was not used.", "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL", ticket.taskId, ticket.resumes);
+        if (ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("The resumed turn ended without asking for this again, so the owner's stored answer was not used.", "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL", ticket.taskId, ticket.resumes);
       },
     };
   };
@@ -858,6 +888,7 @@ export function createBroker(options: {
   };
 
   const endParked = (taskId: number, why: string): void => supersedeWhere(why, "task_id = ?", taskId);
+  const endRunApprovals = (runId: number, why: string): void => supersedeWhere(why, "run_id = ?", runId);
 
-  return { socketPath, offerStandingAfter, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
+  return { endRunApprovals, socketPath, offerStandingAfter, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
 }

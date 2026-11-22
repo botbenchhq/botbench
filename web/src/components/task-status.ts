@@ -27,7 +27,7 @@ const STATUS_LOOK: Record<TaskStatus, string> = {
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "gw-badge gw-badge--warning" : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "waitingOnApproval" | "parked" | "resuming">): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan">): string {
   if (waiting(task)) {
     return task.parked
       ? "Waiting for your answer. Claude Code asked for permission before Smelt restarted and is stopped. Your answer starts it again where it stood."
@@ -36,7 +36,8 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
   if (resuming(task)) return "Resuming. Your answer is stored. Smelt starts Claude Code again where it stood, after any task that is running now, and gives it your answer.";
   switch (task.status) {
     case "queued":
-      return "Queued. It starts when the tasks before it have finished.";
+      // A task of an approved plan is queued with nothing to build it yet: say so, and promise no start.
+      return task.ofPlan === null ? "Queued. It starts when the tasks before it have finished." : `Queued by run ${task.ofPlan}, whose plan you approved. Building a run's tasks arrives in the next version of Smelt: nothing builds this task yet.`;
     case "building":
       return "Building. Claude Code is working in the task's worktree.";
     case "awaiting_decision":
