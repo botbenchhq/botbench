@@ -7,6 +7,7 @@ import { modelNameProblem, type Driver } from "../drivers/contract.ts";
 import type { Runs } from "../engine/run.ts";
 import type { Tasks } from "../engine/task.ts";
 import { approvalRoutes } from "./approvals.ts";
+import { boardRoutes } from "./board.ts";
 import { turnRoutes } from "./routes.ts";
 import { runRoutes } from "./runs.ts";
 import { isShellRequest, serveShell } from "./static.ts";
@@ -106,5 +107,6 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await taskRoutes(req, res, ctx, url)) return;
   if (await runRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
+  if (boardRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }

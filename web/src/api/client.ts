@@ -212,6 +212,18 @@ export interface TaskDetail extends TaskSummary {
   evidence: Evidence[];
   /** For a task that is ready for review: the files the checks left in its copy that are not on its branch. Null otherwise, or when they cannot be read. */
   leftovers: string[] | null;
+  /** For a task that failed, was stopped or was cancelled: what it left, which Discard removes. Null otherwise, or when it cannot be read. */
+  remains: TaskRemains | null;
+  remainsProblem: string | null;
+}
+
+/** What a task that ended without being ready for review left: its copy, Botbench's branch, and the files in the copy that are not on the branch. */
+export interface TaskRemains {
+  copy: boolean;
+  branch: boolean;
+  files: string[];
+  /** When the owner discarded them; null when they have not. */
+  discardedAt: string | null;
 }
 
 export interface RepoCheck {
@@ -244,6 +256,8 @@ export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api
 export const acceptTask = (id: number, removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { removeLeftovers }, 60_000);
 /** Reject a task that is ready for review, keeping or deleting its branch. */
 export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/reject`, { branch, removeLeftovers }, 60_000);
+/** Remove the copy and branch of a task that failed, was stopped or was cancelled. `removeFiles` is the list of files not on the branch, as the owner saw and confirmed it. */
+export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
@@ -269,13 +283,16 @@ export interface RunSummary {
   taskCount: number;
   /** How many of the tasks made from its plan are at an end: built, failed, stopped or cancelled. */
   finishedCount: number;
+  /** How many of them are ready for review, and how many are decided. */
+  readyCount: number;
+  decidedCount: number;
   /** Its planner asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount"> {
+export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount" | "readyCount" | "decidedCount"> {
   prompt: string | null;
   specPath: string | null;
   specText: string | null;
@@ -317,6 +334,17 @@ export interface RunAnnouncement {
 export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[] }): Promise<{ runId: number }> =>
   request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved }, 30_000);
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
+/** One row of the board: a planned run, or a task started on its own (a run of one). */
+export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };
+export type BoardGroupName = "needs-you" | "running" | "finished";
+/** One group of the board: its real count, and its items (Finished sends only its newest). */
+export interface BoardGroup {
+  name: BoardGroupName;
+  total: number;
+  items: BoardItem[];
+}
+/** The board's groups in order, the one that needs the owner first, each newest change first. */
+export const getBoard = async (): Promise<BoardGroup[]> => (await request<{ groups: BoardGroup[] }>("GET", "/api/board", undefined, 30_000)).groups;
 export const getRun = (id: number): Promise<RunDetail> => request("GET", `/api/runs/${id}`, undefined, 30_000);
 /** The whole plan as it should be: how a task is edited, added and deleted. */
 export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Promise<RunDetail> => request("PATCH", `/api/runs/${id}/plan`, { planVersion, tasks }, 30_000);
@@ -398,7 +426,8 @@ export type LogRule =
   | "standing_granted"
   | "standing_revoked"
   | "owner_accepted"
-  | "owner_rejected";
+  | "owner_rejected"
+  | "owner_discarded";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

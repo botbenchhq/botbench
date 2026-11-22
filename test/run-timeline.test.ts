@@ -37,6 +37,11 @@ test("every task ended: Decide waits for the tasks ready for review, and a run w
     stations: ["Plan: done: Done", "Build: failed: No task was built", "Decide: not-started: Not started"],
   });
   assert.deepEqual(flat(run("done", [task("accepted"), task("rejected"), task("failed")]))?.stations[2], "Decide: done: Done · 2 of 3 tasks decided");
+  // Unit 16: a run whose every task failed, was stopped or was cancelled is done with nothing to review, and says so.
+  assert.deepEqual(flat(run("done", [task("failed"), task("interrupted")])), {
+    at: null,
+    stations: ["Plan: done: Done", "Build: failed: No task was ready for review", "Decide: not-started: Not started"],
+  });
 });
 
 test("a cancelled run has no timeline: it has no state for a cancelled station", () => {

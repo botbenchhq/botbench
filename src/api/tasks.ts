@@ -7,7 +7,7 @@ import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
-import { decideTask, LeftoversError, taskDecision, taskLeftovers } from "../engine/decision.ts";
+import { decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { commitsFileDiff, describeCommits, describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -66,8 +66,10 @@ export async function leftoversOf(task: Task): Promise<string[] | null> {
  * be read. A decided task has no copy left: its changes are read from the branch it kept, and a task whose branch was
  * deleted has none to show.
  */
-async function changedFiles(db: DatabaseSync, task: Task): Promise<{ files: FileChange[] | null; filesProblem: string | null }> {
+async function changedFiles(db: DatabaseSync, task: Task, remains: TaskRemains | null): Promise<{ files: FileChange[] | null; filesProblem: string | null }> {
   if (task.headCommit === null || task.worktreePath === null || task.baseCommit === null) return { files: null, filesProblem: null };
+  // The owner discarded the copy and the branch: there are no changes left to show.
+  if (remains?.discardedAt != null) return { files: null, filesProblem: null };
   const decided = taskDecision(db, task.id);
   if (decided?.branch === "deleted") return { files: null, filesProblem: null };
   try {
@@ -79,9 +81,23 @@ async function changedFiles(db: DatabaseSync, task: Task): Promise<{ files: File
 }
 
 
-/** A task as its own screen shows it: the summary, its changed files, its evidence, and what a decision would remove. */
+/**
+ * What a task that failed, was stopped or was cancelled left behind (its copy, its branch, the files in the copy not on
+ * the branch) and whether the owner discarded them; null for any other task. Null too when they cannot be read, and
+ * then the reason is in `remainsProblem`.
+ */
+async function remainsOf(db: DatabaseSync, task: Task): Promise<{ remains: TaskRemains | null; remainsProblem: string | null }> {
+  try {
+    return { remains: await taskRemains(db, task), remainsProblem: null };
+  } catch (err) {
+    return { remains: null, remainsProblem: `What the task left cannot be read: ${words(err)}` };
+  }
+}
+
+/** A task as its own screen shows it: the summary, its changed files, its evidence, what a decision would remove, and what a discard would. */
 async function detail(db: DatabaseSync, task: Task): Promise<Record<string, unknown>> {
-  return { ...summary(db, task), ...(await changedFiles(db, task)), evidence: taskEvidence(db, task.id), leftovers: await leftoversOf(task) };
+  const left = await remainsOf(db, task);
+  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), leftovers: await leftoversOf(task), ...left };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
@@ -100,7 +116,7 @@ async function diff(db: DatabaseSync, res: http.ServerResponse, task: Task, url:
   if (given.length !== 1) throw new TaskError(400, 'Give one "file": the path of one of the task\'s changed files.');
   const decided = taskDecision(db, task.id);
   if (decided?.branch === "deleted") throw new TaskError(409, "This task was rejected and its branch was deleted, so its changes are gone.");
-  const { files, filesProblem } = await changedFiles(db, task);
+  const { files, filesProblem } = await changedFiles(db, task, (await remainsOf(db, task)).remains);
   if (files === null) throw new TaskError(409, filesProblem ?? "This task has nothing committed yet.");
   // Only a name git itself listed as changed is ever handed back to git.
   const file = files.find((f) => f.path === given[0]);
@@ -122,6 +138,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   // An id is 1 to 15 digits with no leading zero, so it is always a number SQLite stores exactly.
   const one = /^\/api\/tasks\/([1-9]\d{0,14})(\/diff)?$/.exec(pathname);
   const decision = /^\/api\/tasks\/([1-9]\d{0,14})\/(accept|reject)$/.exec(pathname);
+  const discard = /^\/api\/tasks\/([1-9]\d{0,14})\/discard$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -156,6 +173,13 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       ctx.stream.announceTask(decided.task);
       if (decided.run !== null) ctx.stream.announceRun(decided.run);
       json(res, 200, await detail(ctx.db, decided.task));
+    } else if (method === "POST" && discard) {
+      const body = await readJsonBody(req);
+      if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
+      const discarded = await discardTask(ctx.db, { taskId: Number(discard[1]), removeFiles: body.removeFiles });
+      // Its state is the same; the screens that show it read it again.
+      ctx.stream.announceTask(discarded);
+      json(res, 200, await detail(ctx.db, discarded));
     } else {
       return false;
     }

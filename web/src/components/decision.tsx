@@ -35,8 +35,8 @@ export function CopyField({ label, value, testId, buttonName }: { label: string;
   );
 }
 
-/** The files the checks left in the task's copy, each by its path. */
-function Leftovers({ files }: { files: readonly string[] }) {
+/** Files in the task's copy that are not on its branch, each by its path: those the checks left, or those a discard removes. */
+export function Leftovers({ files }: { files: readonly string[] }) {
   return (
     <ul data-testid="leftovers" className="ds-list ds-list--dense">
       {files.map((file) => (

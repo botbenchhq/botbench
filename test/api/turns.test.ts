@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -158,6 +159,20 @@ test("without a session every new API route is refused", async (t) => {
     assert.equal(res.status, 401, `${method} ${route}`);
     assert.deepEqual(await res.json(), { error: "sign in required" });
   }
+});
+
+test("the page's one inline script, which applies the owner's appearance choice before the first paint, is allowed by its hash and nothing else is", async (t) => {
+  const { dir } = clientDir(t);
+  const inline = 'document.documentElement.setAttribute("data-theme", "dark");';
+  fs.writeFileSync(path.join(dir, "index.html"), `<!doctype html><title>Botbench</title><script>${inline}</script><script type="module" src="/assets/app-1a2b.js"></script>`);
+  const { base } = await start(t, { clientDir: dir });
+  const csp = (await fetch(base + "/")).headers.get("content-security-policy") ?? "";
+  const hash = createHash("sha256").update(inline).digest("base64");
+  assert.match(csp, new RegExp(`(^|; )script-src 'self' 'sha256-${hash.replace(/[+/]/g, "\\$&")}'(;|$)`));
+  assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:/);
+  // A page with no inline script allows none.
+  fs.writeFileSync(path.join(dir, "index.html"), '<!doctype html><title>Botbench</title><script type="module" src="/assets/app-1a2b.js"></script>');
+  assert.doesNotMatch((await fetch(base + "/")).headers.get("content-security-policy") ?? "", /sha256/);
 });
 
 test("the client shell is served without a session, and /api/session says 401 before sign-in and 200 after", async (t) => {

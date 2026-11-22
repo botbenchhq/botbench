@@ -1,3 +1,10 @@
 {
-  "gaps": []
+  "gaps": [
+    {
+      "name": "settings-icon",
+      "reason": "The icon set has no settings (gear) icon, so the app header's Settings action is a text link. No app-local component was built; to be added to the design system's icons.",
+      "classes": [],
+      "files": []
+    }
+  ]
 }

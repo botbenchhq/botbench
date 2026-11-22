@@ -20,11 +20,14 @@ const waiting = (db: DatabaseSync, run: Run): boolean =>
   (run.status === "planning" && runWaitingOnApproval(db, run.id)) || (run.status === "running" && runTasks(db, run.id).some((task) => task.status === "building" && waitingOnApproval(db, task.id)));
 const AT_WORK = new Set(["queued", "building", "verifying"]);
 
-/** A run as a list shows it. */
-function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
+/** A run as a list shows it. `readyCount` and `decidedCount`: how many of its tasks are ready for review, and decided. */
+export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
   const { id, repo, status, reason, attemptId, createdAt, updatedAt } = run;
-  const finishedCount = runTasks(db, id).filter((task) => !AT_WORK.has(task.status)).length;
-  return { id, repo, title: title(run), status, reason, attemptId, taskCount: planTasks(db, id).length, finishedCount, waitingOnApproval: waiting(db, run), createdAt, updatedAt };
+  const tasks = runTasks(db, id);
+  const finishedCount = tasks.filter((task) => !AT_WORK.has(task.status)).length;
+  const readyCount = tasks.filter((task) => task.status === "awaiting_decision").length;
+  const decidedCount = tasks.filter((task) => task.status === "accepted" || task.status === "rejected").length;
+  return { id, repo, title: title(run), status, reason, attemptId, taskCount: planTasks(db, id).length, finishedCount, readyCount, decidedCount, waitingOnApproval: waiting(db, run), createdAt, updatedAt };
 }
 
 /**
