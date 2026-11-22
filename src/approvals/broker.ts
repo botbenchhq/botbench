@@ -89,7 +89,9 @@ export type LogRule =
   | "standing_revoked"
   /** The owner accepted or rejected a task that was ready for review. The entry names the task's branch. */
   | "owner_accepted"
-  | "owner_rejected";
+  | "owner_rejected"
+  /** The owner discarded what a failed, stopped or cancelled task left behind. */
+  | "owner_discarded";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 

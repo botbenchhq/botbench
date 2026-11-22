@@ -216,8 +216,8 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
 /** The states a task ends in without ever being ready for review. */
 const ENDED_UNREVIEWED: ReadonlySet<TaskStatus> = new Set(["failed", "interrupted", "cancelled"]);
 
-/** The rule a discard is logged under. The broker's own list of rules does not name it yet; migration 13 allows it. */
-const DISCARDED = "owner_discarded";
+/** The rule a discard is logged under. */
+const DISCARDED = "owner_discarded" as const;
 
 /** When the owner discarded what the task left, from the action log; null when they have not. */
 function discardedAt(db: DatabaseSync, taskId: number): string | null {
@@ -316,10 +316,7 @@ async function discard(db: DatabaseSync, task: Task, confirmed: readonly string[
   }
   const copy = dir === null ? "" : present ? "removed the task's copy" : "found the task's copy already gone";
   const kept = files.length === 0 ? "" : ` The copy held ${files.length === 1 ? "1 file" : `${files.length} files`} not on the branch, removed with it as you confirmed: ${listed(files)}.`;
-  // The broker writes every other entry with appendLog, whose list of rules does not name a discard yet: the row is the same.
-  const log = (detail: string): void => {
-    db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, 'Branch', ?, ?, ?)").run(now(), task.id, task.runId, task.attemptId, DISCARDED, branch ?? "", task.repo, detail);
-  };
+  const log = (detail: string): void => appendLog(db, { taskId: task.id, runId: task.runId, attemptId: task.attemptId, rule: DISCARDED, tool: "Branch", command: branch ?? "", cwd: task.repo, detail });
   if (at !== null) {
     try {
       await deleteTaskBranch({ repo: task.repo, branch: branch!, commit: at });
