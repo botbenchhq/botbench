@@ -53,8 +53,8 @@ Early, macOS only, and built for its author's own use so far. It changes often a
 | | Confined commands: `src/confinement.ts` |
 | | Accept or Reject: `src/engine/decision.ts` |
 | | Runs board, chat, usage, settings, restart recovery: `src/api/`, `web/src/screens/`, `src/engine/recover.ts` |
-| **In progress** | Nothing is claimed here until it is in the code |
-| **Planned** | Sending the reviewer's concerns back to the builder (review is one pass today); more agents (Gemini CLI, Grok; the settings already name them, no driver exists); the three modes (manual, semi-autonomous, fully autonomous); pushing a branch and opening a pull request; an installable app with notifications; taking work from issues; Peers |
+| **In progress** | Installing to the phone's Home Screen with notifications for waiting approvals (in the code; not yet confirmed on a real iPhone). Being built now: the reviewer's concerns going back to the builder; the three modes (manual, semi-autonomous, fully autonomous); opening a pull request for an accepted task; Gemini and Grok as reviewers; voice input transcribed on your Mac |
+| **Planned** | Taking work from issues; one container per task; Peers: two developers' workbenches coordinating on one repository |
 
 ## Quick start
 
