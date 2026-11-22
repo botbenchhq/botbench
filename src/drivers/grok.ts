@@ -9,7 +9,8 @@ import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
 import { startOneTurn, type LineResult } from "./one-turn.ts";
 
 /*
- * Grok, driven for one thing only: a read-only review turn, with no tools at all. Seen on 1.0.92:
+ * Grok, driven for one thing only: a read-only turn with no tools at all, for a review or a chat message (src/api/chat.ts).
+ * Seen on 1.0.92:
  *   `grok -p - --output-format streaming-json …` reads the prompt from its input and prints one JSON object per line:
  *     {"type":"available_commands","tools":[…],"commands":[…]}   (more than once; `tools` is what its model is offered)
  *     {"type":"thought","data":"…"}  {"type":"text","data":"…"}  (the reply, in pieces)

@@ -80,3 +80,6 @@ Tool activity stays visible. It builds trust, and it is the evidence.
 6. **Never raw arguments as the line**, and never a summary in place of the evidence: the evidence is always behind the line.
 
 Token counts are not in the main line of a transcript. They are under the "Worked for" row of the reply they belong to.
+
+On screen since chat with any agent: the composer's chip and the Add context row "Model" name the model with the agent as its qualifier ("gpt-6-luna Codex", "Ask several 3 agents"); its view "Agent and model" offers Claude Code, Codex, Grok and Antigravity, each "Not available" with its own reason when it cannot answer, and "Ask several" with a tick for each agent ("Agents to ask"). Once more than one agent has answered in a chat, each reply is labelled "Agent · model" ("Codex · gpt-6-luna"), and a reply that did not finish reads "Codex: Failed" or "Codex: Stopped". Several asked at once: "Send to 3 agents" (the Send button's name), "Asks 3 agents: each reply counts toward that agent's usage.", one "Codex is working." line with "Stop Codex" for each, and under a finished round "Ask one to compare the answers" with "Ask Codex" and so on; the request reads "Codex, compare the answers above: where they agree, where they differ, and which you would act on." In a repository the view says "Only Claude Code can work in a repository."
+

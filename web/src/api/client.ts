@@ -42,10 +42,24 @@ export interface DriverState {
   problem: string | null;
 }
 
+/** A message a chat sent to agents given the conversation by Botbench, or a request to compare its answers. */
+export interface ChatRound {
+  id: number;
+  kind: "ask" | "compare";
+  message: string;
+  /** The round whose answers were compared. */
+  compares: number | null;
+}
+
 export interface Transcript {
   attemptId: number;
   status: string;
   turnRunning: boolean;
+  /** The agent that answered, and the model it was asked for (null: its own default). */
+  agent: string;
+  model: string | null;
+  /** Null for a Claude Code session that keeps the conversation itself. */
+  round: ChatRound | null;
   events: StoredEvent[];
 }
 
@@ -213,6 +227,22 @@ const withModel = (model: string | null | undefined): { model?: string | null } 
 /** Starting a turn launches the CLI, which takes a second or two. A server silent for half a minute is not going to answer. */
 export const startTurn = (prompt: string, attemptId?: number, model?: string | null): Promise<{ attemptId: number; turn: number }> =>
   request("POST", "/api/turns", { prompt, ...(attemptId === undefined ? {} : { attemptId }), ...withModel(model) }, 30_000);
+
+/** One agent asked in a chat: an agent and its model (null: its own default; undefined: the configured one). */
+export interface ChatTarget {
+  agent: string;
+  model?: string | null;
+}
+export interface ChatReply {
+  attemptId: number;
+  turn: number;
+  agent: string;
+  model: string | null;
+  roundId: number | null;
+}
+/** Send a chat message to one agent or several, with the chat so far; or, with `compare`, ask one to compare a round's answers. Each agent is checked first, which takes seconds. */
+export const sendChatMessage = (o: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number }): Promise<ChatReply[]> =>
+  request<{ replies: ChatReply[] }>("POST", "/api/chat", o, 60_000).then((r) => r.replies);
 
 export async function interruptTurn(attemptId: number): Promise<void> {
   await request("POST", `/api/turns/${attemptId}/interrupt`, {});

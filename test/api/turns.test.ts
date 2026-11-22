@@ -308,6 +308,10 @@ test("GET /api/attempts/:id/events returns stored events in order, and only thos
     attemptId: attempt,
     status: "ended",
     turnRunning: false,
+    // Who answered, for a chat several agents may answer; this attempt no chat started is Claude Code's, with no round.
+    agent: "claude-code",
+    model: null,
+    round: null,
     events: stored.map(([turn, event], i) => ({ attemptId: attempt, id: ids[i], turn, ts: String(server.db.prepare("SELECT ts FROM events WHERE id = ?").get(ids[i]!)!.ts), type: event.type, payload: event })),
   });
 

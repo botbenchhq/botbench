@@ -24,6 +24,7 @@ import { voiceRoutes } from "./voice.ts";
 import { issueRoutes } from "./issues.ts";
 import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
+import type { Chat } from "./chat.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
@@ -33,6 +34,8 @@ export interface RouteContext {
   /** The agents that can review a run's tasks, by name. */
   reviewers: Partial<Record<string, Driver>>;
   turns: Turns;
+  /** Chat with any agent, or several at once. */
+  chat: Chat;
   tasks: Tasks;
   runs: Runs;
   broker: Broker;
@@ -110,6 +113,14 @@ export function modelChoice(body: Record<string, unknown>): string | null | unde
   const problem = modelNameProblem(model);
   if (problem !== null) throw new BodyError(400, `"model" is not a model name. ${problem}`);
   return model as string;
+}
+
+/**
+ * Refuse a task or run asked of an agent other than Claude Code: only Claude Code builds in a repository here. A request
+ * that names none is Claude Code's.
+ */
+export function builderOnly(body: Record<string, unknown>): void {
+  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work in a repository. Codex, Grok and Antigravity answer in a chat with no repository, from the conversation alone.");
 }
 
 /**

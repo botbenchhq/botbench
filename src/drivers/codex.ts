@@ -9,7 +9,8 @@ import { startOneTurn, type LineResult } from "./one-turn.ts";
 import { codexSignIn, type SignInDefinition } from "./sign-in.ts";
 
 /*
- * Codex, driven for one thing only: a read-only review turn (U17 in part, for U20). Seen on 0.171.0:
+ * Codex, driven for one thing only: a read-only turn, for a review (U17 in part, for U20) or a chat message (src/api/chat.ts,
+ * in a new empty folder). Seen on 0.171.0:
  *   `codex exec --json … -` reads the prompt from its input and prints one JSON object per line:
  *     {"type":"thread.started","thread_id":"…"}  {"type":"turn.started"}
  *     {"type":"item.started"|"item.completed","item":{"id":"item_0","type":"command_execution","command":"…",
@@ -109,6 +110,8 @@ export function codexArgs(o: { place: ReviewPlace; model?: string; env?: NodeJS.
     "-c", "mcp_servers={}",
     "-c", 'web_search="disabled"',
     ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
+    // A chat turn works in a new empty folder, which is no git repository, and Codex refuses to start in one without this.
+    ...(o.place.gitDir === undefined ? ["--skip-git-repo-check"] : []),
   ];
   if (o.model !== undefined) {
     const problem = modelNameProblem(o.model);

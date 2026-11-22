@@ -7,6 +7,7 @@ import { createAuth, loadOrCreateLoginToken, LOGIN_TOKEN_FILE } from "./api/auth
 import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
+import { createChat } from "./api/chat.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
 import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
@@ -96,7 +97,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
   const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
-  // Codex, Grok and Antigravity review only (src/drivers/): each is offered as a run's reviewer and as nothing else.
+  // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
   const reviewers = { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
   let broker: Broker;
@@ -122,6 +123,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     throw err;
   }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
+  // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
+  const chat = createChat({ db, home, turns, claude: driver, agents: reviewers, onEvent: stream.notify });
   const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
@@ -140,7 +143,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
   const github = options.github ?? createGitHub();
   const deliveries = createDeliveries({ db, config, github, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, config, driver, reviewers, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -165,7 +168,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
-    await Promise.allSettled([turns.close(), tasks.close(), runs.close(), connect.close(), deliveries.close()]);
+    await Promise.allSettled([chat.close().then(() => turns.close()), tasks.close(), runs.close(), connect.close(), deliveries.close()]);
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
     // A notification in flight may still delete an expired device's row; each has a time limit.

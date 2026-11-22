@@ -164,3 +164,18 @@ test("Codex's notice that it ignored a setting is an error event in its own word
   assert.equal(event?.type, "error");
   assert.match((event as { message: string }).message, /unrecognized configuration setting/);
 });
+
+test("CRITICAL: a chat turn starts Codex with the review's arguments and permissions profile, in its empty folder, and only adds that the folder is no git repository", () => {
+  const data = tempDir("botbench-codex-chat-");
+  const review = codexArgs({ place: { cwd: "/tmp/task-copy", dataDir: data, gitDir: "/tmp/repo/.git" }, model: "gpt-6-luna" });
+  const chat = codexArgs({ place: { cwd: "/tmp/empty", dataDir: data }, model: "gpt-6-luna" });
+  const profile = (args: string[]) => args.filter((arg) => arg.startsWith("permissions.") || arg.startsWith("default_permissions") || arg.startsWith("approval_policy"));
+  // The readable places differ only by the folder worked in (and, for a review, its git folder); the rest is the same.
+  assert.deepEqual(profile(chat).filter((a) => !a.includes("filesystem")), profile(review).filter((a) => !a.includes("filesystem")));
+  const rest = (args: string[]) => args.filter((arg, at) => !arg.includes("filesystem") && args[at - 1] !== "-C" && arg !== "--skip-git-repo-check");
+  assert.deepEqual(rest(chat), rest(review));
+  assert.deepEqual(chat.filter((arg) => !review.includes(arg)).filter((a) => !a.includes("filesystem")), ["/tmp/empty", "--skip-git-repo-check"]);
+  assert.equal(review.includes("--skip-git-repo-check"), false, "a review in the task's copy is unchanged");
+  assert.match(chat.find((a) => a.includes("filesystem"))!, /"\/tmp\/empty"="read"/);
+  fs.rmSync(data, { recursive: true, force: true });
+});

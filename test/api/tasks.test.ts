@@ -335,3 +335,24 @@ test("a repository git cannot read in time is answered as not usable with the re
   assert.equal(fs.existsSync(path.join(home, "worktrees")), false);
   assert.deepEqual(gitProcesses(repo), [], "no git process is left for the folder");
 });
+
+test("a task or a run asked of another agent than Claude Code is refused, before any row exists: only Claude Code works in a repository", async (t) => {
+  const { server, base, headers, dir } = await start(t);
+  const repo = path.join(dir, "repo");
+  initRepo(repo);
+  for (const [route, body] of [
+    ["/api/tasks", { repo, prompt: "Add a README", agent: "codex" }],
+    ["/api/runs", { repo, prompt: "Plan a README", agent: "grok", mode: "manual", delivery: "branch" }],
+  ] as const) {
+    const res = await post(base, headers, route, body);
+    assert.equal(res.status, 400, route);
+    assert.match(String(res.body.error), /^Only Claude Code can work in a repository\. Codex, Grok and Antigravity answer in a chat with no repository, from the conversation alone\.$/);
+  }
+  assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n), 0);
+  assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM runs").get()!.n), 0);
+  // A chat request that is not one is refused in words, and starts nothing.
+  for (const body of [{ prompt: "Hi" }, { prompt: "Hi", conversation: [], agents: [{ agent: "codex", model: "--yolo" }] }, { prompt: " ", conversation: [], agents: [{ agent: "codex" }] }, { prompt: "Hi", conversation: ["1"], agents: [{ agent: "codex" }] }, { prompt: "Hi", conversation: [], agents: [] }]) {
+    assert.equal((await post(base, headers, "/api/chat", body)).status, 400, JSON.stringify(body));
+  }
+  assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n), 0);
+});

@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
 import { ISSUE_NOT_FULL, splitPath, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
+import { AgentOptions, BUILDER_ONLY, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
 import { ModePicker } from "./mode-choice.tsx";
 import { ModelOptions, type ModelChoiceState } from "./model-picker.tsx";
@@ -51,6 +52,8 @@ export interface SheetState {
   sameBuild: boolean;
   setSameBuild(same: boolean): void;
   buildModels: ModelChoiceState;
+  /** Who a chat asks; only a chat, with no repository, can ask another agent than Claude Code. */
+  agents: ChatAgentsState;
 }
 
 /**
@@ -62,7 +65,8 @@ export function ContextSheet({ sheetRef, view, setView, state }: { sheetRef: Ref
   const pressed = useRef<Row | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const shown: SheetView = view !== "rows" && !state.rows.includes(view) ? "rows" : view;
-  const title = shown === "rows" ? "Add context" : shown === "models" && state.rows.includes("spec") ? "Models" : ROW[shown].title;
+  const chatting = !state.rows.includes("kind");
+  const title = shown === "rows" ? "Add context" : shown === "models" && state.rows.includes("spec") ? "Models" : shown === "models" && chatting ? "Agent and model" : ROW[shown].title;
 
   // A view takes the focus on its chosen option (else its first control); the rows give it back to the row that was pressed.
   useLayoutEffect(() => {
@@ -170,9 +174,22 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
       </fieldset>
     );
   if (row === "commands") return <PreapprovedEditor choice={state.repository} scope={state.kind} />;
-  if (!state.rows.includes("spec")) return <ModelOptions state={state.models} legend="Model" hideLegend />;
+  if (!state.rows.includes("kind")) return <AgentOptions state={state.agents} claude={state.models} />;
+  const builderOnly = (
+    <p data-testid="builder-only" className="ds-option-picker__hint">
+      {BUILDER_ONLY}
+    </p>
+  );
+  if (!state.rows.includes("spec"))
+    return (
+      <div className="ds-stack ds-gap-sm">
+        {builderOnly}
+        <ModelOptions state={state.models} legend="Model" hideLegend />
+      </div>
+    );
   return (
     <div className="ds-stack ds-gap-lg">
+      {builderOnly}
       <ModelOptions state={state.models} legend="Planning model" />
       <div className="ds-checkbox">
         <input className="ds-checkbox__input" type="checkbox" id="same-build-model" checked={state.sameBuild} onChange={(e) => state.setSameBuild(e.target.checked)} />

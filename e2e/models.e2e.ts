@@ -36,7 +36,8 @@ async function pickModel(page: Page, value: string) {
 test("in the composer the model is picked from the CLI's own list, a name that is no model name is not sent, and a long name does not widen the page", async ({ page, botbench }) => {
   const turnsSent: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().endsWith("/api/turns")) turnsSent.push(request.postData() ?? "");
+    // A chat message goes to the agents asked; with Claude Code alone, its one entry carries the model.
+    if (request.method() === "POST" && request.url().endsWith("/api/chat")) turnsSent.push(JSON.stringify((JSON.parse(request.postData() ?? "{}") as { agents: unknown[] }).agents[0]));
   });
   await signIn(page, botbench);
 
@@ -85,7 +86,8 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   const foreign = watchRequests(page, botbench);
   const turnsSent: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().endsWith("/api/turns")) turnsSent.push(request.postData() ?? "");
+    // A chat message goes to the agents asked; with Claude Code alone, its one entry carries the model.
+    if (request.method() === "POST" && request.url().endsWith("/api/chat")) turnsSent.push(JSON.stringify((JSON.parse(request.postData() ?? "{}") as { agents: unknown[] }).agents[0]));
   });
   await signIn(page, botbench);
   const sheet = await openModels(page);
@@ -194,7 +196,7 @@ test("where Claude Code reports no list, the picker offers the configured models
     const sheet = await openModels(page);
     await expect(chosenModel(page)).toHaveValue("sonnet");
     await expect(page.getByTestId("model-source")).toHaveText("The list comes from Botbench's configuration: Claude Code reported none.");
-    expect(await sheet.locator(".ds-option-picker__name").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
+    expect(await sheet.getByTestId("model-options").locator(".ds-option-picker__name").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
     await checkDesign(page, "add context, models from configuration");
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);
