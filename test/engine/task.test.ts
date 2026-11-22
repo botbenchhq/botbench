@@ -9,6 +9,7 @@ import { checkRepository, createTask, createTasks, getTask, listTasks, moveTask,
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
 import { MIGRATIONS } from "../../src/store/schema.ts";
 import { createWorktree } from "../../src/worktrees.ts";
+import { buildReplayDriver } from "../support/replay-build.ts";
 import { checkoutState, git, initRepo, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
 
 // No test in this file starts a driver: tasks that reach Claude Code are in test/live/task.live.test.ts.
@@ -81,7 +82,7 @@ test("a database at the previous schema version gains the task tables and keeps 
   assert.deepEqual({ ...db.prepare("SELECT * FROM events").get() }, { id: 1, attempt_id: 1, turn: 1, ts: "2026-11-21T10:01:00.000Z", type: "text", payload: '{"type":"text","text":"kept"}' });
   assert.deepEqual(
     db.prepare("SELECT name FROM pragma_table_info('tasks') ORDER BY cid").all().map((r) => r.name),
-    ["id", "run_id", "repo_path", "prompt", "status", "reason", "worktree_path", "branch", "base_commit", "head_commit", "attempt_id", "depends_on", "created_at", "updated_at", "requested_model", "checks"],
+    ["id", "run_id", "repo_path", "prompt", "status", "reason", "worktree_path", "branch", "base_commit", "head_commit", "attempt_id", "depends_on", "created_at", "updated_at", "requested_model", "checks", "restarts"],
   );
   assert.deepEqual(db.prepare("SELECT name FROM pragma_table_info('task_events') ORDER BY cid").all().map((r) => r.name), ["id", "task_id", "ts", "status", "detail"]);
 
@@ -102,13 +103,13 @@ test("a new task is stored as queued, with nothing it does not have yet, togethe
   assert.equal(stored.updated_at, stored.created_at);
   assert.deepEqual({ ...stored, created_at: null, updated_at: null }, {
     id: 1, run_id: 1, repo_path: "/repos/sample", prompt: "create hello.txt containing hi", status: "queued", reason: null,
-    worktree_path: null, branch: null, base_commit: null, head_commit: null, attempt_id: null, depends_on: "", created_at: null, updated_at: null, requested_model: null, checks: null,
+    worktree_path: null, branch: null, base_commit: null, head_commit: null, attempt_id: null, depends_on: "", created_at: null, updated_at: null, requested_model: null, checks: null, restarts: 0,
   });
   assert.deepEqual(eventRows(db, task.id), [{ status: "queued", detail: null }]);
   assert.deepEqual(getTask(db, task.id), task);
   assert.deepEqual(task, {
     id: 1, runId: 1, repo: "/repos/sample", prompt: "create hello.txt containing hi", requestedModel: null, status: "queued", reason: null,
-    worktreePath: null, branch: null, baseCommit: null, headCommit: null, attemptId: null, checks: null, dependsOn: "", createdAt: stored.created_at, updatedAt: stored.created_at,
+    worktreePath: null, branch: null, baseCommit: null, headCommit: null, attemptId: null, checks: null, dependsOn: "", restarts: 0, createdAt: stored.created_at, updatedAt: stored.created_at,
   });
   assert.equal(getTask(db, 2), null);
 
@@ -223,42 +224,42 @@ test("a repository path is checked before it is used: absolute, a git repository
   }
 });
 
-test("on start, a task left building by a Botbench that stopped has its work committed by Botbench and is marked interrupted; the checkout is untouched", async (t) => {
+test("on start, a task left being prepared by a Botbench that stopped, before any agent turn, is started again once; a task it had not started is built after it; the checkout is untouched", async (t) => {
   const { db, dir, home } = store(t);
   const repo = path.join(dir, "repo");
-  const base = initRepo(repo);
+  initRepo(repo);
   write(repo, "README.md", "# Sample\nthe owner is half-way through this line\n");
   write(repo, "notes.txt", "untracked, the owner's\n");
   const before = checkoutState(repo);
 
-  // What a Botbench that was killed mid-build leaves: a queued task, and a building one with files its agent had written.
-  const queued = createTask(db, { repo, prompt: "never started" });
+  // What a Botbench that was killed mid-build leaves: a queued task, and one being prepared with a file already in its copy.
   const building = createTask(db, { repo, prompt: "half done\nsecond line" });
+  const queued = createTask(db, { repo, prompt: "never started" });
   const worktree = await createWorktree({ repo, home, run: "run-old", task: `task-${building.id}` });
   moveTask(db, building.id, "building", { worktree });
   write(worktree.path, "partial.txt", "written before the stop\n");
 
   const announced: number[] = [];
-  const tasks = createTasks({ db, home, driver: new ClaudeCodeDriver(), broker: createBroker({ db, home, onChange: () => {} }), onEvent: () => {}, onTaskChange: (task) => announced.push(task.id) });
+  const broker = createBroker({ db, home, onChange: () => {} });
+  await broker.listen();
+  const driver = buildReplayDriver(["done", "done"]);
+  const tasks = createTasks({ db, home, driver, broker, onEvent: () => {}, onTaskChange: (task) => announced.push(task.id) });
+  t.after(async () => {
+    await tasks.close();
+    await broker.close();
+  });
   await tasks.idle();
-  t.after(() => tasks.close());
 
   const after = getTask(db, building.id)!;
-  assert.equal(after.status, "interrupted");
-  assert.match(after.reason ?? "", /Botbench stopped/);
-  assert.notEqual(after.headCommit, base);
+  assert.equal(after.status, "awaiting_decision");
   assert.equal(git(repo, "rev-parse", worktree.branch).trim(), after.headCommit);
   assert.equal(git(repo, "show", `${worktree.branch}:partial.txt`), "written before the stop\n");
   assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%s", worktree.branch).trim(), `Botbench <botbench@localhost>|Botbench task ${building.id}: half done`);
   assert.equal(git(worktree.path, "status", "--porcelain"), "", "nothing is left uncommitted in the worktree");
-
-  const never = getTask(db, queued.id)!;
-  assert.deepEqual([never.status, never.worktreePath, never.headCommit], ["interrupted", null, null]);
-  assert.deepEqual(announced.sort(), [queued.id, building.id].sort(), "each change is announced");
+  assert.deepEqual(driver.prompts, ["half done\nsecond line", "never started"], "one after the other, each with its own prompt");
+  assert.equal(getTask(db, queued.id)!.status, "awaiting_decision");
+  assert.ok(announced.includes(queued.id) && announced.includes(building.id), "each change is announced");
   assert.deepEqual(checkoutState(repo), before, "the owner's checkout: same branch, same commit, same uncommitted changes");
-  assert.equal(worktreeCount(repo), 2);
-  assert.deepEqual(botbenchBranches(repo), [worktree.branch]);
-  assert.equal(db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
 });
 
 test("a task whose worktree cannot be made fails with the reason, without a driver; after closing, nothing more is started", async (t) => {

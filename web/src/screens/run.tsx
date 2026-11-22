@@ -4,10 +4,11 @@ import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
-import { CHECKS_RISK, ChecksResult, CommandEvidence } from "../components/evidence.tsx";
+import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
+import { ResumeControl } from "../components/resume.tsx";
 import { runSentence } from "../components/run-status.ts";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -454,9 +455,10 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                           </span>
                         </a>
                         {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-ds-content="">{task.reason}</p>}
-                        <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
-                        {task.checks !== null && <ChecksResult checks={task.checks} rows={task.evidence.filter((row) => row.kind === "check")} />}
-                        <CommandEvidence rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                        <CommandRounds rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
+                        {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
+                        <CommandRounds rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                        {task.status === "interrupted" && task.resumeNote !== null && <ResumeControl taskId={task.id} note={task.resumeNote} name={`task ${task.id}`} primary={false} onResumed={load} onSignedOut={onSignedOut} />}
                         {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
                         {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} compact />}
                       </div>

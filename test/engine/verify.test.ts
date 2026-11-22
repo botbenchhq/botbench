@@ -197,7 +197,7 @@ test("check evidence is append-only like setup evidence: a row cannot be changed
   assert.throws(() => e.db.prepare("UPDATE tasks SET checks = NULL WHERE id = ?").run(started.id), /checks/);
 });
 
-test("after a restart, a task left at Checking is stopped with its work kept and its run goes on", async (t) => {
+test("after a restart, a task left at Checking has its checks run again once, as configured now, without committing what a check left, and its run goes on", async (t) => {
   const dir = tempDir("botbench-verify-restart-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
@@ -221,8 +221,9 @@ test("after a restart, a task left at Checking is stopped with its work kept and
   });
   await engine.idle();
   const first = getTask(db, tasks[0]!.id)!;
-  assert.equal(first.status, "interrupted");
-  assert.match(first.reason!, /checks/i);
+  // The checks are run again from the start, as the repository's settings list them now: here none.
+  assert.equal(first.status, "awaiting_decision");
+  assert.equal(first.checks, "none");
   assert.equal(first.headCommit, base);
   assert.throws(() => execFileSync("git", ["-C", repo, "show", `${first.branch}:left-by-check.txt`], { stdio: "pipe" }), "nothing a check left is committed at restart");
   assert.equal(getTask(db, tasks[1]!.id)!.status, "awaiting_decision");
@@ -246,7 +247,8 @@ test("a database at the literal version 10 schema gains the check evidence and t
   t.after(() => db.close());
   assert.equal(schemaVersion(db), MIGRATIONS.length);
   assert.ok(MIGRATIONS.length >= 11);
-  assert.deepEqual(db.prepare("SELECT * FROM evidence").all().map((r) => ({ ...r })), before);
+  // Every row is kept; unit 15 later numbers each as the first time its list was run.
+  assert.deepEqual(db.prepare("SELECT * FROM evidence").all().map((r) => ({ ...r })), before.map((r) => ({ ...r, round: 1 })));
   const task = getTask(db, 5)!;
   assert.deepEqual([task.status, task.checks], ["failed", null]);
   // The kept row is still append-only, and a check row can now be added.

@@ -639,4 +639,70 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // Recovery after a restart (unit 15). Evidence gains `round`: which time its list of commands was run on the task,
+    // from 1. A list stopped by a restart is run again from the start as the next round, and the stopped round stays on
+    // record, so the unique key takes the round. A constraint cannot be altered, so the table is made again with every
+    // row kept, ids included, as round 1, and its append-only triggers put back. Tasks and runs gain `restarts`: how
+    // many times a restart took them up again since the owner last started or resumed them; the second restart stops
+    // them for the owner instead. `command_processes`: one row per setup or check command Botbench starts, written
+    // before it starts, with its process group and when it was started once it runs, and its temporary folder, and
+    // closed (`ended_at`, no group) in the same write that stores its evidence. A row left open is a command a
+    // stopped Botbench left running: the next start stops its group, after checking it is still that command's.
+    // A done run may go back to running, and only to running: the owner resumed one of its stopped tasks.
+    name: "recovery",
+    sql: `
+DROP TRIGGER evidence_no_update;
+DROP TRIGGER evidence_no_delete;
+DROP INDEX evidence_task;
+ALTER TABLE evidence RENAME TO evidence_before_recovery;
+CREATE TABLE evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  round INTEGER NOT NULL DEFAULT 1 CHECK (round >= 1),
+  position INTEGER NOT NULL CHECK (position >= 1),
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  UNIQUE (task_id, kind, round, position)
+);
+INSERT INTO evidence (id, task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms)
+  SELECT id, task_id, kind, 1, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms FROM evidence_before_recovery ORDER BY id;
+DROP TABLE evidence_before_recovery;
+CREATE INDEX evidence_task ON evidence (task_id, id);
+CREATE TRIGGER evidence_no_update BEFORE UPDATE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+CREATE TRIGGER evidence_no_delete BEFORE DELETE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+ALTER TABLE tasks ADD COLUMN restarts INTEGER NOT NULL DEFAULT 0 CHECK (restarts >= 0);
+ALTER TABLE runs ADD COLUMN restarts INTEGER NOT NULL DEFAULT 0 CHECK (restarts >= 0);
+CREATE TABLE command_processes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  round INTEGER NOT NULL CHECK (round >= 1),
+  position INTEGER NOT NULL CHECK (position >= 1),
+  command TEXT NOT NULL,
+  limit_ms INTEGER NOT NULL,
+  tmp_dir TEXT,
+  pgid INTEGER,
+  spawned_at TEXT,
+  created_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX command_processes_open ON command_processes (ended_at, task_id);
+DROP TRIGGER runs_end_is_end;
+CREATE TRIGGER runs_end_is_end BEFORE UPDATE OF status ON runs
+WHEN NEW.status IS NOT OLD.status AND (OLD.status IN ('cancelled', 'failed') OR (OLD.status = 'done' AND NEW.status <> 'running') OR (OLD.status IN ('running', 'awaiting_decision') AND NEW.status IN ('planning', 'awaiting_plan_approval')))
+BEGIN SELECT RAISE(ABORT, 'a run that has ended stays ended, apart from a done run the owner resumes a stopped task of, and an approved plan is not reopened'); END;
+`,
+  },
 ];

@@ -6,8 +6,8 @@ import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { taskEvidence } from "../engine/stations.ts";
-import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
-import { decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
+import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
+import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { commitsFileDiff, describeCommits, describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -26,6 +26,7 @@ export const MAX_DIFF = 400_000;
  * `ofPlan`: the run it belongs to when it was queued by approving that run's plan, else null.
  * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  * `decision`: the owner's decision, once there is one.
+ * `resumeNote`: for a stopped task the owner can resume, what Resume will do, in words; null for any other task.
  */
 export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, checks, createdAt, updatedAt } = task;
@@ -41,6 +42,7 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     ofPlan: task.runId !== null && getRun(db, task.runId) !== null ? task.runId : null,
     preapproved: task.runId === null ? [] : runGrants(db, task.runId).map((grant) => showWords(grant.words)),
     decision: decisionOf(db, task.id),
+    resumeNote: resumeNote(db, task),
     createdAt, updatedAt,
   };
 }
@@ -139,6 +141,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const one = /^\/api\/tasks\/([1-9]\d{0,14})(\/diff)?$/.exec(pathname);
   const decision = /^\/api\/tasks\/([1-9]\d{0,14})\/(accept|reject)$/.exec(pathname);
   const discard = /^\/api\/tasks\/([1-9]\d{0,14})\/discard$/.exec(pathname);
+  const resume = /^\/api\/tasks\/([1-9]\d{0,14})\/resume$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -180,6 +183,11 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       // Its state is the same; the screens that show it read it again.
       ctx.stream.announceTask(discarded);
       json(res, 200, await detail(ctx.db, discarded));
+    } else if (method === "POST" && resume) {
+      const id = Number(resume[1]);
+      // A discard at work on the task may be removing its copy: nothing is started in it meanwhile.
+      if (beingDecided(id)) throw new TaskError(409, "This task is being discarded, so it cannot be resumed.");
+      json(res, 200, await detail(ctx.db, ctx.tasks.resume(id)));
     } else {
       return false;
     }

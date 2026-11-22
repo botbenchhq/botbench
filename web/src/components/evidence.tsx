@@ -86,6 +86,34 @@ export function CommandEvidence({ rows, what, failedFirst = false, testId }: { r
   );
 }
 
+/** The rows of the newest time a list of commands was run on the task: what its result stands on. */
+export const latestRound = (rows: readonly Evidence[]): Evidence[] => {
+  const newest = Math.max(0, ...rows.map((row) => row.round));
+  return rows.filter((row) => row.round === newest);
+};
+
+/**
+ * A list of commands as it was last run, and before it, folded away, each earlier time it was run: a list stopped by a
+ * restart is run again from the start, and what the stopped one did stays on record.
+ */
+export function CommandRounds({ rows, what, failedFirst = false, testId }: { rows: readonly Evidence[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
+  const latest = latestRound(rows);
+  const earlier = [...new Set(rows.map((row) => row.round))].filter((round) => round !== latest[0]?.round).sort((a, b) => a - b);
+  return (
+    <>
+      <CommandEvidence rows={latest} what={what} failedFirst={failedFirst} {...(testId === undefined ? {} : { testId })} />
+      {earlier.map((round) => (
+        <details key={round} className="ds-disclosure">
+          <summary className="ds-disclosure__summary">{`${what.many.charAt(0).toUpperCase()}${what.many.slice(1)} before Botbench restarted`}</summary>
+          <div className="ds-disclosure__content">
+            <CommandEvidence rows={rows.filter((row) => row.round === round)} what={what} />
+          </div>
+        </details>
+      ))}
+    </>
+  );
+}
+
 /** What a task's checks found, in a word or two, for lists. */
 export function checksWords(checks: ChecksMark): string {
   return checks === "passed" ? "Checks passed" : checks === "failed" ? "Checks failed" : "No checks set up";

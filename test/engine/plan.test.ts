@@ -518,7 +518,7 @@ test("the planner's admission to the gate is read-only: an edit in its worktree 
   assert.equal((await hook("Read", { file_path: "README.md" }, "toolu_late")).verdict, "deny");
 });
 
-test("after a restart: a run left planning is failed with the reason and its worktree removed; an approved run's queued tasks are taken up by its build line", async (t) => {
+test("after a restart: a run left planning has its worktree removed and is planned again once, from the start; an approved run's queued tasks are taken up by its build line", async (t) => {
   const e = await engine(t, []);
   const queuedRun = planned(e.db, e.repo, e.base);
   const tasks = approvePlan(e.db, queuedRun.id, queuedRun.planVersion).tasks;
@@ -529,19 +529,22 @@ test("after a restart: a run left planning is failed with the reason and its wor
   execFileSync("git", ["-C", e.repo, "worktree", "add", "--quiet", "--detach", dir, e.base]);
   assert.equal(worktreeCount(e.repo), 2);
 
-  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  const again = planReplayDriver(loadPlanRecording(), [THREE_TASKS]);
+  const runs = createRuns({ db: e.db, home: e.home, driver: again, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(() => runs.close());
   await runs.idle();
-  const failed = getRun(e.db, left.id)!;
-  assert.equal(failed.status, "failed");
-  assert.match(failed.reason!, /Botbench stopped/);
-  assert.equal(worktreeCount(e.repo), 1);
-  assert.deepEqual(worktreeDirs(e.home), []);
-  assert.equal(e.driver.started.length, 0, "nothing was planned again unasked");
+  const replanned = getRun(e.db, left.id)!;
+  assert.equal(replanned.status, "awaiting_plan_approval");
+  assert.equal(planTasks(e.db, left.id).length, 3);
+  assert.equal(again.started.length, 1, "planned again once");
+  assert.equal(again.started[0]!.resumeCursor, undefined, "from the start");
 
   // The run's queued tasks are its build line's, which takes up a running run when it starts: here each is built up to
-  // the repository's setup command, which fails. Planning's recovery itself did nothing to them.
+  // the repository's setup command, which fails. Planning's recovery itself did nothing to them. The line works at the
+  // same time as the planning, so the copies are counted once it is done: only its three tasks' are left.
   await e.line.idle();
+  assert.equal(worktreeCount(e.repo), 4);
+  assert.deepEqual(worktreeDirs(e.home).filter((dir) => dir.startsWith(`run-${left.id}`)), [], "nothing of the planning before the restart, nor of the planning after it, is left");
   assert.deepEqual(tasks.map((task) => getTask(e.db, task.id)!.status), ["failed", "failed", "failed"]);
   // Changed in unit 16: this pinned "awaiting_decision". Every task failed, so nothing is ready for review and the run is done.
   assert.equal(getRun(e.db, queuedRun.id)!.status, "done");
@@ -786,7 +789,7 @@ test("critique: a read-only attempt's own request for a tool that is not reading
   assert.deepEqual(listApprovals(db), [], "no card was made for any of them");
 });
 
-test("critique: a spec file that is another name for a file elsewhere (a hard link) is not read; a run stopped before its turn says to start it again", { timeout: 15000 }, async (t) => {
+test("critique: a spec file that is another name for a file elsewhere (a hard link) is not read; a run stopped before its turn is left planning for the next start, which plans it again", { timeout: 15000 }, async (t) => {
   const e = await engine(t, [THREE_TASKS]);
   fs.writeFileSync(path.join(e.home, "secret-no-ending"), "TOKEN");
   const link = path.join(path.dirname(e.repo), "hard.md");
@@ -803,8 +806,8 @@ test("critique: a spec file that is another name for a file elsewhere (a hard li
   await closing;
   for (const id of [a.id, b.id]) {
     const run = getRun(h.db, id)!;
-    assert.equal(run.status, "failed");
-    assert.match(run.reason!, /Botbench stopped.*Start the run again/);
+    assert.equal(run.status, "planning");
+    assert.equal(run.reason, null);
   }
   assert.deepEqual(worktreeDirs(h.home), []);
 });

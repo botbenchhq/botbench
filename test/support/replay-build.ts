@@ -55,10 +55,12 @@ export interface BuildReplay extends Driver {
 }
 
 /**
- * A driver whose `n`th started attempt plays `script[n]`. With `hold`, the turns whose numbers it lists wait, after the
- * prompt is recorded, until the test calls `release(n)`; a stopped turn stops waiting.
+ * A driver whose `n`th started attempt plays `script[n]`. With `hold`, the turns whose numbers it lists wait until the
+ * test calls `release(n)`; a stopped turn stops waiting. They wait after the prompt is recorded, or with `holdAt:
+ * "session"` once the recorded session announcement is played (so the attempt has the resume cursor a real CLI reports
+ * at that point, and the turn is under way).
  */
-export function buildReplayDriver(script: readonly BuildTurn[], o: { hold?: readonly number[] } = {}): BuildReplay {
+export function buildReplayDriver(script: readonly BuildTurn[], o: { hold?: readonly number[]; holdAt?: "prompt" | "session" } = {}): BuildReplay {
   const turns = recordedTurns();
   const started: StartAttemptOptions[] = [];
   const prompts: string[] = [];
@@ -103,9 +105,12 @@ export function buildReplayDriver(script: readonly BuildTurn[], o: { hold?: read
       record({ type: "user_prompt", text: prompt });
       const kind = script[n];
       if (kind === undefined) return end("error", "The test named no recorded turn for this attempt.");
-      arrival(n).resolve();
       const gate = gates.get(n);
-      if (gate) await Promise.race([gate, stopping]);
+      const atSession = o.holdAt === "session";
+      if (!atSession) {
+        arrival(n).resolve();
+        if (gate) await Promise.race([gate, stopping]);
+      }
       const recorded = turns[kind];
       let given: unknown = null;
       for (const event of recorded.events) {
@@ -122,6 +127,10 @@ export function buildReplayDriver(script: readonly BuildTurn[], o: { hold?: read
           }
         }
         record(event);
+        if (atSession && event.type === "session_started") {
+          arrival(n).resolve();
+          if (gate) await Promise.race([gate, stopping]);
+        }
         if (event.type === "tool_call") {
           // The CLI's pre-tool hook asked the gate about the call, from the directory that was recorded for it.
           const cwd = recorded.hookCwd.get(event.id);

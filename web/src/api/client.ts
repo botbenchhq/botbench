@@ -149,6 +149,8 @@ export type ChecksMark = "passed" | "failed" | "none";
 export interface Evidence {
   id: number;
   kind: "setup" | "check";
+  /** Which time its list was run on the task, from 1: a list stopped by a restart is run again from the start as the next. */
+  round: number;
   /** Its place in its list, from 1. */
   position: number;
   /** The command as the owner configured it. */
@@ -192,6 +194,8 @@ export interface TaskSummary {
   preapproved: string[];
   /** The owner's decision, once there is one. */
   decision: TaskDecision | null;
+  /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
+  resumeNote: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -258,6 +262,8 @@ export const acceptTask = (id: number, removeLeftovers: readonly string[]): Prom
 export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/reject`, { branch, removeLeftovers }, 60_000);
 /** Remove the copy and branch of a task that failed, was stopped or was cancelled. `removeFiles` is the list of files not on the branch, as the owner saw and confirmed it. */
 export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
+/** Take up a stopped task again. Refused (409, with the reason) for a task in any other state. */
+export const resumeTask = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/resume`, {}, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
@@ -322,6 +328,8 @@ export interface RunTask {
   evidence: Evidence[];
   decision: TaskDecision | null;
   leftovers: string[] | null;
+  /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
+  resumeNote: string | null;
 }
 
 /** A run reached a state or its plan changed. The run itself is read from its route. */

@@ -5,7 +5,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { confinementProblem, SANDBOX_EXEC, seatbeltProfile, startHostProxy, unreadablePaths, type Confinement } from "../confinement.ts";
 import { buildChildEnv } from "../drivers/launch.ts";
-import { now } from "../store/db.ts";
+import { now, transaction } from "../store/db.ts";
 
 /*
  * The commands Botbench itself runs in a task's worktree: the repository's setup commands before its builder starts
@@ -32,6 +32,10 @@ import { now } from "../store/db.ts";
  * - it gets the environment a CLI gets (src/drivers/launch.ts): the allowlisted variables, no provider key, and no
  *   GIT_* variable, so nothing inherited points git at another repository.
  * Where it cannot be confined it is not run, and has failed.
+ *
+ * A command run for a task is tracked (U15): its row in `command_processes` is written before it starts, gets its
+ * process group and start time once it runs, and is closed in the same write that stores its evidence. A row left open
+ * is a command a stopped Botbench left running; the next start stops it (engine/recover.ts).
  */
 
 /** One command as Botbench runs it: the owner's text and its time limit. */
@@ -88,7 +92,35 @@ const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
  * Run one command in the worktree `cwd`, confined, and resolve with how it went. Never rejects: a command that cannot
  * be started, or cannot be confined, has failed.
  */
-export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement }): Promise<CommandRun> {
+export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; track?: Tracked }): Promise<CommandRun> {
+  const track = o.track;
+  if (track === undefined) return runUntracked(o, () => {}, () => {});
+  const at = now();
+  const row = Number(track.db.prepare("INSERT INTO command_processes (task_id, kind, round, position, command, limit_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(track.taskId, track.kind, track.round, track.position, o.command, o.limitMs, at).lastInsertRowid);
+  const result = await runUntracked(
+    o,
+    (tmp) => void track.db.prepare("UPDATE command_processes SET tmp_dir = ? WHERE id = ?").run(tmp, row),
+    // Written once the process exists, so the time is no earlier than the process's own start.
+    (pgid) => void track.db.prepare("UPDATE command_processes SET pgid = ?, spawned_at = ? WHERE id = ?").run(pgid, now(), row),
+  );
+  // Its evidence and the end of its row are one write: a start after a kill finds either both or neither.
+  transaction(track.db, () => {
+    insertEvidence(track.db, track.taskId, track.kind, track.position, result, track.round);
+    track.db.prepare("UPDATE command_processes SET pgid = NULL, ended_at = ? WHERE id = ?").run(now(), row);
+  });
+  return result;
+}
+
+/** Where a command run for a task is recorded: its task, its list, which time that list is run, and its place in it. */
+export interface Tracked {
+  db: DatabaseSync;
+  taskId: number;
+  kind: EvidenceKind;
+  round: number;
+  position: number;
+}
+
+async function runUntracked(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement }, onTmp: (dir: string) => void, onSpawn: (pgid: number) => void): Promise<CommandRun> {
   const problem = confinementProblem();
   if (problem !== null) return notRun(o, `Botbench did not run this command. ${problem}`);
   let tmp: string;
@@ -99,6 +131,7 @@ export async function runCommand(o: { command: string; cwd: string; limitMs: num
   } catch (err) {
     return notRun(o, `Botbench did not run this command: it could not make the command's temporary folder (${err instanceof Error ? err.message : String(err)}).`);
   }
+  onTmp(tmp);
   try {
     if (o.confinement.allowedHosts.length > 0) proxy = await startHostProxy(o.confinement.allowedHosts);
     profile = seatbeltProfile({ worktree: fs.realpathSync(o.cwd), unreadable: unreadablePaths({ dataDir: o.confinement.dataDir }), writable: [tmp], proxyPort: proxy?.port ?? null });
@@ -112,7 +145,7 @@ export async function runCommand(o: { command: string; cwd: string; limitMs: num
   for (const name of [...PROXY_VARIABLES, "NO_PROXY", "no_proxy"]) delete env[name];
   if (proxy !== null) for (const name of PROXY_VARIABLES) env[name] = `http://127.0.0.1:${proxy.port}`;
   try {
-    return await spawnCommand({ ...o, argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env });
+    return await spawnCommand({ ...o, argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env, onSpawn });
   } finally {
     await proxy?.close();
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -120,7 +153,7 @@ export async function runCommand(o: { command: string; cwd: string; limitMs: num
 }
 
 /** Run `argv` in `cwd` in a process group of its own and resolve with how it went. Never rejects. */
-function spawnCommand(o: { command: string; argv: string[]; env: Record<string, string>; cwd: string; limitMs: number; signal?: AbortSignal }): Promise<CommandRun> {
+function spawnCommand(o: { command: string; argv: string[]; env: Record<string, string>; cwd: string; limitMs: number; signal?: AbortSignal; onSpawn: (pgid: number) => void }): Promise<CommandRun> {
   const startedAt = now();
   const began = Date.now();
   return new Promise((resolve) => {
@@ -138,6 +171,7 @@ function spawnCommand(o: { command: string; argv: string[]; env: Record<string, 
       }
     };
     const child = spawn(o.argv[0]!, o.argv.slice(1), { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    if (child.pid !== undefined) o.onSpawn(child.pid);
     const finish = (exitCode: number | null, signal: string | null): void => {
       if (finished) return;
       finished = true;
@@ -184,6 +218,8 @@ export interface Evidence extends Omit<CommandRun, "command"> {
   id: number;
   taskId: number;
   kind: EvidenceKind;
+  /** Which time its list was run on the task, from 1: a list stopped by a restart is run again from the start as the next. */
+  round: number;
   /** The command's place in its list, from 1. */
   position: number;
   command: string;
@@ -197,6 +233,7 @@ export function taskEvidence(db: DatabaseSync, taskId: number): Evidence[] {
     id: Number(row.id),
     taskId: Number(row.task_id),
     kind: String(row.kind) as EvidenceKind,
+    round: Number(row.round),
     position: Number(row.position),
     command: String(row.command),
     outcome: String(row.outcome) as CommandOutcome,
@@ -212,10 +249,16 @@ export function taskEvidence(db: DatabaseSync, taskId: number): Evidence[] {
 }
 
 /** Store one command's result on a task. */
-export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceKind, position: number, run: CommandRun): void {
-  db.prepare("INSERT INTO evidence (task_id, kind, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-    taskId, kind, position, run.command, run.outcome, run.exitCode, run.signal, run.output, run.truncated ? 1 : 0, run.limitMs, run.startedAt, run.endedAt, run.durationMs,
+export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceKind, position: number, run: CommandRun, round = 1): void {
+  db.prepare("INSERT INTO evidence (task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    taskId, kind, round, position, run.command, run.outcome, run.exitCode, run.signal, run.output, run.truncated ? 1 : 0, run.limitMs, run.startedAt, run.endedAt, run.durationMs,
   );
+}
+
+/** The round the next run of a task's list of `kind` commands is: one after the last that was begun, or 1. */
+export function nextRound(db: DatabaseSync, taskId: number, kind: EvidenceKind): number {
+  const row = db.prepare("SELECT max(round) AS n FROM (SELECT round FROM evidence WHERE task_id = ? AND kind = ? UNION ALL SELECT round FROM command_processes WHERE task_id = ? AND kind = ?)").get(taskId, kind, taskId, kind);
+  return (typeof row?.n === "number" ? row.n : 0) + 1;
 }
 
 const seconds = (ms: number): string => {
