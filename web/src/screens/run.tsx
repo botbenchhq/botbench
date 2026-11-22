@@ -1,8 +1,9 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ApiError, approvePlan, cancelRun, getRun, getTranscript, openEventStream, requestPlanChanges, savePlan, type PlanTask, type RunDetail, type StoredEvent } from "../api/client.ts";
+import { ApiError, approvePlan, cancelRun, getRun, getTranscript, openEventStream, requestPlanChanges, savePlan, type PlanTask, type RunDetail, type RunTask, type StoredEvent } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
+import { CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
@@ -91,6 +92,14 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
   );
 }
 
+/** What a task of the run is doing, in words, for its row. */
+function taskFacts(task: RunTask): string {
+  if (task.status === "queued") return "Starts when the tasks before it have finished";
+  if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
+  if (task.status === "awaiting_decision") return task.branch ?? "Built";
+  return task.branch ?? "No branch";
+}
+
 export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => void }) {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -144,6 +153,8 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
       onRun: (announcement) => {
         if (announcement.runId === id) load();
       },
+      // A task of the run reached a state or gained evidence. Which run a task belongs to is on the run's own record.
+      onTask: () => load(),
     });
   }, [id, load, onSignedOut]);
 
@@ -152,6 +163,9 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const waiting = useMemo(() => (pending ?? []).filter((approval) => approval.runId === id), [pending, id]);
   const asking = waiting[0];
   useEffect(() => load(), [load, asking?.id]);
+  // A builder's request comes and goes with the pending approvals: the row that waits says so.
+  const pendingCount = pending?.length ?? 0;
+  useEffect(() => load(), [load, pendingCount]);
 
   // The undo offer counts down once a second and then goes. The delete itself is already stored.
   useEffect(() => {
@@ -270,14 +284,21 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
 
   const planning = run?.status === "planning";
   const gate = run?.status === "awaiting_plan_approval";
+  const building = run?.status === "running";
   const working = planning && attemptId !== null && !shown.some((e) => e.type === "turn_ended" && e.id === shown.at(-1)?.id) ? (asking === undefined ? "Claude Code is planning." : "Claude Code is paused until you answer.") : null;
   const transcript = (
     // The planning prompt is Smelt's own, with the owner's words inside it, so the row says Smelt wrote it.
     <Transcript events={shown} working={working} modelName={nameOf} promptBy="Smelt, to Claude Code" folded={!planning} />
   );
-  const cancel = run !== null && (planning || gate) && (
+  const cancel = run !== null && (planning || gate || building) && (
     <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null} losing testId="cancel-run" onConfirm={() => decide("cancel")}>
-      <p>{planning ? "The planner is stopped and no plan is kept. Nothing was built." : `The plan of ${tasksWord(run.plan.length)} is dropped and nothing is built. A cancelled run cannot be started again; start a new one instead.`}</p>
+      <p>
+        {planning
+          ? "The planner is stopped and no plan is kept. Nothing was built."
+          : gate
+            ? `The plan of ${tasksWord(run.plan.length)} is dropped and nothing is built. A cancelled run cannot be started again; start a new one instead.`
+            : "Tasks that have finished keep their branches. The task being built is stopped, and what it did so far is committed to its branch. Tasks that have not started are not built. A cancelled run cannot be started again."}
+      </p>
     </ConfirmAction>
   );
 
@@ -375,7 +396,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     {busy === "approve" ? "Approving" : `Approve ${tasksWord(run.plan.length)}`}
                   </button>
                 </div>
-                <p>Approving queues one task for each item of the plan. Building them arrives in the next version of Smelt.</p>
+                <p>Approving starts building the tasks, one at a time, in this order.</p>
 
                 <div className="gw-stack gw-gap-sm">
                   <div className="gw-field">
@@ -395,7 +416,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
               </section>
             )}
 
-            {planning && (
+            {(planning || building) && (
               <>
                 {decisionProblem !== null && (
                   <Alert tone="error" role="alert">
@@ -412,17 +433,21 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                 <ul data-testid="run-tasks" className="gw-list">
                   {run.tasks.map((task) => (
                     <li key={task.id} className="gw-list__row">
-                      <a href={`#/tasks/${task.id}`} className="gw-list__link">
-                        <span className="gw-run-status">
-                          <span data-gw-content="" className="gw-run-status__title">
-                            {task.title}
+                      <div className="gw-stack gw-gap-sm min-w-0 flex-1">
+                        <a href={`#/tasks/${task.id}`} className="gw-list__link">
+                          <span className="gw-run-status">
+                            <span data-gw-content="" className="gw-run-status__title">
+                              {task.title}
+                            </span>
+                            <span className="gw-run-status__station">
+                              <span className={statusLook({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}</span>
+                            </span>
+                            <span className="gw-run-status__facts">{`Task ${task.id} · ${taskFacts(task)}`}</span>
                           </span>
-                          <span className="gw-run-status__station">
-                            <span className={statusLook({ status: task.status, waitingOnApproval: false, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: false, resuming: false })}</span>
-                          </span>
-                          <span className="gw-run-status__facts">{`Task ${task.id}`}</span>
-                        </span>
-                      </a>
+                        </a>
+                        {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-gw-content="">{task.reason}</p>}
+                        <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
+                      </div>
                     </li>
                   ))}
                 </ul>

@@ -183,6 +183,7 @@ test("a committed task is described with its changed files, and each file's diff
       { path: "src/app.txt", status: "modified", added: 2, removed: 1, binary: false },
     ],
     filesProblem: null,
+    evidence: [],
   });
   assert.equal(described.body.worktreePath, undefined, "the worktree's location is not part of the answer");
 

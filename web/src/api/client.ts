@@ -129,7 +129,27 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-export type TaskStatus = "queued" | "building" | "awaiting_decision" | "interrupted" | "failed";
+export type TaskStatus = "queued" | "building" | "awaiting_decision" | "interrupted" | "failed" | "cancelled";
+
+/** One command Smelt ran on a task, as stored: a setup command before its builder started. */
+export interface Evidence {
+  id: number;
+  kind: "setup";
+  /** Its place in its list, from 1. */
+  position: number;
+  /** The command as the owner configured it. */
+  command: string;
+  outcome: "passed" | "failed" | "timed_out" | "stopped";
+  exitCode: number | null;
+  signal: string | null;
+  /** What it printed, its end when it was long. */
+  output: string;
+  truncated: boolean;
+  limitMs: number;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+}
 
 export interface TaskSummary {
   id: number;
@@ -150,7 +170,7 @@ export interface TaskSummary {
   parked: boolean;
   /** The owner's answer to such a request is stored, and the task is being started again to receive it. */
   resuming: boolean;
-  /** The run whose approved plan queued this task, or null for a task started on its own. Nothing builds such a task in this version. */
+  /** The run whose approved plan queued this task, or null for a task started on its own. */
   ofPlan: number | null;
   /** The commands this task may run without asking, as the owner listed them when starting it. */
   preapproved: string[];
@@ -170,6 +190,8 @@ export interface TaskDetail extends TaskSummary {
   /** The files changed from the base commit to Smelt's commit; null until there is a commit, or when they cannot be read. */
   files: FileChange[] | null;
   filesProblem: string | null;
+  /** The commands Smelt ran on the task, in the order they ran. */
+  evidence: Evidence[];
 }
 
 export interface RepoCheck {
@@ -221,13 +243,15 @@ export interface RunSummary {
   attemptId: number | null;
   /** How many tasks its plan holds. */
   taskCount: number;
+  /** How many of the tasks made from its plan are at an end: built, failed, stopped or cancelled. */
+  finishedCount: number;
   /** Its planner asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface RunDetail extends Omit<RunSummary, "taskCount"> {
+export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount"> {
   prompt: string | null;
   specPath: string | null;
   specText: string | null;
@@ -238,10 +262,22 @@ export interface RunDetail extends Omit<RunSummary, "taskCount"> {
   /** The plan's version. A decision names the version it was made on, and is refused when the plan has changed since. */
   planVersion: number;
   plan: PlanTask[];
-  /** The tasks queued when the plan was approved. */
-  tasks: { id: number; status: TaskStatus; title: string }[];
+  /** The tasks made when the plan was approved, in plan order: where each stands, and the commands Smelt ran on it. */
+  tasks: RunTask[];
   /** The commands the run's builders may use without asking, as the owner listed them when starting it. */
   preapproved: string[];
+}
+
+/** One task of a run as the run's screen shows it. */
+export interface RunTask {
+  id: number;
+  status: TaskStatus;
+  title: string;
+  reason: string | null;
+  attemptId: number | null;
+  branch: string | null;
+  waitingOnApproval: boolean;
+  evidence: Evidence[];
 }
 
 /** A run reached a state or its plan changed. The run itself is read from its route. */

@@ -3,6 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
+import { CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
@@ -216,6 +217,14 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             )}
 
             {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
+
+            {task.evidence.some((row) => row.kind === "setup") && (
+              <section aria-labelledby="setup-heading" className="gw-stack gw-gap-sm">
+                <h2 id="setup-heading">Setup</h2>
+                <p>Smelt ran this repository's setup commands in the task's copy before Claude Code started, as your settings list them.</p>
+                <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
+              </section>
+            )}
 
             {shown.length > 0 || working !== null ? (
               <section aria-label="Transcript">

@@ -10,21 +10,23 @@ import { now, transaction } from "../store/db.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sourceHead, type Worktree } from "../worktrees.ts";
 import { RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { IMPLEMENTER } from "./roles.ts";
+import { commandProblem, insertEvidence, runCommand, type StationCommand } from "./stations.ts";
 
 /**
- * The stations a task can be at so far. `awaiting_decision` means Smelt has
- * committed the work and nothing further happens until the owner decides;
- * `interrupted` and `failed` are ends that carry a reason.
+ * The stations a task can be at so far. `building` covers making its worktree, running the repository's setup
+ * commands there and its builder's turn. `awaiting_decision` means Smelt has committed the work and nothing further
+ * happens until the owner decides; `interrupted`, `failed` and `cancelled` are ends that carry a reason.
  */
-export type TaskStatus = "queued" | "building" | "awaiting_decision" | "interrupted" | "failed";
+export type TaskStatus = "queued" | "building" | "awaiting_decision" | "interrupted" | "failed" | "cancelled";
 
 /** Where a task may go from each station. `building` to `building` records an attempt starting under the task. */
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
-  queued: ["building", "interrupted", "failed"],
-  building: ["building", "awaiting_decision", "interrupted", "failed"],
+  queued: ["building", "interrupted", "failed", "cancelled"],
+  building: ["building", "awaiting_decision", "interrupted", "failed", "cancelled"],
   awaiting_decision: [],
   interrupted: [],
   failed: [],
+  cancelled: [],
 };
 
 export interface Task {
@@ -142,7 +144,12 @@ export interface TaskChange {
  * other. A move the line does not have is refused and writes nothing.
  */
 export function moveTask(db: DatabaseSync, id: number, to: TaskStatus, change: TaskChange = {}): Task {
-  return transaction(db, () => {
+  return transaction(db, () => moveTaskIn(db, id, to, change));
+}
+
+/** `moveTask` inside the caller's transaction, for a move written together with something else. */
+export function moveTaskIn(db: DatabaseSync, id: number, to: TaskStatus, change: TaskChange = {}): Task {
+  {
     const task = getTask(db, id);
     if (!task) throw new Error(`No task ${id}.`);
     if (!MOVES[task.status]?.includes(to)) throw new Error(`Task ${id} is ${task.status} and cannot move to ${to}.`);
@@ -175,7 +182,31 @@ export function moveTask(db: DatabaseSync, id: number, to: TaskStatus, change: T
     db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`).run(...values, id);
     insertEvent(db, id, at, to, details.length === 0 ? null : details.join("; "));
     return getTask(db, id)!;
+  }
+}
+
+/**
+ * A running run whose tasks have all reached an end (built, failed, stopped or cancelled) waits for the owner's
+ * decision. Written in one transaction with its event, and only from `running`: a run cancelled meanwhile stays so.
+ */
+function settleRun(db: DatabaseSync, runId: number): { id: number; status: string } | null {
+  return transaction(db, () => {
+    const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
+    if (run?.status !== "running") return null;
+    if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('queued', 'building') LIMIT 1").get(runId)) return null;
+    const at = now();
+    db.prepare("UPDATE runs SET status = 'awaiting_decision', updated_at = ? WHERE id = ?").run(at, runId);
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, 'awaiting_decision', ?)").run(runId, at, "every task has reached an end");
+    return { id: runId, status: "awaiting_decision" };
   });
+}
+
+/** The run a task was queued by when its plan was approved, with the commit that plan was made from; null for a task started on its own. */
+function plannedRunOf(db: DatabaseSync, task: Task): { id: number; status: string; baseCommit: string } | null {
+  if (task.runId === null) return null;
+  const row = db.prepare("SELECT id, status, base_commit FROM runs WHERE id = ? AND kind = 'planned'").get(task.runId);
+  return row ? { id: Number(row.id), status: String(row.status), baseCommit: String(row.base_commit) } : null;
 }
 
 const MAX_PATH = 4096;
@@ -211,6 +242,10 @@ export interface Tasks {
    * `preapproved` are the commands the owner lets this task's run use without asking; each must be one plain command.
    */
   start(repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task>;
+  /** Build a running run's queued tasks, one at a time, in plan order, after whatever is being built now. */
+  buildRun(runId: number): void;
+  /** The run was cancelled: stop what is being done for it now (a setup command or a turn). Resolves once it has stopped. */
+  stopRun(runId: number): Promise<void>;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /** Interrupt the task being built, commit what it did, and leave no CLI process behind. Tasks still queued are marked interrupted. */
@@ -225,10 +260,14 @@ export interface TasksOptions {
   /** Where the attempt's permission requests go to wait for the owner. */
   broker: Broker;
   model?: string;
+  /** The commands Smelt runs itself in a repository's new worktrees. None when left out. */
+  repoCommands?: (repo: string) => { setup: readonly StationCommand[] };
   /** Called when a transcript event was stored. */
   onEvent: () => void;
-  /** Called after each state a task reaches. */
+  /** Called after each state a task reaches, and after evidence is added to it. */
   onTaskChange: (task: Task) => void;
+  /** Called when a run's build reaches its end. */
+  onRunChange?: (run: { id: number; status: string }) => void;
 }
 
 /**
@@ -244,6 +283,8 @@ export function createTasks(options: TasksOptions): Tasks {
   let current: DriverSession | null = null;
   /** Set while a turn runs: called when Smelt begins to stop, it decides whether that turn's task is parked. */
   let parkCurrent: (() => void) | null = null;
+  /** The task being built now, the run it belongs to, and the way to stop its setup command or turn. */
+  let active: { taskId: number; runId: number | null; stop: AbortController } | null = null;
   /** When this engine began. What the store holds from before it is the last run's. */
   const began = now();
 
@@ -253,6 +294,20 @@ export function createTasks(options: TasksOptions): Tasks {
     const task = moveTask(db, id, to, change);
     options.onTaskChange(task);
     return task;
+  };
+  /** Move a task that is still at `from`, and only then; null when it has moved on meanwhile (its run was cancelled). */
+  const moveFrom = (id: number, from: TaskStatus, to: TaskStatus, change?: TaskChange): Task | null => {
+    const moved = transaction(db, () => (getTask(db, id)?.status === from ? moveTaskIn(db, id, to, change) : null));
+    if (moved) options.onTaskChange(moved);
+    return moved;
+  };
+  /** Whether the run a task belongs to was cancelled. */
+  const cancelled = (task: Task): boolean => plannedRunOf(db, task)?.status === "cancelled";
+  const CANCELLED = "The run was cancelled while this task was being built. The work done up to then is committed to its branch.";
+  const settle = (runId: number | null): void => {
+    if (runId === null) return;
+    const settled = settleRun(db, runId);
+    if (settled) options.onRunChange?.(settled);
   };
 
   /** Commit whatever is in the task's worktree and move the task to where its turn left it. */
@@ -269,18 +324,54 @@ export function createTasks(options: TasksOptions): Tasks {
     move(task.id, to, { headCommit, ...(reason === undefined ? {} : { reason }) });
   };
 
+  /**
+   * Build one queued task: its worktree (from its run's base commit, for a task of a planned run), the repository's
+   * setup commands in it, then its builder's turn. A task whose run was cancelled meanwhile is left as the cancel left it.
+   */
   const build = async (id: number): Promise<void> => {
-    const queued = getTask(db, id)!;
-    if (closed) return void move(id, "interrupted", { reason: "Smelt stopped before this task started." });
+    const queued = getTask(db, id);
+    if (!queued || queued.status !== "queued") return;
+    if (closed) return void moveFrom(id, "queued", "interrupted", { reason: "Smelt stopped before this task started." });
+    const stop = new AbortController();
+    active = { taskId: id, runId: queued.runId, stop };
+    try {
+      await prepareAndDrive(queued, stop);
+    } finally {
+      active = null;
+    }
+  };
 
+  const prepareAndDrive = async (queued: Task, stop: AbortController): Promise<void> => {
+    const id = queued.id;
+    const plan = plannedRunOf(db, queued);
     let worktree: Worktree;
     try {
-      // The run id stands for this task's own single-task run until runs exist.
-      worktree = await createWorktree({ repo: queued.repo, home, run: `run-${randomBytes(4).toString("hex")}`, task: `task-${id}` });
+      // Under the task's own run: a run's tasks sit side by side, and a task started on its own is a run of one.
+      worktree = await createWorktree({ repo: queued.repo, home, run: queued.runId === null ? `run-${randomBytes(4).toString("hex")}` : `run-${queued.runId}`, task: `task-${id}`, ...(plan ? { commit: plan.baseCommit } : {}) });
     } catch (err) {
-      return void move(id, "failed", { reason: `The task's copy of the project could not be created: ${words(err)}` });
+      return void moveFrom(id, "queued", closed ? "interrupted" : "failed", { reason: `The task's copy of the project could not be created: ${words(err)}` });
     }
-    const task = move(id, "building", { worktree });
+    const task = moveFrom(id, "queued", "building", { worktree });
+    if (task === null) {
+      // Cancelled while its copy was being made: the unused copy and its branch go again.
+      await removeWorktree({ repo: queued.repo, path: worktree.path, deleteBranch: true }).catch(report(`Removing the unused copy of task ${id}`));
+      return;
+    }
+
+    // The repository's setup commands, in order, before any agent. The first that does not pass ends the task.
+    const setup = options.repoCommands?.(task.repo).setup ?? [];
+    for (const [i, command] of setup.entries()) {
+      if (stop.signal.aborted) break;
+      const result = await runCommand({ command: command.command, cwd: worktree.path, limitMs: command.limitMs, signal: stop.signal });
+      insertEvidence(db, id, "setup", i + 1, result);
+      options.onTaskChange(getTask(db, id)!);
+      if (result.outcome === "stopped") break;
+      if (result.outcome !== "passed") return void move(id, "failed", { reason: commandProblem("setup", result) });
+    }
+    if (stop.signal.aborted) {
+      if (cancelled(task)) return finish(task, "cancelled", "The run was cancelled while this task was being prepared. What setup wrote is committed to its branch.");
+      return finish(task, "interrupted", "Smelt stopped while this task was being prepared.");
+    }
 
     // The attempt's own way to the permission gate. It is released whichever way the build ends.
     const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: worktree.path });
@@ -290,15 +381,37 @@ export function createTasks(options: TasksOptions): Tasks {
       session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
+      if (setup.length > 0) {
+        // The setup commands may have written to the copy: it is kept, and what they wrote is committed.
+        return finish(task, closed ? "interrupted" : cancelled(task) ? "cancelled" : "failed", words(err));
+      }
       // Nothing happened in the worktree, so it and its branch go again.
       const reason = await removeWorktree({ repo: task.repo, path: worktree.path, deleteBranch: true }).then(
         () => words(err),
         (removal: unknown) => `${words(err)} The unused copy at ${worktree.path} could not be removed: ${words(removal)}`,
       );
-      return void move(id, closed ? "interrupted" : "failed", { reason });
+      return void move(id, closed ? "interrupted" : cancelled(task) ? "cancelled" : "failed", { reason });
     }
 
-    await drive(task, session, admission, task.prompt, false);
+    await drive(task, session, admission, task.prompt, false, stop.signal);
+  };
+
+  /**
+   * Build a run's queued tasks one after another, in plan order, while the run is running. It stops at a task of the
+   * run that is still building without being worked on here: one that waits for the owner's answer across a restart
+   * holds up the tasks after it until it is resumed.
+   */
+  const runLine = async (runId: number): Promise<void> => {
+    for (;;) {
+      if (closed) return;
+      const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
+      if (run?.status !== "running") return;
+      if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status = 'building' LIMIT 1").get(runId)) return;
+      const next = db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id LIMIT 1").get(runId);
+      if (!next) return settle(runId);
+      await build(Number(next.id));
+      settle(runId);
+    }
   };
 
   /**
@@ -306,7 +419,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * turn that re-drives a task after a restart. If Smelt is stopped while the turn waits for the owner, the task
    * is parked: its approvals stay pending and it stays at `building` for the next start to find.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: boolean): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: boolean, stopped?: AbortSignal): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -340,8 +453,8 @@ export function createTasks(options: TasksOptions): Tasks {
     move(id, "building", { attemptId: session.attemptId, ...(resumed ? { note: `resumed after a restart, from attempt ${task.attemptId}` } : {}) });
     let end: TurnEndReason | "not sent";
     try {
-      // Smelt began stopping while the attempt was starting: the turn is not sent.
-      end = closed ? "not sent" : await session.sendTurn(prompt);
+      // Smelt began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
+      end = closed || stopped?.aborted === true || cancelled(task) ? "not sent" : await session.sendTurn(prompt);
     } catch (err) {
       end = "error";
       detail = words(err);
@@ -367,6 +480,8 @@ export function createTasks(options: TasksOptions): Tasks {
 
     // However the turn ended, what it wrote is committed and the task says where it stands.
     if (leftover !== null) await finish(task, "failed", leftover);
+    // A turn that finished before the cancel reached it is a finished task like any other.
+    else if (cancelled(task) && end !== "completed") await finish(task, "cancelled", CANCELLED);
     else if (end === "completed") await finish(task, "awaiting_decision");
     else if (end === "not sent") await finish(task, "interrupted", "Smelt stopped before the prompt was sent.");
     else if (end === "interrupted") await finish(task, "interrupted", "It was stopped before it finished. The work done up to then is committed.");
@@ -425,7 +540,15 @@ export function createTasks(options: TasksOptions): Tasks {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
     }
-    await drive(task, session, admission, RESUME_PROMPT, true);
+    const stop = new AbortController();
+    active = { taskId: id, runId: task.runId, stop };
+    try {
+      await drive(task, session, admission, RESUME_PROMPT, true, stop.signal);
+    } finally {
+      active = null;
+    }
+    // The tasks of its run that waited behind it go on now.
+    if (task.runId !== null) await runLine(task.runId);
   };
 
   /**
@@ -468,8 +591,13 @@ export function createTasks(options: TasksOptions): Tasks {
     }
   };
 
+  /** The runs that were building when the last Smelt stopped go on: their tasks not started yet are built, in plan order. */
+  const resumeRuns = async (): Promise<void> => {
+    for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status = 'running' ORDER BY id").all()) await runLine(Number(row.id));
+  };
+
   // One chain: recovery first, then each task in the order it was started.
-  let chain: Promise<void> = recover().catch(report("Recovering tasks"));
+  let chain: Promise<void> = recover().catch(report("Recovering tasks")).then(resumeRuns).catch(report("Building the runs that were building"));
 
   // An answer stored for a parked approval re-drives its task, in its turn like any other work.
   broker.onStoredAnswer((approval) => {
@@ -489,15 +617,29 @@ export function createTasks(options: TasksOptions): Tasks {
     return task;
   };
 
+  const buildRun = (runId: number): void => {
+    if (closed) return;
+    chain = chain.then(() => runLine(runId)).catch(report(`Building run ${runId}`));
+  };
+
+  const stopRun = async (runId: number): Promise<void> => {
+    if (active === null || active.runId !== runId) return;
+    active.stop.abort();
+    // Ends the running turn as interrupted; the build then commits what it did and records the task as cancelled.
+    await current?.close().catch(report(`Stopping the turn of run ${runId}`));
+  };
+
   const close = async (): Promise<void> => {
     closed = true;
     // A task that is waiting for the owner right now is parked, not ended: its approvals stay for the next start.
     parkCurrent?.();
+    // A setup command at work is stopped with its process group.
+    active?.stop.abort();
     // Ends the running turn as interrupted; the build then commits and records it, or parks it. The build reports a
     // process that would not stop, and the chain is always waited for: the database closes after this.
     await current?.close().catch(() => {});
     await chain;
   };
 
-  return { start, idle: () => chain, close };
+  return { start, buildRun, stopRun, idle: () => chain, close };
 }

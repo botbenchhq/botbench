@@ -12,6 +12,7 @@ import type { DriverEvent } from "../../src/drivers/events.ts";
 import { killProcessGroup, processGroupAlive } from "../../src/drivers/launch.ts";
 import { createTask, createTasks, getTask, type Task, type Tasks } from "../../src/engine/task.ts";
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
+import { MIGRATIONS } from "../../src/store/schema.ts";
 import { checkoutState, git, initRepo, tempDir } from "../support/repo.ts";
 import type { Left } from "../support/leave-pending.ts";
 import { loadRecording, replayDriver } from "../support/replay.ts";
@@ -544,7 +545,7 @@ test("a database from before this unit gains the parked-approval columns and the
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 9);
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
   assert.equal(db.prepare("SELECT requested_model FROM tasks").get()!.requested_model, "haiku");
   assert.deepEqual(listApprovals(db).map((a) => [a.id, a.status, a.command, a.parkedAt, a.storedDecision]), [[1, "allowed", "ls", null, null]]);
   assert.deepEqual(actionLog(db).map((e) => [e.id, e.ts, e.rule, e.approvalId, e.detail]), [[1, "t1", "asked_owner", 1, null], [2, "t2", "owner_allowed", 1, "kept"]]);

@@ -131,7 +131,7 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
   assert.equal(task.status, "awaiting_decision");
   assert.equal(task.reason, null);
   assert.equal(task.repo, live.repo);
-  assert.match(task.branch ?? "", new RegExp(`^smelt/run-[0-9a-f]{8}/task-${taskId}$`));
+  assert.match(task.branch ?? "", new RegExp(`^smelt/run-\\d+/task-${taskId}$`));
   assert.equal(task.baseCommit, before.head);
   assert.notEqual(task.headCommit, before.head);
 

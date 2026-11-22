@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, smeltHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, smeltHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -193,4 +193,26 @@ test("the number of approvals after which a card offers standing permission is 3
     [{ autonomy: { offerStandingAfte: 3 } }, /"autonomy" has unknown setting "offerStandingAfte"/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, ...(over as object) })), words, JSON.stringify(over));
+});
+
+test("a repository's setup and check commands are each a command, or a command with its own time limit in seconds; the limit is 10 minutes when none is given", (t) => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "smelt-config-repo-")));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const config = loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { setup: ["npm ci", { command: "make deps", timeoutSeconds: 90 }], checks: [{ command: "npm test" }] } } }));
+  assert.deepEqual(repositoryCommands(config, repo), {
+    setup: [{ command: "npm ci", limitMs: 600_000 }, { command: "make deps", limitMs: 90_000 }],
+    checks: [{ command: "npm test", limitMs: 600_000 }],
+  });
+  assert.deepEqual(repositoryCommands(config, "/somewhere/else"), { setup: [], checks: [] });
+
+  const refused: [unknown, RegExp][] = [
+    [{ setup: [{ timeoutSeconds: 5 }] }, /repository "\/r": "setup".*"command"/],
+    [{ setup: [{ command: "" }] }, /repository "\/r": "setup".*empty/],
+    [{ setup: [{ command: "npm ci", timeoutSeconds: 0 }] }, /repository "\/r": "setup".*"timeoutSeconds".*whole number of seconds from 1 to 86400/],
+    [{ checks: [{ command: "npm test", timeoutSeconds: 1.5 }] }, /repository "\/r": "checks".*"timeoutSeconds"/],
+    [{ checks: [{ command: "npm test", timeoutSeconds: 100000 }] }, /repository "\/r": "checks".*"timeoutSeconds"/],
+    [{ checks: [{ command: "npm test", timeoutSeconds: "60" }] }, /repository "\/r": "checks".*"timeoutSeconds"/],
+    [{ checks: [{ command: "npm test", timeout: 60 }] }, /repository "\/r": "checks".*unknown.*"timeout"/],
+  ];
+  for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
 });

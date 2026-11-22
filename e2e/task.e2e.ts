@@ -55,7 +55,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Working. Claude Code is working in a separate copy of the project.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
-  await expect(page.getByTestId("branch")).toHaveValue(/^smelt\/run-[0-9a-f]{8}\/task-\d+$/);
+  await expect(page.getByTestId("branch")).toHaveValue(/^smelt\/run-\d+\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
   // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
   const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();

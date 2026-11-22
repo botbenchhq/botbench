@@ -10,16 +10,16 @@ import { now, transaction } from "../store/db.ts";
 import { createPlanningWorktree, removePlanningWorktree, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
 import { correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, taskPrompt, validatePlan, type PlanTask } from "./roles.ts";
-import { checkRepository, getTask, insertQueuedTask, TaskError, words, type Task } from "./task.ts";
+import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 
 /*
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
  * A planner turns it into tasks, the owner edits and approves them, and only then do task rows exist.
  *
- *   planning ──▶ awaiting_plan_approval ──▶ running      (the tasks are queued; building them is the build station's)
- *      │   ◀── request changes ──┘   │
- *      ▼                             ▼
- *   failed, cancelled             cancelled
+ *   planning ──▶ awaiting_plan_approval ──▶ running ──▶ awaiting_decision   (every task built, failed, stopped or cancelled)
+ *      │   ◀── request changes ──┘   │           │
+ *      ▼                             ▼           ▼
+ *   failed, cancelled             cancelled   cancelled                      (the task at work is stopped; the rest are not built)
  *
  * The planner is read-only. It works in a detached worktree of the run's base commit under the Smelt home, never in
  * the owner's checkout; the driver starts it without any tool that writes; every shell command it wants goes to the
@@ -264,14 +264,21 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
   });
 }
 
-/** The owner cancels a run that is being planned or waits for approval. An approved run is the build station's to stop. */
+/**
+ * The owner cancels a run that is being planned, waits for approval, or is building. The run and its tasks that have
+ * not started are cancelled in one write; the task being built, if any, is stopped by the build line, which then
+ * records it. Tasks that have finished are left as they are, with their branches.
+ */
 export function cancelRun(db: DatabaseSync, runId: number): Run {
   return transaction(db, () => {
     const run = known(db, runId);
     if (run.status === "cancelled") throw new RunError(409, `Run ${run.id} was already cancelled.`);
     if (run.status === "failed") throw new RunError(409, `Run ${run.id} failed, so there is nothing to cancel.`);
-    if (run.status !== "planning" && run.status !== "awaiting_plan_approval") throw new RunError(409, `Run ${run.id}'s plan is already approved. Stopping a run that is building arrives with building, in the next version of Smelt.`);
+    if (run.status === "awaiting_decision" || run.status === "done") throw new RunError(409, `Run ${run.id}'s tasks have all been built, so there is nothing left to cancel.`);
     writeRun(db, runId, "cancelled", { detail: "cancelled by the owner" });
+    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id").all(runId)) {
+      moveTaskIn(db, Number(row.id), "cancelled", { reason: "The run was cancelled before this task started." });
+    }
     return getRun(db, runId)!;
   });
 }
@@ -381,11 +388,11 @@ export interface Runs {
   /** Check everything the run was given, store it as planning and return it at once. The planner works in the background. */
   start(input: StartRun): Promise<Run>;
   editPlan(id: number, tasks: unknown, planVersion: unknown): Run;
-  /** Approve the plan: the run is running and its tasks are queued. Nothing builds them in this version. */
+  /** Approve the plan: the run is running, its tasks are queued, and the build line builds them one at a time. */
   approve(id: number, planVersion: unknown): { run: Run; tasks: Task[] };
   /** Send the plan as it stands back to the planner with the owner's feedback. The run is planning until the planner answers. */
   requestChanges(id: number, feedback: unknown, planVersion: unknown): Run;
-  /** Cancel a run that is planning or waits for approval. A planner at work is stopped. */
+  /** Cancel a run that is planning, waits for approval or is building. A planner or a builder at work is stopped. */
   cancel(id: number): Run;
   /** Resolves when no planner is at work and nothing is being recovered. */
   idle(): Promise<void>;
@@ -408,8 +415,10 @@ export interface RunsOptions {
   onEvent: () => void;
   /** Called after each state a run reaches and each change of its plan. */
   onRunChange: (run: Run) => void;
-  /** Called for each task an approval queued. */
+  /** Called for each task an approval queued or a cancel ended. */
   onTaskChange: (task: Task) => void;
+  /** The build line: it builds an approved run's tasks and stops what it does for a cancelled run. */
+  line: Pick<Tasks, "buildRun" | "stopRun">;
 }
 
 /** How one go of the planner ended. */
@@ -626,16 +635,20 @@ export function createRuns(options: RunsOptions): Runs {
     return run;
   };
 
+  const announceTask = (task: Task): void => {
+    try {
+      options.onTaskChange(task);
+    } catch (err) {
+      report(`Announcing task ${task.id}`)(err);
+    }
+  };
+
   const approve = (id: number, planVersion: unknown): { run: Run; tasks: Task[] } => {
+    if (closed) throw new RunError(503, "Smelt is shutting down.");
     const approved = approvePlan(db, id, planVersion, options.implementerModel ?? null);
     announce(approved.run);
-    for (const task of approved.tasks) {
-      try {
-        options.onTaskChange(task);
-      } catch (err) {
-        report(`Announcing task ${task.id}`)(err);
-      }
-    }
+    for (const task of approved.tasks) announceTask(task);
+    options.line.buildRun(id);
     return approved;
   };
 
@@ -659,9 +672,13 @@ export function createRuns(options: RunsOptions): Runs {
 
   const cancel = (id: number): Run => {
     const run = cancelRun(db, id);
-    // A request of its planner that waits for the owner has nobody to answer to any more.
+    // Stops the builder at work, or its setup command; the build line then commits what it did and records it cancelled.
+    void options.line.stopRun(id).catch(report(`Stopping the build of run ${id}`));
+    // A request of its planner or of its builders that waits for the owner has nobody to answer to any more.
     broker.endRunApprovals(id, "The run was cancelled.");
+    for (const task of runTasks(db, id)) broker.endParked(task.id, "The run was cancelled.");
     announce(run);
+    for (const task of runTasks(db, id)) if (task.status === "cancelled") announceTask(task);
     // Stops the planner at work; the planning then sees the run cancelled, stores nothing and removes its worktree.
     if (current?.runId === id) void current.session.close().catch(report(`Stopping run ${id}'s planner`));
     return run;

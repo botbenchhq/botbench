@@ -460,4 +460,34 @@ CREATE TRIGGER approvals_stored_note_fixed BEFORE UPDATE OF note ON approvals WH
 BEGIN SELECT RAISE(ABORT, 'the note of a stored answer cannot be changed'); END;
 `,
   },
+  {
+    // Evidence: one row per command Smelt ran on a task (unit 12: the repository's setup commands), with how it ended,
+    // its exit code or signal, the end of its output, its time limit and its times. Rows are only ever added; the
+    // triggers refuse edits and deletes, and with recursive triggers on, a row replaced by INSERT OR REPLACE too.
+    name: "evidence",
+    sql: `
+CREATE TABLE evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup')),
+  position INTEGER NOT NULL CHECK (position >= 1),
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  UNIQUE (task_id, kind, position)
+);
+CREATE INDEX evidence_task ON evidence (task_id, id);
+CREATE TRIGGER evidence_no_update BEFORE UPDATE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+CREATE TRIGGER evidence_no_delete BEFORE DELETE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+`,
+  },
 ];

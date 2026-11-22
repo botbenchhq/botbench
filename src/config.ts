@@ -6,6 +6,7 @@ import { FLOOR_RULES, type FloorEntry } from "./approvals/floor.ts";
 import { entryProblem, realRepo } from "./approvals/grants.ts";
 import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
+import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_CONFIG_FILE = path.join(ROOT, "smelt.config.json");
@@ -39,11 +40,14 @@ export interface RoleConfig {
 export interface RepositoryConfig {
   /** Commands offered on the new-task screen as the ones a task may run without asking. The owner confirms or edits them per task. */
   preapproved?: string[];
-  /** Commands that prepare a fresh worktree. Read and checked here; run by the build station when it exists. */
-  setup?: string[];
+  /** Commands Smelt runs in each new worktree before its builder starts, in order; one that fails ends the task. */
+  setup?: CommandConfig[];
   /** Commands that verify a task's work. Read and checked here; run by the verify station when it exists. */
-  checks?: string[];
+  checks?: CommandConfig[];
 }
+/** A command Smelt runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
+export type CommandConfig = string | { command: string; timeoutSeconds?: number };
+const MAX_TIMEOUT_SECONDS = 86_400;
 /** One entry the owner adds to the safety floor: a command whose words, found anywhere in a request, make it always ask. */
 export interface FloorConfig {
   name: string;
@@ -145,10 +149,18 @@ function validate(c: Json, where: string): Config {
       if (!isObject(value)) return fail(`repository "${repo}" must be an object.`);
       for (const [setting, list] of Object.entries(value)) {
         if (!(REPOSITORY_SETTINGS as readonly string[]).includes(setting)) fail(`repository "${repo}" has unknown setting "${setting}". Known settings: ${REPOSITORY_SETTINGS.join(", ")}.`);
-        if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
-        // Only the pre-approved list is held to one plain command each: setup and check commands are run by Smelt itself.
-        const problem = setting === "preapproved" ? list.map(entryProblem).find((p) => p !== null) : list.some((command) => command.trim() === "") ? "A command is empty." : undefined;
-        if (problem) fail(`repository "${repo}": "${setting}" holds a command that cannot be used. ${problem}`);
+        if (setting === "preapproved") {
+          if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
+          const problem = list.map(entryProblem).find((p) => p !== null);
+          if (problem) fail(`repository "${repo}": "${setting}" holds a command that cannot be used. ${problem}`);
+          continue;
+        }
+        // Setup and check commands are run by Smelt itself, through a shell, so they are not held to one plain command.
+        if (!Array.isArray(list) || !list.every((entry) => typeof entry === "string" || isObject(entry))) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
+        for (const entry of list as unknown[]) {
+          const problem = commandProblem(entry);
+          if (problem) fail(`repository "${repo}": "${setting}" holds a command that cannot be used. ${problem}`);
+        }
       }
     }
   }
@@ -172,6 +184,28 @@ function validate(c: Json, where: string): Config {
 }
 
 const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks"] as const;
+
+/** Why a setup or check entry cannot be used, or null. */
+function commandProblem(entry: unknown): string | null {
+  if (typeof entry === "string") return entry.trim() === "" ? "A command is empty." : null;
+  if (!isObject(entry)) return 'Each entry is a command, or { "command": "...", "timeoutSeconds": 600 }.';
+  const unknown = Object.keys(entry).find((key) => key !== "command" && key !== "timeoutSeconds");
+  if (unknown !== undefined) return `An entry has the unknown setting "${unknown}"; an entry holds "command" and, if you like, "timeoutSeconds".`;
+  if (typeof entry.command !== "string") return 'An entry needs a "command": the command as text.';
+  if (entry.command.trim() === "") return "A command is empty.";
+  const limit = entry.timeoutSeconds;
+  if (limit !== undefined && !(typeof limit === "number" && Number.isInteger(limit) && limit >= 1 && limit <= MAX_TIMEOUT_SECONDS)) return `"timeoutSeconds" must be a whole number of seconds from 1 to ${MAX_TIMEOUT_SECONDS}.`;
+  return null;
+}
+
+const asCommand = (entry: CommandConfig): StationCommand =>
+  typeof entry === "string" ? { command: entry, limitMs: DEFAULT_LIMIT_MS } : { command: entry.command, limitMs: entry.timeoutSeconds === undefined ? DEFAULT_LIMIT_MS : entry.timeoutSeconds * 1000 };
+
+/** The commands Smelt runs itself in a repository's worktrees, each with its time limit. */
+export function repositoryCommands(config: Config, repo: string): { setup: StationCommand[]; checks: StationCommand[] } {
+  const settings = repositorySettings(config, repo);
+  return { setup: (settings.setup ?? []).map(asCommand), checks: (settings.checks ?? []).map(asCommand) };
+}
 
 /** A repository's settings, found by its real path. The config's keys are compared as written and with their links followed. */
 export function repositorySettings(config: Config, repo: string): RepositoryConfig {

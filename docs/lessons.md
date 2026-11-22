@@ -2,6 +2,12 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: the build line's own tests hid what they meant to test (unit 12)
+Three test mistakes, each caught by a failing run, not by reading. Eight tests across five files compared the schema version and the list of tables with literals (`9`, a fixed table list), so adding one migration broke them all for no reason of their own. The engine test of "an approval pending in task 1 keeps task 2 queued" pre-approved, in its shared run fixture, the very command the recorded turn asks for, so nothing was ever asked and the test could only time out. And "the background child of a timed-out command is gone" read a killed process as alive under load: a killed process stays in the table until its parent's exit lets the system clear it. Rules going forward:
+- A test of the current schema compares with `MIGRATIONS.length` and reads the table list it needs; a literal version belongs only in a test of migrating from that version.
+- A shared fixture grants nothing a scenario might need to be asked about. A test that waits for a card checks first that no grant covers the command.
+- "Gone" for a process is waited for, with a limit, not read once after a kill.
+
 ## 2026-11-22: screens were labelled with Smelt's own engineering words
 The owner's correction: "I don't think anyone referred to a chat as a turn in the UI… This should be intuitive and familiar, anyone could approach this." The plan's domain terms are the names in code, and they had gone straight onto the screens: Turn, attempt, worktree, standing permission, pre-approved, Trust, driver, "Turn completed.", raw tool arguments as a transcript line, and server errors that spoke of the permission gate and the broker. The owner added a limit on the fix: "be careful when hiding certain things like tool calls… people like to see that as it builds trust, so don't just blindly change it." Rules going forward:
 - A name in code is not a word for a screen. Every string a person sees, the server's included, takes its words from `docs/product/voice.md`, which says what each means internally and which words are never shown.

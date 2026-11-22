@@ -30,7 +30,7 @@ async function shot(page: Page, name: string): Promise<void> {
   });
 }
 
-test("LIVE: start a run from a prompt, see the plan arrive without a reload, edit a title, delete a task, approve, and see the queued tasks and what this version does not do yet; every screen follows the design system", async ({ page, smelt }) => {
+test("LIVE: start a run from a prompt, see the plan arrive without a reload, edit a title, delete a task, approve, see it build, and cancel it; every screen follows the design system", async ({ page, smelt }) => {
   const foreign = watchRequests(page, smelt);
   const repo = sourceRepo(smelt.home);
   const before = checkoutState(repo);
@@ -140,39 +140,40 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(dialog).toHaveCount(0);
   await expect(approve).toHaveText("Approve 2 tasks");
 
-  // Approve: the run says in plain words what happened and what this version does not do, and offers nothing more.
+  // Approve: the run says in plain words that it builds, one task at a time, and the owner can still cancel it.
   await approve.click();
-  await expect(page.getByTestId("run-status")).toHaveText(/^Approved\. The 2 tasks are queued\. Building them arrives in the next version of Smelt/);
-  const queued = page.getByTestId("run-tasks").getByRole("listitem");
+  await expect(page.getByTestId("run-status")).toHaveText(/^Working\. Smelt builds the tasks one at a time/);
+  const queued = page.getByTestId("run-tasks").getByRole("listitem").filter({ has: page.locator(".gw-run-status") });
   await expect(queued).toHaveCount(2);
   await expect(queued.nth(0)).toContainText("Create a.txt <b>first</b>");
-  for (const item of await queued.all()) await expect(item).toContainText("Queued");
-  await expect(page.getByRole("button", { name: /Approve|Request changes|Cancel run|Edit|Delete|Add task|Undo/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Approve|Request changes|Edit|Delete|Add task|Undo/ })).toHaveCount(0);
   await expect(page.locator(".gw-button--primary")).toHaveCount(0);
-  await checkDesign(page, "run, approved");
+  await checkDesign(page, "run, approved and building");
 
-  // A queued task's own screen promises no start either: nothing builds it in this version.
-  await queued.nth(0).getByRole("link").click();
-  await expect(page.getByTestId("task-status")).toHaveText(/^Queued by run \d+, whose plan you approved\. Building a run's tasks arrives in the next version of Smelt: nothing builds this task yet\.$/);
-  await checkDesign(page, "task queued by a run");
+  // Cancelled at once, so this test builds nothing: the turn that may have begun is stopped.
+  await page.getByRole("button", { name: "Cancel run" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel run" }).click();
+  await expect(page.getByTestId("run-status")).toHaveText(/^Cancelled\./);
+  await expect(queued.locator(".gw-badge").filter({ hasText: /^(Queued|Working)$/ })).toHaveCount(0, { timeout: 60_000 });
+
+  // A task of the run says on its own screen where it stands.
+  await queued.nth(1).getByRole("link").click();
+  await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\.$/);
+  await checkDesign(page, "task of a cancelled run");
 
   // The runs list and the tasks list both know it.
   await nav.getByRole("link", { name: "Runs", exact: true }).click();
   const listed = page.getByTestId("run-list").getByRole("listitem");
   await expect(listed).toHaveCount(1);
   await expect(listed).toContainText("Add three files");
-  await expect(listed).toContainText("Approved");
-  await expect(listed).toContainText("2 tasks queued");
+  await expect(listed).toContainText("Cancelled");
   await checkDesign(page, "runs, one run");
   await copyShot(page, "runs");
   await shot(page, "u11-runs.png");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page.getByTestId("task-list").getByRole("listitem")).toHaveCount(2);
-  await expect(page.getByTestId("task-list").getByRole("listitem").first()).toContainText("Queued");
 
-  // Nothing was built and nothing of the owner's was touched: no worktree, and the checkout as it was.
-  expect(worktreeCount(repo)).toBe(1);
-  expect(fs.existsSync(path.join(smelt.home, "worktrees")) ? fs.readdirSync(path.join(smelt.home, "worktrees")) : []).toEqual([]);
+  // Nothing of the owner's was touched.
   expect(checkoutState(repo)).toEqual(before);
   expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce)).toBe(true);
   expect(foreign).toEqual([]);

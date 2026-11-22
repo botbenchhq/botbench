@@ -1,6 +1,8 @@
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
+import { waitingOnApproval } from "../approvals/broker.ts";
 import { runGrants, showWords } from "../approvals/grants.ts";
+import { taskEvidence } from "../engine/stations.ts";
 import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, type Run } from "../engine/run.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -12,10 +14,16 @@ function title(run: Run): string {
   return line.length > 120 ? `${line.slice(0, 120)}…` : line;
 }
 
+/** Whether something of the run waits for the owner's answer: its planner's request while planning, or a builder's while building. */
+const waiting = (db: DatabaseSync, run: Run): boolean =>
+  (run.status === "planning" && runWaitingOnApproval(db, run.id)) || (run.status === "running" && runTasks(db, run.id).some((task) => task.status === "building" && waitingOnApproval(db, task.id)));
+const AT_WORK = new Set(["queued", "building"]);
+
 /** A run as a list shows it. */
 function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
   const { id, repo, status, reason, attemptId, createdAt, updatedAt } = run;
-  return { id, repo, title: title(run), status, reason, attemptId, taskCount: planTasks(db, id).length, waitingOnApproval: status === "planning" && runWaitingOnApproval(db, id), createdAt, updatedAt };
+  const finishedCount = runTasks(db, id).filter((task) => !AT_WORK.has(task.status)).length;
+  return { id, repo, title: title(run), status, reason, attemptId, taskCount: planTasks(db, id).length, finishedCount, waitingOnApproval: waiting(db, run), createdAt, updatedAt };
 }
 
 /**
@@ -30,9 +38,14 @@ function detail(db: DatabaseSync, run: Run): Record<string, unknown> {
   return {
     id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, baseCommit, attemptId, planVersion,
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
-    tasks: runTasks(db, id).map((task) => ({ id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]! })),
+    // Each task with where it stands and the commands Smelt ran on it; its transcript and diff are on its own route.
+    tasks: runTasks(db, id).map((task) => ({
+      id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch,
+      waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),
+      evidence: taskEvidence(db, task.id),
+    })),
     preapproved: runGrants(db, id).map((grant) => showWords(grant.words)),
-    waitingOnApproval: status === "planning" && runWaitingOnApproval(db, id),
+    waitingOnApproval: waiting(db, run),
     createdAt, updatedAt,
   };
 }
