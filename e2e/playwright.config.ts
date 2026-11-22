@@ -13,6 +13,12 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: "list",
   use: {
+    // An action waits for its element at most this long, not until the test's own time limit: a stale locator or a
+    // select option the screen no longer offers (`selectOption` waits for it to appear) fails here, saying what it
+    // waited for, instead of hanging a live journey that gives itself 20 minutes. Waiting on a model is done with
+    // `expect`, never with an action.
+    actionTimeout: 30_000,
+    navigationTimeout: 30_000,
     channel: "chrome",
     headless: true,
     viewport: { width: 390, height: 844 },
