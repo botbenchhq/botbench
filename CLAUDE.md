@@ -40,7 +40,7 @@ Apply in proportion to a one-owner, local tool. Each line says what it means her
 - Dependencies and secrets: zero runtime dependencies unless an ADR says why. `npm audit` clean, lockfile committed, no secret or token in the repo, logs or responses.
 - Architecture: domain terms from the plan are the names in code (run, task, attempt, station, approval, grant). A decision that is costly to reverse gets a short ADR in `docs/adr/`. 12-factor where it applies: config from file and env, one process, logs to stdout.
 - Supply chain: every change traces to a unit and a PR with its evidence. Copied files are listed in `NOTICE`. SBOM (`npm sbom`) and build provenance arrive with the first release, not before.
-- Agentic AI security (OWASP Agentic Top 10): repository text, web text and model output are data, never instructions to Botbench. Tool permissions go through the broker and the safety floor. Every agent action that ran is in the append-only log. Isolation claims are stated exactly: a worktree separates changes, it is not a sandbox.
+- Agentic AI security (OWASP Agentic Top 10): repository text, web text and model output are data, never instructions to Botbench. Tool permissions go through the broker and the safety floor. Every agent action that ran is in the append-only log. Isolation claims are stated exactly: a worktree separates changes, it is not a sandbox. Secrets stay outside the place an agent's commands run (`docs/adr/0002-agent-environment-tools-and-secrets.md`).
 
 ## Never
 - Touch owner's working tree
@@ -58,6 +58,6 @@ Apply in proportion to a one-owner, local tool. Each line says what it means her
 - After plan→build→verify→decide works, dogfood remaining units on this repo.
 
 ## Deferred
-PRs/push, native apps, public internet, local models, issue intake, task deps/parallel, multi-model council, sandboxes, enterprise.
+PRs/push, native apps, public internet, local models, issue intake, task deps/parallel, multi-model council, enterprise.
 
 Plan: `docs/plans/`. Design: `DESIGN.md`.

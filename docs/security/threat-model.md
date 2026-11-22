@@ -242,7 +242,7 @@ Stated exactly, for a task's attempt on Claude Code 2.1.322:
 - **Edits and reads inside the worktree** run without asking, by design. Edits are logged before they run; reads are not logged. Writes to anything named `.git` or `.claude` at any depth, also through a link, are sent to the owner, and so is a search whose pattern is absolute or contains `..`.
 - **Shell commands** never run unasked, except the ones the owner pre-approved for that task's run when starting it (U9) and the ones the owner gave standing permission and has not taken back (U10). Both are logged before they run.
 - **Other tools** (web search and fetch, sub-agents, scheduling and messaging tools the CLI ships) are sent to the owner by the hook. If the hook fails for such a call (it crashes, or takes more than 20 seconds because Botbench is stalled), the CLI's own default applies to that one call, and for a tool the CLI runs without a prompt that means it runs. The ask rule covers only `Bash`. Narrowing the CLI's tool list is the fix; it was not part of U9 and is still open.
-- A command the owner allows runs with the owner's rights, anywhere. A worktree separates changes; it is not a sandbox.
+- A command the owner allows runs with the owner's rights, anywhere. A worktree separates changes; it is not a sandbox. Measured on 2026-11-22: such a command can read a vendor sign-in from the Keychain. ADR 0002 and units U27 and U28 close this; until U27 ships it is open.
 
 ## Open items, most serious first
 
