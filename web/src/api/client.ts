@@ -665,3 +665,14 @@ export interface UsageReport {
 }
 /** The server asks the agent for its sign-in, which can take a few seconds. */
 export const getUsage = (): Promise<UsageReport> => request("GET", "/api/usage", undefined, 20_000);
+
+/** Notifications (unit 23): a device's subscription as the browser makes it (`PushSubscription.toJSON()`). */
+export interface DeviceSubscription {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+export const getPushKey = async (): Promise<string> => (await request<{ publicKey: string }>("GET", "/api/push", undefined, 10_000)).publicKey;
+export const savePushSubscription = (subscription: DeviceSubscription): Promise<unknown> => request("POST", "/api/push/subscriptions", subscription, 10_000);
+export const removePushSubscription = (endpoint: string): Promise<unknown> => request("POST", "/api/push/unsubscribe", { endpoint }, 10_000);
+export const pushSubscribed = async (endpoint: string): Promise<boolean> => (await request<{ subscribed: boolean }>("POST", "/api/push/check", { endpoint }, 10_000)).subscribed;
+export const sendTestNotification = (endpoint: string): Promise<unknown> => request("POST", "/api/push/test", { endpoint }, 20_000);

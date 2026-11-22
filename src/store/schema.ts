@@ -745,4 +745,19 @@ WHEN (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'reviewing'
 BEGIN SELECT RAISE(ABORT, 'a review is stored only for a task at the review station'); END;
 `,
   },
+  {
+    // Notifications (unit 23): one row per device the owner turned notifications on for. The endpoint is the push
+    // service's address for that device and is secret to it; p256dh and auth are the device's public key and secret,
+    // which messages are encrypted to. A device turning them off, or the push service saying it expired, deletes it.
+    name: "push_subscriptions",
+    sql: `
+CREATE TABLE push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`,
+  },
 ];

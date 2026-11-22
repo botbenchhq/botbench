@@ -14,6 +14,7 @@ import { CODEX, CodexDriver } from "./drivers/codex.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
+import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
 import { moveOldHome } from "./store/move-home.ts";
 
@@ -24,6 +25,8 @@ export interface BotbenchServer {
   db: DatabaseSync;
   /** The permission broker every task's requests wait in. */
   broker: Broker;
+  /** Notifications to the owner's devices. */
+  push: Push;
   /** The owner's login token, present only on the start that created it, so the entry point can show it once. */
   newLoginToken?: string;
   /** How many clients have the event stream open. */
@@ -60,6 +63,8 @@ export interface StartOptions {
   heartbeatMs?: number;
   /** How long a CLI process with no turn running is kept before it is closed. */
   idleCloseMs?: number;
+  /** Let notifications go to plain-HTTP endpoints. Only for tests, whose push endpoint is a local server; a real one is HTTPS. */
+  allowHttpPushEndpoints?: boolean;
 }
 
 
@@ -77,9 +82,14 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const codexModel = config.drivers[CODEX]?.model;
   const reviewers = { [CODEX]: new CodexDriver({ models: config.drivers[CODEX]?.models ?? [], ...(codexModel ? { defaultModel: codexModel } : {}) }) };
   let broker: Broker;
+  let push: Push;
   try {
+    push = createPush({ db, home, allowHttpEndpoints: options.allowHttpPushEndpoints === true });
     // A number that is no count is refused here too: a config handed over in code has not been through the loader.
-    broker = createBroker({ db, home, onChange: stream.announceApproval, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config) });
+    broker = createBroker({ db, home, onChange: (approval) => {
+        stream.announceApproval(approval);
+        push.approvalChanged(approval);
+      }, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config) });
   } catch (err) {
     stream.close();
     db.close();
@@ -94,9 +104,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     throw err;
   }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: stream.announceTask, onRunChange: stream.announceRun });
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: (task) => {
+      stream.announceTask(task);
+      push.taskChanged(task);
+    }, onRunChange: stream.announceRun });
   const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, line: tasks, onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -124,6 +137,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     await Promise.allSettled([turns.close(), tasks.close(), runs.close()]);
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
+    // A notification in flight may still delete an expired device's row; each has a time limit.
+    await push.idle();
     db.close();
   };
 
@@ -138,7 +153,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     await close();
     throw err;
   }
-  return { port, addresses: [...config.listen], db, broker, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
+  return { port, addresses: [...config.listen], db, broker, push, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
 }
 
 /**
