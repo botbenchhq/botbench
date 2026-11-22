@@ -13,12 +13,12 @@ import { IMPLEMENTER } from "./roles.ts";
 import { commandProblem, insertEvidence, runCommand, type StationCommand } from "./stations.ts";
 
 /**
- * The stations a task can be at so far. `building` covers making its worktree, running the repository's setup
+ * The stations a task can be at. `building` covers making its worktree, running the repository's setup
  * commands there and its builder's turn. `verifying` is the repository's check commands running on the work Botbench
- * committed. `awaiting_decision` means nothing further happens until the owner decides; `interrupted`, `failed` and
- * `cancelled` are ends that carry a reason.
+ * committed. `awaiting_decision` means nothing further happens until the owner decides; `accepted` and `rejected` are
+ * the owner's decision (engine/decision.ts); `interrupted`, `failed` and `cancelled` are ends that carry a reason.
  */
-export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "interrupted" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -27,7 +27,9 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
   building: ["building", "verifying", "awaiting_decision", "interrupted", "failed", "cancelled"],
   verifying: ["awaiting_decision", "interrupted", "failed", "cancelled"],
-  awaiting_decision: [],
+  awaiting_decision: ["accepted", "rejected"],
+  accepted: [],
+  rejected: [],
   interrupted: [],
   failed: [],
   cancelled: [],
@@ -200,19 +202,27 @@ export function moveTaskIn(db: DatabaseSync, id: number, to: TaskStatus, change:
 
 /**
  * A running run whose tasks have all reached an end (built, failed, stopped or cancelled) waits for the owner's
- * decision. Written in one transaction with its event, and only from `running`: a run cancelled meanwhile stays so.
+ * decisions, and is done once at least one task is decided and none is left to decide. Written with its event, and
+ * only from `running` or `awaiting_decision`: a run cancelled meanwhile stays so. Returns the run's new state, or null
+ * when it did not change.
  */
 function settleRun(db: DatabaseSync, runId: number): { id: number; status: string } | null {
-  return transaction(db, () => {
-    const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
-    if (run?.status !== "running") return null;
-    if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('queued', 'building', 'verifying') LIMIT 1").get(runId)) return null;
-    const at = now();
-    db.prepare("UPDATE runs SET status = 'awaiting_decision', updated_at = ? WHERE id = ?").run(at, runId);
-    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, 'awaiting_decision', ?)").run(runId, at, "every task has reached an end");
-    return { id: runId, status: "awaiting_decision" };
-  });
+  return transaction(db, () => settleRunIn(db, runId));
+}
+
+/** `settleRun` inside the caller's transaction, for the end a decision brings about. */
+export function settleRunIn(db: DatabaseSync, runId: number): { id: number; status: string } | null {
+  const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
+  if (run?.status !== "running" && run?.status !== "awaiting_decision") return null;
+  const has = (statuses: string): boolean => db.prepare(`SELECT 1 FROM tasks WHERE run_id = ? AND status IN (${statuses}) LIMIT 1`).get(runId) !== undefined;
+  if (has("'queued', 'building', 'verifying'")) return null;
+  const to = !has("'awaiting_decision'") && has("'accepted', 'rejected'") ? "done" : "awaiting_decision";
+  if (to === run.status) return null;
+  const at = now();
+  db.prepare("UPDATE runs SET status = ?, updated_at = ? WHERE id = ?").run(to, at, runId);
+  // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+  db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, ?, ?)").run(runId, at, to, to === "done" ? "every task is decided or ended" : "every task has reached an end");
+  return { id: runId, status: to };
 }
 
 /** The run a task was queued by when its plan was approved, with the commit that plan was made from; null for a task started on its own. */

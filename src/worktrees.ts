@@ -294,15 +294,11 @@ function checkBase(baseCommit: string): void {
 /** Diffs are computed by git itself, whatever diff programs or display settings the owner has configured. */
 const DIFF = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color"];
 
-/** The task's branch, where it started, where it is now, and what changed in between, file by file. */
-export async function describeWork(o: { path: string; baseCommit: string }): Promise<Work> {
-  checkBase(o.baseCommit);
-  const dir = path.resolve(o.path);
-  const { branch } = await taskWorktree(dir);
-  const headCommit = (await git(dir, ["rev-parse", "HEAD"])).trim();
+/** What changed from `base` to `head`, file by file, ordered by path, as git in `dir` reads it. */
+async function changes(dir: string, base: string, head: string): Promise<FileChange[]> {
   const [names, counts] = await Promise.all([
-    git(dir, [...DIFF, "--name-status", "-z", o.baseCommit, headCommit]),
-    git(dir, [...DIFF, "--numstat", "-z", o.baseCommit, headCommit]),
+    git(dir, [...DIFF, "--name-status", "-z", base, head]),
+    git(dir, [...DIFF, "--numstat", "-z", base, head]),
   ]);
   const status = new Map<string, FileChange["status"]>();
   const parts = names.split("\0");
@@ -320,7 +316,34 @@ export async function describeWork(o: { path: string; baseCommit: string }): Pro
     const binary = added === "-";
     files.push({ path: file, status: status.get(file) ?? "modified", added: binary ? 0 : Number(added), removed: binary ? 0 : Number(removed), binary });
   }
-  return { branch, baseCommit: o.baseCommit, headCommit, files };
+  return files;
+}
+
+/** The task's branch, where it started, where it is now, and what changed in between, file by file. */
+export async function describeWork(o: { path: string; baseCommit: string }): Promise<Work> {
+  checkBase(o.baseCommit);
+  const dir = path.resolve(o.path);
+  const { branch } = await taskWorktree(dir);
+  const headCommit = (await git(dir, ["rev-parse", "HEAD"])).trim();
+  return { branch, baseCommit: o.baseCommit, headCommit, files: await changes(dir, o.baseCommit, headCommit) };
+}
+
+/**
+ * What a decided task's work changed, read from the repository itself once its copy is gone: from its base commit to
+ * the commit Botbench made, which the kept branch holds. Only those two commits are read; nothing is written.
+ */
+export async function describeCommits(o: { repo: string; baseCommit: string; headCommit: string }): Promise<FileChange[]> {
+  checkBase(o.baseCommit);
+  checkBase(o.headCommit);
+  return changes(path.resolve(o.repo), o.baseCommit, o.headCommit);
+}
+
+/** One file's unified diff between two commits, read from the repository itself: for a decided task whose branch was kept. */
+export async function commitsFileDiff(o: { repo: string; baseCommit: string; headCommit: string; file: string }): Promise<string> {
+  checkBase(o.baseCommit);
+  checkBase(o.headCommit);
+  if (o.file === "" || o.file.includes("\0")) throw new Error(`Invalid file name ${JSON.stringify(o.file)}.`);
+  return git(path.resolve(o.repo), [...DIFF, "--full-index", "--src-prefix=a/", "--dst-prefix=b/", o.baseCommit, o.headCommit, "--", o.file]);
 }
 
 /** One file's unified diff from the base commit to the branch head; empty when the file did not change. */
@@ -333,10 +356,22 @@ export async function fileDiff(o: { path: string; baseCommit: string; file: stri
 }
 
 /**
- * Remove a task's worktree. Refused while it has uncommitted changes, so work is never lost. The branch, and so the
+ * The files in a task's worktree that are not on its branch: changed or deleted tracked files, and untracked files.
+ * Files git ignores are not among them. Paths are relative to the worktree, in git's order.
+ */
+export async function leftoverFiles(dir: string): Promise<string[]> {
+  const top = path.resolve(dir);
+  await taskWorktree(top);
+  const out = await git(top, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]);
+  return out.split("\0").filter((entry) => entry.length > 3).map((entry) => entry.slice(3));
+}
+
+/**
+ * Remove a task's worktree. Refused while it has uncommitted changes, so work is never lost, unless `removeLeftovers`
+ * says the owner saw them and agreed they may go. Ignored files go with the folder either way. The branch, and so the
  * committed work, stays unless `deleteBranch` is true.
  */
-export async function removeWorktree(o: { repo: string; path: string; deleteBranch: boolean }): Promise<void> {
+export async function removeWorktree(o: { repo: string; path: string; deleteBranch: boolean; removeLeftovers?: boolean }): Promise<void> {
   const repo = path.resolve(o.repo);
   const dir = path.resolve(o.path);
   const { branch, commonDir } = await taskWorktree(dir);
@@ -348,14 +383,62 @@ export async function removeWorktree(o: { repo: string; path: string; deleteBran
     throw new Error(`${repo} is not a git repository.`, { cause: err });
   }
   if (repoCommon !== commonDir) throw new Error(`The copy at ${dir} does not belong to the repository ${repo}.`);
-  const changes = await git(dir, ["status", "--porcelain", "--untracked-files=all"]);
-  if (changes !== "") throw new Error(`The copy at ${dir} has uncommitted changes, so it was not removed. Commit the work first.`);
+  const uncommitted = await git(dir, ["status", "--porcelain", "--untracked-files=all"]);
+  if (uncommitted !== "" && o.removeLeftovers !== true) throw new Error(`The copy at ${dir} has uncommitted changes, so it was not removed. Commit the work first.`);
 
   // Without --force, git itself also refuses if anything changed since the check above.
-  await git(repo, ["worktree", "remove", dir]);
+  await git(repo, ["worktree", "remove", ...(o.removeLeftovers === true ? ["--force"] : []), dir]);
   await git(repo, ["worktree", "prune"]);
   if (o.deleteBranch) await git(repo, ["branch", "--quiet", "-D", branch]);
   removeIfEmpty(path.dirname(dir));
+}
+
+/**
+ * Forget one task worktree of `repo` whose folder is already gone: git's record of that path only. Other worktrees whose
+ * folders are missing for now (on a drive that is not mounted) keep theirs, so nothing repository-wide is pruned.
+ */
+export async function forgetMissingWorktree(o: { repo: string; path: string }): Promise<void> {
+  const dir = path.resolve(o.path);
+  if (fs.existsSync(dir)) throw new Error(`The copy at ${dir} is still there, so it was not forgotten.`);
+  const listed = (await git(path.resolve(o.repo), ["worktree", "list", "--porcelain", "-z"], GIT_CHECK_LIMIT_MS)).split("\0").some((line) => line === `worktree ${dir}` || line === `worktree ${realPath(dir)}`);
+  if (listed) await git(path.resolve(o.repo), ["worktree", "remove", "--force", dir]);
+}
+
+/** The folders of `repo`'s checkout and worktrees that have `branch` checked out. */
+export async function branchCheckedOutAt(repo: string, branch: string): Promise<string[]> {
+  const fields = (await git(path.resolve(repo), ["worktree", "list", "--porcelain", "-z"], GIT_CHECK_LIMIT_MS)).split("\0");
+  const at: string[] = [];
+  let current = "";
+  for (const field of fields) {
+    if (field.startsWith("worktree ")) current = field.slice("worktree ".length);
+    else if (field === `branch refs/heads/${branch}`) at.push(current);
+  }
+  return at;
+}
+
+const isTaskBranch = (branch: string): boolean => (branch.startsWith(BRANCH_PREFIX) || branch.startsWith(OLD_BRANCH_PREFIX)) && !branch.includes("..") && !/[\s~^:?*[\\]/.test(branch);
+
+/** The commit a Botbench task branch points at, or null when the branch is not there. */
+export async function branchCommit(repo: string, branch: string): Promise<string | null> {
+  if (!isTaskBranch(branch)) throw new Error(`${branch} is not a Botbench task branch.`);
+  const dir = path.resolve(repo);
+  if (!(await succeeds(dir, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]))) return null;
+  return (await git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], GIT_CHECK_LIMIT_MS)).trim();
+}
+
+/**
+ * Delete a Botbench task branch, and only while it still points at `commit`: git compares and deletes in one step, so
+ * work somebody added to it, even a moment ago, is never deleted. A branch checked out anywhere is not deleted. A
+ * branch that is already gone is fine.
+ */
+export async function deleteTaskBranch(o: { repo: string; branch: string; commit: string }): Promise<void> {
+  checkBase(o.commit);
+  const at = await branchCommit(o.repo, o.branch);
+  if (at === null) return;
+  if (at !== o.commit) throw new Error(`The branch ${o.branch} has commits Botbench did not make, so it was not deleted.`);
+  const out = await branchCheckedOutAt(o.repo, o.branch);
+  if (out.length > 0) throw new Error(`The branch ${o.branch} is checked out at ${out.join(", ")}, so it was not deleted.`);
+  await git(path.resolve(o.repo), ["update-ref", "-d", `refs/heads/${o.branch}`, o.commit]);
 }
 
 /**

@@ -531,4 +531,70 @@ CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.check
 BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once'); END;
 `,
   },
+  {
+    // Decisions (unit 14): the owner accepts or rejects a task that is ready for review. One row per task, written once
+    // and never changed: who decided (the owner), what, what became of the branch, the branch and the commit it held,
+    // the files the checks had left in the task's copy that went with it, and when. A row is written only for a task
+    // that is ready for review, and a task becomes accepted or rejected only with its row. The action log gains a
+    // rule for each decision. A check cannot be altered in place, so the log is made again with every row kept, ids
+    // included, and its indexes and append-only triggers put back.
+    name: "decisions",
+    sql: `
+CREATE TABLE decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL UNIQUE REFERENCES tasks (id),
+  decided_by TEXT NOT NULL CHECK (decided_by = 'owner'),
+  decision TEXT NOT NULL CHECK (decision IN ('accept', 'reject')),
+  branch TEXT NOT NULL CHECK (branch IN ('kept', 'deleted')),
+  branch_name TEXT NOT NULL,
+  head_commit TEXT,
+  leftovers TEXT NOT NULL DEFAULT '[]',
+  decided_at TEXT NOT NULL,
+  CHECK (decision <> 'accept' OR branch = 'kept')
+);
+CREATE TRIGGER decisions_no_update BEFORE UPDATE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions are append-only'); END;
+CREATE TRIGGER decisions_no_delete BEFORE DELETE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions are append-only'); END;
+CREATE TRIGGER decisions_ready_only BEFORE INSERT ON decisions
+WHEN (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'awaiting_decision'
+BEGIN SELECT RAISE(ABORT, 'a decision is made only on a task that is ready for review'); END;
+CREATE TRIGGER tasks_decided_with_decision BEFORE UPDATE OF status ON tasks
+WHEN NEW.status IN ('accepted', 'rejected') AND NOT EXISTS (SELECT 1 FROM decisions WHERE task_id = NEW.id AND decision = (CASE NEW.status WHEN 'accepted' THEN 'accept' ELSE 'reject' END))
+BEGIN SELECT RAISE(ABORT, 'a task is accepted or rejected only with its decision'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_decisions;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected') OR task_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id FROM action_log_before_decisions ORDER BY id;
+DROP TABLE action_log_before_decisions;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

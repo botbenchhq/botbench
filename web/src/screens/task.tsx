@@ -5,7 +5,7 @@ import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
 import { CHECKS_RISK, ChecksResult, CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
-import { Icon } from "../components/icon.tsx";
+import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { statusSentence } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -70,7 +70,6 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   const [connected, setConnected] = useState(true);
   const [diffs, setDiffs] = useState<Record<string, DiffState>>({});
   const [open, setOpen] = useState<string[]>([]);
-  const [copied, setCopied] = useState<string | null>(null);
   const missing = useRef(false);
   const nameOf = useModelNames(onSignedOut);
   /** Counts reads of the task, so an answer that arrives after a newer one was asked for is dropped. */
@@ -147,14 +146,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
     );
   };
 
-  const copyBranch = (branch: string): void => {
-    // The clipboard is only there on a secure page (HTTPS, or this Mac itself) and may still refuse.
-    const written = navigator.clipboard === undefined ? Promise.reject(new Error("no clipboard")) : navigator.clipboard.writeText(branch);
-    written.then(
-      () => setCopied("Copied."),
-      () => setCopied("Not copied: this browser refused. Select the name to copy it."),
-    );
-  };
+
 
   // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
   const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : asking.parkedAt === null ? "Claude Code is paused until you answer." : "Claude Code is stopped until you answer.") : null;
@@ -285,26 +277,28 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               </section>
             )}
 
-            {task.branch !== null && (
-              <section className="gw-stack gw-gap-sm">
-                <div className="gw-field">
-                  <label htmlFor="branch" className="gw-field__label">
-                    Branch
-                  </label>
-                  <div className="gw-copy-field">
-                    <input id="branch" data-testid="branch" type="text" readOnly value={task.branch} className="gw-copy-field__value basis-full" />
-                    <button type="button" aria-label="Copy branch name" onClick={() => copyBranch(task.branch!)} className="gw-button">
-                      <Icon name="copy" className="gw-button__icon" />
-                      Copy
-                    </button>
-                    <p data-testid="copy-state" role="status" className="gw-copy-field__status">
-                      {copied}
-                    </p>
-                  </div>
-                </div>
-                <p data-testid="not-merged">
-                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs with your account's rights.`}
-                </p>
+            {task.decision !== null ? (
+              <section aria-labelledby="decision-heading" className="gw-stack gw-gap-sm">
+                <h2 id="decision-heading">{task.decision.decision === "accept" ? "Accepted" : "Rejected"}</h2>
+                <DecisionOutcome decision={task.decision} repo={task.repo} />
+              </section>
+            ) : (
+              task.branch !== null && (
+                <section className="gw-stack gw-gap-sm">
+                  <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />
+                  <p data-testid="not-merged">
+                    {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs with your account's rights.`}
+                  </p>
+                </section>
+              )
+            )}
+
+            {task.status === "awaiting_decision" && (
+              <section aria-labelledby="decide-heading" className="gw-stack gw-gap-sm">
+                <h2 id="decide-heading">Your decision</h2>
+                <p>{`Accept keeps the branch for you to merge yourself and removes the task's copy of the project. Reject removes the copy too, and asks whether to keep the branch.${task.checks === "failed" ? " The checks failed; you can still accept or reject it." : ""}`}</p>
+                {task.leftovers !== null && task.leftovers.length > 0 && <p>{`The checks left ${task.leftovers.length === 1 ? "1 file" : `${task.leftovers.length} files`} in the task's copy that ${task.leftovers.length === 1 ? "is" : "are"} not on the branch. Accept and Reject list ${task.leftovers.length === 1 ? "it" : "them"} before anything is removed.`}</p>}
+                <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={load} onSignedOut={onSignedOut} />
               </section>
             )}
           </>

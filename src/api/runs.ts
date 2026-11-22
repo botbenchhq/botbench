@@ -5,6 +5,7 @@ import { runGrants, showWords } from "../approvals/grants.ts";
 import { taskEvidence } from "../engine/stations.ts";
 import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, type Run } from "../engine/run.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
+import { decisionOf, leftoversOf } from "./tasks.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -31,7 +32,7 @@ function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
  * and the commands its builders may use without asking, read from the run's grants. Everything a planner wrote
  * (titles, criteria) is text, to be shown as text.
  */
-function detail(db: DatabaseSync, run: Run): Record<string, unknown> {
+async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknown>> {
   const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, baseCommit, attemptId, planVersion, createdAt, updatedAt } = run;
   const plan = planTasks(db, id);
   const titles = new Map(plan.map((task) => [task.taskId, task.title]));
@@ -39,11 +40,14 @@ function detail(db: DatabaseSync, run: Run): Record<string, unknown> {
     id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, baseCommit, attemptId, planVersion,
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
-    tasks: runTasks(db, id).map((task) => ({
+    // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
+    tasks: await Promise.all(runTasks(db, id).map(async (task) => ({
       id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch, checks: task.checks,
       waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),
       evidence: taskEvidence(db, task.id),
-    })),
+      decision: decisionOf(db, task.id),
+      leftovers: await leftoversOf(task),
+    }))),
     preapproved: runGrants(db, id).map((grant) => showWords(grant.words)),
     waitingOnApproval: waiting(db, run),
     createdAt, updatedAt,
@@ -79,7 +83,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       if (method === "GET" && action === "") {
         const run = getRun(ctx.db, id);
         if (!run) throw new RunError(404, "No such run.");
-        json(res, 200, detail(ctx.db, run));
+        json(res, 200, await detail(ctx.db, run));
       } else if ((method === "PATCH" && action === "/plan") || (method === "POST" && action !== "" && action !== "/plan")) {
         // Every decision is a whole JSON request, and each names the plan it was made on.
         const body = await readJsonBody(req);
@@ -88,7 +92,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
         else if (action === "/plan/approve") ctx.runs.approve(id, body.planVersion);
         else if (action === "/plan/request-changes") ctx.runs.requestChanges(id, body.feedback, body.planVersion);
         else ctx.runs.cancel(id);
-        json(res, 200, detail(ctx.db, getRun(ctx.db, id)!));
+        json(res, 200, await detail(ctx.db, getRun(ctx.db, id)!));
       } else {
         return false;
       }

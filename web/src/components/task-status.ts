@@ -5,6 +5,8 @@ const STATUS_WORD: Record<TaskStatus, string> = {
   building: "Working",
   verifying: "Checking",
   awaiting_decision: "Ready for review",
+  accepted: "Accepted",
+  rejected: "Rejected",
   interrupted: "Stopped",
   failed: "Failed",
   cancelled: "Cancelled",
@@ -24,6 +26,8 @@ const STATUS_LOOK: Record<TaskStatus, string> = {
   building: "gw-badge gw-badge--info",
   verifying: "gw-badge gw-badge--info",
   awaiting_decision: "gw-badge gw-badge--success",
+  accepted: "gw-badge gw-badge--success",
+  rejected: "gw-badge",
   interrupted: "gw-badge gw-badge--danger",
   failed: "gw-badge gw-badge--danger",
   cancelled: "gw-badge",
@@ -31,7 +35,7 @@ const STATUS_LOOK: Record<TaskStatus, string> = {
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "gw-badge gw-badge--warning" : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan">): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision">): string {
   if (waiting(task)) {
     return task.parked
       ? "Needs input. Claude Code asked for permission before Botbench restarted and is stopped. Your answer starts it again where it left off."
@@ -49,7 +53,11 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
     case "awaiting_decision":
       return task.headCommit === task.baseCommit
         ? "Ready for review. No file was changed, so nothing was committed."
-        : "Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+        : "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.";
+    case "accepted":
+      return "Accepted. Botbench kept the branch and removed the task's copy of the project.";
+    case "rejected":
+      return task.decision?.branch === "deleted" ? "Rejected. The branch was deleted, and the task's copy of the project was removed." : "Rejected. Botbench kept the branch and removed the task's copy of the project.";
     case "interrupted":
       return `Stopped. ${task.reason ?? "The task was stopped before it finished."}`;
     case "failed":

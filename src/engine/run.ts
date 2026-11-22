@@ -16,7 +16,7 @@ import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, word
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
  * A planner turns it into tasks, the owner edits and approves them, and only then do task rows exist.
  *
- *   planning ──▶ awaiting_plan_approval ──▶ running ──▶ awaiting_decision   (every task built, failed, stopped or cancelled)
+ *   planning ──▶ awaiting_plan_approval ──▶ running ──▶ awaiting_decision ──▶ done   (done once every built task is decided)
  *      │   ◀── request changes ──┘   │           │
  *      ▼                             ▼           ▼
  *   failed, cancelled             cancelled   cancelled                      (the task at work is stopped; the rest are not built)

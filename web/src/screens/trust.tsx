@@ -21,6 +21,8 @@ const RULE_WORDS: Record<LogRule, string> = {
   standing: "Ran without asking: always allowed",
   standing_granted: "You chose Always allow",
   standing_revoked: "You took Always allow back",
+  owner_accepted: "You accepted",
+  owner_rejected: "You rejected",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();
@@ -176,7 +178,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
                     <div className="gw-list__content">
                       <span className="gw-list__body">
                         <span className="gw-list__primary">{RULE_WORDS[entry.rule] ?? entry.rule}</span>
-                        <code data-gw-content="" className="gw-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
+                        <code data-gw-content="" className="gw-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" || entry.rule === "owner_accepted" || entry.rule === "owner_rejected" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
                         {/* The server's own sentence, which may hold the command it is about; its wording is checked where it is built. */}
                         {entry.detail !== null && (
                           <span data-gw-content="" className="gw-list__secondary">

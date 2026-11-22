@@ -5,9 +5,10 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
  * action runs when that statement is confirmed. Escape and the cancel button close it and change nothing. No button
  * of the dialog is drawn as a primary action, and focus starts on the one that changes nothing.
  * `losing` is for a step that takes something away: the dialog is then an alert dialog with the cancel button first.
- * `children` is the statement.
+ * `children` is the statement. `primary` draws the opening button as the view's one primary action, for a step that is
+ * the main thing the view is for and asks first only some of the time (Accept, when the checks left files behind).
  */
-export function ConfirmAction({ label, opener, title, confirmLabel, cancelLabel, disabled, losing = false, testId, onConfirm, children }: { label: string; opener?: { small: boolean; name: string }; title: ReactNode; confirmLabel: string; cancelLabel: string; disabled: boolean; losing?: boolean; testId: string; onConfirm: () => void; children: ReactNode }) {
+export function ConfirmAction({ label, opener, primary = false, title, confirmLabel, cancelLabel, disabled, losing = false, testId, onConfirm, children }: { label: string; opener?: { small: boolean; name: string }; primary?: boolean; title: ReactNode; confirmLabel: string; cancelLabel: string; disabled: boolean; losing?: boolean; testId: string; onConfirm: () => void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
@@ -40,7 +41,7 @@ export function ConfirmAction({ label, opener, title, confirmLabel, cancelLabel,
 
   return (
     <>
-      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-label={opener?.name} data-gw-content-label={opener === undefined ? undefined : ""} className={opener?.small === true ? "gw-button gw-button--quiet gw-button--small" : "gw-button"}>
+      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-label={opener?.name} data-gw-content-label={opener === undefined ? undefined : ""} className={opener?.small === true ? "gw-button gw-button--quiet gw-button--small" : primary ? "gw-button gw-button--primary" : "gw-button"}>
         {label}
       </button>
       {open && (

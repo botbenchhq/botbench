@@ -41,7 +41,9 @@ The third column is the list the automated guard reads (`e2e/voice.ts`): every t
 
 On screen since the build and verify steps landed: Checking (the project's checks are running) and Cancelled (the owner stopped the run before this task started). Check results read "Checks passed", "Checks failed" or "No checks are set up for this repository", never a bare colour.
 
-Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): In review (reviewing), Accepted and Rejected (decided), and the paused state for a usage limit.
+On screen since decisions landed: Accept and Reject (the buttons), and Accepted and Rejected (decided). Reject asks "Keep the branch" or "Delete the branch". Files the checks left in a task's copy read "These files were left by the checks and are not on the branch". A decided run reads Done.
+
+Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): In review (reviewing), and the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.
 

@@ -86,7 +86,10 @@ export type LogRule =
   /** A command ran on a standing permission; the owner gave one; the owner took one back. Each entry names its grant. */
   | "standing"
   | "standing_granted"
-  | "standing_revoked";
+  | "standing_revoked"
+  /** The owner accepted or rejected a task that was ready for review. The entry names the task's branch. */
+  | "owner_accepted"
+  | "owner_rejected";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -317,7 +320,7 @@ const toLogEntry = (row: Record<string, unknown>): LogEntry => ({
   detail: text(row.detail),
 });
 
-/** The action log, oldest first; everything or one task's. The log is only ever read here and added to by the broker. */
+/** The action log, oldest first; everything or one task's. The log is only ever read here and added to by `appendLog`. */
 export function actionLog(db: DatabaseSync, taskId?: number): LogEntry[] {
   const rows = taskId === undefined ? db.prepare("SELECT * FROM action_log ORDER BY id").all() : db.prepare("SELECT * FROM action_log WHERE task_id = ? ORDER BY id").all(taskId);
   return rows.map(toLogEntry);
@@ -339,7 +342,7 @@ export function actionLogPage(db: DatabaseSync, o: { before?: number; limit?: nu
   return { entries: rows.slice(0, limit).map(toLogEntry), older: rows.length > limit };
 }
 
-interface LogWrite {
+export interface LogWrite {
   taskId: number | null;
   runId?: number | null;
   attemptId: number | null;
@@ -352,7 +355,8 @@ interface LogWrite {
   detail?: string | null;
 }
 
-function appendLog(db: DatabaseSync, e: LogWrite): void {
+/** Add one entry to the action log. The broker writes every entry but the owner's decisions on tasks (engine/decision.ts). */
+export function appendLog(db: DatabaseSync, e: LogWrite): void {
   db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null);
 }
 

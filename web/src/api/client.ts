@@ -129,7 +129,19 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "interrupted" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
+
+/** The owner's decision on a task, as it was recorded. */
+export interface TaskDecision {
+  decision: "accept" | "reject";
+  /** What became of the task's branch. */
+  branch: "kept" | "deleted";
+  branchName: string;
+  /** The files the checks left in the task's copy, removed with it. */
+  leftovers: string[];
+  decidedBy: "owner";
+  decidedAt: string;
+}
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -178,6 +190,8 @@ export interface TaskSummary {
   ofPlan: number | null;
   /** The commands this task may run without asking, as the owner listed them when starting it. */
   preapproved: string[];
+  /** The owner's decision, once there is one. */
+  decision: TaskDecision | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -196,6 +210,8 @@ export interface TaskDetail extends TaskSummary {
   filesProblem: string | null;
   /** The commands Botbench ran on the task, in the order they ran. */
   evidence: Evidence[];
+  /** For a task that is ready for review: the files the checks left in its copy that are not on its branch. Null otherwise, or when they cannot be read. */
+  leftovers: string[] | null;
 }
 
 export interface RepoCheck {
@@ -224,6 +240,10 @@ export const startTask = (repo: string, prompt: string, model: string | null | u
   request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved }, 30_000);
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
+/** Accept a task that is ready for review. `removeLeftovers` is the list of files its checks left, as the owner saw and confirmed them. */
+export const acceptTask = (id: number, removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { removeLeftovers }, 60_000);
+/** Reject a task that is ready for review, keeping or deleting its branch. */
+export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftovers: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/reject`, { branch, removeLeftovers }, 60_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
@@ -283,6 +303,8 @@ export interface RunTask {
   checks: ChecksMark | null;
   waitingOnApproval: boolean;
   evidence: Evidence[];
+  decision: TaskDecision | null;
+  leftovers: string[] | null;
 }
 
 /** A run reached a state or its plan changed. The run itself is read from its route. */
@@ -374,7 +396,9 @@ export type LogRule =
   | "preapproved"
   | "standing"
   | "standing_granted"
-  | "standing_revoked";
+  | "standing_revoked"
+  | "owner_accepted"
+  | "owner_rejected";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

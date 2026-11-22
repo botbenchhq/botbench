@@ -95,7 +95,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   expect(await granted.evaluate((el) => [el.tagName, ...[...el.children].map((child) => child.tagName)])).toEqual(["UL", "LI", "LI"]);
 
   // It finishes with nobody answering: no card, the tray never counts one.
-  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
+  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.", { timeout: 120_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(tray).toHaveText(NONE_WAITING);
   const resolved = page.locator('[data-event="permission_resolved"]');

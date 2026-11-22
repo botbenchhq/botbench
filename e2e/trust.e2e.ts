@@ -14,7 +14,7 @@ const COMMAND = "sh make-marker.sh";
 const SCRIPT_PROMPT = `Run the command \`${COMMAND}\` with your Bash tool three times, one call at a time: wait for each result before you make the next call, and never put two in one command. Then reply with the single word: done`;
 const PUSH_PROMPT = "Run the command `git push` with your Bash tool two times, one call at a time. It is expected to fail or be refused the first time: make the second call anyway, exactly the same. Do not try any other command. Then reply with the single word: done";
 const NONE_WAITING = "No approvals are waiting.";
-const BUILT = "Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+const BUILT = "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.";
 
 const test = base.extend<{ repo: string }>({
   repo: async ({}, use) => {
