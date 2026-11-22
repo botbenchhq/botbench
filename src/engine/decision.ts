@@ -98,6 +98,8 @@ function ready(task: Task): void {
 
 /** Tasks a decision is being made for now, so two at once for one task cannot both remove its copy. */
 const deciding = new Set<number>();
+/** Whether a decision or a discard of the task is being made now: nothing else may start on it meanwhile. */
+export const beingDecided = (taskId: number): boolean => deciding.has(taskId);
 
 export interface DecideInput {
   taskId: number;

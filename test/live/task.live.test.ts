@@ -178,7 +178,7 @@ const server_states = (live: Live, taskId: number): unknown[] => live.server.db.
 
 // What a task may run, and how the owner is asked, is in approval.live.test.ts.
 
-test("live: stopping Botbench while a task builds interrupts it, and Botbench still commits the work done so far", { timeout: TASK_TIMEOUT }, async (t) => {
+test("live: stopping Botbench while a task builds stops its turn, leaves no CLI process, and keeps what the agent wrote in the task's copy for the next start", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t);
   const before = checkoutState(live.repo);
   const stream = await openStream(t, live);
@@ -194,12 +194,11 @@ test("live: stopping Botbench while a task builds interrupts it, and Botbench st
 
   const db = openStore(live.home);
   t.after(() => db.close());
-  const task = { ...db.prepare("SELECT status, reason, branch, head_commit FROM tasks WHERE id = ?").get(taskId)! };
-  assert.equal(task.status, "interrupted");
-  assert.match(String(task.reason), /stopped before it finished/);
-  assert.equal(git(live.repo, "rev-parse", String(task.branch)).trim(), task.head_commit);
-  assert.equal(git(live.repo, "show", `${String(task.branch)}:part.txt`).trim(), "part");
-  assert.deepEqual(db.prepare("SELECT status FROM task_events WHERE task_id = ? ORDER BY id").all(taskId).map((r) => r.status), ["queued", "building", "building", "interrupted"]);
+  // Left at its station, uncommitted, for the next start, which continues it once from its session. Where it is left
+  // is proven in test/engine/recover.test.ts; the continuing with the real CLI in test/live/recover.live.test.ts.
+  const task = { ...db.prepare("SELECT status, worktree_path FROM tasks WHERE id = ?").get(taskId)! };
+  assert.equal(task.status, "building");
+  assert.equal(fs.readFileSync(path.join(String(task.worktree_path), "part.txt"), "utf8").trim(), "part");
   assert.deepEqual(checkoutState(live.repo), before);
 });
 

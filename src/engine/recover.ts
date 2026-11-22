@@ -1,16 +1,21 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Approval } from "../approvals/broker.ts";
 import type { DriverCapabilities } from "../drivers/contract.ts";
 import { killProcessGroup, processGroupAlive } from "../drivers/launch.ts";
-import { now } from "../store/db.ts";
+import { now, transaction } from "../store/db.ts";
+import { insertEvidence, type CommandRun, type EvidenceKind } from "./stations.ts";
 
 /*
  * What a start of Botbench does about a task that was waiting on the owner when the last run stopped: the
  * parked-approval half of restart recovery. Such a task is not re-driven and not interrupted. Its approval
  * stays pending, its CLI process from before is stopped if it survived, and it waits until the owner answers.
- * Tasks that were mid-turn without an approval are not handled here: they are marked interrupted by the engine.
+ * It also holds what the rest of restart recovery (unit 15) needs to be safe: stopping a recorded process group only
+ * once it is known to be Botbench's own, and closing the setup and check commands a stopped Botbench left running.
+ * What is re-driven, and when a task is stopped for the owner instead, is the engine's (engine/task.ts).
  */
 
 /**
@@ -21,6 +26,13 @@ import { now } from "../store/db.ts";
  */
 export const RESUME_PROMPT =
   "[From Botbench, not from the owner] Botbench was restarted while you were waiting for permission for your last tool call. That call was neither run nor refused. Make exactly that same tool call again now, unchanged, and then carry on with the task.";
+
+/**
+ * What Botbench says to the agent when it continues a task whose turn was stopped before it finished: by a restart of
+ * Botbench, or by the owner's Resume after one. These are Botbench's words and say so: the transcript shows a prompt as the owner's.
+ */
+export const CONTINUE_PROMPT =
+  "[From Botbench, not from the owner] Your work on this task was stopped before it finished, because Botbench stopped. The files in this folder are as you left them, and anything you were running then was stopped. Carry on with the task from where you left off, and finish it.";
 
 const PS_LIMIT_MS = 5000;
 /** A CLI is started just before its attempt row is written; the clock `ps` reads has whole seconds. */
@@ -42,30 +54,88 @@ function startedAt(pid: number): Promise<number | null> {
 }
 
 /**
+ * Stop a process group a Botbench from before this start recorded, if it is still that one, and resolve once it is
+ * gone; rejects when it cannot be stopped. `recordedAt` is when the group was written down, no earlier than its
+ * leader's start.
+ *
+ * A group's number can pass to an unrelated process once the group is gone, so a bare number is never killed. The group
+ * is the one recorded while its leader is the process that was started then (it began no later than the record was
+ * written), or while its leader is gone and members remain (a number is not given out again while its group exists).
+ * A leader that began later is someone else's and is left alone, and so is everything when the machine itself started
+ * after the record was written, or when that time is unknown or cannot be read. Returns whether it was stopped.
+ */
+export async function stopRecordedGroup(pgid: number, recordedAt: string | null): Promise<boolean> {
+  if (!processGroupAlive(pgid)) return false;
+  const made = recordedAt === null ? NaN : Date.parse(recordedAt);
+  if (Number.isNaN(made)) return false;
+  const began = await startedAt(pgid);
+  // Process 1 began when the machine did. Nothing from before that is still running.
+  const booted = await startedAt(1);
+  const ours = booted !== null && booted <= made + START_SLACK_MS && (began === null || began <= made + START_SLACK_MS);
+  if (ours) await killProcessGroup(pgid);
+  return ours;
+}
+
+/**
  * Stop whatever is left of an attempt's CLI process group from before this start, so that no second agent is
  * started beside it in the same worktree. Resolves once the group is gone and the attempt no longer names it;
- * rejects when it cannot be stopped.
- *
- * A group's number can pass to an unrelated process once the group is gone. The group is the attempt's own
- * while its leader is the process that was started for the attempt (it began no later than the attempt's row
- * was written), or while its leader is gone and members remain (a number is not given out again while its
- * group exists). A leader that began later is someone else's and is left alone, and so is everything when the
- * machine itself started after the attempt was made, or when the attempt's own time cannot be read.
+ * rejects when it cannot be stopped. A CLI is started just before its attempt row is written.
  */
 export async function stopSurvivor(db: DatabaseSync, attemptId: number): Promise<void> {
   const row = db.prepare("SELECT pgid, created_at FROM attempts WHERE id = ?").get(attemptId);
-  if (!row || typeof row.pgid !== "number") return;
-  const pgid = row.pgid;
-  if (processGroupAlive(pgid)) {
-    const made = Date.parse(String(row.created_at));
-    const began = await startedAt(pgid);
-    // Process 1 began when the machine did. Nothing from before that is still running.
-    const booted = await startedAt(1);
-    const ours = !Number.isNaN(made) && booted !== null && booted <= made + START_SLACK_MS && (began === null || began <= made + START_SLACK_MS);
-    if (ours) await killProcessGroup(pgid);
-  }
+  if (!row) return;
+  if (typeof row.pgid === "number") await stopRecordedGroup(row.pgid, String(row.created_at));
   // Whatever state the attempt was left in, nothing of it runs any more.
   db.prepare("UPDATE attempts SET pgid = NULL, status = CASE status WHEN 'running' THEN 'interrupted' ELSE status END, updated_at = ? WHERE id = ?").run(now(), attemptId);
+}
+
+/** Whether `dir` is a temporary folder of a command as stations.ts makes one, and nothing else that could be removed. */
+function commandTmpDir(dir: string): boolean {
+  if (!path.isAbsolute(dir) || !path.basename(dir).startsWith("botbench-command-")) return false;
+  const parent = path.dirname(dir);
+  const tmp = os.tmpdir();
+  let real = tmp;
+  try {
+    real = fs.realpathSync(tmp);
+  } catch {
+    // The system's temporary folder as it is named is all there is to compare with.
+  }
+  return parent === tmp || parent === real;
+}
+
+/**
+ * Close what a stopped Botbench left of the setup and check commands it was running: each group that is still that
+ * command's is stopped, its temporary folder removed, and the command recorded as stopped by the restart, in the same
+ * write that closes its row. Evidence is only added to: this is the command's one row. Returns the tasks one of whose
+ * commands could not be stopped, with why: nothing more may run in their copies.
+ */
+export async function closeLeftCommands(db: DatabaseSync, before: string): Promise<Map<number, string>> {
+  const failed = new Map<number, string>();
+  for (const row of db.prepare("SELECT * FROM command_processes WHERE ended_at IS NULL AND created_at < ? ORDER BY id").all(before)) {
+    const taskId = Number(row.task_id);
+    if (typeof row.pgid === "number") {
+      try {
+        await stopRecordedGroup(row.pgid, typeof row.spawned_at === "string" ? row.spawned_at : null);
+      } catch (err) {
+        failed.set(taskId, `A command Botbench started for this task before it stopped could not be stopped: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+    }
+    if (typeof row.tmp_dir === "string" && commandTmpDir(row.tmp_dir)) fs.rmSync(row.tmp_dir, { recursive: true, force: true });
+    const at = now();
+    const started = typeof row.spawned_at === "string" ? row.spawned_at : String(row.created_at);
+    transaction(db, () => {
+      const kind = String(row.kind) as EvidenceKind;
+      const round = Number(row.round);
+      const position = Number(row.position);
+      if (!db.prepare("SELECT 1 FROM evidence WHERE task_id = ? AND kind = ? AND round = ? AND position = ?").get(taskId, kind, round, position)) {
+        const run: CommandRun = { command: String(row.command), outcome: "stopped", exitCode: null, signal: null, output: "Botbench stopped while this command ran, so it did not finish. It was stopped when Botbench started again.\n", truncated: false, limitMs: Number(row.limit_ms), startedAt: started, endedAt: at, durationMs: Math.max(0, Date.parse(at) - Date.parse(started)) };
+        insertEvidence(db, taskId, kind, position, run, round);
+      }
+      db.prepare("UPDATE command_processes SET pgid = NULL, ended_at = ? WHERE id = ?").run(at, Number(row.id));
+    });
+  }
+  return failed;
 }
 
 /**

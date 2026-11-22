@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
@@ -9,9 +10,9 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
-import { RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
+import { closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { IMPLEMENTER } from "./roles.ts";
-import { commandProblem, insertEvidence, runCommand, type StationCommand } from "./stations.ts";
+import { commandProblem, nextRound, runCommand, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
@@ -23,15 +24,18 @@ export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decisio
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
-/** Where a task may go from each station. `building` to `building` records an attempt starting under the task. */
+/**
+ * Where a task may go from each station. `building` to `building` records an attempt starting under the task, and a
+ * move to the same station records something for its history. A stopped task goes back to work only by the owner's Resume.
+ */
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
   building: ["building", "verifying", "awaiting_decision", "interrupted", "failed", "cancelled"],
-  verifying: ["awaiting_decision", "interrupted", "failed", "cancelled"],
+  verifying: ["verifying", "awaiting_decision", "interrupted", "failed", "cancelled"],
   awaiting_decision: ["accepted", "rejected"],
   accepted: [],
   rejected: [],
-  interrupted: [],
+  interrupted: ["building", "verifying"],
   failed: [],
   cancelled: [],
 };
@@ -57,6 +61,8 @@ export interface Task {
   checks: ChecksMark | null;
   /** Tasks this one waits for. Always empty for now. */
   dependsOn: string;
+  /** How many times a restart took it up again since it was started or last resumed by the owner. */
+  restarts: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -90,6 +96,7 @@ function toTask(row: Record<string, unknown>): Task {
     checks: text(row.checks) as ChecksMark | null,
     attemptId: int(row.attempt_id),
     dependsOn: String(row.depends_on),
+    restarts: Number(row.restarts ?? 0),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -236,6 +243,50 @@ function plannedRunOf(db: DatabaseSync, task: Task): { id: number; status: strin
   return row ? { id: Number(row.id), status: String(row.status), baseCommit: String(row.base_commit) } : null;
 }
 
+/**
+ * Where a task's work was when it stopped, for taking it up again: its setup commands (no agent had started in its
+ * copy), its agent's turn, or its checks (its work was committed). Read from where it stands, or, for a stopped task,
+ * from the station it was at before it stopped. Null when there is nothing to take up: no copy, or no committed work to check.
+ */
+export function stageOf(db: DatabaseSync, task: Task): "setup" | "turn" | "checks" | null {
+  if (task.worktreePath === null) return null;
+  const from = task.status === "interrupted" ? db.prepare("SELECT status FROM task_events WHERE task_id = ? AND status <> 'interrupted' ORDER BY id DESC LIMIT 1").get(task.id)?.status : task.status;
+  if (from === "verifying") return task.headCommit === null ? null : "checks";
+  // An agent is sent its prompt only once its task names its attempt, so a task with none has had nothing written by an agent.
+  if (from === "building") return task.attemptId === null ? "setup" : "turn";
+  return null;
+}
+
+/** Why a stopped task cannot be resumed, in words for the owner; null when it can. */
+export function resumeBlocker(db: DatabaseSync, task: Task): string | null {
+  if (stageOf(db, task) === null) return "This task has nothing to resume: it was stopped before there was work in a copy of the project.";
+  if (!fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) return "This task's copy of the project is no longer there, so there is nothing to resume.";
+  if (plannedRunOf(db, task)?.status === "cancelled") return "Its run was cancelled, so it cannot be resumed.";
+  return null;
+}
+
+/** For a stopped task that can be resumed: what Resume will do, in words for the owner. Null for every other task. */
+export function resumeNote(db: DatabaseSync, task: Task): string | null {
+  if (task.status !== "interrupted" || resumeBlocker(db, task) !== null) return null;
+  const stage = stageOf(db, task);
+  if (stage === "checks") return "Resume runs this repository's checks again from the start, on the work committed to the task's branch.";
+  if (stage === "setup") return "Resume runs this repository's setup commands again from the start in the task's copy of the project, then starts Claude Code on the task.";
+  return "Resume starts Claude Code again in the task's copy of the project, with the files as they were left, and asks it to carry on where it stopped.";
+}
+
+/** A task's state as the rest of a sentence that starts "This task", for a refusal. */
+const STANDS: Record<TaskStatus, string> = {
+  queued: "is queued",
+  building: "is already working",
+  verifying: "is already working: its checks are running",
+  awaiting_decision: "is ready for review",
+  accepted: "was accepted",
+  rejected: "was rejected",
+  interrupted: "is stopped",
+  failed: "failed",
+  cancelled: "was cancelled",
+};
+
 const MAX_PATH = 4096;
 
 /**
@@ -273,9 +324,17 @@ export interface Tasks {
   buildRun(runId: number): void;
   /** The run was cancelled: stop what is being done for it now (a setup command or a turn). Resolves once it has stopped. */
   stopRun(runId: number): Promise<void>;
+  /**
+   * The owner's Resume of a stopped task: it goes back to the station it stopped at at once, and is taken up again in
+   * its turn, from where it was. Throws a TaskError (404, 409) for a task that does not exist or cannot be resumed.
+   */
+  resume(id: number): Task;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
-  /** Interrupt the task being built, commit what it did, and leave no CLI process behind. Tasks still queued are marked interrupted. */
+  /**
+   * Stop what is at work and leave no CLI process or command behind. A task at work is left at its station, its files
+   * as they are, for the next start to take up again; one that waits for the owner's answer is parked.
+   */
   close(): Promise<void>;
 }
 
@@ -359,9 +418,39 @@ export function createTasks(options: TasksOptions): Tasks {
   };
 
   /**
-   * The builder finished: commit its work, then run the repository's check commands on it, in its worktree, each with
-   * its time limit, and record each as evidence. The task goes on to wait for the owner whatever the checks found; it
-   * says what that was. A check stopped by a cancel or by Botbench stopping ends the task as cancelled or interrupted.
+   * Botbench is stopping while this task is at work: it is left at its station, its files as they are and nothing
+   * committed, for the next start to take up again (once; see `recover`).
+   */
+  const leave = (id: number, station: "building" | "verifying", what: string): void => {
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    moveFrom(id, station, station, { note: `Botbench stopped while ${what}; left for the next start to take up again` });
+  };
+
+  /**
+   * Run a list of the repository's commands of one kind on a task, in order, in its worktree, each with its time
+   * limit, as the next round of that list: each is recorded as it starts and stored as evidence as it ends. Setup
+   * stops at the first that does not pass; checks all run. `stopped`: a command was stopped (a cancel, or Botbench
+   * stopping) and the rest were not run.
+   */
+  const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
+    const round = nextRound(db, task.id, kind);
+    let failed: CommandRun | null = null;
+    for (const [i, command] of commands.entries()) {
+      if (signal?.aborted || closed) return { stopped: true, failed };
+      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task.repo), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
+      options.onTaskChange(getTask(db, task.id)!);
+      if (result.outcome === "stopped") return { stopped: true, failed };
+      if (result.outcome !== "passed") {
+        failed ??= result;
+        if (kind === "setup") break;
+      }
+    }
+    return { stopped: false, failed };
+  };
+
+  /**
+   * The builder finished: commit its work, then run the repository's check commands on it. The task goes on to wait
+   * for the owner whatever the checks found; it says what that was.
    */
   const verify = async (task: Task, stopped?: AbortSignal): Promise<void> => {
     const headCommit = await commit(task);
@@ -370,27 +459,23 @@ export function createTasks(options: TasksOptions): Tasks {
     // No checks: said so as such, never as a pass.
     if (checks.length === 0) return void move(task.id, "awaiting_decision", { headCommit, checks: "none" });
     move(task.id, "verifying", { headCommit });
-    let failed = false;
-    let interrupted = false;
-    for (const [i, check] of checks.entries()) {
-      if (stopped?.aborted || closed) {
-        interrupted = true;
-        break;
-      }
-      const result = await runCommand({ command: check.command, cwd: task.worktreePath!, limitMs: check.limitMs, confinement: confinement(task.repo), ...(stopped ? { signal: stopped } : {}) });
-      insertEvidence(db, task.id, "check", i + 1, result);
-      options.onTaskChange(getTask(db, task.id)!);
-      if (result.outcome === "stopped") {
-        interrupted = true;
-        break;
-      }
-      if (result.outcome !== "passed") failed = true;
+    await check(task, checks, stopped);
+  };
+
+  /**
+   * Run the repository's checks on a task at `verifying`, whose work is committed, and record what they found. What a
+   * check leaves in the copy is never committed. Checks stopped by a cancel end the task as cancelled; stopped by
+   * Botbench stopping, the task is left for the next start, which runs them again from the start.
+   */
+  const check = async (task: Task, checks: readonly StationCommand[], stopped?: AbortSignal): Promise<void> => {
+    if (checks.length === 0) return void moveFrom(task.id, "verifying", "awaiting_decision", { checks: "none" });
+    const ran = await runList(task, "check", checks, stopped);
+    if (ran.stopped) {
+      if (cancelled(task)) return void moveFrom(task.id, "verifying", "cancelled", { reason: "The run was cancelled while this task's checks ran. The work is committed to its branch; the checks did not finish." });
+      if (closed) return leave(task.id, "verifying", "the checks of this task ran");
+      return void moveFrom(task.id, "verifying", "interrupted", { reason: "This task's checks were stopped before they finished. The work is committed to its branch." });
     }
-    if (interrupted) {
-      if (cancelled(task)) return void move(task.id, "cancelled", { reason: "The run was cancelled while this task's checks ran. The work is committed to its branch; the checks did not finish." });
-      return void move(task.id, "interrupted", { reason: "Botbench stopped while this task's checks ran. The work is committed to its branch; the checks did not finish." });
-    }
-    move(task.id, "awaiting_decision", { checks: failed ? "failed" : "passed" });
+    moveFrom(task.id, "verifying", "awaiting_decision", { checks: ran.failed === null ? "passed" : "failed" });
   };
 
   /**
@@ -400,15 +485,20 @@ export function createTasks(options: TasksOptions): Tasks {
   const build = async (id: number): Promise<void> => {
     const queued = getTask(db, id);
     if (!queued || queued.status !== "queued") return;
-    if (closed) return void moveFrom(id, "queued", "interrupted", { reason: "Botbench stopped before this task started." });
+    if (closed) return;
+    await atWork(queued, (stop) => prepareAndDrive(queued, stop));
+  };
+
+  /** Do the work of a task as the task at work, which a cancel or Botbench stopping can stop. */
+  const atWork = async (task: Task, work: (stop: AbortController) => Promise<void>): Promise<void> => {
     const stop = new AbortController();
-    active = { taskId: id, runId: queued.runId, stop };
+    active = { taskId: task.id, runId: task.runId, stop };
     try {
-      await prepareAndDrive(queued, stop);
+      await work(stop);
     } catch (err) {
       // Whatever went wrong unforeseen, the task does not stay at a station nothing works at, holding up its run.
-      report(`Building task ${id}`)(err);
-      for (const from of ["queued", "building", "verifying"] as const) moveFrom(id, from, "failed", { reason: `Botbench could not go on with this task: ${words(err)}` });
+      report(`Building task ${task.id}`)(err);
+      for (const from of ["queued", "building", "verifying"] as const) moveFrom(task.id, from, "failed", { reason: `Botbench could not go on with this task: ${words(err)}` });
     } finally {
       active = null;
     }
@@ -422,7 +512,9 @@ export function createTasks(options: TasksOptions): Tasks {
       // Under the task's own run: a run's tasks sit side by side, and a task started on its own is a run of one.
       worktree = await createWorktree({ repo: queued.repo, home, run: queued.runId === null ? `run-${randomBytes(4).toString("hex")}` : `run-${queued.runId}`, task: `task-${id}`, ...(plan ? { commit: plan.baseCommit } : {}) });
     } catch (err) {
-      return void moveFrom(id, "queued", closed ? "interrupted" : "failed", { reason: `The task's copy of the project could not be created: ${words(err)}` });
+      // Stopping meanwhile: the task is still queued, and the next start builds it.
+      if (closed) return;
+      return void moveFrom(id, "queued", "failed", { reason: `The task's copy of the project could not be created: ${words(err)}` });
     }
     const task = moveFrom(id, "queued", "building", { worktree });
     if (task === null) {
@@ -430,44 +522,47 @@ export function createTasks(options: TasksOptions): Tasks {
       await removeWorktree({ repo: queued.repo, path: worktree.path, deleteBranch: true }).catch(report(`Removing the unused copy of task ${id}`));
       return;
     }
+    await setUpAndDrive(task, stop);
+  };
 
-    // The repository's setup commands, in order, before any agent. The first that does not pass ends the task.
+  /**
+   * The repository's setup commands in a task's copy, in order, then its builder's turn with the task's own prompt.
+   * Only ever run on a copy no agent has worked in: a new one, or one whose setup was stopped before any agent started.
+   */
+  const setUpAndDrive = async (task: Task, stop: AbortController): Promise<void> => {
+    const id = task.id;
     const setup = options.repoCommands?.(task.repo).setup ?? [];
-    for (const [i, command] of setup.entries()) {
-      if (stop.signal.aborted) break;
-      const result = await runCommand({ command: command.command, cwd: worktree.path, limitMs: command.limitMs, signal: stop.signal, confinement: confinement(task.repo) });
-      insertEvidence(db, id, "setup", i + 1, result);
-      options.onTaskChange(getTask(db, id)!);
-      if (result.outcome === "stopped") break;
-      if (result.outcome !== "passed") return void move(id, "failed", { reason: commandProblem("setup", result) });
-    }
-    if (stop.signal.aborted) {
+    const ran = await runList(task, "setup", setup, stop.signal);
+    if (ran.failed !== null) return void moveFrom(id, "building", "failed", { reason: commandProblem("setup", ran.failed) });
+    if (ran.stopped || stop.signal.aborted) {
       if (cancelled(task)) return finish(task, "cancelled", "The run was cancelled while this task was being prepared. What setup wrote is committed to its branch.");
-      return finish(task, "interrupted", "Botbench stopped while this task was being prepared.");
+      return leave(id, "building", "this task was being prepared");
     }
 
     // The attempt's own way to the permission gate. It is released whichever way the build ends.
-    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: worktree.path });
+    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath! });
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
+      // No agent started: the next start takes the task up from its setup.
+      if (closed) return leave(id, "building", "this task was being prepared");
       if (setup.length > 0) {
         // The setup commands may have written to the copy: it is kept, and what they wrote is committed.
-        return finish(task, closed ? "interrupted" : cancelled(task) ? "cancelled" : "failed", words(err));
+        return finish(task, cancelled(task) ? "cancelled" : "failed", words(err));
       }
       // Nothing happened in the worktree, so it and its branch go again.
-      const reason = await removeWorktree({ repo: task.repo, path: worktree.path, deleteBranch: true }).then(
+      const reason = await removeWorktree({ repo: task.repo, path: task.worktreePath!, deleteBranch: true }).then(
         () => words(err),
-        (removal: unknown) => `${words(err)} The unused copy at ${worktree.path} could not be removed: ${words(removal)}`,
+        (removal: unknown) => `${words(err)} The unused copy at ${task.worktreePath} could not be removed: ${words(removal)}`,
       );
-      return void move(id, closed ? "interrupted" : cancelled(task) ? "cancelled" : "failed", { reason });
+      return void move(id, cancelled(task) ? "cancelled" : "failed", { reason });
     }
 
-    await drive(task, session, admission, task.prompt, false, stop.signal);
+    await drive(task, session, admission, task.prompt, null, stop.signal);
   };
 
   /**
@@ -489,11 +584,13 @@ export function createTasks(options: TasksOptions): Tasks {
   };
 
   /**
-   * Run one turn of a task's attempt to its end and record where that leaves the task. `resumed` is true for the
-   * turn that re-drives a task after a restart. If Botbench is stopped while the turn waits for the owner, the task
-   * is parked: its approvals stay pending and it stays at `building` for the next start to find.
+   * Run one turn of a task's attempt to its end and record where that leaves the task. `resumed` says why a task is
+   * driven again: the owner's answer to a request from before a restart, a restart, or the owner's Resume; null for
+   * its first turn. `fromSession`: the attempt takes up the session of the one before. If Botbench is stopped while
+   * the turn waits for the owner, the task is parked: its approvals stay pending and it stays at `building` for the
+   * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: boolean, stopped?: AbortSignal): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | null, stopped?: AbortSignal, fromSession = resumed === "answer"): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -524,7 +621,9 @@ export function createTasks(options: TasksOptions): Tasks {
       options.onEvent();
     });
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    move(id, "building", { attemptId: session.attemptId, ...(resumed ? { note: `resumed after a restart, from attempt ${task.attemptId}` } : {}) });
+    const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner" } as const;
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    move(id, "building", { attemptId: session.attemptId, ...(resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
     let end: TurnEndReason | "not sent";
     try {
       // Botbench began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
@@ -557,10 +656,13 @@ export function createTasks(options: TasksOptions): Tasks {
     // A turn that finished before the cancel reached it is a finished task like any other.
     else if (cancelled(task) && end !== "completed") await finish(task, "cancelled", CANCELLED);
     else if (end === "completed") await verify(task, stopped);
+    // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
+    else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");
     else if (end === "not sent") await finish(task, "interrupted", "Botbench stopped before the prompt was sent.");
     else if (end === "interrupted") await finish(task, "interrupted", "It was stopped before it finished. The work done up to then is committed.");
     // Nothing came of the session at all: the CLI did not take it up again.
-    else if (resumed && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
+    else if (resumed === "answer" && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
+    else if (fromSession && !sessionStarted) await finish(task, "interrupted", `Claude Code could not carry on where this task stopped${detail === null ? "." : `: ${detail}`} The work done up to then is committed.`);
     else await finish(task, "failed", `Claude Code ended with an error${detail === null ? "." : `: ${detail}`}`);
   };
 
@@ -592,7 +694,7 @@ export function createTasks(options: TasksOptions): Tasks {
    */
   const redrive = async (id: number): Promise<void> => {
     try {
-      await resume(id);
+      await resumeParked(id);
     } finally {
       // However the resume went (re-driven, or given up), the tasks of its run that waited behind it go on now.
       const runId = getTask(db, id)?.runId ?? null;
@@ -600,7 +702,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
   };
 
-  const resume = async (id: number): Promise<void> => {
+  const resumeParked = async (id: number): Promise<void> => {
     const task = getTask(db, id);
     if (!task) return;
     const parked = pendingApprovals(db, id);
@@ -628,56 +730,150 @@ export function createTasks(options: TasksOptions): Tasks {
     const stop = new AbortController();
     active = { taskId: id, runId: task.runId, stop };
     try {
-      await drive(task, session, admission, RESUME_PROMPT, true, stop.signal);
+      await drive(task, session, admission, RESUME_PROMPT, "answer", stop.signal);
     } finally {
       active = null;
     }
   };
 
   /**
-   * A Botbench that stopped leaves tasks at stations nothing is working at. One that was waiting for the owner is
-   * parked: whatever is left of its CLI process is stopped, and it stays where it is until the owner answers.
-   * Every other one is marked interrupted, with its work kept. Say so in each case.
+   * Take up again a task left at `building` or `verifying` by a restart or by the owner's Resume, from where its work
+   * was: its checks run again from the start on the committed work; its setup runs again from the start in a copy no
+   * agent has worked in; or its agent is started again in its copy, once whatever is left of the agent before it is
+   * known to be stopped, taking up the session it had reported (told what happened), or with the task's own prompt
+   * when it had reported none.
    */
-  const recover = async (): Promise<void> => {
+  const carryOn = async (id: number, by: "restart" | "owner"): Promise<void> => {
+    const task = getTask(db, id);
+    if (!task || (task.status !== "building" && task.status !== "verifying") || closed) return;
+    await atWork(task, (stop) => carryOnNow(task, by, stop));
+  };
+
+  const carryOnNow = async (task: Task, by: "restart" | "owner", stop: AbortController): Promise<void> => {
+    const stage = stageOf(db, task);
+    const commands = options.repoCommands?.(task.repo) ?? { setup: [], checks: [] };
+    if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
+      for (const from of ["building", "verifying"] as const) moveFrom(task.id, from, "interrupted", { reason: "This task's copy of the project is no longer there, so it could not be taken up again." });
+      return;
+    }
+    if (stage === "checks") return check(task, commands.checks, stop.signal);
+    if (stage === "setup") return setUpAndDrive(task, stop);
+
+    // Never a second agent beside the first in one copy: what is left of the one before is stopped first, or nothing starts.
+    const problem = await stopSurvivors(task, []);
+    if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
+    const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
+    const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const admission = broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath! });
+    let session: DriverSession;
+    try {
+      if (closed) throw new Error("Botbench is stopping.");
+      const gitDir = await sharedGitDir(task.repo);
+      // The model stays the one the task was started with, whatever is configured by now.
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+    } catch (err) {
+      admission.release();
+      if (closed) return leave(task.id, "building", "this task was being taken up again");
+      return finish(task, "interrupted", `Claude Code could not be started again for this task: ${words(err)} The work done up to then is committed.`);
+    }
+    await drive(task, session, admission, cursor === null ? task.prompt : CONTINUE_PROMPT, by, stop.signal, cursor !== null);
+  };
+
+  /** A task a restart left at work for the second time is stopped for the owner, who can resume it. */
+  const stopForOwner = async (task: Task, stage: "setup" | "turn" | "checks"): Promise<void> => {
+    if (stage === "checks") return void moveFrom(task.id, "verifying", "interrupted", { reason: "Botbench stopped twice while this task's checks ran, so they were not run a third time. The work is committed to its branch; nothing the checks left was committed. Resume runs the checks again." });
+    if (stage === "setup") return void moveFrom(task.id, "building", "interrupted", { reason: "Botbench stopped twice while this task was being set up, so it was not set up a third time and Claude Code was not started. Resume runs the setup commands again." });
+    await finish(task, "interrupted", "Botbench stopped twice while this task was being built, so it was not started a third time. The work done up to then is committed to its branch. Resume lets Claude Code carry on.");
+  };
+
+  /**
+   * A Botbench that stopped leaves tasks at stations nothing is working at. First, whatever is left running of its
+   * CLIs and of the commands it ran is stopped, each only once it is known to be Botbench's own. A task that was
+   * waiting for the owner is parked, and stays where it is until the owner answers. A task that was at work is taken
+   * up again once, from where its work was; stopped by a restart a second time, it is stopped for the owner. The count
+   * is in the store. Returns the tasks to take up, in the order they were started.
+   */
+  const recover = async (): Promise<number[]> => {
     // A CLI process of the last run that is recorded on no task (Botbench stopped between starting it and writing it down) is stopped too.
     for (const row of db.prepare("SELECT id FROM attempts WHERE pgid IS NOT NULL AND created_at < ? ORDER BY id").all(began)) {
       await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
     }
+    const unstoppable = await closeLeftCommands(db, began);
+    const work: number[] = [];
     // The queued tasks of an approved plan are not on their way anywhere yet: they are their run's to build, and stay queued.
-    // A task whose checks were running is stopped. Its work was committed before they started; nothing a check left is committed.
-    for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'verifying' ORDER BY id").all()) {
-      move(Number(row.id), "interrupted", { reason: "Botbench stopped while this task's checks ran. The work is committed to its branch; the checks did not finish." });
-    }
-    const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building') AND NOT (status = 'queued' AND EXISTS (SELECT 1 FROM runs r WHERE r.id = tasks.run_id AND r.kind = 'planned')) ORDER BY id").all();
+    const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building', 'verifying') AND NOT (status = 'queued' AND EXISTS (SELECT 1 FROM runs r WHERE r.id = tasks.run_id AND r.kind = 'planned')) ORDER BY id").all();
     for (const row of stale) {
       const task = getTask(db, Number(row.id))!;
-      const parked = pendingApprovals(db, task.id);
-      if (parked.length > 0) {
-        // An answer the last run stored and did not get to apply is not carried into this one. One stored since this
-        // start (the owner was quick) is not that: its task is resumed in its turn.
-        const unapplied = db.prepare("SELECT 1 FROM approvals WHERE task_id = ? AND status = 'pending' AND stored_decision IS NOT NULL AND stored_at < ? LIMIT 1").get(task.id, began) !== undefined;
-        const problem =
-          (await stopSurvivors(task, parked)) ??
-          (unapplied ? "Botbench stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
-        if (problem === null) {
-          // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-          move(task.id, "building", { note: "parked across a restart: waiting for the owner's answer to a request made before it" });
+      // One task that cannot be recovered does not hold up the others.
+      try {
+        const parked = task.status === "building" ? pendingApprovals(db, task.id) : [];
+        if (parked.length > 0) {
+          // An answer the last run stored and did not get to apply is not carried into this one. One stored since this
+          // start (the owner was quick) is not that: its task is resumed in its turn.
+          const unapplied = db.prepare("SELECT 1 FROM approvals WHERE task_id = ? AND status = 'pending' AND stored_decision IS NOT NULL AND stored_at < ? LIMIT 1").get(task.id, began) !== undefined;
+          const problem =
+            (await stopSurvivors(task, parked)) ??
+            (unapplied ? "Botbench stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
+          if (problem === null) {
+            // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+            move(task.id, "building", { note: "parked across a restart: waiting for the owner's answer to a request made before it" });
+            continue;
+          }
+          await giveUp(task, `Botbench stopped while this task waited for your answer, and it cannot be resumed: ${problem} The request was closed and nothing was run.`);
           continue;
         }
-        await giveUp(task, `Botbench stopped while this task waited for your answer, and it cannot be resumed: ${problem} The request was closed and nothing was run.`);
-        continue;
+        // A task started on its own that had not started: built in its turn.
+        if (task.status === "queued") {
+          work.push(task.id);
+          continue;
+        }
+        // Something of the last run may still be at work in its copy: nothing more is done there, and nothing is committed.
+        const problem = unstoppable.get(task.id) ?? (await stopSurvivors(task, []));
+        // The run may have been cancelled while that was being done: the cancel stands.
+        if (getTask(db, task.id)?.status !== task.status) continue;
+        if (problem !== null) {
+          moveFrom(task.id, task.status, "interrupted", { reason: `${problem} Nothing more was run in its copy of the project, and nothing was committed.` });
+          continue;
+        }
+        const stage = stageOf(db, task);
+        if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
+          moveFrom(task.id, task.status, "interrupted", { reason: "Botbench stopped while this task was on its way, and its copy of the project is not there." });
+          continue;
+        }
+        if (task.restarts >= 1) {
+          await stopForOwner(task, stage);
+          continue;
+        }
+        const taken = transaction(db, () => {
+          if (getTask(db, task.id)?.status !== task.status) return null;
+          db.prepare("UPDATE tasks SET restarts = restarts + 1 WHERE id = ?").run(task.id);
+          // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+          return moveTaskIn(db, task.id, task.status, { note: `Botbench restarted while this task was at work (${stage}); it is taken up again once` });
+        });
+        if (taken === null) continue;
+        options.onTaskChange(taken);
+        work.push(task.id);
+      } catch (err) {
+        report(`Recovering task ${task.id}`)(err);
       }
-      const reason = "Botbench stopped while this task was on its way.";
-      if (task.worktreePath === null) move(task.id, "interrupted", { reason });
-      else await finish(task, "interrupted", `${reason} The work done up to then is committed.`);
     }
     // A pending approval whose task is at no station where it could be resumed has nobody to answer to.
     for (const row of db.prepare("SELECT DISTINCT a.task_id AS id FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'pending' AND t.status <> 'building'").all()) {
       broker.endParked(Number(row.id), "Its task was no longer being built when Botbench started.");
     }
     // A run an older Botbench left waiting for decisions with no task ready for review has nothing left to decide.
-    for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status = 'awaiting_decision' ORDER BY id").all()) settle(Number(row.id));
+    for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status IN ('running', 'awaiting_decision') ORDER BY id").all()) settle(Number(row.id));
+    return work;
+  };
+
+  /** Take up, one at a time, the tasks recovery found at work, then build what the runs that were building have not started. */
+  const takeUp = async (work: readonly number[]): Promise<void> => {
+    for (const id of work) {
+      if (closed) return;
+      if (getTask(db, id)?.status === "queued") await build(id);
+      else await carryOn(id, "restart");
+      settle(getTask(db, id)?.runId ?? null);
+    }
   };
 
   /** The runs that were building when the last Botbench stopped go on: their tasks not started yet are built, in plan order. */
@@ -686,7 +882,11 @@ export function createTasks(options: TasksOptions): Tasks {
   };
 
   // One chain: recovery first, then each task in the order it was started.
-  let chain: Promise<void> = recover().catch(report("Recovering tasks")).then(resumeRuns).catch(report("Building the runs that were building"));
+  let chain: Promise<void> = recover()
+    .then(takeUp)
+    .catch(report("Recovering tasks"))
+    .then(resumeRuns)
+    .catch(report("Building the runs that were building"));
 
   // An answer stored for a parked approval re-drives its task, in its turn like any other work.
   broker.onStoredAnswer((approval) => {
@@ -706,6 +906,41 @@ export function createTasks(options: TasksOptions): Tasks {
     return task;
   };
 
+  const resume = (id: number): Task => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = getTask(db, id);
+    if (!task) throw new TaskError(404, "No such task.");
+    if (task.status !== "interrupted") throw new TaskError(409, `Only a stopped task can be resumed. This task ${STANDS[task.status]}.`);
+    const blocker = resumeBlocker(db, task);
+    if (blocker !== null) throw new TaskError(409, blocker);
+    const to = stageOf(db, task) === "checks" ? "verifying" : "building";
+    const { resumed, run } = transaction(db, () => {
+      // Resumed by the owner, it is taken up again once more after a restart, as a task they had just started.
+      db.prepare("UPDATE tasks SET restarts = 0, reason = NULL WHERE id = ?").run(id);
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+      const moved = moveTaskIn(db, id, to, { note: "resumed by the owner" });
+      const of = plannedRunOf(db, moved);
+      // Its run is at work again until the task reaches an end.
+      if (of === null || (of.status !== "done" && of.status !== "awaiting_decision")) return { resumed: moved, run: null };
+      const at = now();
+      db.prepare("UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?").run(at, of.id);
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+      db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, 'running', ?)").run(of.id, at, `task ${id} resumed by the owner`);
+      return { resumed: moved, run: { id: of.id, status: "running" } };
+    });
+    options.onTaskChange(resumed);
+    if (run !== null) options.onRunChange?.(run);
+    chain = chain
+      .then(() => carryOn(id, "owner"))
+      .then(() => {
+        const runId = getTask(db, id)?.runId ?? null;
+        settle(runId);
+        if (runId !== null && !closed) return runLine(runId);
+      })
+      .catch(report(`Resuming task ${id}`));
+    return resumed;
+  };
+
   const buildRun = (runId: number): void => {
     if (closed) return;
     chain = chain.then(() => runLine(runId)).catch(report(`Building run ${runId}`));
@@ -721,10 +956,12 @@ export function createTasks(options: TasksOptions): Tasks {
   const stopRunNow = async (runId: number): Promise<void> => {
     // A task of the run that waits, parked, for an answer from before a restart has nothing at work: it is ended here,
     // its work committed. Its requests were closed with the cancel.
-    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'building' ORDER BY id").all(runId)) {
+    // So is one the owner resumed that waits for its turn. What its checks left is not committed.
+    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying') ORDER BY id").all(runId)) {
       const task = getTask(db, Number(row.id))!;
       if (active?.taskId === task.id) continue;
-      if (task.worktreePath === null) moveFrom(task.id, "building", "cancelled", { reason: CANCELLED });
+      if (task.status === "verifying") moveFrom(task.id, "verifying", "cancelled", { reason: "The run was cancelled before this task's checks ran again. The work is committed to its branch." });
+      else if (task.worktreePath === null) moveFrom(task.id, "building", "cancelled", { reason: CANCELLED });
       else await finish(task, "cancelled", CANCELLED);
     }
     if (active === null || active.runId !== runId) return;
@@ -739,8 +976,8 @@ export function createTasks(options: TasksOptions): Tasks {
     parkCurrent?.();
     // A setup command at work is stopped with its process group.
     active?.stop.abort();
-    // Ends the running turn as interrupted; the build then commits and records it, or parks it. The build reports a
-    // process that would not stop, and the chain is always waited for: the database closes after this.
+    // Ends the running turn as interrupted; the build then leaves the task for the next start, or parks it. The build
+    // reports a process that would not stop, and the chain is always waited for: the database closes after this.
     await current?.close().catch(() => {});
     await chain;
     await Promise.all([...stopping]);
@@ -750,5 +987,5 @@ export function createTasks(options: TasksOptions): Tasks {
     await Promise.all([chain, ...stopping]);
   };
 
-  return { start, buildRun, stopRun, idle, close };
+  return { start, buildRun, stopRun, resume, idle, close };
 }

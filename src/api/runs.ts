@@ -5,6 +5,7 @@ import { runGrants, showWords } from "../approvals/grants.ts";
 import { taskEvidence } from "../engine/stations.ts";
 import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, type Run } from "../engine/run.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
+import { resumeNote } from "../engine/task.ts";
 import { decisionOf, leftoversOf } from "./tasks.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -50,6 +51,7 @@ async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknow
       evidence: taskEvidence(db, task.id),
       decision: decisionOf(db, task.id),
       leftovers: await leftoversOf(task),
+      resumeNote: resumeNote(db, task),
     }))),
     preapproved: runGrants(db, id).map((grant) => showWords(grant.words)),
     waitingOnApproval: waiting(db, run),

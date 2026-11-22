@@ -568,6 +568,9 @@ export function createRuns(options: RunsOptions): Runs {
     // Cancelled while the planner worked: the run already says so, and a plan that arrived late is not stored.
     if (!now_ || now_.status !== "planning" || "cancelled" in outcome) return;
     if ("tasks" in outcome) return void announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: leftover }));
+    // Botbench is stopping: the run is left planning, and the next start plans it again (see `recover`).
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    if (closed) return void move(id, "planning", { detail: "Botbench stopped while this run was being planned; left for the next start to plan again" });
     const problem = leftover === null ? outcome.problem : `${outcome.problem} ${leftover}`;
     // A planner asked to change a plan and unable to leaves the owner's plan as it was.
     if (change) move(id, "awaiting_plan_approval", { reason: `The planner did not produce a changed plan, so the plan is as it was. ${problem}` });
@@ -575,17 +578,38 @@ export function createRuns(options: RunsOptions): Runs {
   };
 
   /**
-   * A Botbench that stopped while planning leaves a run at `planning` with nobody planning it. Say so, and leave nothing
-   * of it behind. The runs are read before this engine takes its first request, so every one found is the last run's.
+   * A Botbench that stopped while planning leaves a run at `planning` with nobody planning it. Nothing of that planning
+   * is left behind, and the run is planned again once, from the start, in a fresh copy; stopped while planning a
+   * second time (the count is in the store), it fails and says so. A change the owner asked for is not asked again:
+   * the plan stays as it was. The runs are read before this engine takes its first request, so every one found is the
+   * last run's. Returns the runs to plan again.
    */
-  const recover = async (): Promise<void> => {
+  const recover = async (): Promise<number[]> => {
+    const again: number[] = [];
     for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status = 'planning' ORDER BY id").all()) {
       const run = getRun(db, Number(row.id))!;
-      if (run.attemptId !== null) await stopSurvivor(db, run.attemptId).catch(report(`Stopping the planner left by run ${run.id}`));
+      let stuck: string | null = null;
+      if (run.attemptId !== null) {
+        await stopSurvivor(db, run.attemptId).catch((err: unknown) => {
+          stuck = `Its planner from before the restart could not be stopped: ${words(err)}`;
+        });
+      }
       broker.endRunApprovals(run.id, "Botbench stopped while the planner waited for this answer.");
       await removePlanningWorktree({ repo: run.repo, home, run: `run-${run.id}` }).catch(report(`Removing the planning worktree left by run ${run.id}`));
       if (planTasks(db, run.id).length > 0) move(run.id, "awaiting_plan_approval", { reason: `${STOPPED} The planner had been asked to change the plan; the plan is as it was.` });
-      else move(run.id, "failed", { reason: `${STOPPED} Start the run again.` });
+      else if (stuck !== null) move(run.id, "failed", { reason: `${STOPPED} ${stuck} Start the run again.` });
+      else if (Number(db.prepare("SELECT restarts FROM runs WHERE id = ?").get(run.id)!.restarts) >= 1) move(run.id, "failed", { reason: "Botbench stopped twice while this run was being planned, so it was not planned a third time. Start the run again." });
+      else {
+        // Read again in the write: a cancel while the old planner was being stopped stands.
+        const taken = transaction(db, () => {
+          if (getRun(db, run.id)?.status !== "planning") return false;
+          db.prepare("UPDATE runs SET restarts = restarts + 1 WHERE id = ?").run(run.id);
+          // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+          writeRun(db, run.id, "planning", { detail: "Botbench restarted while this run was being planned; it is planned again once, from the start" });
+          return true;
+        });
+        if (taken) again.push(run.id);
+      }
     }
     // No planner is at work yet, so every planning worktree still under the home is a leftover, whatever its run says
     // now: one cancelled just before Botbench was killed, or one whose removal failed.
@@ -596,10 +620,15 @@ export function createRuns(options: RunsOptions): Runs {
       const row = db.prepare("SELECT repo_path FROM runs WHERE id = ?").get(Number(id[1]));
       if (row) await removePlanningWorktree({ repo: String(row.repo_path), home, run: name }).catch(report(`Removing the planning worktree left under ${name}`));
     }
+    return again;
   };
 
   // One chain: recovery first, then each planning in the order it was asked for.
-  let chain: Promise<void> = recover().catch(report("Recovering runs"));
+  let chain: Promise<void> = recover()
+    .then(async (again) => {
+      for (const id of again) await plan(id);
+    })
+    .catch(report("Recovering runs"));
   const enqueue = (id: number, change?: { current: PlanTask[]; feedback: string }): void => {
     chain = chain.then(() => plan(id, change)).catch(report(`Planning run ${id}`));
   };

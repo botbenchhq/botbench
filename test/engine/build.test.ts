@@ -299,7 +299,7 @@ test("cancelling a run while its task waits for an answer closes the pending app
   assert.equal(getRun(e.db, run.id)!.status, "cancelled");
 });
 
-test("after a restart, a running run's unstarted tasks are built in order; the task that was building is stopped with its work committed and not started again, and the run reaches its end", async (t) => {
+test("after a restart, a running run's task that was being prepared, before any agent turn, is started again once, and its unstarted tasks are built after it in order; the run reaches its end", async (t) => {
   const dir = tempDir("botbench-build-restart-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
@@ -316,7 +316,7 @@ test("after a restart, a running run's unstarted tasks are built in order; the t
 
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
-  const driver = buildReplayDriver(["done", "done"]);
+  const driver = buildReplayDriver(["done", "done", "done"]);
   const engine = createTasks({ db, home, driver, broker, onEvent: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await engine.close();
@@ -324,10 +324,11 @@ test("after a restart, a running run's unstarted tasks are built in order; the t
   });
   await engine.idle();
   const after = tasks.map((task) => getTask(db, task.id)!);
-  assert.deepEqual(after.map((task) => task.status), ["interrupted", "awaiting_decision", "awaiting_decision"]);
+  assert.deepEqual(after.map((task) => task.status), ["awaiting_decision", "awaiting_decision", "awaiting_decision"]);
   assert.equal(git(repo, "show", `${after[0]!.branch}:partial.txt`), "written before the stop\n");
-  assert.equal(driver.started.length, 2, "the stopped task is not built again");
-  assert.deepEqual(driver.started.map((s) => s.cwd), [after[1]!.worktreePath, after[2]!.worktreePath]);
+  assert.equal(driver.started.length, 3, "the task that never reached its agent is started once, then the others");
+  assert.deepEqual(driver.started.map((s) => s.cwd), after.map((task) => task.worktreePath));
+  assert.equal(driver.prompts[0], taskPrompt(THREE[0]!), "with its own prompt: no agent had started on it");
   assert.equal(getRun(db, run.id)!.status, "awaiting_decision");
 });
 

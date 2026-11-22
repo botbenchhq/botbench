@@ -5,7 +5,7 @@ import type { RunTask, TaskStatus } from "../web/src/api/client.ts";
 
 // A run's three stations, from the run's state and its tasks' and nothing else (the design system's run timeline).
 
-const task = (status: TaskStatus): RunTask => ({ id: 1, status, title: "t", reason: null, attemptId: null, branch: null, checks: null, waitingOnApproval: false, evidence: [], decision: null, leftovers: null });
+const task = (status: TaskStatus): RunTask => ({ id: 1, status, title: "t", reason: null, attemptId: null, branch: null, checks: null, waitingOnApproval: false, evidence: [], decision: null, leftovers: null, resumeNote: null });
 const run = (status: Parameters<typeof stations>[0]["status"], tasks: RunTask[] = [], more: { attemptId?: number | null; waitingOnApproval?: boolean } = {}) =>
   stations({ status, tasks, attemptId: more.attemptId === undefined ? 1 : more.attemptId, waitingOnApproval: more.waitingOnApproval ?? false });
 const flat = (shown: ReturnType<typeof stations>) => shown && { at: shown.current, stations: shown.stations.map((s) => `${s.name}: ${s.state}: ${s.words}`) };
