@@ -141,6 +141,8 @@ These steer choices throughout the build. They are not requirements of this plan
 - Task dependencies and parallel builds. The schema carries a dependency field from the start (KTD8).
 - Multi-model council stations beyond the single reviewer.
 - Docker or VM sandboxes as an opt-in isolation level.
+- Peers: two developers' Smelt instances coordinating their agents on one repository (`docs/product/peers-concept.md`). It needs pull requests and taint tracking first, and it changes the one-owner contract.
+- An experiment with code-style tool calling (the model writes one piece of code that calls several tools) for any tools Smelt itself gives agents, and for the deferred API and local-model drivers. Each call inside such code must still reach the approval gate.
 - Enterprise foundations: SSO, SCIM, multi-tenancy, policy hooks, compliance documents.
 
 **Considered and not built**
