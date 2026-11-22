@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
+import markUrl from "../brand/mark.svg";
 import { Icon, type IconName } from "./icon.tsx";
 
 /**
@@ -25,6 +26,8 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
     <div className={fill ? "gw-app-shell h-screen" : "gw-app-shell"}>
       <header className="gw-app-header gw-app-header--sticky">
         <a className="gw-app-header__name" href="#/turn">
+          {/* Decorative: the word beside it is the name. */}
+          <img src={markUrl} alt="" width={20} height={20} />
           Botbench
         </a>
         <div className="gw-app-header__tray">

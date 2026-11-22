@@ -2,6 +2,19 @@
 
 **Working positioning, 21 November 2026**
 
+## Where it is heading (owner, 22 November 2026)
+
+**Botbench — Put your coding agents to work. Together.**
+
+The differentiator is not that agents can talk to each other. It is that two developers' independently controlled coding agents produce compatible, reviewable work with far less coordination between the two people.
+
+What this means for messaging today:
+- Until Peers exists (`docs/product/peers-concept.md`), "Together" is only true of one owner's agents from several vendors working one job. The README and the app use the solo line: **Walk away. Come back to the branch.**
+- "Compatible" has to be something Botbench can check, not something two agents say. An agreed interface that both branches are run against is the proof; an exchange of messages is not.
+- Two things already in the plan carry this direction and gain priority from it: the reviewer on a different model, and pushing branches and opening pull requests.
+
+Brand marks are in `assets/svg/` and `web/src/brand/`. Colours come from the design system's Botbench theme, not from this repository.
+
 ## The idea
 
 **Botbench is the software factory you own.** It turns coding work into a governed sequence: plan, build, check, independently review, and decide. It runs the developer's installed AI coding CLIs and stores its orchestration state, branches, transcripts, evidence, and approval records on their machine. The CLIs still communicate with their model providers.
