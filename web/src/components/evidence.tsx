@@ -1,4 +1,4 @@
-import type { ChecksMark, CommandList, Evidence, Review } from "../api/client.ts";
+import type { ChecksMark, CommandList, Evidence, Refinement, Review } from "../api/client.ts";
 import { failureExtract } from "./failure-extract.ts";
 import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
@@ -178,7 +178,7 @@ export const agentName = (agent: string): string => ({ "claude-code": "Claude Co
 export const reviewerWords = (reviewer: { agent: string; model: string | null }): string => `${agentName(reviewer.agent)}, ${reviewer.model ?? "its default model"}`;
 
 /** The plain sentence about what a review is, shown wherever one is. */
-export const REVIEW_RISK = "A model's opinion of the changes, not a check. The reviewer read the diff where it could change nothing and reach no network; nothing Botbench does depends on what it says.";
+export const REVIEW_RISK = "A model's opinion of the changes, not a check. The reviewer read the diff where it could change nothing and reach no network. Botbench reads only its verdict line: with concerns, the builder is given the review to fix what it agrees with, under the same permissions as for its build, and the same reviewer looks again.";
 
 /** A review's verdict line: the verdict in words when the reply gave it in the asked form. */
 function verdictWords(review: Review): string {
@@ -213,6 +213,46 @@ export function ReviewEvidence({ review }: { review: Review }) {
         <figure className="ds-code-block">
           <pre data-ds-content="" data-testid="review-text" className="ds-code-block__body">
             <code>{review.text}</code>
+          </pre>
+        </figure>
+      </div>
+    </details>
+  );
+}
+
+/** A round of fixes in a few words: what the builder did, from its reply's two headings when it used them. */
+function fixesWords(fix: Refinement): string {
+  const explained = fix.notAddressed === null ? "" : `, explained ${fix.notAddressed.length}`;
+  if (!fix.changed) return `Changed nothing${explained}`;
+  return fix.addressed === null ? "Changed the work" : `Addressed ${fix.addressed.length}${explained}`;
+}
+
+/**
+ * One round of fixes, under the review it answers: what the builder did in a few words, with its own reply one tap
+ * away. A round that did not finish says why, in view. The reply is the model's text, shown as text.
+ */
+export function FixesEvidence({ fix }: { fix: Refinement }) {
+  if (fix.outcome !== "finished") {
+    return (
+      <Alert tone="warning" testId="fixes-problem">
+        {fix.problem ?? "This round of fixes did not finish."}
+      </Alert>
+    );
+  }
+  const took = duration(Math.max(0, Date.parse(fix.endedAt) - Date.parse(fix.startedAt)));
+  return (
+    <details data-testid="fixes-detail" className="ds-disclosure">
+      <summary className="ds-disclosure__summary">
+        <span data-testid="fixes-summary">{fixesWords(fix)}</span>
+        <span className="ds-disclosure__meta">
+          <time dateTime={took.iso}>{took.words}</time>
+        </span>
+      </summary>
+      <div className="ds-disclosure__content ds-stack ds-gap-sm">
+        {fix.changed && fix.headCommit !== null && <p>{`Committed as ${fix.headCommit.slice(0, 12)}, and the checks ran again on it.`}</p>}
+        <figure className="ds-code-block">
+          <pre data-ds-content="" data-testid="fixes-text" className="ds-code-block__body">
+            <code>{fix.reply === "" ? "(No reply.)" : fix.reply}</code>
           </pre>
         </figure>
       </div>

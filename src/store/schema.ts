@@ -961,4 +961,84 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // The refine loop: after a review with concerns the builder is given the review and asked to fix what it agrees
+    // with, its work is committed and checked again, and the reviewer looks again. A run gains `max_refine_rounds`,
+    // the cap on rounds of fixes, taken from the settings when it starts and never changed after (0 for runs from
+    // before). A task now has one review per round, so `reviews` is made again with every row kept, ids included, as
+    // round 1, gains the commit it reviewed (unknown for the rows kept), and its append-only triggers are put back.
+    // `refinements`: one row per round of fixes that ended, after the review of the same round: the builder's attempt,
+    // whether its turn finished, failed or was stopped by a cancel, whether it changed the work, the builder's reply,
+    // the commit it started from and the one Botbench made after it, and the times. Rows are only ever added. What a
+    // task's checks found may now change once more for each round of fixes that changed the work: the checks of that
+    // commit, and no other change.
+    name: "refine loop",
+    sql: `
+ALTER TABLE runs ADD COLUMN max_refine_rounds INTEGER NOT NULL DEFAULT 0 CHECK (max_refine_rounds BETWEEN 0 AND 5);
+CREATE TRIGGER runs_refine_cap_fixed BEFORE UPDATE OF max_refine_rounds ON runs
+BEGIN SELECT RAISE(ABORT, 'a run''s cap on rounds of fixes is set when it starts and never changed'); END;
+DROP TRIGGER reviews_no_update;
+DROP TRIGGER reviews_no_delete;
+DROP TRIGGER reviews_task_reviewing;
+ALTER TABLE reviews RENAME TO reviews_before_refine;
+CREATE TABLE reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  round INTEGER NOT NULL DEFAULT 1 CHECK (round >= 1),
+  agent TEXT NOT NULL,
+  model TEXT,
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('reviewed', 'failed', 'timed_out', 'stopped')),
+  verdict TEXT CHECK (verdict IN ('looks_right', 'concerns')),
+  text TEXT NOT NULL,
+  problem TEXT,
+  head_commit TEXT,
+  diff_chars INTEGER NOT NULL,
+  diff_cut INTEGER NOT NULL CHECK (diff_cut IN (0, 1)),
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  UNIQUE (task_id, round),
+  CHECK ((outcome = 'reviewed') = (problem IS NULL)),
+  CHECK (outcome = 'reviewed' OR verdict IS NULL)
+);
+INSERT INTO reviews (id, task_id, round, agent, model, attempt_id, outcome, verdict, text, problem, head_commit, diff_chars, diff_cut, started_at, ended_at, duration_ms)
+  SELECT id, task_id, 1, agent, model, attempt_id, outcome, verdict, text, problem, NULL, diff_chars, diff_cut, started_at, ended_at, duration_ms FROM reviews_before_refine ORDER BY id;
+DROP TABLE reviews_before_refine;
+CREATE TRIGGER reviews_no_update BEFORE UPDATE ON reviews
+BEGIN SELECT RAISE(ABORT, 'reviews are append-only'); END;
+CREATE TRIGGER reviews_no_delete BEFORE DELETE ON reviews
+BEGIN SELECT RAISE(ABORT, 'reviews are append-only'); END;
+CREATE TRIGGER reviews_task_reviewing BEFORE INSERT ON reviews
+WHEN (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'reviewing'
+BEGIN SELECT RAISE(ABORT, 'a review is stored only for a task at the review station'); END;
+CREATE TABLE refinements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  round INTEGER NOT NULL CHECK (round >= 1),
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'failed', 'stopped')),
+  changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+  reply TEXT NOT NULL,
+  problem TEXT,
+  from_commit TEXT NOT NULL,
+  head_commit TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  UNIQUE (task_id, round),
+  CHECK ((outcome = 'finished') = (problem IS NULL))
+);
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+CREATE TRIGGER refinements_no_update BEFORE UPDATE ON refinements
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes are append-only'); END;
+CREATE TRIGGER refinements_no_delete BEFORE DELETE ON refinements
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes are append-only'); END;
+CREATE TRIGGER refinements_after_review BEFORE INSERT ON refinements
+WHEN NOT EXISTS (SELECT 1 FROM reviews WHERE task_id = NEW.task_id AND round = NEW.round)
+BEGIN SELECT RAISE(ABORT, 'a round of fixes follows the review of the same round'); END;
+`,
+  },
 ];

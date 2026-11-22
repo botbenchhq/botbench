@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, botbenchHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, botbenchHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -184,7 +184,8 @@ test("a repository's settings are keyed by its full path: lists of plain command
 });
 
 test("the number of approvals after which a card offers standing permission is 3 as shipped, can be set by the owner, and must be a whole number of at least 1", (t) => {
-  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual" });
+  // Changed with the refine loop: the shipped settings name its cap too.
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual", maxRefineRounds: 2 });
   assert.equal(offerStandingAfter(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 3);
   // A config that says nothing of it still means 3.
   const silent = loadConfig(configFiles(t, BASE));
@@ -273,4 +274,13 @@ test("a repository may name the remote and base branch of its pull requests; ori
     [{ baseBranch: "a..b" }, /"baseBranch" must be/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
+});
+
+test("the cap on rounds of fixes after a review is 2 as shipped and when unset, can be set by the owner, and must be a whole number from 0 to 5", (t) => {
+  assert.equal(maxRefineRounds(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 2);
+  assert.equal(maxRefineRounds(loadConfig(configFiles(t, BASE))), 2);
+  for (const good of [0, 1, 5]) assert.equal(maxRefineRounds(loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: good } }))), good);
+  for (const bad of [-1, 6, 1.5, "2", null]) {
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: bad } })), /"autonomy\.maxRefineRounds" must be a whole number from 0 to 5/, String(bad));
+  }
 });

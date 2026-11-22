@@ -6,7 +6,8 @@ import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
-import { reviewAssignment, taskReview } from "../engine/review.ts";
+import { loopRecord, outcomeLine, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
+import { reviewAssignment, taskReview, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
@@ -49,19 +50,41 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     resumeNote: resumeNote(db, task),
     // The mode of its run (manual for a task started on its own), which says who decides on it.
     mode: runModeOf(db, task.runId),
+    // What the refine loop came to, for the decision point: "none", "satisfied", "unresolved" or "failed", and how many
+    // reviews and rounds of fixes there were. Read from the records; once the task is ready for review it is final.
+    ...loopCounts(db, task.id),
     createdAt, updatedAt,
   };
+}
+
+function loopCounts(db: DatabaseSync, taskId: number): { reviewOutcome: string; reviewRounds: number; refineRounds: number } {
+  const assigned = reviewAssignment(db, taskId);
+  if (assigned === null) return { reviewOutcome: "none", reviewRounds: 0, refineRounds: 0 };
+  const record = loopRecord(db, taskId, assigned.agent);
+  return { reviewOutcome: reviewOutcome(record), reviewRounds: record.reviews.length, refineRounds: record.refinements.length };
 }
 
 /**
  * Who reviews a task (its run's reviewer, or null), and its review once there is one. The review's text is the reviewer's
  * own words, a model's opinion: shown as text, never acted on.
  */
-export function reviewOf(db: DatabaseSync, taskId: number): { reviewer: { agent: string; model: string | null } | null; review: Record<string, unknown> | null } {
+export function reviewOf(db: DatabaseSync, taskId: number): Record<string, unknown> {
   const assigned = reviewAssignment(db, taskId);
   const found = taskReview(db, taskId);
   const review = found === null ? null : (({ taskId: _, ...rest }) => rest)(found);
-  return { reviewer: assigned === null ? null : { agent: assigned.agent, model: assigned.model }, review };
+  // Each review and round of fixes, in order; the builder's reply is its own words, read only for its two headings.
+  const reviews = taskReviews(db, taskId).map(({ taskId: _, ...rest }) => rest);
+  const refinements = taskRefinements(db, taskId).map(({ taskId: _, ...rest }) => {
+    const parsed = parseRefineReply(rest.reply);
+    return { ...rest, addressed: parsed?.addressed ?? null, notAddressed: parsed?.notAddressed ?? null };
+  });
+  const line = assigned === null ? "" : outcomeLine(loopRecord(db, taskId, assigned.agent));
+  return {
+    reviewer: assigned === null ? null : { agent: assigned.agent, model: assigned.model },
+    review, reviews, refinements,
+    maxRefineRounds: assigned === null ? 0 : refineCap(db, taskId),
+    reviewLine: line === "" ? null : line,
+  };
 }
 
 /** A task's decision as a client sees it. */
@@ -126,10 +149,23 @@ async function pullRequestTarget(ctx: RouteContext, task: Task): Promise<Record<
 }
 
 /** A task as its own screen shows it: the summary, its changed files, its evidence, what a decision would remove, and what a discard would. */
+/**
+ * How many of the task's builder sessions came before the one it names now (a build before its rounds of fixes, a
+ * session before a restart). Read from the task's own history, where each session it worked in is recorded by number.
+ */
+function earlierAttempts(db: DatabaseSync, task: Task): number {
+  const ids = new Set<number>();
+  for (const row of db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND detail LIKE '%attempt %'").all(task.id)) {
+    for (const match of String(row.detail).matchAll(/\battempt (\d+)\b/g)) ids.add(Number(match[1]));
+  }
+  if (task.attemptId !== null) ids.delete(task.attemptId);
+  return ids.size;
+}
+
 async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unknown>> {
   const { db } = ctx;
   const left = await remainsOf(db, task);
-  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+  return { ...summary(db, task), earlierAttempts: earlierAttempts(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {

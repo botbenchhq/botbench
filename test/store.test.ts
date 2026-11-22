@@ -50,7 +50,7 @@ test("a fresh data directory gets the current schema with owner-only permissions
   assert.equal(mode(dbFile), 0o600);
   for (const name of fs.readdirSync(home)) assert.equal(mode(path.join(home, name)), 0o600, `${name} is owner-only`);
   assert.equal(schemaVersion(first), CURRENT);
-  assert.deepEqual(tableNames(first), ["action_log", "approvals", "attempts", "command_lists", "command_processes", "decisions", "deliveries", "events", "evidence", "grant_revocations", "grants", "owner_settings", "plan_tasks", "push_subscriptions", "reviews", "run_events", "runs", "schema_version", "task_events", "tasks"]);
+  assert.deepEqual(tableNames(first), ["action_log", "approvals", "attempts", "command_lists", "command_processes", "decisions", "deliveries", "events", "evidence", "grant_revocations", "grants", "owner_settings", "plan_tasks", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "tasks"]);
   assert.deepEqual(columnNames(first, "attempts"), ["id", "driver", "model", "resume_cursor", "status", "pgid", "created_at", "updated_at"]);
   assert.deepEqual(columnNames(first, "events"), ["id", "attempt_id", "turn", "ts", "type", "payload"]);
   const schemaBefore = schemaSql(first);
@@ -121,7 +121,7 @@ test("a database at an older schema version is migrated forward and keeps its ro
   const db = openStore(home);
   t.after(() => db.close());
   assert.equal(schemaVersion(db), CURRENT);
-  assert.deepEqual(tableNames(db), ["action_log", "approvals", "attempts", "command_lists", "command_processes", "decisions", "deliveries", "events", "evidence", "grant_revocations", "grants", "owner_settings", "plan_tasks", "push_subscriptions", "reviews", "run_events", "runs", "schema_version", "task_events", "tasks"]);
+  assert.deepEqual(tableNames(db), ["action_log", "approvals", "attempts", "command_lists", "command_processes", "decisions", "deliveries", "events", "evidence", "grant_revocations", "grants", "owner_settings", "plan_tasks", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "tasks"]);
   assert.deepEqual({ ...db.prepare("SELECT * FROM attempts").get() }, {
     id: 1, driver: "codex", model: "gpt-mini", resume_cursor: "cursor-abc", status: "ended", pgid: 4242,
     created_at: "2026-11-20T10:00:00.000Z", updated_at: "2026-11-20T10:05:00.000Z",

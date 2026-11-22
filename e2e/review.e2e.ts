@@ -7,7 +7,8 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The milestone "Two vendors on one job", yes or no, in the real client at a phone's size: a real Botbench process, a real
 // temporary repository, the owner's Claude Code planning and building on its cheapest model, and the owner's Codex
-// reviewing the diff read-only on its cheapest model. The review must be on the task before the owner decides.
+// reviewing the diff read-only on its cheapest model. The review must be on the task before the owner decides. When
+// Codex has concerns the refine loop adds rounds (e2e/refine.e2e.ts); this test reads the first review.
 
 const test = base.extend<{ dir: string; repo: string; botbench: Botbench }>({
   dir: async ({}, use) => {
@@ -85,13 +86,13 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   await expect(section.getByRole("heading", { name: "Codex's review", level: 2 })).toBeVisible();
   await expect(page.getByTestId("review-by")).toContainText("By Codex, gpt-6-luna. A model's opinion of the changes, not a check.");
   await expect(page.getByTestId("review-problem")).toHaveCount(0);
-  await expect(page.getByTestId("review-verdict")).toHaveText(/^(Verdict: looks right|Verdict: concerns|No verdict in the asked form)$/);
-  await expect(page.getByTestId("review-text")).toBeHidden();
+  await expect(page.getByTestId("review-verdict").first()).toHaveText(/^(Verdict: looks right|Verdict: concerns|No verdict in the asked form)$/);
+  await expect(page.getByTestId("review-text").first()).toBeHidden();
   await checkDesign(page, "task, ready for review, with Codex's review");
   await shot(page, "review-task.png");
-  await page.getByTestId("review-detail").locator("summary").click();
-  await expect(page.getByTestId("review-text")).toBeVisible();
-  await expect(page.getByTestId("review-text")).toContainText(/Verdict/i);
+  await page.getByTestId("review-detail").first().locator("summary").click();
+  await expect(page.getByTestId("review-text").first()).toBeVisible();
+  await expect(page.getByTestId("review-text").first()).toContainText(/Verdict/i);
   await checkDesign(page, "task, Codex's review opened");
   const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { decision: unknown; review: { outcome: string; agent: string; endedAt: string; attemptId: number } };
   expect(task.decision).toBeNull();

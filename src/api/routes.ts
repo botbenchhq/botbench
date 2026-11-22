@@ -1,3 +1,4 @@
+import { maxRefineRounds } from "../config.ts";
 import type http from "node:http";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { DriverUnavailableError, type Driver } from "../drivers/contract.ts";
@@ -54,7 +55,8 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       // Each agent as it reports itself now, and the steps Botbench lets it work in.
       const listed = [ctx.driver, ...Object.values(ctx.reviewers).filter((d): d is Driver => d !== undefined && d.name !== ctx.driver.name)];
       const agents = await Promise.all(listed.map(async (agent) => ({ agent: agent.name, ...(await agent.probe()), roles: agentRoles(ctx, agent) })));
-      json(res, 200, { agents });
+      // With the cap on rounds of fixes a run started now gets, which New run shows beside Review.
+      json(res, 200, { agents, maxRefineRounds: maxRefineRounds(ctx.config) });
     } else if (method === "GET" && /^\/api\/agents\/[a-z-]{1,40}\/models$/.test(pathname)) {
       const name = pathname.split("/")[3]!;
       const reviewer = Object.hasOwn(ctx.reviewers, name) ? ctx.reviewers[name] : undefined;

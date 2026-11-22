@@ -116,7 +116,9 @@ export interface AgentState extends Omit<DriverState, "driver"> {
   roles: string[];
 }
 /** Each agent asks its own program, which can take a few seconds. */
-export const getAgents = async (): Promise<AgentState[]> => (await request<{ agents: AgentState[] }>("GET", "/api/agents", undefined, 30_000)).agents;
+export const getAgents = async (): Promise<AgentState[]> => (await getAgentsAndCap()).agents;
+/** The agents, and how many rounds of fixes a run started now allows after a review with concerns. */
+export const getAgentsAndCap = (): Promise<{ agents: AgentState[]; maxRefineRounds: number }> => request("GET", "/api/agents", undefined, 30_000);
 /** The models a reviewer offers, as its program lists them or as the configuration does. */
 export const getAgentModels = (agent: string): Promise<ModelList> => request("GET", `/api/agents/${encodeURIComponent(agent)}/models`, undefined, 30_000);
 
@@ -129,6 +131,10 @@ export interface ReviewerChoice {
 /** A task's review, as stored. Its text is the reviewer's own words: a model's opinion, not a check. */
 export interface Review {
   id: number;
+  /** Which review of the task this is, from 1. */
+  round: number;
+  /** The commit reviewed; null when unknown. */
+  headCommit: string | null;
   agent: string;
   model: string | null;
   attemptId: number | null;
@@ -166,6 +172,26 @@ export const startConnect = (driver: string): Promise<ConnectState> => request("
 export const sendConnectCode = (driver: string, code: string): Promise<ConnectState> => request("POST", `${agentPath(driver)}/connect/code`, { code });
 export const cancelConnect = (driver: string): Promise<ConnectState> => request("POST", `${agentPath(driver)}/connect/cancel`, {}, 30_000);
 export const disconnectAgent = (driver: string): Promise<DriverState> => request("POST", `${agentPath(driver)}/disconnect`, {}, 60_000);
+
+/** One round of fixes after a review with concerns. `reply` is the builder's own words; `addressed` and `notAddressed` are its two headings read, null when it did not use them. */
+export interface Refinement {
+  id: number;
+  round: number;
+  attemptId: number | null;
+  outcome: "finished" | "failed" | "stopped";
+  changed: boolean;
+  reply: string;
+  problem: string | null;
+  addressed: string[] | null;
+  notAddressed: string[] | null;
+  fromCommit: string;
+  headCommit: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
+/** What the refine loop came to: nothing reviewed, the reviewer satisfied, the models still disagree, or a step did not finish. */
+export type ReviewOutcome = "none" | "satisfied" | "unresolved" | "failed";
 
 /** The models the driver offers and where the list came from. `default` null means the CLI's own default. */
 export interface ModelList {
@@ -312,6 +338,10 @@ export interface TaskSummary {
   resumeNote: string | null;
   /** The mode of its run; manual for a task started on its own. */
   mode: RunMode;
+  /** What the refine loop came to, and how many reviews and rounds of fixes there were. */
+  reviewOutcome: ReviewOutcome;
+  reviewRounds: number;
+  refineRounds: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -334,8 +364,18 @@ export interface TaskDetail extends TaskSummary {
   commandLists: CommandList[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
-  /** Its review, once there is one. */
+  /** Its latest review, once there is one. */
   review: Review | null;
+  /** Every review, one per round, in order. */
+  reviews: Review[];
+  /** How many of the builder's sessions on this task came before the one its transcript shows; they are kept. */
+  earlierAttempts: number;
+  /** Every round of fixes, in order; round n follows review n. */
+  refinements: Refinement[];
+  /** The run's cap on rounds of fixes. */
+  maxRefineRounds: number;
+  /** What came of the reviews and fixes, in a plain line; null before the first review. */
+  reviewLine: string | null;
   /** For a task that is ready for review: the files the checks left in its copy that are not on its branch. Null otherwise, or when they cannot be read. */
   leftovers: string[] | null;
   /** For a task that failed, was stopped or was cancelled: what it left, which Discard removes. Null otherwise, or when it cannot be read. */

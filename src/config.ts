@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_REFINE_ROUNDS, MAX_REFINE_ROUNDS } from "./engine/refine.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -139,9 +140,16 @@ export interface AutonomyConfig {
   offerStandingAfter?: number;
   /** The mode a new run is given when none is chosen, until the owner picks one in Settings: "manual" (when absent), "semi" or "full". */
   mode?: RunMode;
+  /** After a review with concerns, how many rounds of fixes the builder may be asked for before the task is Ready for review. 0 to 5; 2 when absent. */
+  maxRefineRounds?: number;
 }
 const OFFER_STANDING_AFTER = 3;
-const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode"] as const;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds"] as const;
+
+/** How many rounds of fixes a run started now allows after a review with concerns. */
+export function maxRefineRounds(config: Config): number {
+  return config.autonomy?.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS;
+}
 
 /** How many approvals of the same command earn the offer of standing permission. */
 export function offerStandingAfter(config: Config): number {
@@ -261,6 +269,8 @@ function validate(c: Json, where: string): Config {
     const after = autonomy.offerStandingAfter;
     if (after !== undefined && !(typeof after === "number" && Number.isSafeInteger(after) && after >= 1)) fail(`"autonomy.offerStandingAfter" must be a whole number of at least 1: how many times you allow the same command before its card offers standing permission.`);
     if (autonomy.mode !== undefined && !isRunMode(autonomy.mode)) fail(`"autonomy.mode" must be "manual", "semi" or "full": the mode a new run is given when none is chosen.`);
+    const rounds = autonomy.maxRefineRounds;
+    if (rounds !== undefined && !(typeof rounds === "number" && Number.isSafeInteger(rounds) && rounds >= 0 && rounds <= MAX_REFINE_ROUNDS)) fail(`"autonomy.maxRefineRounds" must be a whole number from 0 to ${MAX_REFINE_ROUNDS}: how many rounds of fixes the builder may be asked for after a review with concerns.`);
   }
   return c as unknown as Config;
 }
