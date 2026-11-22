@@ -2,6 +2,12 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: two ways a run could stand still for good, found by the critique (units 12 and 13)
+The tests covered a cancel and a resume of the task at work, but not of a task parked on an answer across a restart: a cancel left it at building with nothing to end it, and a resume that gave up returned before the tasks behind it were started, so the run stayed running. Also, a command's time limit could still fire in the moment after it had ended by itself, recording a pass as timed out. Rules going forward:
+- Every way a station can be left (done, failed, given up, cancelled, stopped, thrown) is followed to the line's next step; a `finally` carries the "go on" step, not the happy path.
+- A cancel covers each state a task of the run can be in, parked included, and the test for it starts from that state.
+- Once a process has ended, nothing changes how it is recorded as having ended.
+
 ## 2026-11-22: the build line's own tests hid what they meant to test (unit 12)
 Three test mistakes, each caught by a failing run, not by reading. Eight tests across five files compared the schema version and the list of tables with literals (`9`, a fixed table list), so adding one migration broke them all for no reason of their own. The engine test of "an approval pending in task 1 keeps task 2 queued" pre-approved, in its shared run fixture, the very command the recorded turn asks for, so nothing was ever asked and the test could only time out. And "the background child of a timed-out command is gone" read a killed process as alive under load: a killed process stays in the table until its parent's exit lets the system clear it. Rules going forward:
 - A test of the current schema compares with `MIGRATIONS.length` and reads the table list it needs; a literal version belongs only in a test of migrating from that version.

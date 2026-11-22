@@ -162,6 +162,8 @@ test("a check that edits the worktree does not change the committed work; nothin
   assert.equal(task.checks, "passed");
   assert.equal(task.headCommit, task.baseCommit, "the commit is the one Smelt made after the turn, before the checks");
   assert.equal(execFileSync("git", ["-C", e.repo, "rev-parse", task.branch!], { encoding: "utf8" }).trim(), task.headCommit);
+  assert.throws(() => execFileSync("git", ["-C", e.repo, "show", `${task.branch}:check-output.txt`], { stdio: "pipe" }), "what the check wrote is not on the branch");
+  assert.ok(fs.existsSync(path.join(task.worktreePath!, "check-output.txt")), "it is left, uncommitted, in the copy");
 });
 
 test("cancelling a run while its checks run stops the check and records it as stopped; the task is cancelled with its work kept", { timeout: 30_000 }, async (t) => {
@@ -221,6 +223,8 @@ test("after a restart, a task left at Checking is stopped with its work kept and
   const first = getTask(db, tasks[0]!.id)!;
   assert.equal(first.status, "interrupted");
   assert.match(first.reason!, /checks/i);
+  assert.equal(first.headCommit, base);
+  assert.throws(() => execFileSync("git", ["-C", repo, "show", `${first.branch}:left-by-check.txt`], { stdio: "pipe" }), "nothing a check left is committed at restart");
   assert.equal(getTask(db, tasks[1]!.id)!.status, "awaiting_decision");
   assert.equal(getRun(db, run.id)!.status, "awaiting_decision");
 });

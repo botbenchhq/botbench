@@ -387,6 +387,10 @@ export function createTasks(options: TasksOptions): Tasks {
     active = { taskId: id, runId: queued.runId, stop };
     try {
       await prepareAndDrive(queued, stop);
+    } catch (err) {
+      // Whatever went wrong unforeseen, the task does not stay at a station nothing works at, holding up its run.
+      report(`Building task ${id}`)(err);
+      for (const from of ["queued", "building", "verifying"] as const) moveFrom(id, from, "failed", { reason: `Smelt could not go on with this task: ${words(err)}` });
     } finally {
       active = null;
     }
@@ -568,6 +572,16 @@ export function createTasks(options: TasksOptions): Tasks {
    * its stored answers are discarded.
    */
   const redrive = async (id: number): Promise<void> => {
+    try {
+      await resume(id);
+    } finally {
+      // However the resume went (re-driven, or given up), the tasks of its run that waited behind it go on now.
+      const runId = getTask(db, id)?.runId ?? null;
+      if (runId !== null && !closed) await runLine(runId);
+    }
+  };
+
+  const resume = async (id: number): Promise<void> => {
     const task = getTask(db, id);
     if (!task) return;
     const parked = pendingApprovals(db, id);
@@ -598,8 +612,6 @@ export function createTasks(options: TasksOptions): Tasks {
     } finally {
       active = null;
     }
-    // The tasks of its run that waited behind it go on now.
-    if (task.runId !== null) await runLine(task.runId);
   };
 
   /**
@@ -677,7 +689,22 @@ export function createTasks(options: TasksOptions): Tasks {
     chain = chain.then(() => runLine(runId)).catch(report(`Building run ${runId}`));
   };
 
-  const stopRun = async (runId: number): Promise<void> => {
+  /** Cancels at work outside the chain: waited for by `idle` and `close`. */
+  const stopping = new Set<Promise<void>>();
+  const stopRun = (runId: number): Promise<void> => {
+    const done = stopRunNow(runId).finally(() => stopping.delete(done));
+    stopping.add(done);
+    return done;
+  };
+  const stopRunNow = async (runId: number): Promise<void> => {
+    // A task of the run that waits, parked, for an answer from before a restart has nothing at work: it is ended here,
+    // its work committed. Its requests were closed with the cancel.
+    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'building' ORDER BY id").all(runId)) {
+      const task = getTask(db, Number(row.id))!;
+      if (active?.taskId === task.id) continue;
+      if (task.worktreePath === null) moveFrom(task.id, "building", "cancelled", { reason: CANCELLED });
+      else await finish(task, "cancelled", CANCELLED);
+    }
     if (active === null || active.runId !== runId) return;
     active.stop.abort();
     // Ends the running turn as interrupted; the build then commits what it did and records the task as cancelled.
@@ -694,7 +721,12 @@ export function createTasks(options: TasksOptions): Tasks {
     // process that would not stop, and the chain is always waited for: the database closes after this.
     await current?.close().catch(() => {});
     await chain;
+    await Promise.all([...stopping]);
   };
 
-  return { start, buildRun, stopRun, idle: () => chain, close };
+  const idle = async (): Promise<void> => {
+    await Promise.all([chain, ...stopping]);
+  };
+
+  return { start, buildRun, stopRun, idle, close };
 }

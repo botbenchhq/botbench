@@ -399,3 +399,82 @@ test("Smelt runs an owner's command in a directory with a time limit, in its own
   assert.ok(stopped.durationMs < 5000);
   assert.equal(DEFAULT_LIMIT_MS, 600_000);
 });
+
+// Found by the critique pass, each first seen failing.
+
+/** A Smelt home in which a run's first task waited for the owner's answer when Smelt stopped: parked at building, with its worktree and a session to resume. */
+async function parkedRun(t: T): Promise<{ db: DatabaseSync; home: string; repo: string; run: Run; taskIds: number[]; worktree: string; approvalId: number }> {
+  const dir = tempDir("smelt-build-parked-");
+  const home = path.join(dir, "home");
+  const db = openStore(home);
+  t.after(() => {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const repo = path.join(dir, "repo");
+  const base = initRepo(repo);
+  const run = storePlan(db, createRun(db, { repo, prompt: "two files", baseCommit: base }).id, THREE.slice(0, 2));
+  const { tasks } = approvePlan(db, run.id, run.planVersion, "haiku");
+  const worktree = await createWorktree({ repo, home, run: `run-${run.id}`, task: `task-${tasks[0]!.id}`, commit: base });
+  const at = new Date().toISOString();
+  const attemptId = Number(db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', 'haiku', 'a-session', 'interrupted', NULL, ?, ?)").run(at, at).lastInsertRowid);
+  moveTask(db, tasks[0]!.id, "building", { worktree, attemptId });
+  const approvalId = Number(db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at) VALUES (?, ?, 'implementer', 'Bash', 'sh other.sh', '.', NULL, 'toolu_parked', 'pending', ?)").run(tasks[0]!.id, attemptId, at).lastInsertRowid);
+  db.prepare("UPDATE approvals SET parked_at = ? WHERE id = ?").run(at, approvalId);
+  return { db, home, repo, run, taskIds: tasks.map((task) => task.id), worktree: worktree.path, approvalId };
+}
+
+async function engineOn(t: T, p: { db: DatabaseSync; home: string }, script: BuildTurn[]): Promise<{ broker: Broker; driver: BuildReplay; tasks: Tasks; runs: Runs }> {
+  const broker = createBroker({ db: p.db, home: p.home, onChange: () => {} });
+  await broker.listen();
+  const driver = buildReplayDriver(script);
+  const tasks = createTasks({ db: p.db, home: p.home, driver, broker, repoCommands: () => ({ setup: [], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
+  const runs = createRuns({ db: p.db, home: p.home, driver, broker, line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  t.after(async () => {
+    await runs.close();
+    await tasks.close();
+    await broker.close();
+  });
+  await tasks.idle();
+  return { broker, driver, tasks, runs };
+}
+
+test("critique: cancelling a run whose task is parked on an answer across a restart ends that task as cancelled, with its work committed, and closes the request", async (t) => {
+  const p = await parkedRun(t);
+  write(p.worktree, "partial.txt", "written before the stop\n");
+  const e = await engineOn(t, p, ["done"]);
+  assert.equal(getTask(p.db, p.taskIds[0]!)!.status, "building", "parked: it waits for the answer");
+  assert.equal(getTask(p.db, p.taskIds[1]!)!.status, "queued", "and holds up the task after it");
+  e.runs.cancel(p.run.id);
+  await e.tasks.idle();
+  const first = getTask(p.db, p.taskIds[0]!)!;
+  assert.equal(first.status, "cancelled");
+  assert.equal(git(p.repo, "show", `${first.branch}:partial.txt`), "written before the stop\n");
+  assert.equal(getTask(p.db, p.taskIds[1]!)!.status, "cancelled");
+  assert.deepEqual(listApprovals(p.db).map((approval) => approval.status), ["superseded"]);
+  assert.equal(e.driver.started.length, 0);
+});
+
+test("critique: when a parked task cannot be resumed after the owner answers, its run still goes on with the tasks after it and reaches its end", async (t) => {
+  const p = await parkedRun(t);
+  const e = await engineOn(t, p, ["done"]);
+  assert.equal(getTask(p.db, p.taskIds[0]!)!.status, "building");
+  // Its copy is gone by the time the answer comes, so it cannot be resumed.
+  fs.rmSync(p.worktree, { recursive: true, force: true });
+  e.broker.answer(p.approvalId, "allow");
+  await until("the run reaches its end", () => getRun(p.db, p.run.id)!.status === "awaiting_decision");
+  await e.tasks.idle();
+  assert.notEqual(getTask(p.db, p.taskIds[0]!)!.status, "building");
+  assert.equal(getTask(p.db, p.taskIds[1]!)!.status, "awaiting_decision");
+});
+
+test("critique: a command that ends by itself is recorded as it ended, even when its time limit or a stop comes while its output is still being read", async (t) => {
+  const dir = tempDir("smelt-command-race-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // It exits at once and leaves a child outside its group holding its output open, so Smelt is still reading when the limit passes.
+  const abort = new AbortController();
+  const ran = runCommand({ command: "perl -MPOSIX -e 'setsid(); sleep 3' & sleep 0.2; exit 0", cwd: dir, limitMs: 400, signal: abort.signal });
+  setTimeout(() => abort.abort(), 600);
+  const result = await ran;
+  assert.deepEqual([result.outcome, result.exitCode], ["passed", 0]);
+});

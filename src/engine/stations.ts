@@ -67,6 +67,8 @@ export function runCommand(o: { command: string; cwd: string; limitMs: number; s
     let truncated = false;
     let outcome: CommandOutcome | null = null;
     let finished = false;
+    /** Set once the command's own process has ended: how it ended is then known, and no limit or stop can change it. */
+    let exited = false;
     const add = (chunk: string): void => {
       output += chunk;
       if (output.length > MAX_OUTPUT_CHARS) {
@@ -87,7 +89,7 @@ export function runCommand(o: { command: string; cwd: string; limitMs: number; s
       resolve({ command: o.command, outcome: outcome ?? (exitCode === 0 ? "passed" : "failed"), exitCode: outcome === null ? exitCode : null, signal, output, truncated, limitMs: o.limitMs, startedAt, endedAt, durationMs: Date.now() - began });
     };
     const stop = (why: CommandOutcome): void => {
-      if (outcome !== null || finished) return;
+      if (outcome !== null || finished || exited) return;
       outcome = why;
       killGroup(child.pid);
     };
@@ -103,6 +105,9 @@ export function runCommand(o: { command: string; cwd: string; limitMs: number; s
       finish(null, null);
     });
     child.on("exit", (code, signal) => {
+      exited = true;
+      clearTimeout(timer);
+      o.signal?.removeEventListener("abort", onAbort);
       // What the command left running in its group goes with it; its pipes then close.
       killGroup(child.pid);
       drain = setTimeout(() => finish(code, signal), DRAIN_MS);
