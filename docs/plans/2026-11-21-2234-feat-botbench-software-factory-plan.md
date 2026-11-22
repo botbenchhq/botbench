@@ -133,7 +133,7 @@ These steer choices throughout the build. They are not requirements of this plan
 
 **Deferred to Follow-Up Work**
 
-- Pushing branches and opening pull requests, with the ledger that makes a restart unable to open a second one. The tagline's "Verified PRs" is delivered by that plan; this plan stops at a verified branch.
+- (Lifted on 22 November 2026, see Autonomy and delivery.) Pushing branches and opening pull requests, with the ledger that makes a restart unable to open a second one. The tagline's "Verified PRs" is delivered by that plan; this plan stops at a verified branch.
 - A native phone app from the app stores. This plan delivers an installable web app with notifications (KTD16).
 - Reaching Botbench from the public internet without a private network, which a product for other people will need.
 - Local-model drivers. They are the full answer to the privacy objection, since vendor CLIs still send prompts to their providers.
@@ -578,6 +578,16 @@ Requirement **R27.** The commands an agent runs cannot read the owner's vendor s
 **Verification:** The owner runs a real task whose checks install dependencies inside the container.
 
 The Codex driver (U17) applies its own permissions profile to meet R27. Grok and Antigravity are offered for read-only roles until theirs is shown to hold.
+
+### Autonomy and delivery (added 22 November 2026, owner direction)
+
+North Star: from my phone I hand Botbench a piece of work, walk away, and come back to a branch I can trust, built and reviewed by more than one vendor's agent.
+
+- **Review and refine.** Another vendor's agent reviews the builder's diff; its concerns go back to the builder, which fixes or explains; the reviewer looks again. Capped rounds.
+- **Three modes per run.** Manual: every step asks. Semi-autonomous: confined commands run without asking; the owner approves the plan and makes the final decision. Fully autonomous: no plan approval, and the task is accepted without the owner when every configured check passed and the reviewer is satisfied; dangerous actions are refused, never asked. It refuses to start on a repository with no checks.
+- **Deliver.** A run can be set to open a pull request for each accepted task. Botbench itself pushes the task's branch and opens the pull request with the owner's own `git` and `gh`; agents never hold the credentials. Never the default branch, never by force, never a merge. A ledger makes a restart unable to open a second one.
+- **Intake (next).** A GitHub issue or the owner's feedback becomes a run. Outside text is untrusted: a run that read it is marked, and its commands lose pre-approved and standing permissions.
+- **Composer.** Chat, New task and New run become one message box; repository, mode and review are set from an add-context sheet; voice input is transcribed on the owner's Mac.
 
 ### Milestone 4: Every subscription
 
