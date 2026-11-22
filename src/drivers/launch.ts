@@ -157,9 +157,9 @@ export interface CliRun {
 /**
  * Run a short CLI command (a version or status query) to its end through
  * `launch` and collect what it printed. The group is killed if it takes longer
- * than `timeoutMs`.
+ * than `timeoutMs`. `stdin` is written to the command before its input is closed.
  */
-export function runCli(command: string, args: readonly string[], options: LaunchOptions & { timeoutMs?: number }): Promise<CliRun> {
+export function runCli(command: string, args: readonly string[], options: LaunchOptions & { timeoutMs?: number; stdin?: string }): Promise<CliRun> {
   return new Promise((resolve) => {
     const { child, pgid } = launch(command, args, options);
     let stdout = "";
@@ -168,7 +168,7 @@ export function runCli(command: string, args: readonly string[], options: Launch
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
     child.stdin.on("error", () => {});
-    child.stdin.end();
+    child.stdin.end(options.stdin);
     const timer = setTimeout(() => {
       if (pgid) void killProcessGroup(pgid, { graceMs: 500 }).catch(() => {});
     }, options.timeoutMs ?? 15000);

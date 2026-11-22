@@ -133,4 +133,12 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // The model the owner asked for when the task was started. NULL means the CLI's own default.
+    // The model that answered is on the task's attempt, taken from the driver's session event.
+    name: "task model",
+    sql: `
+ALTER TABLE tasks ADD COLUMN requested_model TEXT;
+`,
+  },
 ];

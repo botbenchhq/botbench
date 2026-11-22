@@ -28,12 +28,12 @@ export function tempDir(prefix: string): string {
 /**
  * Start a real Smelt process: `node src/server.ts`, its data in `home`, on a
  * free port (or `port`, to come back on the same one). Turns ask for the
- * cheapest model. `env` adds to the process environment.
+ * cheapest model unless `settings` gives the owner's settings file. `env` adds to the process environment.
  */
-export async function startSmelt(options: { home?: string; port?: number; env?: Record<string, string> } = {}): Promise<Smelt> {
+export async function startSmelt(options: { home?: string; port?: number; env?: Record<string, string>; settings?: unknown } = {}): Promise<Smelt> {
   const home = options.home ?? path.join(tempDir("smelt-e2e-"), "home");
   const settings = path.join(path.dirname(home), "settings.json");
-  fs.writeFileSync(settings, JSON.stringify({ drivers: { "claude-code": { model: "haiku" } } }));
+  fs.writeFileSync(settings, JSON.stringify(options.settings ?? { drivers: { "claude-code": { model: "haiku" } } }));
   const child: ChildProcess = spawn(process.execPath, [path.join(ROOT, "src", "server.ts")], {
     cwd: ROOT,
     env: { ...process.env, SMELT_HOME: home, SMELT_PORT: String(options.port ?? 0), SMELT_CONFIG: settings, ...options.env },

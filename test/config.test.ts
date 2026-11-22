@@ -95,7 +95,7 @@ test("malformed values are rejected with the setting's name", (t) => {
   assert.throws(() => loadConfig(configFiles(t, BASE, { listen: [] })), /"listen" must be a non-empty list of addresses/);
   assert.throws(() => loadConfig(configFiles(t, BASE, { listen: "127.0.0.1" })), /"listen"/);
   assert.throws(() => loadConfig(configFiles(t, BASE, { roles: { planner: "claude-code" } })), /role "planner" must be an object with a "driver"/);
-  assert.throws(() => loadConfig(configFiles(t, BASE, { drivers: { codex: { model: 5 } } })), /driver "codex": "model" must be a string/);
+  assert.throws(() => loadConfig(configFiles(t, BASE, { drivers: { codex: { model: 5 } } })), /driver "codex": "model"/);
 });
 
 test("a config file that is not a JSON object is rejected, naming the file", (t) => {
@@ -123,4 +123,16 @@ test("publicHosts is a list of host names: absent by default in a file, overridd
   for (const bad of ["mac.tailnet.ts.net", [7], [""], ["https://mac.tailnet.ts.net"], ["mac.tailnet.ts.net/path"], ["two names"], { name: "x" }, null]) {
     assert.throws(() => loadConfig(configFiles(t, BASE, { publicHosts: bad })), /"publicHosts" must be a list of host names/, JSON.stringify(bad));
   }
+});
+
+test("a model may be set for a role and for a driver, and a driver may list its models; each must be a plain model name", (t) => {
+  const config = loadConfig(configFiles(t, BASE, { drivers: { "claude-code": { model: "sonnet", models: ["sonnet", "claude-haiku-4-5-20251001"] } }, roles: { implementer: { driver: "claude-code", model: "haiku" } } }));
+  assert.deepEqual(config.drivers["claude-code"], { model: "sonnet", models: ["sonnet", "claude-haiku-4-5-20251001"] });
+  assert.deepEqual(config.roles.implementer, { driver: "claude-code", model: "haiku" });
+  // The shipped list is only what `claude --help` itself names, for when the CLI reports no list.
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).drivers["claude-code"], { models: ["fable", "opus", "sonnet"] });
+  assert.throws(() => loadConfig(configFiles(t, BASE, { drivers: { "claude-code": { model: "--bare" } } })), /driver "claude-code": "model".*model name/);
+  assert.throws(() => loadConfig(configFiles(t, BASE, { drivers: { "claude-code": { models: "haiku" } } })), /driver "claude-code": "models" must be a list/);
+  assert.throws(() => loadConfig(configFiles(t, BASE, { drivers: { "claude-code": { models: ["haiku", "-p"] } } })), /driver "claude-code": "models".*model name/);
+  assert.throws(() => loadConfig(configFiles(t, BASE, { roles: { implementer: { driver: "claude-code", model: "hai ku" } } })), /role "implementer": "model".*model name/);
 });

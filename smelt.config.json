@@ -3,7 +3,7 @@
   "listen": ["127.0.0.1"],
   "publicHosts": [],
   "drivers": {
-    "claude-code": {}
+    "claude-code": { "models": ["fable", "opus", "sonnet"] }
   },
   "roles": {
     "planner": { "driver": "claude-code" },

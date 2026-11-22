@@ -3,7 +3,8 @@ import { once } from "node:events";
 import { test } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import { blank, claudeArgs, parseClaudeLine, parsePermissionRequest, repositoryInstructions, shellWatch } from "../../src/drivers/claude-code.ts";
+import { blank, claudeArgs, parseClaudeLine, parseModelList, parsePermissionRequest, repositoryInstructions, shellWatch } from "../../src/drivers/claude-code.ts";
+import { modelNameProblem } from "../../src/drivers/contract.ts";
 import { PROXY_SCRIPT } from "../../src/approvals/permission-proxy.ts";
 import { tempDir } from "../support/repo.ts";
 import { buildChildEnv, checkVersion, killProcessGroup, launch, processGroupAlive } from "../../src/drivers/launch.ts";
@@ -367,4 +368,66 @@ test("the attempt's gate secret is blanked out of an event before it is stored, 
   // An event without it is passed on as it is.
   const text = { type: "text", text: "done" } as const;
   assert.equal(blank(text, secret), text);
+});
+
+test("the launch arguments name a model only when one was chosen, as two separate entries", () => {
+  for (const options of [{}, { allowEdits: true }, { allowEdits: true, gated: true }, { resumeCursor: "5a850a06-92af-40cd-8cde-1c4435399134" }]) {
+    const without = claudeArgs(options);
+    assert.equal(without.some((a) => a.startsWith("--model")), false, "no model chosen means the CLI's own default");
+    for (const model of ["haiku", "claude-haiku-4-5-20251001", "claude-opus-4-8[1m]"]) {
+      const args = claudeArgs({ ...options, model });
+      const at = args.indexOf("--model");
+      assert.notEqual(at, -1);
+      assert.equal(args[at + 1], model, "the name is an entry of its own");
+      assert.equal(args.filter((a) => a.startsWith("--model")).length, 1);
+      // Nothing else changed: the same arguments as without a model, plus those two.
+      assert.deepEqual(args.filter((_, i) => i !== at && i !== at + 1), without);
+    }
+  }
+  // The driver itself refuses a value that could be read as a flag, whoever hands it over.
+  for (const model of ["--dangerously-skip-permissions", "-p", "hai ku", "haiku\n", ""]) {
+    assert.throws(() => claudeArgs({ model }), /model/i, JSON.stringify(model));
+  }
+});
+
+test("a model name is letters, digits and a few signs, starts with a letter or digit, and is at most 100 characters", () => {
+  for (const name of ["haiku", "sonnet", "claude-haiku-4-5-20251001", "claude-opus-4-8[1m]", "us.anthropic.claude-haiku-4-5-20251001-v1:0", "provider/model@v2", "x".repeat(100)]) {
+    assert.equal(modelNameProblem(name), null, name);
+  }
+  for (const name of ["-p", "--model=opus", " haiku", "hai ku", "haiku\n", "hai\u0000ku", "\u2014model", "haiku;rm", "$(id)", "ha'iku", "", "x".repeat(101), 7, null, undefined, ["haiku"]]) {
+    assert.match(String(modelNameProblem(name)), /model name/i, JSON.stringify(name));
+  }
+});
+
+test("the model list Claude Code 2.1.322 reports is read as its choices and its own default; anything else is no list", () => {
+  // The CLI's answer to an `initialize` request, as printed on 2026-11-22: four of its fourteen entries, each cut to the
+  // fields read here, and without the account it also describes.
+  const line =
+    '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"default","resolvedModel":"claude-fable-5-2","displayName":"Default (recommended)","description":"Fable 5.2"},{"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus 5.5","description":"For complex work and everyday tasks"},{"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku 5.5","description":"Fastest for quick answers"},{"value":"claude-haiku-4-5-20251001","resolvedModel":"claude-haiku-4-5-20251001","displayName":"Haiku 4.5","description":"Fastest for quick answers"}],"claude_code_version":"2.1.322"}}}';
+  assert.deepEqual(parseModelList(line), {
+    models: [
+      { id: "opus", label: "Opus 5.5" },
+      { id: "haiku", label: "Haiku 5.5" },
+      { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+    ],
+    cliDefault: "Fable 5.2",
+  });
+  // What the CLI prints is data: an entry whose name could not be passed back as an argument is left out.
+  const odd = '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"--bare","displayName":"x"},{"value":"sonnet"},{"value":7},"haiku"]}}}';
+  assert.deepEqual(parseModelList(odd), { models: [{ id: "sonnet" }], cliDefault: null });
+  for (const nothing of ["", "not json", '{"type":"control_response","response":{"subtype":"error","request_id":"smelt-models","error":"no"}}', '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[]}}}', '{"type":"system","subtype":"init","model":"claude-haiku-5-5"}']) {
+    assert.equal(parseModelList(nothing), null, nothing);
+  }
+});
+
+test("a result the CLI marks as an error is an error in its own words, as printed for a model it does not know", () => {
+  // Recorded from Claude Code 2.1.322 on 2026-11-22, started with a model name that does not exist; long fields left out.
+  const line =
+    '{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"terminal_reason":"api_error","result":"There\'s an issue with the selected model (smelt-no-such-model-1). It may not exist or you may not have access to it. Run --model to pick a different model."}';
+  const detail = "api_error: There's an issue with the selected model (smelt-no-such-model-1). It may not exist or you may not have access to it. Run --model to pick a different model.";
+  assert.deepEqual(parseClaudeLine(line), [
+    { type: "usage", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    { type: "error", message: detail, raw: null },
+    { type: "turn_ended", reason: "error", detail },
+  ]);
 });

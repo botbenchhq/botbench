@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_CONFIG_FILE = path.join(ROOT, "smelt.config.json");
@@ -23,9 +24,13 @@ export type DriverName = (typeof DRIVER_NAMES)[number];
 export interface DriverConfig {
   /** Model to ask the CLI for; the CLI's own default when absent. */
   model?: string;
+  /** The models offered to the owner when the CLI itself reports no list. */
+  models?: string[];
 }
 export interface RoleConfig {
   driver: DriverName;
+  /** Model for this role; the driver's `model` when absent. Only the implementer role is in use so far. */
+  model?: string;
 }
 export interface Config {
   port: number;
@@ -89,12 +94,15 @@ function validate(c: Json, where: string): Config {
   if (!isObject(drivers)) return fail(`"drivers" must be an object keyed by driver name.`);
   for (const [name, value] of Object.entries(drivers)) {
     if (!isObject(value)) fail(`driver "${name}" must be an object.`);
-    else if (value.model !== undefined && typeof value.model !== "string") fail(`driver "${name}": "model" must be a string.`);
+    else if (value.model !== undefined && modelNameProblem(value.model) !== null) fail(`driver "${name}": "model" must be a model name. ${modelNameProblem(value.model)}`);
+    else if (value.models !== undefined && !Array.isArray(value.models)) fail(`driver "${name}": "models" must be a list of model names.`);
+    else if (Array.isArray(value.models) && !value.models.every((m) => modelNameProblem(m) === null)) fail(`driver "${name}": "models" must hold only model names. ${MODEL_NAME_RULE}`);
   }
   if (!isObject(roles)) return fail(`"roles" must be an object keyed by role name.`);
   for (const [role, value] of Object.entries(roles)) {
     if (!isObject(value) || typeof value.driver !== "string") fail(`role "${role}" must be an object with a "driver".`);
     else if (!(value.driver in drivers)) fail(`role "${role}" uses driver "${value.driver}", which is not in "drivers".`);
+    else if (value.model !== undefined && modelNameProblem(value.model) !== null) fail(`role "${role}": "model" must be a model name. ${modelNameProblem(value.model)}`);
   }
   return c as unknown as Config;
 }

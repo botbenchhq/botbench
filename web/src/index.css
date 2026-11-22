@@ -37,9 +37,19 @@
   }
   input,
   textarea,
-  button {
+  button,
+  select,
+  option {
     @apply text-on-surface;
     caret-color: currentColor;
+  }
+  option {
+    @apply bg-surface;
+  }
+  /* A control that cannot be used yet says so in the muted colour, not in a browser's own grey. */
+  select:disabled {
+    @apply text-muted;
+    opacity: 1;
   }
   :focus-visible {
     @apply outline outline-2 outline-offset-xs outline-accent;

@@ -386,7 +386,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Approach:** Each driver reports the models it accepts. For Claude Code that is the list the CLI itself documents or reports, never a list invented by Smelt; where a CLI cannot report one, the choices come from the owner's configuration and the screen says so. The picker sits on the new-task and turn screens, defaults to the configured model for the role, and the model that actually answered is shown on the task from the driver's own session event.
 **Test scenarios:**
 - The models route returns the driver's list and the configured default, and needs a session.
-- A model that the driver does not offer is rejected before any worktree or attempt is created.
+- A model value that is not a plain model name is rejected before any worktree or attempt is created. A name the list does not offer may be typed under "Other"; the real CLI decides whether it exists, and its own error is shown in words.
 - Live: a task started with a chosen model reports that model in its session event.
 - End to end at phone width: pick a model, start a turn, and the transcript names that model.
 **Verification:** The owner runs the same prompt on two models from their phone and sees each named.

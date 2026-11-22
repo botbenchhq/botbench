@@ -5,7 +5,7 @@ import readline from "node:readline";
 import type { DatabaseSync } from "node:sqlite";
 import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../approvals/permission-proxy.ts";
 import { now, transaction } from "../store/db.ts";
-import { DriverUnavailableError, type BillingKind, type Driver, type DriverCapabilities, type DriverProbe, type DriverSession, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
+import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "./events.ts";
 import { checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type CliChild } from "./launch.ts";
 
@@ -24,6 +24,16 @@ import { checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type
  *                "tool_name":"Bash","input":{...},"tool_use_id":"toolu_..."}}
  *           The CLI was seen to wait seven minutes for that answer and then carry on; no limit was found.
  * The process stays up between turns and exits when stdin closes.
+ *
+ * Models (seen on 2.1.322): there is no `claude models` command, and `claude --help` names only the aliases
+ * 'fable', 'opus' and 'sonnet' as examples. The CLI does report its list over this protocol, without a turn:
+ *   stdin   {"type":"control_request","request_id":"...","request":{"subtype":"initialize"}}
+ *   stdout  {"type":"control_response","response":{"subtype":"success","request_id":"...","response":{"models":[
+ *             {"value":"default","displayName":"Default (recommended)","description":"Fable 5.2",...},
+ *             {"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku 5.5",...}, ...], "account":{...}, ...}}}
+ * `--model` takes those values and full model names. A name it does not know is not refused at start: the first turn
+ * ends with a result marked is_error (terminal_reason "api_error") whose text says "There's an issue with the
+ * selected model (<name>). It may not exist or you may not have access to it."
  */
 
 const COMMAND = "claude";
@@ -93,9 +103,50 @@ export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCurso
   else args.push("--permission-prompts", "none");
   if (options.allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
   if (gated && options.instructionsFile) args.push("--append-system-prompt-file", options.instructionsFile);
-  if (options.model) args.push("--model", options.model);
+  if (options.model !== undefined) {
+    // The name is an argument of its own, and one that could be read as a flag never gets this far.
+    const problem = modelNameProblem(options.model);
+    if (problem !== null) throw new Error(`The model name cannot be passed to Claude Code. ${problem}`);
+    args.push("--model", options.model);
+  }
   if (options.resumeCursor) args.push("--resume", options.resumeCursor);
   return args;
+}
+
+const MODELS_REQUEST_ID = "smelt-models";
+/** Asking the CLI what it offers starts no turn. No settings file, hook or MCP server is loaded for it. */
+const MODELS_ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: {} }), "--permission-prompts", "none"];
+const MODELS_TIMEOUT_MS = 10_000;
+const MODELS_FRESH_MS = 60_000;
+
+/**
+ * Read the CLI's answer to an `initialize` request: the models it offers and what it calls its own default.
+ * Pure. Null when the output holds no such list. What the CLI prints is data: only entries whose name could be
+ * handed back to it as an argument are kept, and nothing else of the answer (it also describes the account) is read.
+ */
+export function parseModelList(output: string): { models: ModelChoice[]; cliDefault: string | null } | null {
+  for (const line of output.split("\n")) {
+    if (!line.includes('"control_response"')) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const response = isObject(parsed) && parsed.type === "control_response" && isObject(parsed.response) ? parsed.response : null;
+    const listed = response !== null && response.subtype === "success" && response.request_id === MODELS_REQUEST_ID && isObject(response.response) ? response.response.models : null;
+    if (!Array.isArray(listed)) continue;
+    const models: ModelChoice[] = [];
+    let cliDefault: string | null = null;
+    for (const entry of listed) {
+      if (!isObject(entry) || typeof entry.value !== "string") continue;
+      // The CLI lists its own default as an entry named "default"; its description says which model that is.
+      if (entry.value === "default") cliDefault = str(entry.description) ?? str(entry.resolvedModel);
+      else if (modelNameProblem(entry.value) === null && !models.some((m) => m.id === entry.value)) models.push({ id: entry.value, ...(typeof entry.displayName === "string" && entry.displayName !== "" ? { label: shorten(entry.displayName, 80) } : {}) });
+    }
+    if (models.length > 0) return { models, cliDefault: cliDefault === null ? null : shorten(cliDefault, 80) };
+  }
+  return null;
 }
 
 const INSTRUCTIONS_FILE = "CLAUDE.md";
@@ -250,7 +301,9 @@ export function parseClaudeLine(line: string): DriverEvent[] {
       } else if (terminal?.startsWith("aborted")) {
         events.push({ type: "turn_ended", reason: "interrupted", detail: terminal });
       } else {
-        const detail = shorten([str(parsed.subtype), terminal, str(parsed.result)].filter(Boolean).join(": ") || "The turn failed.");
+        // A failed turn can still carry the subtype "success" (seen for a model the CLI does not know); that word is left out.
+        const subtype = parsed.subtype === "success" ? null : str(parsed.subtype);
+        const detail = shorten([subtype, terminal, str(parsed.result)].filter(Boolean).join(": ") || "The turn failed.");
         events.push({ type: "error", message: detail, raw: null }, { type: "turn_ended", reason: "error", detail });
       }
       return events;
@@ -543,15 +596,50 @@ class ClaudeCodeSession implements DriverSession {
 export interface ClaudeCodeDriverOptions {
   /** Claude Code's configuration directory, for an owner who keeps it somewhere other than the default. */
   configDir?: string;
+  /** The owner's configured list of models, offered when the CLI reports none. */
+  models?: readonly string[];
+  /** The configured model, preselected for the owner. The CLI's own default when absent. */
+  defaultModel?: string;
 }
 
 export class ClaudeCodeDriver implements Driver {
   readonly name = CLAUDE_CODE;
   readonly capabilities = CAPABILITIES;
   private readonly extraEnv: Record<string, string>;
+  private readonly configured: { models: readonly string[]; defaultModel: string | null };
+  /** The list being read, or read less than `MODELS_FRESH_MS` ago: screens that open together share one CLI process. */
+  private listing: { at: number; answer: Promise<DriverModels> } | null = null;
 
   constructor(options: ClaudeCodeDriverOptions = {}) {
     this.extraEnv = options.configDir ? { CLAUDE_CONFIG_DIR: options.configDir } : {};
+    this.configured = { models: options.models ?? [], defaultModel: options.defaultModel ?? null };
+  }
+
+  /**
+   * Ask the CLI itself which models it offers, with one `initialize` request and no turn. The process has a time
+   * limit and is gone when this returns. A CLI that is missing, too slow, or prints no list leaves the configured list.
+   */
+  models(): Promise<DriverModels> {
+    if (this.listing !== null && Date.now() - this.listing.at < MODELS_FRESH_MS) return this.listing.answer;
+    const listing = { at: Date.now(), answer: this.readModels() };
+    this.listing = listing;
+    // Only a list the CLI gave is kept for a while; a CLI that gave none is asked again next time.
+    void listing.answer.then((answer) => {
+      if (answer.source !== "cli" && this.listing === listing) this.listing = null;
+    });
+    return listing.answer;
+  }
+
+  private async readModels(): Promise<DriverModels> {
+    const run = await runCli(COMMAND, MODELS_ARGS, {
+      cwd: os.tmpdir(),
+      extraEnv: this.extraEnv,
+      timeoutMs: MODELS_TIMEOUT_MS,
+      stdin: `${JSON.stringify({ type: "control_request", request_id: MODELS_REQUEST_ID, request: { subtype: "initialize" } })}\n`,
+    });
+    const reported = run.started ? parseModelList(run.stdout) : null;
+    if (reported !== null) return { source: "cli", models: reported.models, default: this.configured.defaultModel, cliDefault: reported.cliDefault };
+    return { source: "config", models: this.configured.models.map((id) => ({ id })), default: this.configured.defaultModel, cliDefault: null };
   }
 
   /**
