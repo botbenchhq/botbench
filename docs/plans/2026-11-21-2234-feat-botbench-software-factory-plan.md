@@ -140,7 +140,7 @@ These steer choices throughout the build. They are not requirements of this plan
 - Intake from GitHub Issues, Linear and Slack.
 - Task dependencies and parallel builds. The schema carries a dependency field from the start (KTD8).
 - Multi-model council stations beyond the single reviewer.
-- Docker or VM sandboxes as an opt-in isolation level.
+- A browser or other desktop applications as agent tools, and host-held service tokens (ADR 0002, point 5).
 - Peers: two developers' Botbench instances coordinating their agents on one repository (`docs/product/peers-concept.md`). It needs pull requests and taint tracking first, and it changes the one-owner contract.
 - An experiment with code-style tool calling (the model writes one piece of code that calls several tools) for any tools Botbench itself gives agents, and for the deferred API and local-model drivers. Each call inside such code must still reach the approval gate.
 - Enterprise foundations: SSO, SCIM, multi-tenancy, policy hooks, compliance documents.
@@ -544,6 +544,40 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - With no runs, the first-run state is shown.
 - End to end at phone width: the station selector switches the visible station.
 **Verification:** The owner's real runs appear correctly on their phone.
+
+### Execution isolation (added 22 November 2026, ADR 0002)
+
+Requirement **R27.** The commands an agent runs cannot read the owner's vendor sign-ins, Keychain, SSH keys or cloud credentials, and cannot reach the network unless the owner allowed it for that repository. A driver that cannot enforce this is offered for read-only roles only.
+
+### U27. Confined commands for Claude Code
+
+**Goal:** A command an agent runs through Claude Code cannot read secrets outside its worktree or reach the network, and Botbench's approval gate still fires.
+**Requirements:** R27, R10, R8.
+**Dependencies:** U9.
+**Files:** `src/drivers/claude-code.ts`, `src/drivers/launch.ts`, `src/config.ts`, `docs/security/threat-model.md`, `test/drivers/`, `test/live/sandbox.live.test.ts`.
+**Approach:** Pass Claude Code's sandbox settings on the command line with the gate settings: enabled, fail if unavailable, `autoAllowBashIfSandboxed` false, no unsandboxed commands, an unreadable list (vendor sign-in folders, `~/Library/Keychains`, `~/.ssh`, cloud credential folders, Botbench's own data folder), and an empty network allowlist. Deny the CLI's own file tools outside the worktree by rule. A per-repository network allowance is owner configuration. A sandbox denial is reported in the transcript in plain words.
+**Test scenarios:**
+- The launch settings contain every key above; a missing sandbox stops the turn with a plain reason.
+- Live: a command that reads a decoy file outside the worktree fails and the transcript says it was blocked.
+- Live: a command that reads the Keychain item or a decoy in a sign-in folder fails, and the CLI's own turn still works.
+- Live: a command that reaches the network fails with no allowance, and succeeds for a host the repository's settings allow.
+- Live: a command still raises an approval card with the sandbox on.
+- Setup and check commands run under the same confinement.
+**Verification:** The owner runs a real task and sees a blocked read reported.
+
+### U28. One container per task
+
+**Goal:** Where a container runtime is present, an agent's shell commands run in a container that holds only the task's worktree.
+**Requirements:** R27.
+**Dependencies:** U27, U15.
+**Approach:** The execution environment becomes a named seam with two kinds: confined on the host (U27) and container. For the container kind, Botbench starts one container per task with the worktree mounted, no network and no credentials, rewrites each approved shell command into it through the permission answer, and removes it when the task is decided or cancelled. Settings shows which kind each task used. The owner chooses the image per repository.
+**Test scenarios:**
+- Live: a command sees the worktree, writes a file that appears on the task branch, and cannot see a decoy outside the mount or reach the network.
+- With no container runtime, tasks run confined on the host and the screen says so.
+- A restart finds and removes containers of finished tasks; none is left after a run.
+**Verification:** The owner runs a real task whose checks install dependencies inside the container.
+
+The Codex driver (U17) applies its own permissions profile to meet R27. Grok and Antigravity are offered for read-only roles until theirs is shown to hold.
 
 ### Milestone 4: Every subscription
 
