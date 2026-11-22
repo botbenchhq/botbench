@@ -9,6 +9,7 @@ import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "./events.ts";
 import { checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type CliChild } from "./launch.ts";
+import { claudeCodeSignIn, type SignInDefinition } from "./sign-in.ts";
 
 /*
  * Claude Code, driven over its stream-json protocol (seen on 2.1.322):
@@ -747,6 +748,7 @@ export interface ClaudeCodeDriverOptions {
 export class ClaudeCodeDriver implements Driver {
   readonly name = CLAUDE_CODE;
   readonly capabilities = CAPABILITIES;
+  readonly signIn: SignInDefinition;
   private readonly extraEnv: Record<string, string>;
   private readonly configDir: string | undefined;
   private readonly configured: { models: readonly string[]; defaultModel: string | null };
@@ -756,6 +758,7 @@ export class ClaudeCodeDriver implements Driver {
   constructor(options: ClaudeCodeDriverOptions = {}) {
     this.extraEnv = options.configDir ? { CLAUDE_CONFIG_DIR: options.configDir } : {};
     this.configDir = options.configDir || undefined;
+    this.signIn = claudeCodeSignIn(this.configDir);
     this.configured = { models: options.models ?? [], defaultModel: options.defaultModel ?? null };
   }
 

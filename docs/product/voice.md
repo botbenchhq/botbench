@@ -49,6 +49,8 @@ On screen since Codex reviews: In review (a task whose run's reviewer is reading
 
 On screen since notifications landed: Settings → Notifications, with the state of this device as On for this device, Off, Not allowed in the browser's settings, Not available: add Botbench to the Home Screen first (iOS offers notifications only to an app on the Home Screen), Not available: open Botbench at its HTTPS address, or Not available in this browser; the buttons Allow notifications, Stop notifications and Send a test notification; and the notifications themselves, "An approval is waiting" and "A task is ready for review". "Turn on" is not used: `turn` is a banned word.
 
+On screen since connecting landed: Connect (start an agent's own sign-in from Settings), Connect Claude Code (the sheet), Open sign-in page, Code from the sign-in page, Send code, Cancel connecting, Disconnect (the agent's own sign-out, behind "Disconnect Claude Code?" with Keep connected), and Sign in on the Mac (an agent whose sign-in can only be finished in a browser on the Mac, with the command to run there).
+
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.

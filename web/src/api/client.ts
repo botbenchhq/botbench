@@ -136,6 +136,29 @@ export interface Review {
   durationMs: number;
 }
 
+/** An agent's sign-in, run by its own command-line program from Settings. The link and code are there only while it waits. */
+export interface ConnectState {
+  driver: string;
+  kind: "device-code" | "link" | "on-the-mac";
+  terminalCommand: string;
+  /** The agent's own sign-out, as Disconnect runs it. */
+  signOutCommand: string;
+  /** The page shows a code after sign-in, to be pasted back here. */
+  takesCode: boolean;
+  state: "idle" | "starting" | "waiting" | "checking" | "succeeded" | "failed" | "cancelled";
+  url: string | null;
+  code: string | null;
+  expiresAt: string | null;
+  reason: string | null;
+}
+
+const agentPath = (driver: string): string => `/api/agents/${encodeURIComponent(driver)}`;
+export const getConnect = (driver: string): Promise<ConnectState> => request("GET", `${agentPath(driver)}/connect`);
+export const startConnect = (driver: string): Promise<ConnectState> => request("POST", `${agentPath(driver)}/connect`, {}, 60_000);
+export const sendConnectCode = (driver: string, code: string): Promise<ConnectState> => request("POST", `${agentPath(driver)}/connect/code`, { code });
+export const cancelConnect = (driver: string): Promise<ConnectState> => request("POST", `${agentPath(driver)}/connect/cancel`, {}, 30_000);
+export const disconnectAgent = (driver: string): Promise<DriverState> => request("POST", `${agentPath(driver)}/disconnect`, {}, 60_000);
+
 /** The models the driver offers and where the list came from. `default` null means the CLI's own default. */
 export interface ModelList {
   driver: string;
@@ -539,6 +562,8 @@ export interface StreamHandlers {
   onApproval?(announcement: ApprovalAnnouncement): void;
   /** Called when a run reached a state or its plan changed. */
   onRun?(announcement: RunAnnouncement): void;
+  /** Called when an agent's sign-in moved on, or it was signed out. */
+  onAgent?(announcement: { driver: string; state: string }): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -596,6 +621,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("approval", (message) => {
       alive();
       handlers.onApproval?.(JSON.parse((message as MessageEvent<string>).data) as ApprovalAnnouncement);
+    });
+    source.addEventListener("agent", (message) => {
+      alive();
+      handlers.onAgent?.(JSON.parse((message as MessageEvent<string>).data) as { driver: string; state: string });
     });
     source.onmessage = (message) => {
       alive();

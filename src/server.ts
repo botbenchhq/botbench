@@ -11,6 +11,8 @@ import { createBroker, type Broker } from "./approvals/broker.ts";
 import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
+import { createConnect } from "./drivers/connect.ts";
+import type { SignInDefinition } from "./drivers/sign-in.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
@@ -65,6 +67,8 @@ export interface StartOptions {
   idleCloseMs?: number;
   /** Let notifications go to plain-HTTP endpoints. Only for tests, whose push endpoint is a local server; a real one is HTTPS. */
   allowHttpPushEndpoints?: boolean;
+  /** Sign-ins to run in place of an agent's own, by driver. Tests replay a captured sign-in through it. */
+  signIns?: readonly SignInDefinition[];
 }
 
 
@@ -109,7 +113,15 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
       push.taskChanged(task);
     }, onRunChange: stream.announceRun });
   const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, line: tasks, onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.
+  const connect = createConnect({
+    agents: [driver, ...Object.values(reviewers)].flatMap((d) => {
+      const signIn = options.signIns?.find((s) => s.driver === d.name) ?? d.signIn;
+      return signIn === undefined ? [] : [{ signIn, probe: () => d.probe() }];
+    }),
+    onChange: stream.announceAgent,
+  });
+  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -134,7 +146,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
-    await Promise.allSettled([turns.close(), tasks.close(), runs.close()]);
+    await Promise.allSettled([turns.close(), tasks.close(), runs.close(), connect.close()]);
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
     // A notification in flight may still delete an expired device's row; each has a time limit.
