@@ -587,3 +587,34 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source?.close();
   };
 }
+
+/** The usage report: tokens by agent and model, for the last 7 days and all time, and by run. Never a dollar amount. */
+export interface UsageTotals {
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+export interface UsageAgent extends UsageTotals {
+  driver: string;
+  billing: "subscription" | "metered" | "unknown";
+  models: (UsageTotals & { model: string | null })[];
+}
+export interface UsageScope extends UsageTotals {
+  agents: UsageAgent[];
+}
+export interface UsageRun extends UsageTotals {
+  id: number;
+  kind: "planned" | "single";
+  title: string;
+  createdAt: string;
+  planning: UsageTotals;
+  tasks: (UsageTotals & { id: number; title: string })[];
+}
+export interface UsageReport {
+  since: string;
+  week: UsageScope;
+  allTime: UsageScope;
+  runs: { total: number; items: UsageRun[] };
+}
+/** The server asks the agent for its sign-in, which can take a few seconds. */
+export const getUsage = (): Promise<UsageReport> => request("GET", "/api/usage", undefined, 20_000);

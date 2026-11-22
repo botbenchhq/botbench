@@ -4,6 +4,8 @@ import { DriverUnavailableError } from "../drivers/contract.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { eventsAfter, parseEventId } from "./stream.ts";
 import { TurnError } from "./turns.ts";
+import { usageReport } from "../usage.ts";
+import type { BillingKind } from "../drivers/contract.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -32,6 +34,10 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
     } else if (method === "GET" && pathname === "/api/models") {
       // The driver's own account of what can be chosen. It answers in seconds or falls back to the configured list.
       json(res, 200, { driver: CLAUDE_CODE, ...(await ctx.driver.models()) });
+    } else if (method === "GET" && pathname === "/api/usage") {
+      // The sign-in kind is the agent's own account of it; when it cannot say, it is unknown and only tokens are shown.
+      const billing: Record<string, BillingKind> = { [CLAUDE_CODE]: await ctx.turns.probe().then((probe) => probe.billing, () => "unknown" as const) };
+      json(res, 200, usageReport(ctx.db, { now: Date.now(), drivers: Object.keys(ctx.config.drivers), billing }));
     } else if (method === "GET" && pathname === "/api/stream") {
       ctx.stream.handle(req, res);
     } else if (method === "POST" && pathname === "/api/turns") {
