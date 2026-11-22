@@ -133,7 +133,7 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
   }
   diffChars = diff.length;
   diffCut = diff.length > MAX_REVIEW_DIFF;
-  const prompt = reviewerPrompt({ task: o.task, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null });
+  const prompt = reviewerPrompt({ task: o.task, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null, tools: o.driver.capabilities.tools !== false });
 
   if (o.signal?.aborted) {
     outcome = "stopped";

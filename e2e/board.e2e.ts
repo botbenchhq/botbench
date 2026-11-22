@@ -105,7 +105,9 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   await expect(codexRow.getByTestId("agent-state")).toHaveText(codex.problem === null ? "Available" : /Signed out|Not installed|Unsupported version|Unavailable/);
   await expect(codexRow).toContainText(codex.problem ?? `Version ${codex.version}.`);
   if (codex.problem === null) await expect(codexRow).toContainText("Reviews a run's tasks when you choose it on New run; it cannot plan or build here.");
-  for (const other of ["Gemini", "Grok"]) await expect(page.getByText(other)).toHaveCount(0);
+  // Grok and Antigravity, each with the state its own probe reports.
+  for (const key of ["grok", "antigravity"]) await expect(page.getByTestId(`agent-${key}`).getByTestId("agent-state")).toHaveText(/^(Available|Signed out|Not installed|Unsupported version|Unavailable)$/);
+  await expect(page.getByText("Gemini CLI")).toHaveCount(0);
   // Settings is no tab: the tab bar keeps its five destinations.
   await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
   await expect(page.locator('.ds-tab-bar__item[aria-current="page"]')).toHaveCount(0);

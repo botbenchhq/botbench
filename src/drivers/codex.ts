@@ -1,13 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
-import type { DatabaseSync } from "node:sqlite";
 import { confinementProblem, unreadablePaths } from "../confinement.ts";
-import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
-import type { DriverEvent, TurnEndReason } from "./events.ts";
-import { buildChildEnv, checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type CliChild } from "./launch.ts";
+import type { DriverEvent } from "./events.ts";
+import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
+import { startOneTurn, type LineResult } from "./one-turn.ts";
 import { codexSignIn, type SignInDefinition } from "./sign-in.ts";
 
 /*
@@ -226,132 +224,11 @@ export function parseCodexLine(line: string): DriverEvent[] {
   }
 }
 
-class CodexSession implements DriverSession {
-  readonly attemptId: number;
-  readonly capabilities = CODEX_CAPABILITIES;
-  private readonly db: DatabaseSync;
-  private readonly args: string[];
-  private readonly cwd: string;
-  private readonly listeners = new Set<(event: DriverEvent) => void>();
-  private turn = 0;
-  private child: CliChild | null = null;
-  private pgid = 0;
-  private running: { resolve: (reason: TurnEndReason) => void } | null = null;
-  private exited: Promise<void> = Promise.resolve();
-  private interrupting = false;
-  private over = false;
-  private cursor: string | null = null;
-  private stderrTail = "";
-  private readonly called = new Set<string>();
-
-  constructor(db: DatabaseSync, attemptId: number, args: string[], cwd: string) {
-    this.db = db;
-    this.attemptId = attemptId;
-    this.args = args;
-    this.cwd = cwd;
-  }
-
-  resumeCursor(): string | null {
-    return this.cursor;
-  }
-
-  onEvent(listener: (event: DriverEvent) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  /** One turn per session: Codex here neither keeps a session nor resumes one. */
-  sendTurn(prompt: string): Promise<TurnEndReason> {
-    if (this.over || this.turn > 0) return Promise.reject(new Error("This session with Codex has ended: Botbench gives Codex one message per session."));
-    this.turn = 1;
-    const done = new Promise<TurnEndReason>((resolve) => (this.running = { resolve }));
-    this.record({ type: "user_prompt", text: prompt });
-    const { child, pgid } = launch(COMMAND, this.args, { cwd: this.cwd, extraEnv: EXTRA_ENV });
-    this.child = child;
-    this.pgid = pgid;
-    if (pgid) this.db.prepare("UPDATE attempts SET pgid = ?, updated_at = ? WHERE id = ?").run(pgid, now(), this.attemptId);
-    readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => this.onLine(line));
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (this.stderrTail = (this.stderrTail + chunk).slice(-2000)));
-    child.stdin.on("error", () => {});
-    let spawnError: Error | null = null;
-    child.on("error", (err) => (spawnError = err));
-    this.exited = new Promise((resolve) => child.once("close", (code, signal) => void this.onExit(code, signal, spawnError).finally(resolve)));
-    // The prompt goes on the input, never on the command line, where any process on the Mac could read it.
-    child.stdin.end(prompt);
-    return done;
-  }
-
-  async interruptTurn(): Promise<void> {
-    if (!this.running) return;
-    this.interrupting = true;
-    if (this.pgid) await killProcessGroup(this.pgid);
-    await this.exited;
-  }
-
-  respondToRequest(requestId: string): Promise<void> {
-    return Promise.reject(new Error(`Codex cannot be answered in Botbench: no request ${requestId} can be waiting, as a review asks for nothing.`));
-  }
-
-  async close(): Promise<void> {
-    if (this.running) await this.interruptTurn();
-    this.over = true;
-    if (this.pgid) await killProcessGroup(this.pgid).catch(() => {});
-    await this.exited;
-    this.db.prepare("UPDATE attempts SET status = 'ended', updated_at = ? WHERE id = ? AND status = 'running'").run(now(), this.attemptId);
-  }
-
-  private onLine(line: string): void {
-    for (const event of parseCodexLine(line)) {
-      if (event.type === "turn_ended") {
-        if (this.running) this.endTurn(event.reason, event.detail);
-        continue;
-      }
-      if (event.type === "tool_call") {
-        if (this.called.has(event.id)) continue;
-        this.called.add(event.id);
-      }
-      if (event.type === "session_started") this.cursor = event.resumeCursor;
-      this.record(event);
-      // A setting Codex ignores could be one the review's confinement rests on: nothing more runs.
-      if (event.type === "error" && IGNORED_SETTING.test(event.message) && this.running) {
-        this.endTurn("error", `Stopped: Codex did not take one of Botbench's settings (${event.message}), so the review could not be kept to read-only. Update Botbench or Codex.`);
-        if (this.pgid) void killProcessGroup(this.pgid).catch(() => {});
-      }
-    }
-  }
-
-  private endTurn(reason: TurnEndReason, detail: string | null): void {
-    const running = this.running;
-    if (!running) return;
-    this.running = null;
-    const status = reason === "completed" ? null : reason === "interrupted" ? "interrupted" : "failed";
-    this.record({ type: "turn_ended", reason, detail }, status);
-    running.resolve(reason);
-  }
-
-  private async onExit(code: number | null, signal: NodeJS.Signals | null, spawnError: Error | null): Promise<void> {
-    if (this.running) {
-      if (this.interrupting) this.endTurn("interrupted", "Codex was stopped.");
-      else {
-        const how = spawnError ? spawnError.message : signal ? `was killed by ${signal}` : `exited with code ${code}`;
-        const message = `Codex ${how} before it finished.`;
-        this.record({ type: "error", message, raw: this.stderrTail.trim() === "" ? null : shorten(this.stderrTail.trim()) });
-        this.endTurn("error", message);
-      }
-    }
-    if (this.pgid) await killProcessGroup(this.pgid).catch(() => {});
-    if (!processGroupAlive(this.pgid)) this.db.prepare("UPDATE attempts SET pgid = NULL, updated_at = ? WHERE id = ?").run(now(), this.attemptId);
-    this.db.prepare("UPDATE attempts SET status = 'ended', updated_at = ? WHERE id = ? AND status = 'running'").run(now(), this.attemptId);
-    this.over = true;
-  }
-
-  private record(event: DriverEvent, status: string | null = null): void {
-    transaction(this.db, () => {
-      this.db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, ?, ?, ?, ?)").run(this.attemptId, this.turn, now(), event.type, JSON.stringify(event));
-      if (status !== null) this.db.prepare("UPDATE attempts SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), this.attemptId);
-    });
-    for (const listener of this.listeners) listener(event);
-  }
+/** What one line of `codex exec --json` gave, and a stop when Codex says it ignored a setting the review's confinement may rest on. */
+export function readCodexLine(line: string): LineResult {
+  const events = parseCodexLine(line);
+  const ignored = events.find((e): e is Extract<DriverEvent, { type: "error" }> => e.type === "error" && IGNORED_SETTING.test(e.message));
+  return { events, stop: ignored ? `Stopped: Codex did not take one of Botbench's settings (${ignored.message}), so the review could not be kept to read-only. Update Botbench or Codex.` : null };
 }
 
 export interface CodexDriverOptions {
@@ -423,8 +300,6 @@ export class CodexDriver implements Driver {
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
     const args = codexArgs({ place: { cwd: options.cwd, dataDir: options.confinement.dataDir, ...(options.confinement.gitDir === undefined ? {} : { gitDir: options.confinement.gitDir }) }, ...(options.model ? { model: options.model } : {}) });
-    const at = now();
-    const { lastInsertRowid } = options.db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (?, ?, NULL, 'running', NULL, ?, ?)").run(CODEX, options.model ?? null, at, at);
-    return new CodexSession(options.db, Number(lastInsertRowid), args, options.cwd);
+    return startOneTurn(options.db, CODEX, options.model ?? null, { agent: "Codex", command: COMMAND, args, cwd: options.cwd, extraEnv: EXTRA_ENV, capabilities: CODEX_CAPABILITIES, input: (prompt) => prompt, reader: () => readCodexLine });
   }
 }

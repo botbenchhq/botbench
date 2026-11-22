@@ -384,7 +384,7 @@ test("a run's reviewer is refused in words when it is malformed, unknown, the bu
     [{ agent: "codex", model: "--sandbox" }, /reviewer's model is not a model name/],
     // The builder here is Claude Code with its own default model.
     [{ agent: "claude-code", model: null }, /The reviewer must be a different model from the builder, and Claude Code with its own default model builds this run\./],
-    [{ agent: "claude-code", model: "sonnet" }, /Claude Code cannot review a run yet\. Choose Codex, or no review\./],
+    [{ agent: "claude-code", model: "sonnet" }, /Claude Code cannot review a run\. Choose Codex, Grok, Antigravity, or no review\./],
   ];
   for (const [reviewer, words] of bad) {
     const res = await call(api, "POST", "/api/runs", { repo: api.repo, prompt: "plan this", reviewer });
@@ -414,16 +414,18 @@ test("a run's screen names its reviewer, and a task's screen gives its review on
   assert.deepEqual({ agent: review.agent, model: review.model, outcome: review.outcome, verdict: review.verdict, text: review.text, problem: review.problem, diffCut: review.diffCut }, { agent: "codex", model: "gpt-6-luna", outcome: "reviewed", verdict: "concerns", text: "Verdict: concerns\nFindings:\n- calc.py:2: subtracts", problem: null, diffCut: false });
 });
 
-test("the agents are listed with what each reports about itself, and Codex's models come from Codex or the configuration, never made up", async (t) => {
+test("the agents are listed with what each reports about itself, and each reviewer's models come from its CLI or the configuration, never made up", async (t) => {
   const api = await start(t);
   const agents = (await call(api, "GET", "/api/agents")).body.agents as Record<string, unknown>[];
-  assert.deepEqual(agents.map((agent) => agent.agent), ["claude-code", "codex"]);
+  assert.deepEqual(agents.map((agent) => agent.agent), ["claude-code", "codex", "grok", "antigravity"]);
   for (const agent of agents) for (const key of ["installed", "version", "supported", "signedIn", "billing", "problem"]) assert.ok(key in agent, `${String(agent.agent)}: ${key}`);
-  assert.deepEqual(agents.map((agent) => agent.roles), [["planner", "builder"], ["reviewer"]]);
-  const models = (await call(api, "GET", "/api/agents/codex/models")).body;
-  assert.ok(models.source === "cli" || models.source === "config");
-  assert.equal(models.driver, "codex");
-  assert.equal((await call(api, "GET", "/api/agents/grok/models")).status, 404);
+  assert.deepEqual(agents.map((agent) => agent.roles), [["planner", "builder"], ["reviewer"], ["reviewer"], ["reviewer"]]);
+  for (const reviewer of ["codex", "grok", "antigravity"]) {
+    const models = (await call(api, "GET", `/api/agents/${reviewer}/models`)).body;
+    assert.ok(models.source === "cli" || models.source === "config", reviewer);
+    assert.equal(models.driver, reviewer);
+  }
+  assert.equal((await call(api, "GET", "/api/agents/gemini-cli/models")).status, 404);
   const refused = await fetch(`${api.base}/api/agents`);
   assert.equal(refused.status, 401);
 });

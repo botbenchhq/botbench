@@ -10,9 +10,13 @@ import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
 import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
+import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
 import { createConnect } from "./drivers/connect.ts";
 import type { SignInDefinition } from "./drivers/sign-in.ts";
+import { removeLeftoverReviewFolders } from "./drivers/cli-sandbox.ts";
+import type { Driver } from "./drivers/contract.ts";
+import { GROK, GrokDriver } from "./drivers/grok.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { defaultMode } from "./engine/modes.ts";
 import { createDictation, type DictationOptions } from "./dictation/dictation.ts";
@@ -80,15 +84,17 @@ export interface StartOptions {
 export async function startServer(options: StartOptions): Promise<BotbenchServer> {
   const { config, home } = options;
   const db = openStore(home);
+  // A review folder of a Botbench that stopped mid-review is never used again (src/drivers/cli-sandbox.ts).
+  removeLeftoverReviewFolders(home);
   const login = loadOrCreateLoginToken(home);
   const stream = createEventStream(db, options.heartbeatMs);
   // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
   const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
-  // Codex reviews only (src/drivers/codex.ts): it is offered as a run's reviewer and as nothing else.
-  const codexModel = config.drivers[CODEX]?.model;
-  const reviewers = { [CODEX]: new CodexDriver({ models: config.drivers[CODEX]?.models ?? [], ...(codexModel ? { defaultModel: codexModel } : {}) }) };
+  // Codex, Grok and Antigravity review only (src/drivers/): each is offered as a run's reviewer and as nothing else.
+  const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
+  const reviewers = { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
   let broker: Broker;
   let push: Push;
   try {
@@ -119,7 +125,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
   // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.
   const connect = createConnect({
-    agents: [driver, ...Object.values(reviewers)].flatMap((d) => {
+    agents: ([driver, ...Object.values(reviewers)] as Driver[]).flatMap((d) => {
       const signIn = options.signIns?.find((s) => s.driver === d.name) ?? d.signIn;
       return signIn === undefined ? [] : [{ signIn, probe: () => d.probe() }];
     }),

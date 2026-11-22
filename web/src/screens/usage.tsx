@@ -14,7 +14,7 @@ const tokens = (n: number): string => `${number(n)} ${n === 1 ? "token" : "token
 const when = (iso: string): string => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
 /** The product names of the agents Botbench has; an agent not listed is shown by its own id. */
-const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "gemini-cli": "Gemini CLI", grok: "Grok" };
+const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "gemini-cli": "Gemini CLI", grok: "Grok", antigravity: "Antigravity" };
 const agentName = (driver: string): string => AGENT_NAMES[driver] ?? driver;
 
 const COST_WORDS = {

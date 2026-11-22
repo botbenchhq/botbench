@@ -124,3 +124,15 @@ test("npm start's entry point creates the data directory, answers health, and ex
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
 });
+
+test("starting removes review folders a stopped Botbench left in the configured data folder", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-server-leftovers-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  const left = path.join(home, "reviewers", "0b5e-left-by-a-crash");
+  fs.mkdirSync(path.join(left, ".agents", "agents"), { recursive: true });
+  const server = await startServer({ config: { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} }, home, signInDelayMs: 1 });
+  t.after(() => server.close());
+  assert.equal(fs.existsSync(left), false);
+  assert.ok(fs.existsSync(path.join(home, "reviewers")), "only what is inside is removed");
+});
