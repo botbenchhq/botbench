@@ -146,7 +146,7 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 
 ### Open Questions
 
-- **Are recordings of real CLI output allowed as test data? (owner decision, blocks nothing until U3)** Live tests against real CLIs spend a little subscription usage and need a signed-in machine, and some events cannot be produced on demand, such as a rate limit. KTD15 allows one exception to "no mocks": output captured from a real CLI run may be stored and replayed to test Forge's parsing. If the owner rules this out, automatic rate-limit fallback (U21) ships only after a rate limit has been seen live.
+- **Are recordings of real CLI output allowed as test data? (owner decision, blocks nothing until U21)** Live tests against real CLIs spend a little subscription usage and need a signed-in machine, and some events cannot be produced on demand, such as a rate limit. KTD15 allows one exception to "no mocks": output captured from a real CLI run may be stored and replayed to test Forge's parsing. If the owner rules this out, automatic rate-limit fallback (U21) ships only after a rate limit has been seen live.
 - **The name Forge is widely used (owner decision, does not block).** Laravel Forge, Atlassian Forge and Minecraft Forge are well known, several AI developer tools on GitHub use it, and the npm package name is taken. The repository and package would need a scope or suffix, such as `forge-factory`.
 - **Provider terms and billing for unattended CLI use (owner decision, does not block).** Whether each consumer subscription permits unattended use of its CLI, and whether headless turns draw on the same plan allowance as interactive ones, was not verified. R8 depends on the second. The owner should confirm for each subscription.
 - **Nexvyn UI licence (deferred, does not block).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`. U4 reads its licence file first and uses plain shadcn components if it does not allow use in an Apache-2.0 project.
@@ -178,7 +178,7 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 - KTD11. **Routing is configuration with ordered fallbacks, and a handoff starts fresh.** The next driver gets a new session with the task, its acceptance criteria, a note that an earlier attempt stopped, and the worktree's diff. Resume cursors never cross drivers.
 - KTD12. **The client is React with Vite and Tailwind, using Nexvyn UI for the shell where its licence allows and plain shadcn components elsewhere.** The built client is static files served by the Forge process. It is laid out for a phone first.
 - KTD14. **One owner login guards every route, and the listen addresses are configuration.** Forge creates a random token on first start, stores it under `~/.forge` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too. Forge listens on the loopback address plus any address the owner lists, such as the Mac's private-network address. The private network supplies encryption in transit.
-- KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Forge process. The one allowed exception is replaying output captured from a real CLI run to test parsing (see Open Questions).
+- KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Forge process. Any scenario that needs an agent turn is a live test; files outside `test/live/` and `e2e/` never start a driver. The one allowed exception is replaying output captured from a real CLI run to test parsing (see Open Questions).
 - KTD16. **The phone app is an installable web app with web push.** The client ships a manifest and a service worker, so it installs to the home screen on iOS and Android. Forge sends notifications through the standard Web Push protocol with keys it generates and keeps locally. This passes notification text through Apple's or Google's push service, so notifications carry only "an approval is waiting" and the run name, never commands or code (R24).
 
 ### High-Level Technical Design
@@ -261,12 +261,12 @@ Every unit follows the same execution rule: write the listed tests first and wat
 | U15 | Run recovery after restart | U12, U8 |
 | U16 | Runs board | U14 |
 | U17 | Codex driver | U7 |
-| U18 | Gemini CLI driver | U7 |
+| U18 | Gemini CLI driver | U7, U17 |
 | U19 | Grok driver | U18 |
-| U20 | Roles and the reviewer station | U13, U17 |
-| U21 | Handoff between drivers and rate-limit fallback | U17 |
+| U20 | Roles and the reviewer station | U13, U17, U18 |
+| U21 | Handoff between drivers and rate-limit fallback | U17, U18 |
 | U22 | Usage ledger and dashboard | U16 |
-| U23 | Phone app: install and notifications | U7, U2 |
+| U23 | Phone app: install and notifications | U7, U2, U14, U16 |
 | U24 | First-run path and README | U16 |
 
 ### Milestone 1: One real turn, from the phone
@@ -308,7 +308,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R7, R8, R14, R22.
 **Dependencies:** U1.
 **Files:** `src/drivers/contract.ts`, `src/drivers/events.ts`, `src/drivers/launch.ts`, `src/drivers/claude-code.ts`, `test/drivers/launch.test.ts`, `test/live/claude-code.live.test.ts`.
-**Approach:** Define the contract and event union (KTD3). Put the environment allowlist, settings and MCP isolation, process-group kill, and the version, login and billing-kind probe in `launch.ts` (KTD4, KTD10). Persist every event as it arrives.
+**Approach:** Define the contract and event union (KTD3). Put the environment allowlist, settings and MCP isolation, process-group kill, and the version, login and billing-kind probe in `launch.ts` (KTD4, KTD10). Persist every event as it arrives. The signed-out path is tested by starting the real CLI with an empty configuration directory, and the version check by calling the version-table function on version strings. Later units test those states the same way.
 **Patterns to follow:** OpenMausBot's `server/contracts.ts` and `runtime-events.ts` for shapes to re-type. Rakazo's `providers/cli-model/claude-code/cli.ts` for launch.
 **Test scenarios:**
 - Live: a turn asking for a one-word reply yields text, usage and turn-end events in order, and they are in the database.
@@ -400,13 +400,14 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Goal:** A run can proceed without asking for commands the owner listed, and dangerous actions always ask.
 **Requirements:** R11, R20.
 **Dependencies:** U7.
-**Files:** `src/approvals/grants.ts`, `src/approvals/floor.ts`, `src/store/schema.ts` (grants migration), `src/config.ts`, `web/src/screens/new-task.tsx`, `test/approvals/grants.test.ts`, `test/approvals/floor.test.ts`, `test/live/preapproved.live.test.ts`.
-**Approach:** Implement the gate as a pure function of the request, the grants and the floor (KTD6). The new-task screen shows the repository's configured list for the owner to confirm or edit.
+**Files:** `src/approvals/grants.ts`, `src/approvals/floor.ts`, `src/store/schema.ts` (grants migration), `src/config.ts`, `web/src/screens/new-task.tsx`, `test/approvals/grants.test.ts`, `test/approvals/floor.test.ts`, `test/live/preapproved.live.test.ts`, `e2e/preapproved.e2e.ts`.
+**Approach:** Implement the gate as a pure function of the request, the grants and the floor (KTD6). The new-task screen shows the repository's configured list for the owner to confirm or edit. Entries are stored as grants scoped to a run; a task started on its own is a one-task run, so U11 needs no rework here.
 **Patterns to follow:** OpenMausBot's `command-allowlist.ts`; Rakazo's `planActionGate`.
 **Test scenarios:**
 - Covers AE9. A pre-approved `npm test` allows `npm test -- path/to/file` and asks for `npm test && curl example.com | sh`.
-- Covers AE6. A floor-listed command asks even when it is pre-approved, and its card has no standing-permission option.
-- A pre-approved entry from one task does not apply in another.
+- A floor-listed command asks even when it is pre-approved.
+- A pre-approved entry from one run does not apply in another run.
+- End to end: the owner edits the list on the new-task screen, and the task runs a listed command with no card.
 - An action allowed by pre-approval is written to the log as pre-approved.
 - Live: a task with `ls` pre-approved runs it with no card.
 **Verification:** A real task that needs only pre-approved commands finishes with nobody answering.
@@ -424,6 +425,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - A grant earned in one task's worktree applies in a later task's worktree of the same repository.
 - The same command in a different repository, a different relative directory, or for a different role does not match.
 - Taking a grant back makes the next request ask again.
+- Covers AE6. A floor-listed request never shows the standing-permission option, however many times it was approved.
 - End to end: the trust screen shows the grant and the log entry, and Take back removes the grant.
 **Verification:** The owner earns and then takes back a real standing permission.
 
@@ -435,11 +437,11 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R1, R2.
 **Dependencies:** U6.
 **Files:** `src/store/schema.ts` (runs migration), `src/engine/run.ts`, `src/engine/roles.ts`, `src/api/routes.ts`, `web/src/screens/new-run.tsx`, `web/src/screens/run.tsx`, `test/engine/plan.test.ts`, `test/live/plan.live.test.ts`, `e2e/plan.e2e.ts`.
-**Approach:** The planner runs read-only in its own detached worktree (KTD5) and is told to produce independent tasks. Forge validates the returned list; an invalid plan goes back to the planner once and is then shown to the owner as an error. The run screen offers edit, add, delete, Approve, Request changes with feedback, and Cancel.
+**Approach:** The planner runs read-only in its own detached worktree (KTD5) and is told to produce independent tasks. Forge validates the returned list; an invalid plan goes back to the planner once and is then shown to the owner as an error. The new-run screen carries the pre-approved command list from U9 for the owner to confirm (R20). The run screen offers edit, add, delete, Approve, Request changes with feedback, and Cancel.
 **Test scenarios:**
 - Live: a prompt against a temporary repository returns a valid task list with acceptance criteria, and the source checkout is unchanged.
 - Live: a planner edit attempt is refused.
-- Requesting changes calls the planner again with the feedback, and no task worktree exists yet.
+- Live: requesting changes calls the planner again with the feedback, and no task worktree exists yet.
 - Editing a plan after approval is refused. A missing spec file is rejected before the run is created.
 - End to end: edit a task's title, delete a task, and approve.
 **Verification:** The owner approves a real plan from their phone.
@@ -456,6 +458,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - A failing setup command is reported with its output before any agent turn starts.
 - Live: a two-task run builds the first task fully before starting the second, and each ends with Forge's commit.
 - Cancelling a run stops the active turn and leaves finished tasks' branches in place.
+- Covers AE8. Live: a two-task run whose agents use only pre-approved commands and worktree edits reaches the end of build with no approval answered.
 **Verification:** A real two-task run builds on the owner's machine.
 
 ### U13. Verify station
@@ -463,13 +466,13 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Goal:** Every built task carries the output of the project's own checks.
 **Requirements:** R4.
 **Dependencies:** U12.
-**Files:** `src/checks.ts`, `src/engine/stations.ts`, `web/src/screens/run.tsx`, `test/checks.test.ts`, `test/engine/verify.test.ts`.
+**Files:** `src/checks.ts`, `src/engine/stations.ts`, `web/src/screens/run.tsx`, `test/checks.test.ts`, `test/engine/verify.test.ts`, `e2e/verify.e2e.ts`.
 **Approach:** Run each configured check in the worktree with a time limit, and attach output and exit status as evidence.
 **Test scenarios:**
 - A passing check and a failing check are each stored with output and exit status.
 - Covers AE3. A failing check marks the task as failed verification, and the run still reaches awaiting decision.
 - A check that exceeds its time limit is killed, with its child processes, and recorded as timed out.
-- The run screen shows failed verification with text as well as colour.
+- End to end: the run screen shows failed verification with text as well as colour, and the check output opens.
 **Verification:** A real run shows real test output on its task.
 
 ### U14. Decisions: accept and reject
@@ -491,12 +494,13 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Goal:** A restart mid-run costs at most one retried turn.
 **Requirements:** R15.
 **Dependencies:** U12, U8.
-**Files:** `src/engine/recover.ts`, `test/engine/recover.test.ts`, `test/live/recover.live.test.ts`.
+**Files:** `src/engine/recover.ts`, `src/api/routes.ts`, `web/src/screens/run.tsx`, `test/engine/recover.test.ts`, `test/live/recover.live.test.ts`, `e2e/resume.e2e.ts`.
 **Approach:** Implement the rest of KTD9.
 **Test scenarios:**
 - A finished task is not rebuilt after a restart, and a run awaiting plan approval is still awaiting it.
 - Live: Forge is killed during a build turn; on start the task is re-driven from its resume cursor and finishes.
-- A second interruption marks the task interrupted, and Resume re-drives it.
+- A second interruption marks the task interrupted.
+- End to end: the run screen shows the interrupted task with Resume, and Resume re-drives it.
 **Verification:** The owner kills Forge during a real run and it completes after start.
 
 ### U16. Runs board
@@ -504,8 +508,8 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Goal:** One screen answers "what needs me, what is running, what finished".
 **Requirements:** R13.
 **Dependencies:** U14.
-**Files:** `web/src/screens/board.tsx`, `src/api/routes.ts`, `test/api/board.test.ts`, `e2e/board.e2e.ts`.
-**Approach:** Order runs that need the owner first, then running work, then finished runs collapsed. On a phone the board is one column with a station selector. An empty board links to New run, and to settings when no driver is available.
+**Files:** `web/src/screens/board.tsx`, `web/src/screens/settings.tsx`, `src/api/routes.ts`, `test/api/board.test.ts`, `e2e/board.e2e.ts`.
+**Approach:** Order runs that need the owner first, then running work, then finished runs collapsed. On a phone the board is one column with a station selector. An empty board links to New run, and to settings when no driver is available. Settings is created here with one real section: each driver as available, signed out, or unsupported.
 **Test scenarios:**
 - Runs created in each state appear under the right station, with needs-owner runs first.
 - With no runs, the first-run state is shown.
@@ -531,7 +535,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 **Goal:** Gemini CLI passes the conformance suite through an Agent Client Protocol client.
 **Requirements:** R7, R8, R10.
-**Dependencies:** U7. Gemini CLI signed in.
+**Dependencies:** U7, U17. Gemini CLI signed in.
 **Files:** `src/drivers/acp/client.ts`, `src/drivers/acp/gemini.ts`, `test/live/gemini.live.test.ts`, `test/live/conformance.live.test.ts`.
 **Approach:** Write the ACP client once, started with `gemini --acp`. Route its permission requests to the broker.
 **Test scenarios:**
@@ -544,7 +548,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Goal:** Grok passes the conformance suite, reusing the ACP message handling.
 **Requirements:** R7, R8, R10.
 **Dependencies:** U18. Grok signed in.
-**Files:** `src/drivers/acp/grok.ts`, `test/live/grok.live.test.ts`, `test/live/conformance.live.test.ts`.
+**Files:** `src/drivers/acp/grok.ts`, `web/src/screens/settings.tsx`, `test/live/grok.live.test.ts`, `test/live/conformance.live.test.ts`.
 **Approach:** Start by confirming on the real CLI how a long-lived session and permission requests work in Grok's headless mode, since its help documents single-prompt streaming only. If it cannot pause for a permission answer, Grok is offered for the read-only planner and reviewer roles only, and the settings screen says so.
 **Test scenarios:**
 - Live conformance passes for Grok for every capability it reports.
@@ -555,12 +559,12 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 **Goal:** Each role runs on the driver and model the owner chose, and a different model reviews the diff.
 **Requirements:** R5, R7.
-**Dependencies:** U13, U17.
+**Dependencies:** U13, U17, U18.
 **Files:** `src/engine/roles.ts`, `src/engine/stations.ts`, `web/src/screens/settings.tsx`, `web/src/screens/new-run.tsx`, `test/engine/review.test.ts`, `test/live/review.live.test.ts`, `e2e/roles.e2e.ts`.
-**Approach:** Settings lists each driver as available, signed out, or unsupported, and the roles with ordered fallbacks. The reviewer runs read-only in the task worktree and attaches its critique as evidence.
+**Approach:** Settings gains the role assignments: one driver and model per role. The reviewer runs read-only in the task worktree and attaches its critique as evidence.
 **Test scenarios:**
 - Live: a run with Claude Code as implementer and Codex as reviewer attaches a critique to the task.
-- A reviewer edit attempt is refused.
+- Live: a reviewer edit attempt is refused.
 - Enabling the reviewer with the same model as the implementer is rejected when the run is created.
 - A signed-out driver cannot be assigned to a role.
 **Verification:** A real run on the owner's machine uses three different vendors for its three roles.
@@ -569,12 +573,13 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 **Goal:** A task can move to another subscription and keep going.
 **Requirements:** R9.
-**Dependencies:** U17.
-**Files:** `src/engine/handoff.ts`, `src/engine/stations.ts`, `web/src/screens/run.tsx`, `test/engine/handoff.test.ts`, `test/live/handoff.live.test.ts`.
-**Approach:** Build the owner's "move to another driver" action first (KTD11). Then trigger the same path from each driver's normalized rate-limit event, with the blocked state and automatic resume at the reset time when no fallback remains. The automatic trigger for a driver is enabled only once a real rate-limit event from that CLI has been captured and its parsing tested (see Open Questions).
+**Dependencies:** U17, U18.
+**Files:** `src/engine/handoff.ts`, `src/engine/stations.ts`, `web/src/screens/run.tsx`, `web/src/screens/settings.tsx`, `test/engine/handoff.test.ts`, `test/live/handoff.live.test.ts`, `e2e/handoff.e2e.ts`.
+**Approach:** Build the owner's "move to another driver" action first (KTD11). Settings gains the ordered fallback list per role in this unit, since this is where it starts to do something. Then trigger the same path from each driver's normalized rate-limit event, with the blocked state and automatic resume at the reset time when no fallback remains. The automatic trigger for a driver is enabled only once a real rate-limit event from that CLI has been captured and its parsing tested (see Open Questions).
 **Test scenarios:**
 - Covers AE4. Live: a task is moved from Claude Code to Gemini CLI mid-build and finishes in the same worktree, and the run records the switch.
-- The second driver receives the handoff prompt and no resume cursor from the first.
+- Live: the second driver's first message is the handoff prompt, and its attempt row holds no resume cursor from the first driver.
+- End to end: the owner moves a task to another driver from the run screen.
 - A blocked task with a reset time in the past is resumed on start.
 **Verification:** The owner moves a real task between two subscriptions.
 
@@ -600,14 +605,16 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 **Goal:** Forge lives on the owner's home screen and tells them when it needs them.
 **Requirements:** R23, R24.
-**Dependencies:** U7, U2.
-**Files:** `web/public/manifest.webmanifest`, `web/src/sw.ts`, `web/src/app/notifications.tsx`, `src/push.ts`, `src/store/schema.ts` (push subscriptions migration), `src/api/routes.ts`, `test/push.test.ts`, `e2e/install.e2e.ts`.
+**Dependencies:** U7, U2, U14, U16.
+**Files:** `web/public/manifest.webmanifest`, `web/src/sw.ts`, `web/src/app/notifications.tsx`, `src/push.ts`, `src/store/schema.ts` (push subscriptions migration), `web/src/screens/settings.tsx`, `src/api/routes.ts`, `test/push.test.ts`, `e2e/install.e2e.ts`.
 **Approach:** Implement KTD16. The owner turns notifications on per device from settings. Notification text follows KTD16's limit.
 **Test scenarios:**
 - The manifest and service worker meet the browser's install criteria in an end-to-end check.
 - Turning notifications on stores a subscription for that device, and turning them off removes it.
 - A new pending approval sends one push message per subscribed device, whose payload contains no command text or code.
+- A task reaching awaiting decision sends one push message per subscribed device, under the same payload limit.
 - A subscription the push service reports as expired is removed.
+- End to end: activating a notification opens the pending approval card.
 **Verification:** Covers AE11. The owner installs Forge on their iPhone, receives a notification for a real approval, and answers it from the notification.
 
 ### U24. First-run path and README
@@ -615,10 +622,10 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Goal:** A new user gets from clone to a finished run in 15 minutes and knows exactly what stays on their machine.
 **Requirements:** R16, R24.
 **Dependencies:** U16.
-**Files:** `README.md`, `web/src/screens/settings.tsx`, `test/first-run.test.ts`.
+**Files:** `README.md`, `web/src/screens/settings.tsx`, `e2e/first-run.e2e.ts`.
 **Approach:** The README leads with the headline and tagline, then install, first run, roles, commands, phone access, and a plain section on what stays local and what each vendor CLI sends to its provider.
 **Test scenarios:**
-- On a fresh data directory with one signed-in CLI, starting Forge and following the first-run screen reaches a started run with no manual file editing.
+- End to end: on a fresh data directory with one signed-in CLI, starting Forge and following the first-run screen reaches a started run with no manual file editing.
 **Verification:** The owner times a first run from a fresh clone on a second machine or user account.
 
 ---
