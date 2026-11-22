@@ -115,3 +115,12 @@ test("SMELT_HOME is resolved to an absolute path, and a leading ~ means the home
   assert.equal(smeltHome({ SMELT_HOME: "~/elsewhere" }), path.join(os.homedir(), "elsewhere"));
   assert.equal(smeltHome({}), path.join(os.homedir(), ".smelt"));
 });
+
+test("publicHosts is a list of host names: absent by default in a file, overridden by the local file, rejected when malformed", (t) => {
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).publicHosts, [], "the shipped default names no HTTPS host");
+  assert.deepEqual(loadConfig(configFiles(t, BASE, { publicHosts: ["mac.tailnet.ts.net"] })).publicHosts, ["mac.tailnet.ts.net"]);
+  assert.deepEqual(loadConfig(configFiles(t, { ...BASE, publicHosts: ["a.example"] }, { publicHosts: [] })).publicHosts, []);
+  for (const bad of ["mac.tailnet.ts.net", [7], [""], ["https://mac.tailnet.ts.net"], ["mac.tailnet.ts.net/path"], ["two names"], { name: "x" }, null]) {
+    assert.throws(() => loadConfig(configFiles(t, BASE, { publicHosts: bad })), /"publicHosts" must be a list of host names/, JSON.stringify(bad));
+  }
+});

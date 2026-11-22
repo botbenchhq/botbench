@@ -1,23 +1,22 @@
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { createAuth, loadOrCreateLoginToken, LOGIN_TOKEN_FILE } from "./api/auth.ts";
+import { json, route } from "./api/router.ts";
 import { loadConfig, smeltHome, type Config } from "./config.ts";
-import { openStore, schemaVersion } from "./store/db.ts";
+import { openStore } from "./store/db.ts";
 
 export interface SmeltServer {
   /** The port actually bound, which differs from the configured one when that is 0. */
   port: number;
   addresses: string[];
   db: DatabaseSync;
+  /** The owner's login token, present only on the start that created it, so the entry point can show it once. */
+  newLoginToken?: string;
   /** Stop listening, drop open connections and close the database. Safe to call twice. */
   close(): Promise<void>;
-}
-
-function json(res: http.ServerResponse, status: number, body: unknown): void {
-  const text = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(text) });
-  res.end(text);
 }
 
 function listen(server: http.Server, port: number, address: string): Promise<number> {
@@ -39,18 +38,24 @@ function stop(server: http.Server): Promise<void> {
 }
 
 /** Open the store under `home` and serve on every configured address. */
-export async function startServer(options: { config: Config; home: string }): Promise<SmeltServer> {
+export async function startServer(options: { config: Config; home: string; signInDelayMs?: number }): Promise<SmeltServer> {
   const { config, home } = options;
   const db = openStore(home);
+  const login = loadOrCreateLoginToken(home);
+
+  let port = config.port;
+  const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
 
   const handler: http.RequestListener = (req, res) => {
-    const { pathname } = new URL(req.url ?? "/", "http://smelt.invalid");
-    if (req.method === "GET" && pathname === "/health") {
-      // Reads the database, so a healthy answer means the store is usable.
-      json(res, 200, { status: "ok", schemaVersion: schemaVersion(db) });
-    } else {
-      json(res, 404, { error: "not found" });
-    }
+    // The gate answers sign-in and every refusal itself; only a request with a session reaches the routes.
+    auth
+      .gate(req, res)
+      .then((allowed) => (allowed ? route(req, res, { db }) : undefined))
+      .catch((err: unknown) => {
+        console.error(`${req.method} ${new URL(req.url ?? "/", "http://smelt.invalid").pathname} failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (res.headersSent) res.destroy();
+        else json(res, 500, { error: "internal error" });
+      });
   };
 
   const servers: http.Server[] = [];
@@ -62,7 +67,6 @@ export async function startServer(options: { config: Config; home: string }): Pr
     db.close();
   };
 
-  let port = config.port;
   try {
     for (const address of config.listen) {
       const server = http.createServer(handler);
@@ -74,7 +78,7 @@ export async function startServer(options: { config: Config; home: string }): Pr
     await close();
     throw err;
   }
-  return { port, addresses: [...config.listen], db, close };
+  return { port, addresses: [...config.listen], db, ...(login.created ? { newLoginToken: login.token } : {}), close };
 }
 
 const runDirectly = process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === import.meta.filename;
@@ -86,6 +90,10 @@ if (runDirectly) {
   const server = await startServer({ config: { ...config, port }, home: smeltHome() });
   for (const address of server.addresses) {
     console.log(`Smelt is listening on http://${address.includes(":") ? `[${address}]` : address}:${server.port}`);
+  }
+  if (server.newLoginToken !== undefined) {
+    // Shown once, on the start that created it. Afterwards it is only in the owner-only file under the data directory.
+    console.log(`Login token (shown this once, kept in ${path.join(smeltHome(), LOGIN_TOKEN_FILE)}): ${server.newLoginToken}`);
   }
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => void server.close());
