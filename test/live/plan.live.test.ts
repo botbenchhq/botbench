@@ -141,7 +141,7 @@ test("live: a planner told to create a file cannot: it has no tool that writes, 
   const dir = await createPlanningWorktree({ repo: live.repo, home: live.home, run: `run-${run.id}`, commit: before.head });
   t.after(() => removePlanningWorktree({ repo: live.repo, home: live.home, run: `run-${run.id}` }));
   const admission = broker.admit({ runId: run.id, role: "planner", worktree: dir, readOnly: true });
-  const session = await new ClaudeCodeDriver().startAttempt({ db, cwd: dir, readOnly: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, model: "haiku" });
+  const session = await new ClaudeCodeDriver().startAttempt({ db, cwd: dir, readOnly: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, model: "haiku", confinement: { dataDir: live.home, allowedHosts: [] } });
   t.after(() => session.close());
   admission.bind(session.attemptId);
   const events: DriverEvent[] = [];
@@ -174,7 +174,7 @@ test("live: a planner told to create a file cannot: it has no tool that writes, 
   admission.release();
 
   // How it was started: no tool that writes exists for the model, and no settings of the repository or the owner load.
-  const args = claudeArgs({ readOnly: true, gated: true, model: "haiku" });
+  const args = claudeArgs({ readOnly: true, gated: true, model: "haiku", confinement: { cwd: dir, dataDir: live.home, allowedHosts: [] } });
   assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Bash");
   assert.equal(args[args.indexOf("--disallowedTools") + 1], "Write,Edit,MultiEdit,NotebookEdit");
   assert.equal(args.includes("--allowedTools"), false);

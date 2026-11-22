@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { Confinement } from "../confinement.ts";
 import type { DriverEvent, TurnEndReason } from "./events.ts";
 
 /**
@@ -72,6 +73,11 @@ export interface StartAttemptOptions {
   db: DatabaseSync;
   /** The directory the CLI works in. */
   cwd: string;
+  /**
+   * What the commands the attempt runs are kept from (U27): Botbench's data folder, apart from `cwd`, the owner's
+   * secret places, every host but `allowedHosts`, and writes to `gitDir`. Required: no attempt runs unconfined.
+   */
+  confinement: Confinement;
   /** Model name or alias as the CLI takes it. The CLI's default when left out. */
   model?: string;
   /** Continue the session an earlier attempt recorded. */

@@ -38,7 +38,7 @@ const dir = tempDir("botbench-capture-plan-");
 const db = openStore(path.join(dir, "home"));
 const cwd = path.join(dir, "empty");
 fs.mkdirSync(cwd);
-const session = await new ClaudeCodeDriver().startAttempt({ db, cwd, model: "haiku" });
+const session = await new ClaudeCodeDriver().startAttempt({ db, cwd, model: "haiku", confinement: { dataDir: path.dirname(cwd), allowedHosts: [] } });
 const turns: { prompt: string; events: DriverEvent[] }[] = [];
 let current: DriverEvent[] = [];
 session.onEvent((event) => current.push(event));

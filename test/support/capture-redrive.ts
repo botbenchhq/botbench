@@ -41,7 +41,7 @@ const taskId = createTask(db, { repo, prompt: FIRST_PROMPT }).id;
 /** One attempt as Botbench's engine runs it: its permission requests go to the broker and wait there. */
 async function attempt(prompt: string, resumeCursor: string | undefined, onAsked: (session: DriverSession, approvalId: number) => Promise<void>): Promise<DriverSession> {
   const admission = broker.admit({ taskId, role: "implementer", worktree: repo });
-  const session = await driver.startAttempt({ db, cwd: repo, allowEdits: true, gate: admission, model: "haiku", ...(resumeCursor === undefined ? {} : { resumeCursor }) });
+  const session = await driver.startAttempt({ db, cwd: repo, allowEdits: true, gate: admission, model: "haiku", confinement: { dataDir: home, allowedHosts: [] }, ...(resumeCursor === undefined ? {} : { resumeCursor }) });
   admission.bind(session.attemptId);
   session.onEvent((event: DriverEvent) => {
     if (event.type !== "permission_request") return;

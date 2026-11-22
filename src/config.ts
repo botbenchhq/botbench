@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FLOOR_RULES, type FloorEntry } from "./approvals/floor.ts";
 import { entryProblem, realRepo } from "./approvals/grants.ts";
+import { HOST_RULE, hostProblem } from "./confinement.ts";
 import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
@@ -87,6 +88,12 @@ export interface RepositoryConfig {
   setup?: CommandConfig[];
   /** Commands Botbench runs in the worktree after the work is committed, each with its time limit; their results are evidence on the task. */
   checks?: CommandConfig[];
+  /**
+   * The host names this repository's commands may reach: the builder's commands, through Claude Code's sandbox, and the
+   * setup and check commands, through Botbench's proxy. Plain names only. None, and no network at all, when absent.
+   * The planner's commands reach no network whatever is set here.
+   */
+  allowedHosts?: string[];
 }
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
@@ -192,6 +199,12 @@ function validate(c: Json, where: string): Config {
       if (!isObject(value)) return fail(`repository "${repo}" must be an object.`);
       for (const [setting, list] of Object.entries(value)) {
         if (!(REPOSITORY_SETTINGS as readonly string[]).includes(setting)) fail(`repository "${repo}" has unknown setting "${setting}". Known settings: ${REPOSITORY_SETTINGS.join(", ")}.`);
+        if (setting === "allowedHosts") {
+          if (!Array.isArray(list)) return fail(`repository "${repo}": "${setting}" must be a list of host names, such as ["registry.npmjs.org"].`);
+          const bad = (list as unknown[]).find((host) => hostProblem(host) !== null);
+          if (bad !== undefined) fail(`repository "${repo}": "${setting}" holds ${JSON.stringify(bad)}, which cannot be used. ${HOST_RULE}`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -226,7 +239,7 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts"] as const;
 
 /** Why a setup or check entry cannot be used, or null. */
 function commandProblem(entry: unknown): string | null {
@@ -248,6 +261,11 @@ const asCommand = (entry: CommandConfig): StationCommand =>
 export function repositoryCommands(config: Config, repo: string): { setup: StationCommand[]; checks: StationCommand[] } {
   const settings = repositorySettings(config, repo);
   return { setup: (settings.setup ?? []).map(asCommand), checks: (settings.checks ?? []).map(asCommand) };
+}
+
+/** The host names a repository's commands may reach; none when its settings name none. */
+export function repositoryHosts(config: Config, repo: string): string[] {
+  return [...(repositorySettings(config, repo).allowedHosts ?? [])];
 }
 
 /** A repository's settings, found by its real path. The config's keys are compared as written and with their links followed. */
@@ -292,3 +310,4 @@ export function loadConfig(files: ConfigFiles = { defaults: DEFAULT_CONFIG_FILE,
   }
   return validate(merged, where);
 }
+

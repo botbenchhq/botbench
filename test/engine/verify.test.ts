@@ -138,12 +138,12 @@ test("a repository with no check commands: the task says so as 'none', with no c
 });
 
 test("a check that passes its time limit is killed with its child processes and recorded as timed out, and the task is checks failed", { timeout: 30_000 }, async (t) => {
-  const pids = path.join(tempDir("botbench-verify-pids-"), "child.pid");
-  t.after(() => fs.rmSync(path.dirname(pids), { recursive: true, force: true }));
-  const e = await line(t, ["done"], { checks: [cmd(`sh stall.sh ${pids}`, 1000), cmd("echo after the stalled one")], files: { "README.md": "# Sample\n", "stall.sh": 'sleep 300 &\necho $! > "$1"\nsleep 300\n' } });
+  // A check may write only inside the task's copy (U27), so the child's number is left there.
+  const e = await line(t, ["done"], { checks: [cmd("sh stall.sh child.pid", 1000), cmd("echo after the stalled one")], files: { "README.md": "# Sample\n", "stall.sh": 'sleep 300 &\necho $! > "$1"\nsleep 300\n' } });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
   const task = getTask(e.db, started.id)!;
+  const pids = path.join(task.worktreePath!, "child.pid");
   assert.deepEqual([task.status, task.checks], ["awaiting_decision", "failed"]);
   const [stalled, after] = checks(e.db, task.id);
   assert.deepEqual([stalled!.outcome, stalled!.exitCode], ["timed_out", null]);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callLine, callReason, callTarget, duration, editChange, lineChanges, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { bannedIn } from "../e2e/voice.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
 
@@ -89,4 +90,20 @@ test("a step group's line counts what its calls did, by kind, in the same past-t
     "Read 1 file, 1 not run, 1 did not finish",
   );
   assert.equal(stepsSummary([{ name: "Bash", state: "running" }, { name: "Bash", state: "running" }, { name: "Bash", state: "waiting" }]), "");
+});
+
+test("what the sandbox kept a call from is said in plain words, from what its result reports, and nothing is said when it reports nothing", () => {
+  assert.equal(confinedWords(undefined), null);
+  assert.equal(confinedWords({ hosts: [], files: false }), null);
+  const network = confinedWords({ hosts: ["example.com:443"], files: false })!;
+  assert.equal(network.note, "kept from the network");
+  assert.deepEqual(network.sentences, ["Its output says a connection to example.com:443 was not allowed. The agent's commands reach only the hosts allowed for this repository in Botbench's settings file, and none when no host is."]);
+  const file = confinedWords({ hosts: [], files: true })!;
+  assert.equal(file.note, "kept from a file");
+  assert.deepEqual(file.sentences, ["Its output says it was not allowed to open a file. The agent cannot read your sign-ins, your keys or Botbench's own files."]);
+  const both = confinedWords({ hosts: ["a.example.com:443", "b.example.com:80"], files: true })!;
+  assert.equal(both.note, "kept from a file and the network");
+  assert.equal(both.sentences.length, 2);
+  assert.match(both.sentences[1]!, /a\.example\.com:443, b\.example\.com:80/);
+  for (const words of [network, file, both]) for (const sentence of [words.note, ...words.sentences]) assert.deepEqual(bannedIn(sentence), [], sentence);
 });

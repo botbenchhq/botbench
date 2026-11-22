@@ -3,7 +3,7 @@ import type { DriverEvent, StoredEvent } from "../api/client.ts";
 import { DiffLine } from "./diff.tsx";
 import { duration as took } from "./evidence.tsx";
 import { Icon, type IconName } from "./icon.tsx";
-import { callLine, callReason, callTarget, duration, editChange, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, duration, editChange, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
 export function mergeEvents(have: StoredEvent[], more: StoredEvent[]): StoredEvent[] {
@@ -33,6 +33,8 @@ interface Story {
   answers: Map<string, Of<"permission_resolved">["decision"]>;
   /** The calls refused with nobody to ask. */
   refused: Set<string>;
+  /** The calls Claude Code's rule on reads refused, outside the folder the agent works in (U27). */
+  outside: Set<string>;
   /** The exchanges that have ended, as "attempt:exchange". */
   ended: Set<string>;
   /** When each exchange began, and the tokens the agent reported for it. */
@@ -42,7 +44,7 @@ interface Story {
 const exchangeOf = (event: StoredEvent): string => `${event.attemptId}:${event.turn}`;
 
 function readStory(events: readonly StoredEvent[], live: boolean): Story {
-  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), ended: new Set(), exchanges: new Map() };
+  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), exchanges: new Map() };
   for (const event of events) {
     const e = event.payload;
     const key = exchangeOf(event);
@@ -51,7 +53,10 @@ function readStory(events: readonly StoredEvent[], live: boolean): Story {
     else if (e.type === "tool_result") (story.results.set(e.id, e), story.returnedAt.set(e.id, event.ts));
     else if (e.type === "permission_request") story.asked.add(e.toolCallId);
     else if (e.type === "permission_resolved") story.answers.set(e.toolCallId, e.decision);
-    else if (e.type === "permission_denied") story.refused.add(e.id);
+    else if (e.type === "permission_denied") {
+      story.refused.add(e.id);
+      if (e.code === "outside_reads_blocked") story.outside.add(e.id);
+    }
     else if (e.type === "turn_ended") story.ended.add(key);
     else if (e.type === "usage") {
       const exchange = story.exchanges.get(key)!;
@@ -138,6 +143,9 @@ function What({ call, fallback }: { call: Of<"tool_call"> | undefined; fallback:
   );
 }
 
+/** Why Claude Code's rule on reads refused a call (U27). */
+const OUTSIDE = "It was not run. The agent may read only the folder it works in.";
+
 /** How the design system's tool call draws each state of a call, the state in words, and why it did not run or end well. */
 interface Shown {
   state: "awaiting-approval" | "running" | "succeeded" | "failed" | "declined" | "cancelled";
@@ -164,6 +172,7 @@ function shownOf(story: Story, id: string, state: CallState): Shown {
       if (answer === "cancelled") return { state: "cancelled", word: "Not answered", note: "The request ended without an answer. It was not run." };
       if (answer === "declined") return { state: "declined", word: "Denied", note: "You denied it. It was not run." };
       if (answer === "denied") return { state: "declined", word: "Denied", note: "Botbench denied it without asking you. It was not run." };
+      if (story.outside.has(id)) return { state: "declined", word: "Denied", note: OUTSIDE };
       return { state: "declined", word: "Denied", note: "It needed your approval, and there was no way to ask you here." };
     }
   }
@@ -241,8 +250,10 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
       </pre>
     </>
   );
-  const shown = shownOf(story, call.id, state);
   const result = story.results.get(call.id);
+  // What the sandbox kept a call that ran from, as its result reports it (U27): a failed row, open, its note in plain words.
+  const kept = state === "done" || state === "failed" ? confinedWords(result?.confined) : null;
+  const shown: Shown = kept === null ? shownOf(story, call.id, state) : { state: "failed", word: "Failed", note: `${kept.note[0]!.toUpperCase()}${kept.note.slice(1)}. ${kept.sentences.join(" ")}` };
   const line = callLine(call.name, call.input, state);
   const reason = callReason(call.input);
   const change = editChange(call.name, call.input);
@@ -254,7 +265,7 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
   const time = !Number.isFinite(ms) || ms < 0 ? null : ms < 1000 ? { words: `${ms} ms`, iso: `PT${ms / 1000}S` } : took(ms);
   const { opened, set } = useContext(Opened);
   // Open without a tap: a call that failed, one that ended without a result, and one that waits for an answer.
-  const open = opened.get(call.id) ?? (state === "failed" || state === "unfinished" || state === "waiting");
+  const open = opened.get(call.id) ?? (state === "failed" || state === "unfinished" || state === "waiting" || kept !== null);
   // While a command runs, the state says Working and the line is the command alone, as the design system has it.
   const verb = state === "running" && call.name === "Bash" && line.verb !== null ? null : line.verb;
   return (
@@ -282,7 +293,11 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
                 <time dateTime={time.iso}>{time.words}</time>
               </span>
             )}
-            {shown.note !== null && <span className="ds-tool-call__note">{shown.note}</span>}
+            {shown.note !== null && (
+              <span data-testid={kept === null ? undefined : "confined"} className="ds-tool-call__note">
+                {shown.note}
+              </span>
+            )}
           </summary>
           <div className="ds-tool-call__body">
             {reason !== null && (
@@ -388,7 +403,7 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
       return (
         <Line kind={e.type} look="refused" label="Denied">
           <What call={story.calls.get(e.id)} fallback={e.name} />
-          <Body>It was not run. It needed your approval, and there was no way to ask you here.</Body>
+          <Body>{e.code === "outside_reads_blocked" ? OUTSIDE : "It was not run. It needed your approval, and there was no way to ask you here."}</Body>
         </Line>
       );
     case "permission_request": {

@@ -7,7 +7,8 @@ import { insertPreapproved, realRepo } from "../approvals/grants.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
-import { commitWork, createWorktree, describeWork, removeWorktree, sourceHead, type Worktree } from "../worktrees.ts";
+import type { Confinement } from "../confinement.ts";
+import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { IMPLEMENTER } from "./roles.ts";
 import { commandProblem, insertEvidence, runCommand, type StationCommand } from "./stations.ts";
@@ -285,6 +286,8 @@ export interface TasksOptions {
   model?: string;
   /** The commands Botbench runs itself in a repository's new worktrees. None when left out. */
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
+  /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
+  repoHosts?: (repo: string) => readonly string[];
   /** Called when a transcript event was stored. */
   onEvent: () => void;
   /** Called after each state a task reaches, and after evidence is added to it. */
@@ -302,6 +305,8 @@ export interface TasksOptions {
  */
 export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
+  /** What the commands of a task in `repo` are kept from (U27). */
+  const confinement = (repo: string): Confinement => ({ dataDir: home, allowedHosts: options.repoHosts?.(repo) ?? [] });
   let closed = false;
   let current: DriverSession | null = null;
   /** Set while a turn runs: called when Botbench begins to stop, it decides whether that turn's task is parked. */
@@ -369,7 +374,7 @@ export function createTasks(options: TasksOptions): Tasks {
         interrupted = true;
         break;
       }
-      const result = await runCommand({ command: check.command, cwd: task.worktreePath!, limitMs: check.limitMs, ...(stopped ? { signal: stopped } : {}) });
+      const result = await runCommand({ command: check.command, cwd: task.worktreePath!, limitMs: check.limitMs, confinement: confinement(task.repo), ...(stopped ? { signal: stopped } : {}) });
       insertEvidence(db, task.id, "check", i + 1, result);
       options.onTaskChange(getTask(db, task.id)!);
       if (result.outcome === "stopped") {
@@ -427,7 +432,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const setup = options.repoCommands?.(task.repo).setup ?? [];
     for (const [i, command] of setup.entries()) {
       if (stop.signal.aborted) break;
-      const result = await runCommand({ command: command.command, cwd: worktree.path, limitMs: command.limitMs, signal: stop.signal });
+      const result = await runCommand({ command: command.command, cwd: worktree.path, limitMs: command.limitMs, signal: stop.signal, confinement: confinement(task.repo) });
       insertEvidence(db, id, "setup", i + 1, result);
       options.onTaskChange(getTask(db, id)!);
       if (result.outcome === "stopped") break;
@@ -443,7 +448,8 @@ export function createTasks(options: TasksOptions): Tasks {
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
-      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      const gitDir = await sharedGitDir(task.repo);
+      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       if (setup.length > 0) {
@@ -610,7 +616,8 @@ export function createTasks(options: TasksOptions): Tasks {
     const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, resumes: previous });
     let session: DriverSession;
     try {
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      const gitDir = await sharedGitDir(task.repo);
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task.repo), gitDir }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);

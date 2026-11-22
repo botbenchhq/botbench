@@ -139,7 +139,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added.*\+1 line added.*−0 lines removed/);
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow runs with your account's rights.",
+    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
   );
   await checkDesign(page, "task, finished after an approval");
 

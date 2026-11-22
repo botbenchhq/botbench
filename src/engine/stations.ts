@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { confinementProblem, SANDBOX_EXEC, seatbeltProfile, startHostProxy, unreadablePaths, type Confinement } from "../confinement.ts";
+import { buildChildEnv } from "../drivers/launch.ts";
 import { now } from "../store/db.ts";
-import { gitEnv } from "../worktrees.ts";
 
 /*
  * The commands Botbench itself runs in a task's worktree: the repository's setup commands before its builder starts
@@ -10,11 +14,24 @@ import { gitEnv } from "../worktrees.ts";
  * stored as evidence on the task, append-only. A check runs the project's own code as the agent left it: the agent
  * may have changed what it runs.
  *
- * Each runs as `/bin/sh -c <command>` in the worktree, in a process group of its own, with the caller's environment
- * less every GIT_* variable (as for Botbench's own git calls), no input, and a time limit. When the limit passes, or Botbench
- * stops the command (a cancel, a shutdown), the whole group is killed; when the command ends by itself, whatever it left
- * running in its group is killed too, so nothing it started outlives it. A process that leaves the group on purpose
- * (`setsid`, a daemon) is not followed.
+ * Each runs as `/bin/sh -c <command>` in the worktree, in a process group of its own, with no input and a time limit.
+ * When the limit passes, or Botbench stops the command (a cancel, a shutdown), the whole group is killed; when the
+ * command ends by itself, whatever it left running in its group is killed too, so nothing it started outlives it. A
+ * process that leaves the group on purpose (`setsid`, a daemon) is not followed.
+ *
+ * Each runs confined (U27), under macOS's sandbox-exec with a profile made for it (src/confinement.ts), and so does
+ * everything it starts, a process that left its group included:
+ * - it cannot read the places src/confinement.ts lists (vendor sign-ins, the Keychain, keys, cloud and registry
+ *   credentials), nor Botbench's data folder apart from the worktree, which lies inside it; the rest of the home folder
+ *   stays readable;
+ * - it cannot start an app through LaunchServices or send Apple Events, which would run a program outside the sandbox;
+ * - it can write the worktree and a temporary folder of its own, made for it and removed after it, which TMPDIR names,
+ *   and nothing else, so a tool that keeps a cache in the home folder has to be pointed at TMPDIR;
+ * - it reaches no network, unless the repository allows hosts: it may then reach Botbench's proxy, which opens a
+ *   tunnel to an allowed host name and to nothing else, and is pointed at it with the usual proxy variables;
+ * - it gets the environment a CLI gets (src/drivers/launch.ts): the allowlisted variables, no provider key, and no
+ *   GIT_* variable, so nothing inherited points git at another repository.
+ * Where it cannot be confined it is not run, and has failed.
  */
 
 /** One command as Botbench runs it: the owner's text and its time limit. */
@@ -58,8 +75,52 @@ const killGroup = (pid: number | undefined): void => {
   }
 };
 
-/** Run one command in `cwd` and resolve with how it went. Never rejects: a command that cannot be started has failed. */
-export function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal }): Promise<CommandRun> {
+/** A run that never started, with why in its output. */
+function notRun(o: { command: string; limitMs: number }, why: string): CommandRun {
+  const at = now();
+  return { command: o.command, outcome: "failed", exitCode: null, signal: null, output: `${why}\n`, truncated: false, limitMs: o.limitMs, startedAt: at, endedAt: at, durationMs: 0 };
+}
+
+/** The proxy variables, named both ways tools read them. */
+const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+
+/**
+ * Run one command in the worktree `cwd`, confined, and resolve with how it went. Never rejects: a command that cannot
+ * be started, or cannot be confined, has failed.
+ */
+export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement }): Promise<CommandRun> {
+  const problem = confinementProblem();
+  if (problem !== null) return notRun(o, `Botbench did not run this command. ${problem}`);
+  let tmp: string;
+  let profile: string;
+  let proxy: Awaited<ReturnType<typeof startHostProxy>> | null = null;
+  try {
+    tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-command-")));
+  } catch (err) {
+    return notRun(o, `Botbench did not run this command: it could not make the command's temporary folder (${err instanceof Error ? err.message : String(err)}).`);
+  }
+  try {
+    if (o.confinement.allowedHosts.length > 0) proxy = await startHostProxy(o.confinement.allowedHosts);
+    profile = seatbeltProfile({ worktree: fs.realpathSync(o.cwd), unreadable: unreadablePaths({ dataDir: o.confinement.dataDir }), writable: [tmp], proxyPort: proxy?.port ?? null });
+  } catch (err) {
+    await proxy?.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return notRun(o, `Botbench did not run this command: it could not confine it (${err instanceof Error ? err.message : String(err)}).`);
+  }
+  // The allowlist holds no GIT_* variable; the owner's own proxy settings are replaced, as the network is Botbench's to give.
+  const env = buildChildEnv(process.env, { TMPDIR: tmp, GIT_TERMINAL_PROMPT: "0" });
+  for (const name of [...PROXY_VARIABLES, "NO_PROXY", "no_proxy"]) delete env[name];
+  if (proxy !== null) for (const name of PROXY_VARIABLES) env[name] = `http://127.0.0.1:${proxy.port}`;
+  try {
+    return await spawnCommand({ ...o, argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env });
+  } finally {
+    await proxy?.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Run `argv` in `cwd` in a process group of its own and resolve with how it went. Never rejects. */
+function spawnCommand(o: { command: string; argv: string[]; env: Record<string, string>; cwd: string; limitMs: number; signal?: AbortSignal }): Promise<CommandRun> {
   const startedAt = now();
   const began = Date.now();
   return new Promise((resolve) => {
@@ -76,7 +137,7 @@ export function runCommand(o: { command: string; cwd: string; limitMs: number; s
         truncated = true;
       }
     };
-    const child = spawn("/bin/sh", ["-c", o.command], { cwd: o.cwd, env: gitEnv(), stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const child = spawn(o.argv[0]!, o.argv.slice(1), { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const finish = (exitCode: number | null, signal: string | null): void => {
       if (finished) return;
       finished = true;
