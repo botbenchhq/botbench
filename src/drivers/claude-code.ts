@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import type { DatabaseSync } from "node:sqlite";
 import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../approvals/permission-proxy.ts";
+import { confinementProblem, hostProblem, unreadablePaths, type Confinement } from "../confinement.ts";
 import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "./events.ts";
@@ -65,11 +66,78 @@ const shellQuote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'
  *   So that a shell command still cannot run unasked then, the ask rule makes the CLI ask about every one.
  *   A hook's "allow" does not get past that rule, and Botbench's hook never prints one.
  */
-function gateSettings(): string {
-  return JSON.stringify({
+function gateSettings(): Record<string, unknown> {
+  return {
     permissions: { ask: ["Bash"] },
     hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `${shellQuote(process.execPath)} ${shellQuote(PROXY_SCRIPT)}`, timeout: HOOK_TIMEOUT_S }] }] },
-  });
+  };
+}
+
+/** Where an attempt works and what its commands may reach. */
+export interface AttemptPlace extends Confinement {
+  /** The folder the CLI works in. */
+  cwd: string;
+  /** Claude Code's own configuration folder, when the owner moved it. */
+  configDir?: string;
+}
+
+const realOrAsIs = (place: string): string => {
+  try {
+    return fs.realpathSync(place);
+  } catch {
+    return path.resolve(place);
+  }
+};
+
+/**
+ * Claude Code's sandbox for every attempt (U27), checked against the settings reference and seen on 2.1.322:
+ * - `enabled` with `failIfUnavailable`: the CLI's shell commands, and what they start, run under macOS Seatbelt, and
+ *   the CLI refuses to start rather than run them without it.
+ * - `autoAllowBashIfSandboxed` false. CRITICAL: true (the default before 2.1.324) lets a sandboxed command run without
+ *   a permission prompt, which skips the bare `Bash` ask rule, so Botbench's permission check would never be heard.
+ * - `allowUnsandboxedCommands` false: the model cannot have a command run outside the sandbox; no command is excluded.
+ * - `filesystem.denyRead` holds the secret places and Botbench's data folder, and `allowRead` the attempt's own folder,
+ *   which lies inside the data folder: Claude Code lets the narrower entry win, so the folder stays readable and the rest
+ *   of the data folder does not. Writes stay where the sandbox puts them: the folder and a temporary folder of the CLI's.
+ *   `denyWrite` holds the repository's shared git folder, which the sandbox would otherwise open for a linked worktree:
+ *   git still reads it, and no command moves one of the owner's branches.
+ * - `network.allowedDomains` is the repository's allowed hosts, none by default, and `strictAllowlist` refuses every
+ *   other host instead of asking (a prompt Botbench would not know how to put to the owner).
+ * - `credentials.envVars` takes the permission check's socket and secret out of every command's environment; the hook,
+ *   which runs outside the sandbox, still has them.
+ * - `permissions.blockReadsOutsideWorkingDirectories`: the CLI's own file tools, which run outside the sandbox, refuse
+ *   reads outside the folder, and the sandbox also closes the rest of the home folder to commands.
+ */
+export function sandboxSettings(place: AttemptPlace): Record<string, unknown> {
+  // Claude Code's settings reference: the read block does not reach sandboxed commands when the folder the CLI starts in has a glob character.
+  if (/[*?[]/.test(place.cwd)) throw new Error(`Claude Code cannot be confined in ${place.cwd}: its path holds *, ? or [. Move Botbench's data folder to a path without them.`);
+  const bad = place.allowedHosts.find((host) => hostProblem(host) !== null);
+  if (bad !== undefined) throw new Error(`The host ${JSON.stringify(bad)} cannot be passed to Claude Code's sandbox. ${hostProblem(bad)}`);
+  const filesystem: Record<string, string[]> = {
+    denyRead: unreadablePaths({ dataDir: place.dataDir, also: place.configDir === undefined ? [] : [place.configDir] }),
+    allowRead: [realOrAsIs(place.cwd)],
+  };
+  if (place.gitDir !== undefined) filesystem.denyWrite = [realOrAsIs(place.gitDir)];
+  return {
+    permissions: { blockReadsOutsideWorkingDirectories: true },
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: false,
+      allowUnsandboxedCommands: false,
+      filesystem,
+      network: { allowedDomains: [...place.allowedHosts], strictAllowlist: true },
+      credentials: { envVars: [{ name: SOCKET_ENV, mode: "deny" }, { name: SECRET_ENV, mode: "deny" }] },
+    },
+  };
+}
+
+/** The one settings object of an attempt: the sandbox, and with the gate its hook and ask rule as well. */
+function attemptSettings(place: AttemptPlace, gated: boolean): string {
+  const sandbox = sandboxSettings(place);
+  if (!gated) return JSON.stringify(sandbox);
+  const gate = gateSettings();
+  return JSON.stringify({ ...gate, ...sandbox, permissions: { ...(gate.permissions as object), ...(sandbox.permissions as object) } });
 }
 
 /**
@@ -93,13 +161,16 @@ function gateSettings(): string {
  * `instructionsFile` is the repository's instructions as text, which the CLI
  * no longer reads itself once settings files are off.
  *
+ * Every attempt is given Botbench's settings object on the command line with Claude Code's sandbox in it
+ * (`sandboxSettings`), for `confinement`.
+ *
  * With `readOnly` the attempt changes nothing. Seen on 2.1.322: `--tools` leaves the CLI
  * with the listed tools and no other, so the model has no tool that writes a file, starts
  * an agent or fetches a page; the writing tools are also named as denied. It works on a
  * repository's content like an attempt that may edit, so no settings file is loaded, and
  * with `gated` every shell command asks through the gate. `readOnly` wins over `allowEdits`.
  */
-export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string } = {}): string[] {
+export function claudeArgs(options: { confinement: AttemptPlace; model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string }): string[] {
   const readOnly = options.readOnly === true;
   const allowEdits = options.allowEdits === true && !readOnly;
   const inWorktree = allowEdits || readOnly;
@@ -113,7 +184,8 @@ export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCurso
     "--strict-mcp-config",
     "--mcp-config", JSON.stringify({ mcpServers: {} }),
   ];
-  if (gated) args.push("--permission-prompt-tool", "stdio", "--settings", gateSettings());
+  args.push("--settings", attemptSettings(options.confinement, gated));
+  if (gated) args.push("--permission-prompt-tool", "stdio");
   else args.push("--permission-prompts", "none");
   if (allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
   if (readOnly) args.push("--tools", READ_ONLY_TOOLS, "--disallowedTools", WRITING_TOOLS);
@@ -207,6 +279,59 @@ function toolOutput(content: unknown): string {
   return content === undefined ? "" : JSON.stringify(content);
 }
 
+/** What Claude Code's sandbox, or its rule on reads, kept a tool call from, as the call's result reports it. */
+export type Confined = { hosts: string[]; files: boolean };
+
+/** The block the CLI adds to a sandboxed command's result when the sandbox refused something (seen on 2.1.322). */
+const VIOLATIONS = /<sandbox_violations>\n([\s\S]*?)\n?<\/sandbox_violations>\s*$/;
+
+/**
+ * What a result says the call was kept from, or null when it says nothing of the kind. Read from the text, which the
+ * command itself also writes, so it is a report to show, never a fact Botbench decides anything on.
+ * - A host comes from the CLI's violations block: "deny network-outbound example.com:443 (...)".
+ * - A file: macOS's "Operation not permitted", a file line of the block, or the CLI's own read rule refusing a file.
+ */
+export function confinedBy(output: string): Confined | null {
+  const hosts: string[] = [];
+  let files = false;
+  const block = VIOLATIONS.exec(output);
+  for (const line of block?.[1]?.split("\n") ?? []) {
+    const host = /^deny network-outbound (\S+)/.exec(line.trim());
+    if (host) hosts.push(host[1]!);
+    else if (/^deny file-/.test(line.trim())) files = true;
+  }
+  if (/: Operation not permitted\b/.test(output) || output.includes("blockReadsOutsideWorkingDirectories")) files = true;
+  return hosts.length > 0 || files ? { hosts, files } : null;
+}
+
+/**
+ * Managed settings outrank Botbench's own: one could set `autoAllowBashIfSandboxed`, exclude commands from the sandbox or
+ * allow hosts, and the owner would not be asked. Where a managed settings file of Claude Code's is on this Mac, Botbench
+ * starts no agent. Only files are looked for (the paths in Claude Code's managed-settings guide for macOS, and the
+ * preferences file a device-management profile leaves); server-managed settings of a Team or Enterprise login are not.
+ */
+export function managedSettingsProblem(places: readonly string[] = MANAGED_SETTINGS): string | null {
+  const found = places.find((place) => fs.existsSync(place));
+  return found === undefined ? null : `Claude Code has managed settings on this Mac (${found}), which come before Botbench's and could let commands run unconfined or without asking you. Botbench starts no agent while they are there.`;
+}
+
+const MANAGED_SETTINGS = [
+  "/Library/Application Support/ClaudeCode/managed-settings.json",
+  "/Library/Application Support/ClaudeCode/managed-settings.d",
+  "/Library/Application Support/ClaudeCode/managed-mcp.json",
+  "/Library/Managed Preferences/com.anthropic.claudecode.plist",
+  path.join("/Library/Managed Preferences", os.userInfo().username, "com.anthropic.claudecode.plist"),
+];
+
+/** What the CLI wrote to its error output when it would not start without its sandbox, in words for the owner; null when it wrote nothing of the kind. */
+export function sandboxRefusal(stderr: string): string | null {
+  // Claude Code 2.1.322's own words, from its code: "Error: sandbox required but unavailable: <reason>" and then
+  // "sandbox.failIfUnavailable is set — refusing to start without a working sandbox."
+  const reason = /sandbox required but unavailable: ([^\n]*)/.exec(stderr)?.[1]?.trim();
+  if (reason === undefined) return null;
+  return `Claude Code did not start: its sandbox cannot run on this computer (${shorten(reason, 300)}), and Botbench does not let an agent run commands without it. Nothing was run.`;
+}
+
 /**
  * Read a permission prompt the CLI printed. Null when it is not one, or is not whole: no id to answer,
  * no tool, no tool call, or an input that is not an object.
@@ -270,7 +395,7 @@ export function parseClaudeLine(line: string): DriverEvent[] {
   switch (parsed.type) {
     case "system": {
       if (parsed.subtype === "permission_denied") {
-        return [{ type: "permission_denied", id: str(parsed.tool_use_id) ?? "", name: str(parsed.tool_name) ?? "", reason: str(parsed.decision_reason) }];
+        return [{ type: "permission_denied", id: str(parsed.tool_use_id) ?? "", name: str(parsed.tool_name) ?? "", reason: str(parsed.decision_reason), code: str(parsed.decision_reason_code) }];
       }
       const session = str(parsed.session_id);
       return parsed.subtype === "init" && session ? [{ type: "session_started", resumeCursor: session, model: str(parsed.model), keySource: str(parsed.apiKeySource) }] : [];
@@ -287,7 +412,9 @@ export function parseClaudeLine(line: string): DriverEvent[] {
         } else if (parsed.type === "assistant" && block.type === "tool_use") {
           events.push({ type: "tool_call", id: str(block.id) ?? "", name: str(block.name) ?? "", input: block.input ?? null });
         } else if (parsed.type === "user" && block.type === "tool_result") {
-          events.push({ type: "tool_result", id: str(block.tool_use_id) ?? "", output: toolOutput(block.content), isError: block.is_error === true });
+          const output = toolOutput(block.content);
+          const confined = confinedBy(output);
+          events.push({ type: "tool_result", id: str(block.tool_use_id) ?? "", output, isError: block.is_error === true, ...(confined === null ? {} : { confined }) });
         }
       }
       return events;
@@ -555,7 +682,7 @@ class ClaudeCodeSession implements DriverSession {
         this.endTurn("interrupted", "Claude Code exited.");
       } else {
         const how = spawnError ? spawnError.message : signal ? `was killed by ${signal}` : `exited with code ${code}`;
-        const message = `Claude Code ${how} while it was working.`;
+        const message = sandboxRefusal(this.stderrTail) ?? `Claude Code ${how} while it was working.`;
         this.record({ type: "error", message, raw: this.stderrTail.trim() === "" ? null : shorten(this.stderrTail.trim()) });
         this.endTurn("error", message, "failed");
       }
@@ -621,12 +748,14 @@ export class ClaudeCodeDriver implements Driver {
   readonly name = CLAUDE_CODE;
   readonly capabilities = CAPABILITIES;
   private readonly extraEnv: Record<string, string>;
+  private readonly configDir: string | undefined;
   private readonly configured: { models: readonly string[]; defaultModel: string | null };
   /** The list being read, or read less than `MODELS_FRESH_MS` ago: screens that open together share one CLI process. */
   private listing: { at: number; answer: Promise<DriverModels> } | null = null;
 
   constructor(options: ClaudeCodeDriverOptions = {}) {
     this.extraEnv = options.configDir ? { CLAUDE_CONFIG_DIR: options.configDir } : {};
+    this.configDir = options.configDir || undefined;
     this.configured = { models: options.models ?? [], defaultModel: options.defaultModel ?? null };
   }
 
@@ -675,6 +804,10 @@ export class ClaudeCodeDriver implements Driver {
       return { installed: true, version: check.version, supported: false, signedIn: false, billing: "unknown", problem };
     }
 
+    // An agent's commands run in Claude Code's sandbox or not at all, and with nothing above Botbench's settings that could loosen it.
+    const unconfined = confinementProblem() ?? managedSettingsProblem();
+    if (unconfined !== null) return { installed: true, version: check.version, supported: false, signedIn: false, billing: "unknown", problem: unconfined };
+
     // Signed out, the command exits 1 and still prints its JSON.
     const statusRun = await runCli(COMMAND, ["auth", "status", "--json"], launchOptions);
     let status: unknown;
@@ -711,6 +844,7 @@ export class ClaudeCodeDriver implements Driver {
       if (instructionsDir !== null) fs.rmSync(instructionsDir, { recursive: true, force: true });
     };
     const args = claudeArgs({
+      confinement: { ...options.confinement, cwd: options.cwd, ...(this.configDir === undefined ? {} : { configDir: this.configDir }) },
       gated: gate !== undefined,
       ...(options.model ? { model: options.model } : {}),
       ...(options.resumeCursor ? { resumeCursor: options.resumeCursor } : {}),
@@ -741,3 +875,4 @@ export class ClaudeCodeDriver implements Driver {
     return new ClaudeCodeSession(options.db, attemptId, child, pgid, options.resumeCursor ?? null, gate?.secret ?? null, cleanUp);
   }
 }
+

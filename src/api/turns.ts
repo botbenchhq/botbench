@@ -109,7 +109,8 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
   // Attempts being started. Shutdown waits for them, so none comes up after the database has closed.
   const starting = new Set<Promise<unknown>>();
   const begin = async (prompt: string, model: string | undefined, resumeCursor?: string): Promise<{ attemptId: number; turn: number }> => {
-    const launching = driver.startAttempt({ db, cwd, ...(model ? { model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
+    // A chat works in no repository: its commands reach no network.
+    const launching = driver.startAttempt({ db, cwd, confinement: { dataDir: options.home, allowedHosts: [] }, ...(model ? { model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
     starting.add(launching);
     const session = await launching.finally(() => starting.delete(launching));
     if (closed) {

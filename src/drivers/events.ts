@@ -17,10 +17,16 @@ export type DriverEvent =
   | { type: "text"; text: string }
   /** The model asked to run a tool. */
   | { type: "tool_call"; id: string; name: string; input: unknown }
-  /** What a tool returned, matched to its call by `id`. */
-  | { type: "tool_result"; id: string; output: string; isError: boolean }
-  /** The CLI refused a tool call because it needed an approval nobody gave. `id` is the call's; `reason` is the CLI's own short account. */
-  | { type: "permission_denied"; id: string; name: string; reason: string | null }
+  /**
+   * What a tool returned, matched to its call by `id`. `confined` is there when the output reports that the sandbox
+   * kept the call from a file or from hosts (U27); it is read from the output, which the command also writes.
+   */
+  | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
+  /**
+   * The CLI refused a tool call: it needed an approval nobody gave, or a rule refused it. `id` is the call's; `reason` is
+   * the CLI's own short account and `code` its name for the reason, such as "outside_reads_blocked", when it gives one.
+   */
+  | { type: "permission_denied"; id: string; name: string; reason: string | null; code: string | null }
   /**
    * The CLI is waiting for permission to run a tool call, and the turn stands still until `respondToRequest` answers `id`.
    * `reason` is the agent's own account of why, when the CLI passes one on.

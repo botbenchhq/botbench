@@ -43,7 +43,7 @@ interface Line {
   taskChanges: string[];
 }
 
-async function line(t: T, script: BuildTurn[], o: { hold?: number[]; setup?: StationCommand[]; files?: Record<string, string> } = {}): Promise<Line> {
+async function line(t: T, script: BuildTurn[], o: { hold?: number[]; setup?: StationCommand[]; files?: Record<string, string>; hosts?: string[] } = {}): Promise<Line> {
   const dir = tempDir("botbench-build-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -54,7 +54,7 @@ async function line(t: T, script: BuildTurn[], o: { hold?: number[]; setup?: Sta
   const driver = buildReplayDriver(script, { hold: o.hold ?? [] });
   const runChanges: string[] = [];
   const taskChanges: string[] = [];
-  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [], checks: [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`), onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`) });
+  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [], checks: [] }), repoHosts: () => o.hosts ?? [], onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`), onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`) });
   const runs = createRuns({ db, home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`), onTaskChange: () => {} });
   // Everything is stopped before the folder goes, so nothing still at work writes into it afterwards.
   t.after(async () => {
@@ -180,14 +180,14 @@ test("a failing setup command fails its task with the reason and its output befo
 });
 
 test("a setup command that passes its time limit is killed with its child processes and recorded as timed out; a stand-alone task runs setup commands too", { timeout: 30_000 }, async (t) => {
-  const pids = path.join(tempDir("botbench-build-pids-"), "child.pid");
-  t.after(() => fs.rmSync(path.dirname(pids), { recursive: true, force: true }));
+  // A setup command may write only inside the task's copy (U27), so the child's number is left there.
   const stall = 'sleep 300 &\necho $! > "$1"\nsleep 300\n';
-  const e = await line(t, ["done"], { setup: [{ command: `sh stall.sh ${pids}`, limitMs: 1000 }], files: { "README.md": "# Sample\n", "stall.sh": stall } });
+  const e = await line(t, ["done"], { setup: [{ command: "sh stall.sh child.pid", limitMs: 1000 }], files: { "README.md": "# Sample\n", "stall.sh": stall } });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
 
   const failed = getTask(e.db, started.id)!;
+  const pids = path.join(failed.worktreePath!, "child.pid");
   assert.equal(failed.status, "failed");
   assert.match(failed.reason!, /did not finish within 1 second/);
   const [evidence] = taskEvidence(e.db, started.id);
@@ -369,17 +369,19 @@ test("Botbench runs an owner's command in a directory with a time limit, in its 
   process.env.GIT_DIR = "/somewhere/else";
   t.after(() => (before === undefined ? delete process.env.GIT_DIR : (process.env.GIT_DIR = before)));
 
-  const passed = await runCommand({ command: 'pwd; echo "git dir: ${GIT_DIR:-none}"', cwd: dir, limitMs: 10_000 });
+  const confinement = { dataDir: tempDir("botbench-command-home-"), allowedHosts: [] };
+  t.after(() => fs.rmSync(confinement.dataDir, { recursive: true, force: true }));
+  const passed = await runCommand({ command: 'pwd; echo "git dir: ${GIT_DIR:-none}"', cwd: dir, limitMs: 10_000, confinement });
   assert.equal(passed.outcome, "passed");
   assert.equal(passed.exitCode, 0);
   assert.match(passed.output, new RegExp(`^${dir}\\ngit dir: none\\n$`));
 
-  const failed = await runCommand({ command: "echo out; echo err >&2; exit 7", cwd: dir, limitMs: 10_000 });
+  const failed = await runCommand({ command: "echo out; echo err >&2; exit 7", cwd: dir, limitMs: 10_000, confinement });
   assert.deepEqual([failed.outcome, failed.exitCode, failed.signal], ["failed", 7, null]);
   assert.match(failed.output, /out/);
   assert.match(failed.output, /err/);
 
-  const long = await runCommand({ command: "i=0; while [ $i -lt 30000 ]; do echo line $i; i=$((i+1)); done; echo the last line", cwd: dir, limitMs: 20_000 });
+  const long = await runCommand({ command: "i=0; while [ $i -lt 30000 ]; do echo line $i; i=$((i+1)); done; echo the last line", cwd: dir, limitMs: 20_000, confinement });
   assert.equal(long.outcome, "passed");
   assert.equal(long.truncated, true);
   assert.match(long.output, /the last line\n$/, "the end of the output is kept");
@@ -387,12 +389,12 @@ test("Botbench runs an owner's command in a directory with a time limit, in its 
 
   // A program that leaves a child behind when it ends does not leave it running.
   const pidFile = path.join(dir, "bg.pid");
-  const leftBehind = await runCommand({ command: `sleep 300 > /dev/null 2>&1 & echo $! > ${pidFile}`, cwd: dir, limitMs: 10_000 });
+  const leftBehind = await runCommand({ command: `sleep 300 > /dev/null 2>&1 & echo $! > ${pidFile}`, cwd: dir, limitMs: 10_000, confinement });
   assert.equal(leftBehind.outcome, "passed");
   await until("the left-behind child is gone", () => !alive(Number(fs.readFileSync(pidFile, "utf8"))), 3000);
 
   const abort = new AbortController();
-  const stopping = runCommand({ command: "sleep 30", cwd: dir, limitMs: 60_000, signal: abort.signal });
+  const stopping = runCommand({ command: "sleep 30", cwd: dir, limitMs: 60_000, signal: abort.signal, confinement });
   setTimeout(() => abort.abort(), 100);
   const stopped = await stopping;
   assert.equal(stopped.outcome, "stopped");
@@ -473,8 +475,22 @@ test("critique: a command that ends by itself is recorded as it ended, even when
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // It exits at once and leaves a child outside its group holding its output open, so Botbench is still reading when the limit passes.
   const abort = new AbortController();
-  const ran = runCommand({ command: "perl -MPOSIX -e 'setsid(); sleep 3' & sleep 0.2; exit 0", cwd: dir, limitMs: 400, signal: abort.signal });
+  const ran = runCommand({ command: "perl -MPOSIX -e 'setsid(); sleep 3' & sleep 0.2; exit 0", cwd: dir, limitMs: 400, signal: abort.signal, confinement: { dataDir: path.join(dir, "no-home"), allowedHosts: [] } });
   setTimeout(() => abort.abort(), 600);
   const result = await ran;
   assert.deepEqual([result.outcome, result.exitCode], ["passed", 0]);
+});
+
+test("a task's setup commands run confined: one that reads Botbench's data folder is refused and fails its task before any agent starts, and the repository's allowed hosts reach them through Botbench's proxy", async (t) => {
+  const e = await line(t, ["done"], { setup: [{ command: 'echo "proxy=${HTTPS_PROXY:-none}"', limitMs: 10_000 }, { command: "cat ../../../botbench.sqlite", limitMs: 10_000 }], hosts: ["registry.npmjs.org"] });
+  const started = await e.tasks.start(e.repo, "create hello.txt");
+  await e.tasks.idle();
+  const failed = getTask(e.db, started.id)!;
+  assert.equal(failed.status, "failed");
+  assert.equal(path.dirname(path.dirname(path.dirname(failed.worktreePath!))), e.home, "the copy is three folders below the data folder");
+  const [proxy, store] = taskEvidence(e.db, started.id);
+  assert.match(proxy!.output, /^proxy=http:\/\/127\.0\.0\.1:\d+$/m);
+  assert.equal(store!.outcome, "failed");
+  assert.match(store!.output, /Operation not permitted/);
+  assert.equal(e.driver.started.length, 0);
 });

@@ -39,7 +39,7 @@ function store(t: TestContext): DatabaseSync {
 
 /** Start an attempt that is closed before its database, whatever the test does. */
 async function start(db: DatabaseSync, cwd: string, resumeCursor?: string): Promise<{ session: DriverSession; events: DriverEvent[] }> {
-  const session = await new ClaudeCodeDriver().startAttempt({ db, cwd, model: MODEL, resumeCursor });
+  const session = await new ClaudeCodeDriver().startAttempt({ db, cwd, model: MODEL, resumeCursor, confinement: { dataDir: path.dirname(cwd), allowedHosts: [] } });
   opened.get(db)!.push(session);
   const events: DriverEvent[] = [];
   session.onEvent((event) => events.push(event));
@@ -193,7 +193,7 @@ test("live: the real CLI with an empty configuration directory is signed out and
   assert.equal(probe.billing, "unknown");
   assert.match(probe.problem ?? "", /signed out/);
 
-  await assert.rejects(driver.startAttempt({ db, cwd: tempDir(t, "botbench-live-cwd-"), model: MODEL }), (err: unknown) => err instanceof DriverUnavailableError && err.probe.signedIn === false);
+  await assert.rejects(driver.startAttempt({ db, cwd: tempDir(t, "botbench-live-cwd-"), model: MODEL, confinement: { dataDir: tempDir(t, "botbench-live-home-"), allowedHosts: [] } }), (err: unknown) => err instanceof DriverUnavailableError && err.probe.signedIn === false);
   assert.equal(db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0);
   assert.equal(db.prepare("SELECT count(*) AS n FROM events").get()!.n, 0);
 });

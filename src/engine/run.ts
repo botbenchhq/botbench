@@ -7,7 +7,7 @@ import { entryProblem, insertPreapproved, MAX_ENTRIES, realRepo } from "../appro
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
-import { createPlanningWorktree, removePlanningWorktree, sourceHead } from "../worktrees.ts";
+import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
 import { correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, taskPrompt, validatePlan, type PlanTask } from "./roles.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
@@ -461,7 +461,9 @@ export function createRuns(options: RunsOptions): Runs {
     const admission: Admission = broker.admit({ runId: run.id, role: PLANNER, worktree: dir, readOnly: true });
     let session: DriverSession;
     try {
-      session = await driver.startAttempt({ db, cwd: dir, readOnly: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(run.requestedModel === null ? {} : { model: run.requestedModel }) });
+      // The planner only reads: its commands reach no network, whatever hosts the repository allows its builder.
+      const gitDir = await sharedGitDir(run.repo);
+      session = await driver.startAttempt({ db, cwd: dir, readOnly: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { dataDir: home, allowedHosts: [], gitDir }, ...(run.requestedModel === null ? {} : { model: run.requestedModel }) });
     } catch (err) {
       admission.release();
       return { problem: `The planner could not be started: ${words(err)}` };

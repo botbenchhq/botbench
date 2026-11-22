@@ -3,13 +3,27 @@ import { once } from "node:events";
 import { test } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import { blank, claudeArgs, parseClaudeLine, parseModelList, parsePermissionRequest, repositoryInstructions, shellWatch } from "../../src/drivers/claude-code.ts";
+import { blank, claudeArgs, managedSettingsProblem, parseClaudeLine, parseModelList, parsePermissionRequest, repositoryInstructions, sandboxRefusal, shellWatch } from "../../src/drivers/claude-code.ts";
+import { unreadablePaths } from "../../src/confinement.ts";
 import { modelNameProblem } from "../../src/drivers/contract.ts";
-import { PROXY_SCRIPT } from "../../src/approvals/permission-proxy.ts";
+import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../../src/approvals/permission-proxy.ts";
 import { tempDir } from "../support/repo.ts";
 import { buildChildEnv, checkVersion, killProcessGroup, launch, processGroupAlive } from "../../src/drivers/launch.ts";
 
 // Nothing in this file starts `claude`: the children are node and sh.
+
+/** Where the attempts below would work: a task's copy inside a Botbench data folder, as real folders. */
+const DATA_DIR = tempDir("botbench-args-");
+const CWD = path.join(DATA_DIR, "worktrees", "run-1", "task-1");
+fs.mkdirSync(CWD, { recursive: true });
+process.on("exit", () => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
+const CONFINED = { cwd: CWD, dataDir: DATA_DIR, allowedHosts: [] as string[] };
+
+/** The settings object an attempt is started with, as the CLI reads it from the command line. */
+function settingsOf(args: string[]): Record<string, unknown> {
+  assert.equal(args.filter((a) => a === "--settings").length, 1, "one settings object");
+  return JSON.parse(args[args.indexOf("--settings") + 1]!) as Record<string, unknown>;
+}
 
 const KEY_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY"];
 
@@ -70,7 +84,7 @@ test("AE7: a real child started by launch does not receive the keys", async () =
 });
 
 test("the Claude Code arguments leave out personal settings and personal MCP servers", () => {
-  const args = claudeArgs({ model: "haiku" });
+  const args = claudeArgs({ confinement: CONFINED, model: "haiku" });
   const valueOf = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
     return i === -1 ? undefined : args[i + 1];
@@ -83,14 +97,17 @@ test("the Claude Code arguments leave out personal settings and personal MCP ser
   assert.equal(valueOf("--output-format"), "stream-json");
   assert.equal(valueOf("--model"), "haiku");
   assert.equal(valueOf("--permission-prompts"), "none", "with no permission broker yet, anything that would ask is denied");
-  for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--settings", "--plugin-dir", "--bare"]) {
+  for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--plugin-dir", "--bare"]) {
     assert.equal(args.includes(flag), false, `${flag} must not be passed`);
   }
+  // The one settings object holds the sandbox and the read rule, and no hook or permission rule of anyone's.
+  assert.deepEqual(Object.keys(settingsOf(args)).sort(), ["permissions", "sandbox"]);
+  assert.deepEqual(settingsOf(args).permissions, { blockReadsOutsideWorkingDirectories: true });
   assert.equal(args.includes("--resume"), false);
 });
 
 test("the Claude Code arguments resume a session from its cursor", () => {
-  const args = claudeArgs({ resumeCursor: "5a850a06-92af-40cd-8cde-1c4435399134" });
+  const args = claudeArgs({ confinement: CONFINED, resumeCursor: "5a850a06-92af-40cd-8cde-1c4435399134" });
   assert.equal(args[args.indexOf("--resume") + 1], "5a850a06-92af-40cd-8cde-1c4435399134");
   assert.equal(args.includes("--model"), false, "no model named means the CLI's default");
 });
@@ -182,7 +199,7 @@ test("output lines recorded from Claude Code 2.1.322 become normalized events", 
 });
 
 test("an attempt that may edit gets edits inside its working directory allowed, and loads no settings files at all", () => {
-  const args = claudeArgs({ model: "haiku", allowEdits: true });
+  const args = claudeArgs({ confinement: CONFINED, model: "haiku", allowEdits: true });
   const valueOf = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
     return i === -1 ? undefined : args[i + 1];
@@ -196,11 +213,12 @@ test("an attempt that may edit gets edits inside its working directory allowed, 
   assert.equal(valueOf("--setting-sources"), "");
   assert.equal(args.filter((a) => a === "--setting-sources").length, 1);
   assert.ok(args.includes("--strict-mcp-config"));
-  for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--settings", "--plugin-dir", "--bare", "--add-dir"]) {
+  for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--plugin-dir", "--bare", "--add-dir"]) {
     assert.equal(args.includes(flag), false, `${flag} must not be passed`);
   }
+  assert.deepEqual(Object.keys(settingsOf(args)).sort(), ["permissions", "sandbox"], "the sandbox only: no hook, no rule");
   // Without the option nothing is allowed, as before.
-  assert.equal(claudeArgs({ model: "haiku" }).includes("--allowedTools"), false);
+  assert.equal(claudeArgs({ confinement: CONFINED, model: "haiku" }).includes("--allowedTools"), false);
   assert.equal(checkVersion("2.1.322").missingFlags.includes("--allowedTools"), false);
   assert.ok(checkVersion("2.1.0").missingFlags.includes("--allowedTools"));
 });
@@ -211,15 +229,15 @@ test("a permission the CLI denied becomes a permission_denied event naming the t
   const line =
     '{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_01GZ1Xt2X9EptfvaCaRhaiuh","decision_reason_type":"asyncAgent","decision_reason":"no approval surface in this session; permission request denied automatically","message":"Permission for this tool use was denied. It requires approval, and this session has no approval surface — nobody can answer a permission prompt here — so it was denied automatically. The action was NOT performed; do not claim it succeeded, and do not retry it: this action, and anything else that requires approval, will be denied the same way for the rest of this session. Tell the user what was blocked and why you needed it, then continue with the parts of the task that do not require approval. What required approval: This command requires approval","uuid":"eb5a6d33-f4dc-4e09-ae39-62acfec51b0a"}';
   assert.deepEqual(parseClaudeLine(line), [
-    { type: "permission_denied", id: "toolu_01GZ1Xt2X9EptfvaCaRhaiuh", name: "Bash", reason: "no approval surface in this session; permission request denied automatically" },
+    { type: "permission_denied", id: "toolu_01GZ1Xt2X9EptfvaCaRhaiuh", name: "Bash", reason: "no approval surface in this session; permission request denied automatically", code: null },
   ]);
-  assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"permission_denied"}'), [{ type: "permission_denied", id: "", name: "", reason: null }]);
+  assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"permission_denied"}'), [{ type: "permission_denied", id: "", name: "", reason: null, code: null }]);
   // Other system lines still carry nothing for the transcript.
   assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"task_summary","summary":"x"}'), []);
 });
 
 test("an attempt behind the permission gate asks Botbench about every tool call and answers the CLI's prompts itself; the repository's settings stay out", () => {
-  const args = claudeArgs({ model: "haiku", allowEdits: true, gated: true, instructionsFile: "/botbench-home/instructions/abc.md" });
+  const args = claudeArgs({ confinement: CONFINED, model: "haiku", allowEdits: true, gated: true, instructionsFile: "/botbench-home/instructions/abc.md" });
   const valueOf = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
     return i === -1 ? undefined : args[i + 1];
@@ -231,8 +249,8 @@ test("an attempt behind the permission gate asks Botbench about every tool call 
   // The one settings object is Botbench's own, given on the command line: an ask rule for every shell command, and the pre-tool hook.
   assert.equal(args.filter((a) => a === "--settings").length, 1);
   const settings = JSON.parse(valueOf("--settings") ?? "null") as { permissions: { ask: string[]; allow?: unknown }; hooks: Record<string, { matcher: string; hooks: { type: string; command: string; timeout: number }[] }[]> };
-  assert.deepEqual(Object.keys(settings).sort(), ["hooks", "permissions"]);
-  assert.deepEqual(settings.permissions, { ask: ["Bash"] }, "shell commands always prompt, also when the hook did not run; no allow rule");
+  assert.deepEqual(Object.keys(settings).sort(), ["hooks", "permissions", "sandbox"]);
+  assert.deepEqual(settings.permissions, { ask: ["Bash"], blockReadsOutsideWorkingDirectories: true }, "shell commands always prompt, also when the hook did not run; no allow rule");
   assert.deepEqual(Object.keys(settings.hooks), ["PreToolUse"]);
   assert.equal(settings.hooks.PreToolUse!.length, 1);
   assert.equal(settings.hooks.PreToolUse![0]!.matcher, "*", "every tool call goes to the hook");
@@ -242,8 +260,8 @@ test("an attempt behind the permission gate asks Botbench about every tool call 
   assert.equal(hook!.command, `'${process.execPath}' '${PROXY_SCRIPT}'`);
   assert.equal(fs.existsSync(PROXY_SCRIPT), true);
   assert.ok(hook!.timeout >= 10 && hook!.timeout <= 60);
-  // No secret is on the command line: it travels in the child's environment.
-  assert.equal(args.some((a) => /secret/i.test(a)), false);
+  // No secret is on the command line: it travels in the child's environment. Its variable's name is, for the sandbox to take it out of commands.
+  assert.equal(args.some((a) => /secret/i.test(a.replaceAll(SECRET_ENV, ""))), false);
   // Settings files still do not load, so a repository's allow rules and hooks stay out; its instructions come as text.
   assert.equal(valueOf("--setting-sources"), "");
   assert.ok(args.includes("--strict-mcp-config"));
@@ -253,12 +271,13 @@ test("an attempt behind the permission gate asks Botbench about every tool call 
     assert.equal(args.includes(flag), false, `${flag} must not be passed`);
   }
 
-  // Without the gate nothing changes: every prompt is denied and no settings are given.
-  const ungated = claudeArgs({ model: "haiku", allowEdits: true });
+  // Without the gate nothing changes: every prompt is denied, and the settings hold the sandbox and no hook.
+  const ungated = claudeArgs({ confinement: CONFINED, model: "haiku", allowEdits: true });
   assert.equal(ungated[ungated.indexOf("--permission-prompts") + 1], "none");
-  assert.equal(ungated.includes("--settings") || ungated.includes("--permission-prompt-tool") || ungated.includes("--append-system-prompt-file"), false);
+  assert.equal(ungated.includes("--permission-prompt-tool") || ungated.includes("--append-system-prompt-file"), false);
+  assert.deepEqual(Object.keys(settingsOf(ungated)).sort(), ["permissions", "sandbox"]);
   // The gate is only for an attempt in a worktree: without the edit rule it is not switched on.
-  assert.equal(claudeArgs({ gated: true }).includes("--permission-prompt-tool"), false);
+  assert.equal(claudeArgs({ confinement: CONFINED, gated: true }).includes("--permission-prompt-tool"), false);
   for (const flag of ["--settings", "--permission-prompt-tool", "--append-system-prompt-file"]) {
     assert.ok(checkVersion("2.1.0").missingFlags.includes(flag), flag);
     assert.equal(checkVersion("2.1.322").missingFlags.includes(flag), false);
@@ -372,10 +391,10 @@ test("the attempt's gate secret is blanked out of an event before it is stored, 
 
 test("the launch arguments name a model only when one was chosen, as two separate entries", () => {
   for (const options of [{}, { allowEdits: true }, { allowEdits: true, gated: true }, { resumeCursor: "5a850a06-92af-40cd-8cde-1c4435399134" }]) {
-    const without = claudeArgs(options);
+    const without = claudeArgs({ confinement: CONFINED, ...options });
     assert.equal(without.some((a) => a.startsWith("--model")), false, "no model chosen means the CLI's own default");
     for (const model of ["haiku", "claude-haiku-4-5-20251001", "claude-opus-4-8[1m]"]) {
-      const args = claudeArgs({ ...options, model });
+      const args = claudeArgs({ confinement: CONFINED, ...options, model });
       const at = args.indexOf("--model");
       assert.notEqual(at, -1);
       assert.equal(args[at + 1], model, "the name is an entry of its own");
@@ -386,7 +405,7 @@ test("the launch arguments name a model only when one was chosen, as two separat
   }
   // The driver itself refuses a value that could be read as a flag, whoever hands it over.
   for (const model of ["--dangerously-skip-permissions", "-p", "hai ku", "haiku\n", ""]) {
-    assert.throws(() => claudeArgs({ model }), /model/i, JSON.stringify(model));
+    assert.throws(() => claudeArgs({ confinement: CONFINED, model }), /model/i, JSON.stringify(model));
   }
 });
 
@@ -431,4 +450,95 @@ test("a result the CLI marks as an error is an error in its own words, as printe
     { type: "error", message: detail, raw: null },
     { type: "turn_ended", reason: "error", detail },
   ]);
+});
+
+test("every attempt runs its commands in Claude Code's sandbox: required, asking before each command, never unsandboxed, kept from the secret places and Botbench's data folder but not its own folder, and with no network unless hosts are allowed", (t) => {
+  const kinds = { chat: {}, edits: { allowEdits: true }, gated: { allowEdits: true, gated: true }, planner: { readOnly: true, gated: true } };
+  for (const [kind, options] of Object.entries(kinds)) {
+    const settings = settingsOf(claudeArgs({ confinement: CONFINED, ...options }));
+    assert.deepEqual(
+      settings.sandbox,
+      {
+        enabled: true,
+        // The CLI refuses to start rather than run commands unconfined.
+        failIfUnavailable: true,
+        // CRITICAL: with true, the CLI stops asking before a sandboxed command and Botbench's permission check is never heard.
+        autoAllowBashIfSandboxed: false,
+        // The model cannot ask for a command to run outside the sandbox.
+        allowUnsandboxedCommands: false,
+        filesystem: { denyRead: unreadablePaths({ dataDir: DATA_DIR }), allowRead: [CWD] },
+        network: { allowedDomains: [], strictAllowlist: true },
+        // The permission check's address and secret are for Botbench's hook, which runs outside the sandbox; commands never see them.
+        credentials: { envVars: [{ name: SOCKET_ENV, mode: "deny" }, { name: SECRET_ENV, mode: "deny" }] },
+      },
+      kind,
+    );
+    // The CLI's own file tools run outside the sandbox: they may not read outside the folder the attempt works in.
+    assert.equal((settings.permissions as Record<string, unknown>).blockReadsOutsideWorkingDirectories, true, kind);
+  }
+  // The data folder is denied and the task's copy inside it is not: Claude Code lets the narrower entry win (seen on 2.1.322).
+  const denied = (settingsOf(claudeArgs({ confinement: CONFINED })).sandbox as { filesystem: { denyRead: string[] } }).filesystem.denyRead;
+  assert.ok(denied.includes(DATA_DIR) && !denied.includes(CWD));
+  assert.ok(CWD.startsWith(`${DATA_DIR}${path.sep}`));
+
+  // A repository's allowed hosts are the only hosts its commands may reach.
+  const allowed = settingsOf(claudeArgs({ confinement: { ...CONFINED, allowedHosts: ["registry.npmjs.org", "github.com"] }, allowEdits: true, gated: true }));
+  assert.deepEqual((allowed.sandbox as { network: unknown }).network, { allowedDomains: ["registry.npmjs.org", "github.com"], strictAllowlist: true });
+  // A host that is not a plain name never gets onto the command line, whoever hands it over.
+  assert.throws(() => claudeArgs({ confinement: { ...CONFINED, allowedHosts: ["*.npmjs.org"] } }), /plain host name/);
+
+  // The repository's shared git folder stays readable, so git works in the copy, and is not writable: no command of the
+  // agent's moves one of the owner's branches. Botbench makes the task's commit itself, outside the sandbox.
+  const gitDir = path.join(DATA_DIR, "repo.git");
+  fs.mkdirSync(gitDir, { recursive: true });
+  const withGit = settingsOf(claudeArgs({ confinement: { ...CONFINED, gitDir }, allowEdits: true, gated: true }));
+  assert.deepEqual((withGit.sandbox as { filesystem: unknown }).filesystem, { denyRead: unreadablePaths({ dataDir: DATA_DIR }), allowRead: [CWD], denyWrite: [gitDir] });
+
+  // The folder Claude Code keeps its sign-in in, when the owner moved it, is denied as well.
+  const moved = settingsOf(claudeArgs({ confinement: { ...CONFINED, configDir: "/opt/claude-config" } }));
+  assert.ok((moved.sandbox as { filesystem: { denyRead: string[] } }).filesystem.denyRead.includes("/opt/claude-config"));
+
+  // The attempt's own folder is given by its real path, which is what the sandbox compares.
+  const linked = path.join(tempDir("botbench-args-link-"), "copy");
+  t.after(() => fs.rmSync(path.dirname(linked), { recursive: true, force: true }));
+  fs.symlinkSync(CWD, linked);
+  assert.deepEqual((settingsOf(claudeArgs({ confinement: { ...CONFINED, cwd: linked } })).sandbox as { filesystem: { allowRead: string[] } }).filesystem.allowRead, [CWD]);
+});
+
+test("what the sandbox kept a command from is read out of its result, as Claude Code 2.1.322 reported it, and an ordinary result carries nothing of the kind", () => {
+  // Lines Claude Code 2.1.322 printed on 2026-11-22 with Botbench's sandbox settings (paths are the experiment's).
+  const network = parseClaudeLine(
+    '{"type": "user", "message": {"role": "user", "content": [{"tool_use_id": "toolu_01U1MCiCbkyxo9PR2iaqNAEA", "type": "tool_result", "content": "Exit code 56\\ncurl: (56) CONNECT tunnel failed, response 403\\n000\\n<sandbox_violations>\\ndeny network-outbound example.com:443 (host is not on the allow list)\\n</sandbox_violations>", "is_error": true}]}}',
+  );
+  assert.deepEqual(network, [{ type: "tool_result", id: "toolu_01U1MCiCbkyxo9PR2iaqNAEA", output: "Exit code 56\ncurl: (56) CONNECT tunnel failed, response 403\n000\n<sandbox_violations>\ndeny network-outbound example.com:443 (host is not on the allow list)\n</sandbox_violations>", isError: true, confined: { hosts: ["example.com:443"], files: false } }]);
+  const read = parseClaudeLine('{"type": "user", "message": {"role": "user", "content": [{"tool_use_id": "toolu_01URVg9VfbiVeAhZA84vSjGK", "type": "tool_result", "content": "Exit code 1\\ncat: /private/tmp/u27-exp/home/secret.txt: Operation not permitted", "is_error": true}]}}');
+  assert.deepEqual(read.map((e) => (e.type === "tool_result" ? e.confined : null)), [{ hosts: [], files: true }]);
+  // A command can end well and still have been kept from a file: the CLI marks the result as no error then.
+  const quiet = parseClaudeLine('{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01GPiy1tihhaygwtcwr82PXL","type":"tool_result","content":"cat: /private/tmp/u27-exp/home/secret.txt: Operation not permitted\\nr1=1\\nINSIDE-OK\\nr2=0","is_error":false}]}}');
+  assert.deepEqual(quiet.map((e) => (e.type === "tool_result" ? [e.isError, e.confined] : null)), [[false, { hosts: [], files: true }]]);
+  // The CLI's own Read tool refused a file outside the folder.
+  const tool = parseClaudeLine('{"type": "user", "message": {"role": "user", "content": [{"tool_use_id": "toolu_01HMXM3Eoq8776Y2SVSzBsND", "type": "tool_result", "content": "/Users/jonlange/.u27-exp-home/token is outside /Users/jonlange/.u27-exp-home/worktrees/r/t; the permissions.blockReadsOutsideWorkingDirectories setting blocks reads outside the working directories. Ask the user to add the directory with /add-dir, or to remove that setting.", "is_error": true}]}}');
+  assert.deepEqual(tool.map((e) => (e.type === "tool_result" ? e.confined : null)), [{ hosts: [], files: true }]);
+  const denied = parseClaudeLine('{"type": "system", "subtype": "permission_denied", "tool_name": "Read", "tool_use_id": "toolu_01HMXM3Eoq8776Y2SVSzBsND", "decision_reason_type": "other", "decision_reason_code": "outside_reads_blocked", "decision_reason": "Reads outside the working directories are blocked (permissions.blockReadsOutsideWorkingDirectories). Add the directory with /add-dir, or remove that setting."}');
+  assert.deepEqual(denied, [{ type: "permission_denied", id: "toolu_01HMXM3Eoq8776Y2SVSzBsND", name: "Read", reason: "Reads outside the working directories are blocked (permissions.blockReadsOutsideWorkingDirectories). Add the directory with /add-dir, or remove that setting.", code: "outside_reads_blocked" }]);
+
+  const ordinary = parseClaudeLine('{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01WjxChzdxP4VivfVmLADLYr","type":"tool_result","content":"CLAUDE.md\\nREADME.md\\nmake-marker.sh","is_error":false}]}}');
+  assert.deepEqual(ordinary, [{ type: "tool_result", id: "toolu_01WjxChzdxP4VivfVmLADLYr", output: "CLAUDE.md\nREADME.md\nmake-marker.sh", isError: false }]);
+});
+
+test("a CLI that will not start without its sandbox is reported in plain words, with its own reason", () => {
+  // The two lines Claude Code 2.1.322 writes to its error output in that case, as its own code holds them (not seen: this Mac has a sandbox).
+  const stderr = "\nError: sandbox required but unavailable: sandbox is enabled but cannot start here: sandbox-exec failed\n  sandbox.failIfUnavailable is set — refusing to start without a working sandbox.\n";
+  assert.equal(sandboxRefusal(stderr), "Claude Code did not start: its sandbox cannot run on this computer (sandbox is enabled but cannot start here: sandbox-exec failed), and Botbench does not let an agent run commands without it. Nothing was run.");
+  assert.equal(sandboxRefusal("Error: something else\n"), null);
+});
+
+test("Claude Code with managed settings on this Mac starts no agent, since they come before Botbench's; a folder with a glob character cannot be confined", (t) => {
+  assert.equal(managedSettingsProblem(), null, "this Mac has no managed settings");
+  const dir = tempDir("botbench-managed-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "managed-settings.json");
+  fs.writeFileSync(file, "{}");
+  assert.match(managedSettingsProblem([path.join(dir, "absent.json"), file]) ?? "", /managed settings on this Mac .*managed-settings\.json.*starts no agent/);
+  assert.throws(() => claudeArgs({ confinement: { ...CONFINED, cwd: "/tmp/data[1]/copy" } }), /\*, \? or \[/);
 });

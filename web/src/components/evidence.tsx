@@ -107,4 +107,4 @@ export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: reado
 }
 
 /** The plain sentence about what checks are, shown wherever their results are. */
-export const CHECKS_RISK = "Checks run this repository's own commands on the agent's work, on this Mac, with your account's rights. The agent may have changed the code they run, so read the output, not only the result.";
+export const CHECKS_RISK = "Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: they cannot read the sign-in, key and credential folders Botbench keeps them from or Botbench's own files, can change files only in this task's copy and a temporary folder, and reach the internet only at hosts allowed for this repository in Botbench's settings file. They can still read the rest of your home folder. The agent may have changed the code they run, so read the output, not only the result.";

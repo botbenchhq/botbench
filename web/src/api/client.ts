@@ -11,8 +11,8 @@ export type DriverEvent =
   | { type: "session_started"; resumeCursor: string; model: string | null; keySource: string | null }
   | { type: "text"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; id: string; output: string; isError: boolean }
-  | { type: "permission_denied"; id: string; name: string; reason: string | null }
+  | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
+  | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
   | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, botbenchHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, repositoryHosts, botbenchHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -213,6 +213,26 @@ test("a repository's setup and check commands are each a command, or a command w
     [{ checks: [{ command: "npm test", timeoutSeconds: 100000 }] }, /repository "\/r": "checks".*"timeoutSeconds"/],
     [{ checks: [{ command: "npm test", timeoutSeconds: "60" }] }, /repository "\/r": "checks".*"timeoutSeconds"/],
     [{ checks: [{ command: "npm test", timeout: 60 }] }, /repository "\/r": "checks".*unknown.*"timeout"/],
+  ];
+  for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
+});
+
+test("a repository's allowed hosts are plain host names its commands may reach; anything else is refused, naming the repository, the setting and the value", (t) => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const config = loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { allowedHosts: ["registry.npmjs.org", "github.com"] } } }));
+  assert.deepEqual(repositoryHosts(config, repo), ["registry.npmjs.org", "github.com"]);
+  assert.deepEqual(repositoryHosts(config, "/somewhere/else"), [], "no network for a repository that allows none");
+  assert.deepEqual(repositoryHosts(loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { setup: ["npm ci"] } } })), repo), []);
+
+  const refused: [unknown, RegExp][] = [
+    [{ allowedHosts: "github.com" }, /repository "\/r": "allowedHosts" must be a list of host names/],
+    [{ allowedHosts: ["*.npmjs.org"] }, /repository "\/r": "allowedHosts" holds "\*\.npmjs\.org", which cannot be used\. .*plain host name/],
+    [{ allowedHosts: ["github.com", "https://github.com"] }, /repository "\/r": "allowedHosts" holds "https:\/\/github\.com"/],
+    [{ allowedHosts: ["github.com:443"] }, /"allowedHosts" holds "github\.com:443"/],
+    [{ allowedHosts: ["localhost"] }, /"allowedHosts" holds "localhost"/],
+    [{ allowedHosts: ["127.0.0.1"] }, /"allowedHosts" holds "127\.0\.0\.1"/],
+    [{ allowedHosts: [7] }, /"allowedHosts" holds 7/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
 });

@@ -180,3 +180,18 @@ export function stepsSummary(steps: readonly { name: string; state: CallState }[
   const line = parts.join(", ");
   return line === "" ? "" : `${line[0]!.toUpperCase()}${line.slice(1)}`;
 }
+
+/**
+ * What the sandbox kept a call from, in plain words, from what its result reports (U27): a note for the call's line and
+ * the sentences behind it. The report is read from the output, which the command also writes, so the words say what
+ * the output says. Null when it says nothing of the kind.
+ */
+export function confinedWords(confined: { hosts: string[]; files: boolean } | undefined): { note: string; sentences: string[] } | null {
+  if (confined === undefined || (confined.hosts.length === 0 && !confined.files)) return null;
+  const hosts = confined.hosts.length > 0;
+  const note = confined.files && hosts ? "kept from a file and the network" : confined.files ? "kept from a file" : "kept from the network";
+  const sentences: string[] = [];
+  if (confined.files) sentences.push("Its output says it was not allowed to open a file. The agent cannot read your sign-ins, your keys or Botbench's own files.");
+  if (hosts) sentences.push(`Its output says a connection to ${confined.hosts.join(", ")} was not allowed. The agent's commands reach only the hosts allowed for this repository in Botbench's settings file, and none when no host is.`);
+  return { note, sentences };
+}

@@ -8,7 +8,7 @@ import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, offerStandingAfter, repositoryCommands, ROOT, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { createRuns } from "./engine/run.ts";
@@ -90,7 +90,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     throw err;
   }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), onEvent: stream.notify, onTaskChange: stream.announceTask, onRunChange: stream.announceRun });
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), onEvent: stream.notify, onTaskChange: stream.announceTask, onRunChange: stream.announceRun });
   const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), line: tasks, onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
   const ctx = { db, config, driver, turns, tasks, runs, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 

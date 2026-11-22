@@ -237,6 +237,17 @@ function removeIfEmpty(dir: string): void {
 }
 
 /**
+ * The shared git folder of the source repository `repo`, by its real path: what an agent's commands in one of its copies
+ * may read and not write (U27). Asked of the repository the task was started on, never of the copy, whose `.git` file an
+ * agent can rewrite.
+ */
+export async function sharedGitDir(repo: string): Promise<string> {
+  const found = (await git(path.resolve(repo), ["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_CHECK_LIMIT_MS)).trim();
+  if (found === "") throw new Error(`git did not say where the shared git folder of ${repo} is.`);
+  return realPath(found);
+}
+
+/**
  * Check `dir` is the top of a linked worktree on a Botbench task branch, and return that branch and the repository's shared git folder.
  * The owner's own checkout is never one, so nothing here can commit in it or remove it.
  */
