@@ -146,17 +146,18 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 
 ### Open Questions
 
-- **Are recordings of real CLI output allowed as test data? (owner decision, blocks nothing until U21)** Live tests against real CLIs spend a little subscription usage and need a signed-in machine, and some events cannot be produced on demand, such as a rate limit. KTD15 allows one exception to "no mocks": output captured from a real CLI run may be stored and replayed to test Forge's parsing. If the owner rules this out, automatic rate-limit fallback (U21) ships only after a rate limit has been seen live.
+- **May captured real CLI sessions be replayed in tests? (owner decision, needed before U8)** A live model cannot be made to misbehave on demand. KTD15 proposes one exception to "no mocks": a session captured from a real CLI run may be stored and replayed through the driver contract. Without it, these scenarios have no automated test and rely on the owner's check alone: a re-issued request that does not match a stored approval (U8), an invalid plan sent back once (U11), a planner or reviewer edit attempt being refused (U11, U20), a metered login's running cost (U22), an expired push subscription (U23), and automatic rate-limit fallback (U21), which would ship only after a rate limit has been seen live.
+- **HTTPS on the private network (owner decision, blocks U23).** Phone notifications need a trusted HTTPS address for Forge. With Tailscale that means turning on HTTPS certificates for the tailnet, which publishes the Mac's machine name in public certificate logs. Whether Tailscale is installed on the Mac and phone was not checked.
 - **The name Forge is widely used (owner decision, does not block).** Laravel Forge, Atlassian Forge and Minecraft Forge are well known, several AI developer tools on GitHub use it, and the npm package name is taken. The repository and package would need a scope or suffix, such as `forge-factory`.
 - **Provider terms and billing for unattended CLI use (owner decision, does not block).** Whether each consumer subscription permits unattended use of its CLI, and whether headless turns draw on the same plan allowance as interactive ones, was not verified. R8 depends on the second. The owner should confirm for each subscription.
 - **Nexvyn UI licence (deferred, does not block).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`. U4 reads its licence file first and uses plain shadcn components if it does not allow use in an Apache-2.0 project.
-- **Sign-in to the new CLIs (owner action, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in". Each needs the owner to sign in once.
+- **Sign-in to the new CLIs (owner action, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in"; Gemini CLI and Grok were not checked. Each needs the owner to sign in once.
 
 ### Sources
 
 - The owner's "OpenMaus Factory" PRD, version 1.0, November 2026, and the owner's later direction in this session.
 - Code studies of `milind-soni/OpenMausBot` (Apache-2.0 except `enterprise/`) and `elie222/rakazo` (Apache-2.0) on 2026-11-21.
-- Installed CLI help output on 2026-11-21: Claude Code 2.1.322 (`--print`, stream-json input and output, `--resume`, `--permission-prompt-tool`, `--setting-sources`, `--strict-mcp-config`); Codex (`app-server`, with `generate-json-schema` for its protocol); Gemini CLI (`--acp`, `--output-format stream-json`, `--approval-mode`); Grok (`--single` headless mode with `--output-format streaming-json`, one ACP session update per line, and `--permission-mode`).
+- Installed CLI help output on 2026-11-21: Claude Code 2.1.322 (`--print`, stream-json input and output, `--resume`, `--permission-prompt-tool`, `--setting-sources`, `--strict-mcp-config`); Codex (`app-server`, with `generate-json-schema` for its protocol); Gemini CLI (`--acp`, `--output-format stream-json`, `--approval-mode`); Grok (`agent stdio`, and `--permission-mode`).
 - Prior prototype `../botdeck` (approval ladder, usage bucketing, loopback server checks).
 
 ---
@@ -167,17 +168,17 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 
 - KTD1. **New repository, Apache-2.0, written from the contracts and not copied wholesale.** OpenMausBot's driver layer is 39k lines importing 213 paths outside itself, so it cannot be lifted as a module. Small self-contained files may be copied, each recorded in `NOTICE` with its upstream notice, including the MIT notice on files OpenMausBot adapted from T3 Code (R18).
 - KTD2. **TypeScript on Node 24 or later, run directly with no server build step.** One process, `node:http`, one server-sent-events stream, `node:sqlite` in a single database under `~/.forge`. This is what makes R16 reachable.
-- KTD3. **Drivers are stdio subprocesses speaking each CLI's structured headless protocol, behind one adapter contract.** The contract has `sendTurn`, `interruptTurn`, `respondToRequest`, `onEvent`, an opaque resume cursor, and capability flags, and every driver emits one normalized event union. Claude Code uses stream-json with a retained process. Codex uses its app-server protocol, typed from the schema the CLI generates. Gemini CLI uses `--acp`. Grok uses the same Agent Client Protocol messages through its headless streaming mode. No pty and no vendor agent SDK.
+- KTD3. **Drivers are stdio subprocesses speaking each CLI's structured headless protocol, behind one adapter contract.** The contract has `sendTurn`, `interruptTurn`, `respondToRequest`, `onEvent`, an opaque resume cursor, and capability flags, and every driver emits one normalized event union. Claude Code uses stream-json with a retained process. Codex uses its app-server protocol, typed from the schema the CLI generates. Gemini CLI uses `--acp`. Grok is started with `grok agent stdio`, which serves the same Agent Client Protocol. No pty and no vendor agent SDK.
 - KTD4. **Launch isolation protects the subscription and the approvals.** The child environment is built from an allowlist, and provider API-key variables are removed (AE7). Each CLI is started without the owner's personal settings, permission allow rules, hooks, plugins and MCP servers, while the repository's own instructions still load. For Claude Code that is `--setting-sources project` with `--strict-mcp-config`. Each driver unit finds the equivalent for its CLI. Forge implements no in-app OAuth and calls no unofficial usage endpoints.
-- KTD5. **Tool-level approvals go through one permission broker.** Each driver routes its CLI's permission requests to an in-process broker that writes the approval row, emits the event, and blocks until answered. Any broker failure denies. The implementer may edit inside its worktree and asks for everything else. Planner and reviewer run read-only. The planner works in a detached worktree of the base commit, never in the owner's checkout (R3).
+- KTD5. **Tool-level approvals go through one permission broker.** Each driver routes its CLI's permission requests to an in-process broker that writes the approval row, emits the event, and blocks until answered. Any broker failure denies. A CLI only asks when it would otherwise prompt, so the broker alone misses commands the CLI treats as safe and commands allowed by rules committed in the repository. The Claude Code driver therefore also registers a Forge pre-tool hook through `--settings`, which sends every shell and write call to the gate before the CLI's own rules apply. Each other driver states its equivalent interception point or reports the capability as missing, and a driver without it is offered for read-only roles only. The implementer may edit inside its worktree and asks for everything else. Planner and reviewer run read-only. The planner works in a detached worktree of the base commit, never in the owner's checkout (R3).
 - KTD6. **Grants are narrow, keyed on the repository, and capped by a safety floor.** A grant is an exact command plus the source repository plus the working directory relative to the worktree root, or a named tool, scoped to a role. Approval counts use the same key. A run's pre-approved list is stored as grants scoped to that run and matches a request whose leading words equal the entry and which contains no shell operators that chain, pipe, substitute or redirect (AE9). A never-list overrides every grant (AE6).
 - KTD7. **Isolation is one git worktree per task, on the host, and Forge commits the work.** Worktrees live under `~/.forge/worktrees/<run>/<task>` on branch `forge/<run>/<task>`, from the repository's current `HEAD` commit. Setup commands configured per repository run in each new worktree. When an implementer's turn ends, Forge stages and commits everything to the task branch. The diff is base commit to branch head.
 - KTD8. **Runs and tasks are two row-driven state machines, with attempts under tasks.** The run row carries planning, awaiting plan approval, running, awaiting decision, done and cancelled. Each task row carries queued, building, verifying, reviewing, awaiting decision, blocked, interrupted and decided. Tasks proceed one at a time. Each task has a `depends_on` field left empty in this plan. State changes and their events are written in one transaction.
-- KTD9. **Restart recovery reconciles from the database.** A task that was mid-turn is re-driven once from its resume cursor and otherwise marked interrupted. A task blocked on a pending approval is parked: when the owner answers, Forge re-drives it and applies the stored answer once to the first matching request.
-- KTD10. **Usage is an append-only ledger whose cost kind comes from the login, not from the CLI's printout.** Each driver's probe reports whether the login is a subscription or metered, without reading credentials. A subscription turn stores no dollar amount even when the CLI prints one.
+- KTD9. **Restart recovery reconciles from the database.** Each attempt records its CLI's process group, and on start Forge stops any that survived before re-driving, so two agents never write to one worktree. A task that was mid-turn is re-driven once from its resume cursor and otherwise marked interrupted. A task blocked on a pending approval is parked: when the owner answers, Forge re-drives it and applies the stored answer once to the first matching request.
+- KTD10. **Usage is an append-only ledger whose cost kind comes from the login, not from the CLI's printout.** Each driver's probe reports whether the login is a subscription or metered, without reading credentials. A subscription turn stores no dollar amount even when the CLI prints one. A CLI that cannot report its login kind is shown as unknown, and its turns are counted in tokens only.
 - KTD11. **Routing is configuration with ordered fallbacks, and a handoff starts fresh.** The next driver gets a new session with the task, its acceptance criteria, a note that an earlier attempt stopped, and the worktree's diff. Resume cursors never cross drivers.
 - KTD12. **The client is React with Vite and Tailwind, using Nexvyn UI for the shell where its licence allows and plain shadcn components elsewhere.** The built client is static files served by the Forge process. It is laid out for a phone first.
-- KTD14. **One owner login guards every route, and the listen addresses are configuration.** Forge creates a random token on first start, stores it under `~/.forge` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too. Forge listens on the loopback address plus any address the owner lists, such as the Mac's private-network address. The private network supplies encryption in transit.
+- KTD14. **One owner login guards every route, and the listen addresses are configuration.** Forge creates a random token on first start, stores it under `~/.forge` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too. Forge listens on the loopback address plus any address the owner lists, such as the Mac's private-network address. The phone reaches Forge over HTTPS under the Mac's private-network name, with the private network's own tool terminating TLS in front of Forge's loopback listener (for Tailscale, `tailscale serve`). A phone app with notifications needs this, because browsers only run service workers and push on a trusted HTTPS origin. The session cookie is marked secure when reached that way.
 - KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Forge process. Any scenario that needs an agent turn is a live test; files outside `test/live/` and `e2e/` never start a driver. The one allowed exception is replaying output captured from a real CLI run to test parsing (see Open Questions).
 - KTD16. **The phone app is an installable web app with web push.** The client ships a manifest and a service worker, so it installs to the home screen on iOS and Android. Forge sends notifications through the standard Web Push protocol with keys it generates and keeps locally. This passes notification text through Apple's or Google's push service, so notifications carry only "an approval is waiting" and the run name, never commands or code (R24).
 
@@ -224,7 +225,7 @@ stateDiagram-v2
 
 - The owner's repositories are local git repositories with at least one commit.
 - Check, setup and pre-approved commands are supplied per repository. Forge does not detect them.
-- The owner's Mac and phone are on the same private network, such as Tailscale.
+- The owner's Mac and phone are on the same private network, such as Tailscale, with its HTTPS certificates turned on (see Open Questions).
 - Live tests may spend a small amount of subscription usage.
 
 ### Risks
@@ -264,7 +265,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 | U18 | Gemini CLI driver | U7, U17 |
 | U19 | Grok driver | U18 |
 | U20 | Roles and the reviewer station | U13, U17, U18 |
-| U21 | Handoff between drivers and rate-limit fallback | U17, U18 |
+| U21 | Handoff between drivers and rate-limit fallback | U12, U17, U18 |
 | U22 | Usage ledger and dashboard | U16 |
 | U23 | Phone app: install and notifications | U7, U2, U14, U16 |
 | U24 | First-run path and README | U16 |
@@ -298,6 +299,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - Covers AE10. A request with no session is refused on every route except sign-in, from the loopback address as well as a configured address.
 - Signing in with the token sets a session cookie scripts cannot read; a wrong token is refused, and repeated wrong tokens are slowed down.
 - With no extra address configured, Forge listens on the loopback address only.
+- A request arriving through the configured HTTPS name is accepted, and its session cookie is marked secure.
 - The token file is readable only by the owner, and the token never appears in logs or responses after first start.
 - A request with a foreign `Origin`, or a non-JSON body on a write route, is refused.
 **Verification:** From another device on the private network, the health route is refused before sign-in and answers after it.
@@ -361,7 +363,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Test scenarios:**
 - Live: a task "create hello.txt containing hi" in a temporary repository ends with a commit on a task branch containing that file, and the source checkout is unchanged.
 - The diff route returns per-file changes from base commit to branch head.
-- A task whose agent attempts a shell command records that the command was denied.
+- Live: a task told to run a script committed in the fixture repository, which writes a marker file, records the command as denied, and the marker file does not exist.
 - End to end at phone width: choose a repository, start a task, and expand a file's diff.
 **Verification:** The owner runs one small real task on one of their repositories and reads the diff on their phone.
 
@@ -374,8 +376,9 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Approach:** Implement KTD5 for Claude Code. The card shows the command or tool, directory, role, task, and the agent's stated reason, with Allow and Decline. A tray with the pending count appears on every screen.
 **Patterns to follow:** OpenMausBot's `server/permission-proxy.ts` is a candidate to copy.
 **Test scenarios:**
-- Live: a task that must run `ls` creates a pending approval; allowing it lets the turn finish, and the command's output is in the transcript.
-- Live: declining returns a declined result to the agent, and the turn ends without the command having run.
+- Live: a task that must run the fixture repository's marker script creates a pending approval; allowing it lets the turn finish, and the marker file exists. A read-only command such as `ls` is not used, because the CLIs run those without asking.
+- Live: declining returns a declined result to the agent, and the marker file does not exist.
+- Live: a command allowed by the fixture repository's own committed CLI settings still creates a pending approval.
 - Live: a command the owner's personal Claude Code settings allow still creates a pending approval.
 - If the broker socket is unavailable, the proxy answers deny.
 - Every decision is in the action log, and the store offers no way to change or remove a log entry.
@@ -409,7 +412,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 - A pre-approved entry from one run does not apply in another run.
 - End to end: the owner edits the list on the new-task screen, and the task runs a listed command with no card.
 - An action allowed by pre-approval is written to the log as pre-approved.
-- Live: a task with `ls` pre-approved runs it with no card.
+- Live: a task with the marker script pre-approved runs it with no card, and the marker file exists.
 **Verification:** A real task that needs only pre-approved commands finishes with nobody answering.
 
 ### U10. Standing permissions and the action log
@@ -524,11 +527,12 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R7, R8, R10.
 **Dependencies:** U7. Codex signed in.
 **Files:** `src/drivers/codex.ts`, `src/drivers/codex-protocol.ts`, `test/live/codex.live.test.ts`, `test/live/conformance.live.test.ts`.
-**Approach:** Type the protocol from the schema `codex app-server generate-json-schema` emits. Map server-to-client approval requests to the broker. Apply KTD4 launch rules and find Codex's settings isolation. Move the scenarios from U3 and U7 into one conformance suite every driver must pass.
+**Approach:** Type the protocol from the schema `codex app-server generate-json-schema` emits. Map server-to-client approval requests to the broker. Apply KTD4 launch rules. Codex's app server has no flag to ignore personal settings, so isolation is done by setting approval policy and sandbox explicitly on each thread and passing `-c` overrides that empty the MCP server and hook configuration. If a command the owner's own Codex rules allow still runs without a card, Codex reports the capability as missing (KTD5). Move the scenarios from U3 and U7 into one conformance suite every driver must pass.
 **Test scenarios:**
 - Live conformance for Claude Code and Codex: one-word turn, resume, interrupt, a permission request allowed and one declined, usage recorded, login and version probe.
 - With `OPENAI_API_KEY` set in the parent, the child environment does not contain it.
 - A capability the CLI lacks, such as resume, is reported through its capability flag and not faked.
+- Live: a command allowed by the owner's own Codex rules still creates a pending approval, or the driver reports interception as missing.
 **Verification:** A real task builds on Codex in the client.
 
 ### U18. Gemini CLI driver
@@ -537,9 +541,9 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R7, R8, R10.
 **Dependencies:** U7, U17. Gemini CLI signed in.
 **Files:** `src/drivers/acp/client.ts`, `src/drivers/acp/gemini.ts`, `test/live/gemini.live.test.ts`, `test/live/conformance.live.test.ts`.
-**Approach:** Write the ACP client once, started with `gemini --acp`. Route its permission requests to the broker.
+**Approach:** Write the ACP client once, started with `gemini --acp`. Route its permission requests to the broker. Gemini CLI applies folder trust, and every task worktree is a new path, so the driver handles trust explicitly for the worktree.
 **Test scenarios:**
-- Live conformance passes for Gemini CLI.
+- Live conformance passes for Gemini CLI in a freshly created worktree.
 - With `GEMINI_API_KEY` set in the parent, the child environment does not contain it.
 **Verification:** A real task builds on Gemini CLI in the client.
 
@@ -549,7 +553,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R7, R8, R10.
 **Dependencies:** U18. Grok signed in.
 **Files:** `src/drivers/acp/grok.ts`, `web/src/screens/settings.tsx`, `test/live/grok.live.test.ts`, `test/live/conformance.live.test.ts`.
-**Approach:** Start by confirming on the real CLI how a long-lived session and permission requests work in Grok's headless mode, since its help documents single-prompt streaming only. If it cannot pause for a permission answer, Grok is offered for the read-only planner and reviewer roles only, and the settings screen says so.
+**Approach:** Start `grok agent stdio` and reuse the ACP client from U18. If the live conformance run shows permission requests are not delivered, Grok is offered for the read-only planner and reviewer roles only, and the settings screen says so.
 **Test scenarios:**
 - Live conformance passes for Grok for every capability it reports.
 - A role Grok cannot serve safely cannot be assigned to it.
@@ -573,7 +577,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 
 **Goal:** A task can move to another subscription and keep going.
 **Requirements:** R9.
-**Dependencies:** U17, U18.
+**Dependencies:** U12, U17, U18.
 **Files:** `src/engine/handoff.ts`, `src/engine/stations.ts`, `web/src/screens/run.tsx`, `web/src/screens/settings.tsx`, `test/engine/handoff.test.ts`, `test/live/handoff.live.test.ts`, `e2e/handoff.e2e.ts`.
 **Approach:** Build the owner's "move to another driver" action first (KTD11). Settings gains the ordered fallback list per role in this unit, since this is where it starts to do something. Then trigger the same path from each driver's normalized rate-limit event, with the blocked state and automatic resume at the reset time when no fallback remains. The automatic trigger for a driver is enabled only once a real rate-limit event from that CLI has been captured and its parsing tested (see Open Questions).
 **Test scenarios:**
@@ -607,9 +611,9 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R23, R24.
 **Dependencies:** U7, U2, U14, U16.
 **Files:** `web/public/manifest.webmanifest`, `web/src/sw.ts`, `web/src/app/notifications.tsx`, `src/push.ts`, `src/store/schema.ts` (push subscriptions migration), `web/src/screens/settings.tsx`, `src/api/routes.ts`, `test/push.test.ts`, `e2e/install.e2e.ts`.
-**Approach:** Implement KTD16. The owner turns notifications on per device from settings. Notification text follows KTD16's limit.
+**Approach:** Implement KTD16 over the HTTPS address from KTD14. The owner turns notifications on per device from settings. Automated browsers often cannot subscribe to a real push service, so subscription and delivery are proven on the owner's phone. Notification text follows KTD16's limit.
 **Test scenarios:**
-- The manifest and service worker meet the browser's install criteria in an end-to-end check.
+- The manifest and service worker meet the browser's install criteria in an end-to-end check, and the service worker registers on the HTTPS origin.
 - Turning notifications on stores a subscription for that device, and turning them off removes it.
 - A new pending approval sends one push message per subscribed device, whose payload contains no command text or code.
 - A task reaching awaiting decision sends one push message per subscribed device, under the same payload limit.
