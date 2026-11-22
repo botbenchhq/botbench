@@ -222,7 +222,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               <section aria-labelledby="setup-heading" className="ds-stack ds-gap-sm">
                 <h2 id="setup-heading">Setup</h2>
                 <p>Botbench ran this repository's setup commands in the task's copy before Claude Code started, as your settings list them.</p>
-                <CommandRounds rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
+                <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
               </section>
             )}
 
@@ -253,7 +253,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <h2 id="checks-heading">Checks</h2>
                 {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
                 {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
-                <CommandRounds testId="checks" rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
             )}
 

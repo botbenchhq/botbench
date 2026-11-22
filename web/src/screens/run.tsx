@@ -359,6 +359,12 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                 <dt className="ds-key-value__label">Planning model</dt>
                 <dd data-testid="run-model" className="ds-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session, nameOf)}. You asked for: ${run.requestedModel === null ? "Claude Code's default" : nameOf(run.requestedModel)}.`}</dd>
               </div>
+              {run.buildModel !== undefined && (
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Build model</dt>
+                  <dd data-testid="run-build-model" className="ds-key-value__value">{`The tasks are built on what you asked for: ${run.buildModel === null ? "Claude Code's default" : nameOf(run.buildModel)}.`}</dd>
+                </div>
+              )}
             </dl>
 
             {gate && run.reason !== null && (
@@ -463,9 +469,9 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                           </span>
                         </a>
                         {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-ds-content="">{task.reason}</p>}
-                        <CommandRounds rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
+                        <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
                         {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
-                        <CommandRounds rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                        <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
                         {task.status === "interrupted" && task.resumeNote !== null && <ResumeControl taskId={task.id} note={task.resumeNote} name={`task ${task.id}`} primary={false} onResumed={load} onSignedOut={onSignedOut} />}
                         {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
                         {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} compact />}

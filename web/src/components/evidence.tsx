@@ -1,4 +1,5 @@
-import type { ChecksMark, Evidence, Review } from "../api/client.ts";
+import type { ChecksMark, CommandList, Evidence, Review } from "../api/client.ts";
+import { failureExtract } from "./failure-extract.ts";
 import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
 import { StatusBadge } from "./status.tsx";
@@ -33,15 +34,20 @@ function result(row: Evidence): { words: string; look: string } {
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
-/** The count a check list opens with: how many passed, then each other result by itself. */
-function summary(rows: readonly Evidence[], what: { one: string; many: string }): string {
+/**
+ * The count a check list opens with: how many passed out of the whole list, then each other result by itself. The
+ * whole list is `total`, recorded before its first command ran; a round from before that was recorded counts its rows.
+ */
+function summary(rows: readonly Evidence[], what: { one: string; many: string }, total = rows.length): string {
   const count = (outcome: Evidence["outcome"]): number => rows.filter((row) => row.outcome === outcome).length;
   const others = [
     count("failed") > 0 ? `${count("failed")} failed` : null,
     count("timed_out") > 0 ? `${count("timed_out")} timed out` : null,
     count("stopped") > 0 ? `${count("stopped")} stopped` : null,
   ].filter((part) => part !== null);
-  return `${count("passed")} of ${plural(rows.length, what.one, what.many)} passed.${others.length === 0 ? "" : ` ${others.join(", ")}.`}`;
+  const notRun = total - rows.length;
+  if (notRun > 0) others.push(`${notRun} not run`);
+  return `${count("passed")} of ${plural(total, what.one, what.many)} passed.${others.length === 0 ? "" : ` ${others.join(", ")}.`}`;
 }
 
 /**
@@ -49,14 +55,14 @@ function summary(rows: readonly Evidence[], what: { one: string; many: string })
  * result in words, how long it took, and its output behind a disclosure. The commands and their output are the
  * owner's and the program's text, marked as such.
  */
-export function CommandEvidence({ rows, what, failedFirst = false, testId }: { rows: readonly Evidence[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
+export function CommandEvidence({ rows, what, failedFirst = false, testId, total }: { rows: readonly Evidence[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string; total?: number }) {
   if (rows.length === 0) return null;
   // Checks are read by what needs the reader first; setup commands in the order they ran, which is why a later one never ran.
   const RANK: Record<Evidence["outcome"], number> = { failed: 0, timed_out: 1, stopped: 2, passed: 3 };
   const shownRows = failedFirst ? [...rows].sort((a, b) => RANK[a.outcome] - RANK[b.outcome] || a.position - b.position) : rows;
   return (
     <div data-testid={testId} className="ds-check-list">
-      <p className="ds-check-list__summary">{summary(rows, what)}</p>
+      <p className="ds-check-list__summary">{summary(rows, what, Math.max(total ?? rows.length, rows.length))}</p>
       <ul className="ds-check-list__items">
         {shownRows.map((row) => {
           const shown = result(row);
@@ -70,6 +76,7 @@ export function CommandEvidence({ rows, what, failedFirst = false, testId }: { r
               <span className="ds-check-list__duration">
                 <time dateTime={took.iso}>{took.words}</time>
               </span>
+              {row.kind === "check" && row.outcome === "failed" && <FailureExtract row={row} />}
               <details className="ds-check-list__output">
                 <summary className="ds-check-list__toggle">
                   Output
@@ -87,6 +94,30 @@ export function CommandEvidence({ rows, what, failedFirst = false, testId }: { r
   );
 }
 
+/**
+ * Above a failed check's output, which opens at its tail: the first lines that look like the failure, with their line
+ * numbers, labelled as an extract. The full output stays one tap away below it.
+ */
+function FailureExtract({ row }: { row: Evidence }) {
+  const lines = failureExtract(row.output);
+  if (lines.length === 0) return null;
+  return (
+    <figure data-testid="failure-extract" className="ds-code-block">
+      <figcaption className="ds-code-block__caption">{`Extract: lines of the output${row.truncated ? " shown" : ""} that look like the failure`}</figcaption>
+      <pre data-ds-content="" className="ds-code-block__body">
+        <code className="ds-code-block__lines">
+          {lines.map((line) => (
+            <span key={line.line} className="ds-code-block__line">
+              <span className="ds-code-block__number">{line.line}</span>
+              <span className="ds-code-block__text">{line.text}</span>
+            </span>
+          ))}
+        </code>
+      </pre>
+    </figure>
+  );
+}
+
 /** The rows of the newest time a list of commands was run on the task: what its result stands on. */
 export const latestRound = (rows: readonly Evidence[]): Evidence[] => {
   const newest = Math.max(0, ...rows.map((row) => row.round));
@@ -97,17 +128,19 @@ export const latestRound = (rows: readonly Evidence[]): Evidence[] => {
  * A list of commands as it was last run, and before it, folded away, each earlier time it was run: a list stopped by a
  * restart is run again from the start, and what the stopped one did stays on record.
  */
-export function CommandRounds({ rows, what, failedFirst = false, testId }: { rows: readonly Evidence[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
+export function CommandRounds({ rows, lists, what, failedFirst = false, testId }: { rows: readonly Evidence[]; lists: readonly CommandList[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
   const latest = latestRound(rows);
+  const kind = rows[0]?.kind;
+  const totalOf = (round: number | undefined): number | undefined => lists.find((list) => list.kind === kind && list.round === round)?.total;
   const earlier = [...new Set(rows.map((row) => row.round))].filter((round) => round !== latest[0]?.round).sort((a, b) => a - b);
   return (
     <>
-      <CommandEvidence rows={latest} what={what} failedFirst={failedFirst} {...(testId === undefined ? {} : { testId })} />
+      <CommandEvidence rows={latest} what={what} failedFirst={failedFirst} total={totalOf(latest[0]?.round)} {...(testId === undefined ? {} : { testId })} />
       {earlier.map((round) => (
         <details key={round} className="ds-disclosure">
           <summary className="ds-disclosure__summary">{`${what.many.charAt(0).toUpperCase()}${what.many.slice(1)} before Botbench restarted`}</summary>
           <div className="ds-disclosure__content">
-            <CommandEvidence rows={rows.filter((row) => row.round === round)} what={what} />
+            <CommandEvidence rows={rows.filter((row) => row.round === round)} what={what} total={totalOf(round)} />
           </div>
         </details>
       ))}

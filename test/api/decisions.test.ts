@@ -208,3 +208,34 @@ test("a run's screen lists each task's decision, and the run is done once the la
   assert.equal(run.status, "done");
   assert.deepEqual((run.tasks as Body[]).map((task) => [task.status, (task.decision as Body).branch]), [["accepted", "kept"], ["rejected", "deleted"]]);
 });
+
+test("Reject and Accept carry an optional short note: it is stored on the decision, shown with it and in Activity; a note that is not short plain text is refused and decides nothing", async (t) => {
+  const api = await start(t);
+  const one = createTask(api.server.db, { repo: api.repo, prompt: "one" });
+  const two = createTask(api.server.db, { repo: api.repo, prompt: "two" });
+  const three = createTask(api.server.db, { repo: api.repo, prompt: "three" });
+  await ready(api, one);
+  await ready(api, two);
+  await ready(api, three);
+
+  for (const note of [42, "x".repeat(501), "two\nlines"]) {
+    const res = await call(api, "POST", `/api/tasks/${one.id}/reject`, { branch: "keep", note });
+    assert.equal(res.status, 400, JSON.stringify(note));
+    assert.match(String(res.body.error), /note/i);
+    assert.equal((await call(api, "GET", `/api/tasks/${one.id}`)).body.status, "awaiting_decision", "a refused note decides nothing");
+  }
+
+  const rejected = await call(api, "POST", `/api/tasks/${one.id}/reject`, { branch: "keep", note: "  The tests it added never run.  " });
+  assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+  assert.equal((rejected.body.decision as Body).note, "The tests it added never run.");
+  const accepted = await call(api, "POST", `/api/tasks/${two.id}/accept`, { note: "Good enough for now" });
+  assert.equal((accepted.body.decision as Body).note, "Good enough for now");
+  const plain = await call(api, "POST", `/api/tasks/${three.id}/accept`, { note: "   " });
+  assert.equal((plain.body.decision as Body).note, null, "an empty note is no note");
+
+  const log = (await call(api, "GET", "/api/action-log")).body.entries as Body[];
+  const ofTask = (id: number) => log.find((e) => e.taskId === id && String(e.rule).startsWith("owner_"))!;
+  assert.match(String(ofTask(one.id).detail), /Your note: The tests it added never run\./);
+  assert.match(String(ofTask(two.id).detail), /Your note: Good enough for now/);
+  assert.doesNotMatch(String(ofTask(three.id).detail), /Your note/);
+});

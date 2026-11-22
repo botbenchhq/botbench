@@ -40,7 +40,23 @@ export interface TaskDecision {
   decidedBy: "owner" | "mode";
   /** Why the mode accepted, in words for the owner; null for the owner's own decision. */
   reasons: string | null;
+  /** The owner's own short note, given with the decision; null when none was, and always for the mode's accept. */
+  note: string | null;
   decidedAt: string;
+}
+
+/** The longest note a decision carries: a short reason, read beside the decision and in Activity. */
+export const MAX_DECISION_NOTE = 500;
+
+/** The note a request gives, trimmed, or null for none. Throws a TaskError for one that is not short plain text on one line. */
+export function decisionNote(given: unknown): string | null {
+  if (given === undefined || given === null) return null;
+  const rule = `A note is plain text on one line, at most ${MAX_DECISION_NOTE} characters.`;
+  if (typeof given !== "string") throw new TaskError(400, `The note was not sent as text. ${rule}`);
+  const note = given.trim();
+  // What a screen would fold or hide is refused here, so the note shown is the note given.
+  if (note.length > MAX_DECISION_NOTE || /[\0-\x1f\x7f\u2028\u2029]/.test(note)) throw new TaskError(400, `The note was not accepted. ${rule}`);
+  return note === "" ? null : note;
 }
 
 /** A decision refused because the checks left files in the task's copy that the owner has not agreed to remove. */
@@ -72,6 +88,7 @@ function toDecision(row: Record<string, unknown>): TaskDecision {
     leftovers: Array.isArray(leftovers) ? leftovers.filter((f): f is string => typeof f === "string") : [],
     decidedBy: row.decided_by === "mode" ? "mode" : "owner",
     reasons: typeof row.reasons === "string" ? row.reasons : null,
+    note: typeof row.note === "string" ? row.note : null,
     decidedAt: String(row.decided_at),
   };
 }
@@ -121,6 +138,8 @@ export interface DecideInput {
    * The decision is refused when the files in the copy are not exactly these.
    */
   removeLeftovers?: unknown;
+  /** The owner's optional short note on the decision. */
+  note?: unknown;
 }
 
 /**
@@ -131,6 +150,7 @@ export interface DecideInput {
  */
 export async function decideTask(db: DatabaseSync, input: DecideInput): Promise<{ task: Task; run: { id: number; status: string } | null }> {
   const { decision, branch, removeLeftovers } = input;
+  const note = decisionNote(input.note);
   if (decision !== "accept" && decision !== "reject") throw new TaskError(400, 'Say whether to accept or reject the task: "decision" is "accept" or "reject".');
   if (decision === "reject" && branch !== "keep" && branch !== "discard") throw new TaskError(400, 'Say whether to keep or discard the task\'s branch when rejecting it: "branch" is "keep" or "discard".');
   if (decision === "accept" && branch !== undefined && branch !== "keep") throw new TaskError(400, "An accepted task keeps its branch. To delete the branch, reject the task instead.");
@@ -141,7 +161,7 @@ export async function decideTask(db: DatabaseSync, input: DecideInput): Promise<
   if (deciding.has(task.id)) throw new TaskError(409, `A decision on task ${task.id} is being made already.`);
   deciding.add(task.id);
   try {
-    return await decide(db, task, decision, decision === "reject" && branch === "discard", (removeLeftovers as string[] | undefined) ?? []);
+    return await decide(db, task, decision, decision === "reject" && branch === "discard", (removeLeftovers as string[] | undefined) ?? [], note);
   } finally {
     deciding.delete(task.id);
   }
@@ -160,14 +180,14 @@ export async function acceptByMode(db: DatabaseSync, taskId: number, reasons: st
   if (deciding.has(task.id)) throw new TaskError(409, `A decision on task ${task.id} is being made already.`);
   deciding.add(task.id);
   try {
-    return await decide(db, task, "accept", false, [], reasons);
+    return await decide(db, task, "accept", false, [], null, reasons);
   } finally {
     deciding.delete(task.id);
   }
 }
 
-/** `reasons` is set for the mode's accept and left out for the owner's decision. */
-async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, discard: boolean, confirmed: readonly string[], reasons?: string): Promise<{ task: Task; run: { id: number; status: string } | null }> {
+/** `reasons` is set for the mode's accept and left out for the owner's decision; only the owner's carries a `note`. */
+async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, discard: boolean, confirmed: readonly string[], note: string | null, reasons?: string): Promise<{ task: Task; run: { id: number; status: string } | null }> {
   const dir = task.worktreePath!;
   const branch = task.branch!;
   // A copy that is already gone (removed by hand, or by a decision that failed after removing it) holds nothing to keep.
@@ -222,13 +242,13 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
   const kept = discard ? "deleted" : "kept";
   const copy = present ? "removed the task's copy" : "found the task's copy already gone";
   const files = leftovers.length === 0 ? "" : ` The copy held ${leftovers.length === 1 ? "1 file" : `${leftovers.length} files`} the checks left, removed with it as you confirmed: ${listed(leftovers)}.`;
-  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. Nothing was merged or pushed.${files}`;
+  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. Nothing was merged or pushed.${files}${note === null ? "" : ` Your note: ${note}`}`;
   return transaction(db, () => {
     const now_ = getTask(db, task.id)!;
     ready(now_);
     // The commit the kept branch holds now: Botbench's, or one the owner added on top of it.
     const by = reasons === undefined ? "owner" : "mode";
-    db.prepare("INSERT INTO decisions (task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at, reasons) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id, by, decision, kept, branch, discard ? task.headCommit : at, JSON.stringify(leftovers), now(), reasons ?? null);
+    db.prepare("INSERT INTO decisions (task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at, reasons, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id, by, decision, kept, branch, discard ? task.headCommit : at, JSON.stringify(leftovers), now(), reasons ?? null, by === "owner" ? note : null);
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     const decided = moveTaskIn(db, task.id, decision === "accept" ? "accepted" : "rejected", { note: `${decision === "accept" ? "accepted" : "rejected"} by ${by === "owner" ? "the owner" : "the run's mode, fully autonomous"}; branch ${kept}${leftovers.length > 0 ? `; ${leftovers.length} leftover files removed with the worktree` : ""}` });
     const rule = by === "mode" ? "mode_accepted" : decision === "accept" ? "owner_accepted" : "owner_rejected";

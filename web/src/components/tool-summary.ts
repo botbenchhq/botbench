@@ -135,6 +135,18 @@ export function writtenText(name: string, input: unknown): { text: string; lines
   return { text: content, lines: content === "" ? 0 : content.replace(/\n$/, "").split("\n").length };
 }
 
+/**
+ * How long a call ran, in milliseconds, from stored times: from when it was allowed when the owner was asked (the wait
+ * for the answer is not running), else from the call, to its result. Null when a time is missing or out of order: a
+ * call that was asked about with no stored answer shows no time rather than one that holds the wait.
+ */
+export function ranFor(t: { calledAt?: string | undefined; asked: boolean; allowedAt?: string | undefined; returnedAt?: string | undefined }): number | null {
+  const from = t.asked ? t.allowedAt : t.calledAt;
+  if (from === undefined || t.returnedAt === undefined) return null;
+  const ms = Date.parse(t.returnedAt) - Date.parse(from);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
 /** How long something took, from two stored times: "42s", "2m 14s", "1h 3m". Null when either is not a time or they are out of order. */
 export function duration(from: string, to: string): string | null {
   const ms = Date.parse(to) - Date.parse(from);

@@ -257,7 +257,7 @@ test("declines, requests that ended unanswered and pre-approved runs do not adva
   assert.equal((await decide(r, a, "npm test", "toolu_8"))?.approvals, 3);
 
   // The count is read from the approvals and the log, and nothing else holds it.
-  assert.deepEqual(r.db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name), ["action_log", "approvals", "attempts", "command_processes", "decisions", "events", "evidence", "grant_revocations", "grants", "owner_settings", "plan_tasks", "push_subscriptions", "reviews", "run_events", "runs", "schema_version", "task_events", "tasks"]);
+  assert.deepEqual(r.db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name), ["action_log", "approvals", "attempts", "command_lists", "command_processes", "decisions", "events", "evidence", "grant_revocations", "grants", "owner_settings", "plan_tasks", "push_subscriptions", "reviews", "run_events", "runs", "schema_version", "task_events", "tasks"]);
   // An approval marked allowed with no decision of the owner's in the log is not counted.
   assert.equal(approvalCount(r.db, { ...key, words: ["npm", "run", "lint"] }), 0);
   const { answer } = await a.ask("npm run lint", "toolu_9");

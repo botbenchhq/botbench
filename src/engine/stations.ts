@@ -27,8 +27,10 @@ import { now, transaction } from "../store/db.ts";
  * - it cannot start an app through LaunchServices or send Apple Events, which would run a program outside the sandbox;
  * - it can write the worktree and a temporary folder of its own, made for it and removed after it, which TMPDIR names,
  *   and nothing else, so a tool that keeps a cache in the home folder has to be pointed at TMPDIR;
- * - it reaches no network, unless the repository allows hosts: it may then reach Botbench's proxy, which opens a
- *   tunnel to an allowed host name and to nothing else, and is pointed at it with the usual proxy variables;
+ * - it reaches no address that is not this Mac's own, unless the repository allows hosts: it is then pointed at
+ *   Botbench's proxy with the usual proxy variables, which opens a tunnel to an allowed host name and to nothing else;
+ *   it may listen and connect on this Mac's own addresses, and use Unix sockets in the worktree and its temporary
+ *   folder, so a project's tests can start servers;
  * - it gets the environment a CLI gets (src/drivers/launch.ts): the allowlisted variables, no provider key, and no
  *   GIT_* variable, so nothing inherited points git at another repository.
  * Where it cannot be confined it is not run, and has failed.
@@ -134,7 +136,7 @@ async function runUntracked(o: { command: string; cwd: string; limitMs: number; 
   onTmp(tmp);
   try {
     if (o.confinement.allowedHosts.length > 0) proxy = await startHostProxy(o.confinement.allowedHosts);
-    profile = seatbeltProfile({ worktree: fs.realpathSync(o.cwd), unreadable: unreadablePaths({ dataDir: o.confinement.dataDir }), writable: [tmp], proxyPort: proxy?.port ?? null });
+    profile = seatbeltProfile({ worktree: fs.realpathSync(o.cwd), unreadable: unreadablePaths({ dataDir: o.confinement.dataDir }), writable: [tmp] });
   } catch (err) {
     await proxy?.close();
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -257,8 +259,25 @@ export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceK
 
 /** The round the next run of a task's list of `kind` commands is: one after the last that was begun, or 1. */
 export function nextRound(db: DatabaseSync, taskId: number, kind: EvidenceKind): number {
-  const row = db.prepare("SELECT max(round) AS n FROM (SELECT round FROM evidence WHERE task_id = ? AND kind = ? UNION ALL SELECT round FROM command_processes WHERE task_id = ? AND kind = ?)").get(taskId, kind, taskId, kind);
+  const row = db.prepare("SELECT max(round) AS n FROM (SELECT round FROM evidence WHERE task_id = ? AND kind = ? UNION ALL SELECT round FROM command_processes WHERE task_id = ? AND kind = ? UNION ALL SELECT round FROM command_lists WHERE task_id = ? AND kind = ?)").get(taskId, kind, taskId, kind, taskId, kind);
   return (typeof row?.n === "number" ? row.n : 0) + 1;
+}
+
+/** One time a list of commands was run on a task, and how many commands the list held when it started. */
+export interface CommandList {
+  kind: EvidenceKind;
+  round: number;
+  total: number;
+}
+
+/** Record, before its first command starts, that a round of a list begins and how many commands it holds. */
+export function startCommandList(db: DatabaseSync, taskId: number, kind: EvidenceKind, round: number, total: number): void {
+  db.prepare("INSERT INTO command_lists (task_id, kind, round, total, started_at) VALUES (?, ?, ?, ?, ?)").run(taskId, kind, round, total, now());
+}
+
+/** Each round of each list run on a task, in order, with its size. A round run before sizes were recorded is not here. */
+export function commandLists(db: DatabaseSync, taskId: number): CommandList[] {
+  return db.prepare("SELECT kind, round, total FROM command_lists WHERE task_id = ? ORDER BY kind, round").all(taskId).map((row) => ({ kind: String(row.kind) as EvidenceKind, round: Number(row.round), total: Number(row.total) }));
 }
 
 const seconds = (ms: number): string => {

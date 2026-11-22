@@ -19,9 +19,9 @@ interface Choice {
   other: boolean;
 }
 
-function loadChoice(): Choice | null {
+function loadChoice(key: string): Choice | null {
   try {
-    const parsed: unknown = JSON.parse((window.localStorage.getItem(MODEL_KEY) ?? window.localStorage.getItem(OLD_MODEL_KEY)) ?? "null");
+    const parsed: unknown = JSON.parse((window.localStorage.getItem(key) ?? (key === MODEL_KEY ? window.localStorage.getItem(OLD_MODEL_KEY) : null)) ?? "null");
     if (typeof parsed !== "object" || parsed === null) return null;
     const { model, other } = parsed as Record<string, unknown>;
     return (model === null || typeof model === "string") && typeof other === "boolean" ? { model, other } : null;
@@ -30,9 +30,9 @@ function loadChoice(): Choice | null {
   }
 }
 
-function saveChoice(choice: Choice): void {
+function saveChoice(key: string, choice: Choice): void {
   try {
-    window.localStorage.setItem(MODEL_KEY, JSON.stringify(choice));
+    window.localStorage.setItem(key, JSON.stringify(choice));
   } catch {
     // Private browsing may refuse storage; the choice then lasts until a reload.
   }
@@ -50,11 +50,11 @@ export interface ModelChoiceState {
   request(): ModelRequest;
 }
 
-/** Read the driver's model list once, and hold the owner's choice. */
-export function useModelChoice(onSignedOut: () => void): ModelChoiceState {
+/** Read the driver's model list once, and hold the owner's choice, kept under `key` (another key for another choice, such as a run's build model). */
+export function useModelChoice(onSignedOut: () => void, key: string = MODEL_KEY): ModelChoiceState {
   const [list, setList] = useState<ModelList | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [stored, setStored] = useState<Choice | null>(loadChoice);
+  const [stored, setStored] = useState<Choice | null>(() => loadChoice(key));
 
   useEffect(() => {
     let stale = false;
@@ -78,10 +78,13 @@ export function useModelChoice(onSignedOut: () => void): ModelChoiceState {
   const base: Choice | null = stored ?? (list === null ? null : { model: list.default, other: false });
   const choice: Choice | null = base !== null && base.model !== null && !base.other && settled && !listed(base.model) ? { model: base.model, other: true } : base;
 
-  const choose = useCallback((next: Choice): void => {
-    setStored(next);
-    saveChoice(next);
-  }, []);
+  const choose = useCallback(
+    (next: Choice): void => {
+      setStored(next);
+      saveChoice(key, next);
+    },
+    [key],
+  );
 
   const request = (): ModelRequest => {
     // Nothing chosen and the list not read yet: the server's configured model applies, which is what would be preselected.
@@ -114,7 +117,7 @@ export function choiceName(state: ModelChoiceState): string {
 }
 
 /** A labelled select of the driver's models, the CLI's own default, and "Other…" with a field for any other name. */
-export function ModelPicker({ state }: { state: ModelChoiceState }) {
+export function ModelPicker({ state, id = "model", label = "Model" }: { state: ModelChoiceState; id?: string; label?: string }) {
   const { list, problem, choice } = state;
   const ready = list !== null || problem !== null;
   const value = choice === null ? CONFIGURED : choice.other ? OTHER : (choice.model ?? "");
@@ -122,20 +125,20 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
   return (
     <div className="ds-stack ds-gap-sm">
       <div className="ds-field">
-        <label htmlFor="model" className="ds-field__label">
-          Model
+        <label htmlFor={id} className="ds-field__label">
+          {label}
         </label>
         <div className="ds-select">
           <select
-            id="model"
-            name="model"
+            id={id}
+            name={id}
             value={ready ? value : ""}
             disabled={!ready}
             onChange={(e) => {
               if (e.target.value === CONFIGURED) return;
               state.choose(e.target.value === OTHER ? { model: "", other: true } : { model: e.target.value === "" ? null : e.target.value, other: false });
             }}
-            aria-describedby="model-source"
+            aria-describedby={`${id}-source`}
             className="ds-field__control ds-select__control"
           >
             {ready ? (
@@ -154,25 +157,25 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
             )}
           </select>
         </div>
-        <p id="model-source" data-testid="model-source" role="status" className="ds-field__description">
+        <p id={`${id}-source`} data-testid={`${id}-source`} role="status" className="ds-field__description">
           {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
         </p>
       </div>
       {ready && choice?.other === true && (
         <div className="ds-field">
-          <label htmlFor="model-other" className="ds-field__label">
-            Model name
+          <label htmlFor={`${id}-other`} className="ds-field__label">
+            {id === "model" ? "Model name" : `${label} name`}
           </label>
           <input
-            id="model-other"
-            name="model-other"
+            id={`${id}-other`}
+            name={`${id}-other`}
             type="text"
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
             value={choice.model ?? ""}
             onChange={(e) => state.choose({ model: e.target.value, other: true })}
-            aria-describedby="model-source"
+            aria-describedby={`${id}-source`}
             className="ds-field__control"
           />
         </div>

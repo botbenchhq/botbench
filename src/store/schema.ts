@@ -851,4 +851,35 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // Three findings from building Botbench with itself. Decisions gain the owner's optional short note, written with
+    // the decision and, as the decision is append-only, never changed; a decision the mode made has none. A run gains the model its tasks are built on,
+    // chosen when it starts and never changed after; `build_model_set` tells a run that recorded one (null then means
+    // the agent's own default) from a run made before this, which did not. And each time a list of setup or check
+    // commands is run on a task, how many commands that list holds is recorded as it starts, so a count shown while it
+    // runs is out of the whole list. Rows are only ever added.
+    name: "decision notes, build model and list sizes",
+    sql: `
+ALTER TABLE decisions ADD COLUMN note TEXT;
+CREATE TRIGGER decisions_note_owner_only BEFORE INSERT ON decisions
+WHEN NEW.note IS NOT NULL AND NEW.decided_by <> 'owner'
+BEGIN SELECT RAISE(ABORT, 'only the owner''s decision carries a note'); END;
+ALTER TABLE runs ADD COLUMN build_model TEXT;
+ALTER TABLE runs ADD COLUMN build_model_set INTEGER NOT NULL DEFAULT 0 CHECK (build_model_set IN (0, 1));
+CREATE TRIGGER runs_build_model_fixed BEFORE UPDATE OF build_model, build_model_set ON runs
+BEGIN SELECT RAISE(ABORT, 'a run''s build model is chosen when it starts and never changed'); END;
+CREATE TABLE command_lists (
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  round INTEGER NOT NULL CHECK (round >= 1),
+  total INTEGER NOT NULL CHECK (total >= 0),
+  started_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, kind, round)
+);
+CREATE TRIGGER command_lists_no_update BEFORE UPDATE ON command_lists
+BEGIN SELECT RAISE(ABORT, 'command lists are append-only'); END;
+CREATE TRIGGER command_lists_no_delete BEFORE DELETE ON command_lists
+BEGIN SELECT RAISE(ABORT, 'command lists are append-only'); END;
+`,
+  },
 ];

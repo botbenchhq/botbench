@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { taskPrompt, type PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, createRun, createRuns, editPlan, getRun, RunError, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
-import { DEFAULT_LIMIT_MS, runCommand, taskEvidence, type StationCommand } from "../../src/engine/stations.ts";
+import { commandLists, DEFAULT_LIMIT_MS, runCommand, taskEvidence, type StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, moveTask, type Tasks } from "../../src/engine/task.ts";
 import { MIGRATIONS } from "../../src/store/schema.ts";
 import { migrate, openStore, schemaVersion } from "../../src/store/db.ts";
@@ -152,6 +152,15 @@ test("tasks build strictly one after another: the second task's worktree does no
   assert.equal(getRun(e.db, run.id)!.status, "awaiting_decision");
 });
 
+test("the tasks of a run are built on the run's build model, not on the configured one: the builder's attempt is started with it", async (t) => {
+  const e = await line(t, ["done"]);
+  const run = storePlan(e.db, createRun(e.db, { repo: e.repo, prompt: "Add a file", baseCommit: e.base, requestedModel: "opus", buildModel: "sonnet" }).id, THREE.slice(0, 1));
+  const { tasks } = e.runs.approve(run.id, run.planVersion);
+  await e.tasks.idle();
+  assert.equal(getTask(e.db, tasks[0]!.id)!.status, "awaiting_decision", getTask(e.db, tasks[0]!.id)!.reason ?? "");
+  assert.deepEqual(e.driver.started.map((started) => started.model), ["sonnet"], "the line's configured model is haiku; the run asked for sonnet");
+});
+
 test("a failing setup command fails its task with the reason and its output before any agent turn starts, the commands after it do not run, and the run goes on with the next task", async (t) => {
   const failing = "echo preparing the copy; echo it broke >&2; exit 3";
   const e = await line(t, ["done", "done"], { setup: [{ command: "echo first step", limitMs: 10_000 }, { command: failing, limitMs: 10_000 }, { command: "echo never runs > never.txt", limitMs: 10_000 }] });
@@ -180,6 +189,20 @@ test("a failing setup command fails its task with the reason and its output befo
   // for review. With every task failed there is nothing to decide, so the run went on past the failed task and ended.
   assert.equal(getRun(e.db, run.id)!.status, "done", "the run went on past the failed task and reached its end: done, with nothing to review");
   assert.deepEqual(e.runChanges.at(-1), `${run.id}:done`);
+});
+
+test("how many setup commands a round holds is recorded before the first runs, so a count shown while the third waits is out of three", { timeout: 30_000 }, async (t) => {
+  const waits = "while [ ! -f go ]; do sleep 0.05; done; echo third";
+  const e = await line(t, ["done"], { setup: [{ command: "echo first", limitMs: 10_000 }, { command: waits, limitMs: 20_000 }, { command: "echo third", limitMs: 10_000 }] });
+  const run = planned(e, THREE.slice(0, 1));
+  const { tasks } = e.runs.approve(run.id, run.planVersion);
+  const id = tasks[0]!.id;
+  await until("the second setup command is running", () => taskEvidence(e.db, id).length === 1 && getTask(e.db, id)!.worktreePath !== null);
+  assert.deepEqual(commandLists(e.db, id), [{ kind: "setup", round: 1, total: 3 }], "the whole list is known while its second command runs");
+  fs.writeFileSync(path.join(getTask(e.db, id)!.worktreePath!, "go"), "");
+  await e.tasks.idle();
+  assert.equal(taskEvidence(e.db, id).filter((row) => row.kind === "setup").length, 3);
+  assert.deepEqual(commandLists(e.db, id), [{ kind: "setup", round: 1, total: 3 }]);
 });
 
 test("a setup command that passes its time limit is killed with its child processes and recorded as timed out; a stand-alone task runs setup commands too", { timeout: 30_000 }, async (t) => {

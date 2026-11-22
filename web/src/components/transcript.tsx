@@ -3,7 +3,7 @@ import type { DriverEvent, StoredEvent } from "../api/client.ts";
 import { DiffLine } from "./diff.tsx";
 import { duration as took } from "./evidence.tsx";
 import { Icon, type IconName } from "./icon.tsx";
-import { callLine, callReason, callTarget, confinedWords, duration, editChange, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, duration, editChange, ranFor, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
 export function mergeEvents(have: StoredEvent[], more: StoredEvent[]): StoredEvent[] {
@@ -27,6 +27,8 @@ interface Story {
   /** When each call and each result was stored, by the call's id: the only times a call's duration is taken from. */
   calledAt: Map<string, string>;
   returnedAt: Map<string, string>;
+  /** When the owner's answer let a call run, by the call's id. */
+  allowedAt: Map<string, string>;
   /** The calls a request to the owner was made for. */
   asked: Set<string>;
   /** How each request ended, by its call. */
@@ -44,7 +46,7 @@ interface Story {
 const exchangeOf = (event: StoredEvent): string => `${event.attemptId}:${event.turn}`;
 
 function readStory(events: readonly StoredEvent[], live: boolean): Story {
-  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), exchanges: new Map() };
+  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), allowedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), exchanges: new Map() };
   for (const event of events) {
     const e = event.payload;
     const key = exchangeOf(event);
@@ -52,7 +54,10 @@ function readStory(events: readonly StoredEvent[], live: boolean): Story {
     if (e.type === "tool_call") (story.calls.set(e.id, e), story.calledAt.set(e.id, event.ts));
     else if (e.type === "tool_result") (story.results.set(e.id, e), story.returnedAt.set(e.id, event.ts));
     else if (e.type === "permission_request") story.asked.add(e.toolCallId);
-    else if (e.type === "permission_resolved") story.answers.set(e.toolCallId, e.decision);
+    else if (e.type === "permission_resolved") {
+      story.answers.set(e.toolCallId, e.decision);
+      if (e.decision === "allowed" || e.decision === "preapproved" || e.decision === "standing") story.allowedAt.set(e.toolCallId, event.ts);
+    }
     else if (e.type === "permission_denied") {
       story.refused.add(e.id);
       if (e.code === "outside_reads_blocked") story.outside.add(e.id);
@@ -232,7 +237,7 @@ function Returned({ text, label }: { text: string; label: string }) {
 /**
  * One action of the agent, as the design system's tool call in a transcript row: its state in words (and the icon and
  * tone the stylesheet draws from it), then one plain line, a plain verb and the real object, and how long it took,
- * from the stored times of the call and its result. Behind the line, one tap away: the whole command or path, the
+ * from the stored times of the call (or of the owner's allow) and its result. Behind the line, one tap away: the whole command or path, the
  * agent's own reason, the change or the text written, and the output. One level deeper: the tool's own name and its
  * raw arguments. A call that failed or that waits for an answer is open without a tap. `folded` is for a call whose row
  * already sits one level down (in a step group, or in a transcript behind a disclosure of its own): its raw arguments
@@ -258,11 +263,10 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
   const reason = callReason(call.input);
   const change = editChange(call.name, call.input);
   const written = writtenText(call.name, call.input);
-  const calledAt = story.calledAt.get(call.id);
-  const returnedAt = story.returnedAt.get(call.id);
-  const ms = calledAt === undefined || returnedAt === undefined ? NaN : Date.parse(returnedAt) - Date.parse(calledAt);
+  // How long it ran, not how long it waited for the owner's answer.
+  const ms = ranFor({ calledAt: story.calledAt.get(call.id), asked: story.asked.has(call.id), allowedAt: story.allowedAt.get(call.id), returnedAt: story.returnedAt.get(call.id) });
   // Under a second in milliseconds, as the design system writes it ("38 ms"), so a quick call does not read "0 s".
-  const time = !Number.isFinite(ms) || ms < 0 ? null : ms < 1000 ? { words: `${ms} ms`, iso: `PT${ms / 1000}S` } : took(ms);
+  const time = ms === null ? null : ms < 1000 ? { words: `${ms} ms`, iso: `PT${ms / 1000}S` } : took(ms);
   const { opened, set } = useContext(Opened);
   // Open without a tap: a call that failed, one that ended without a result, and one that waits for an answer.
   const open = opened.get(call.id) ?? (state === "failed" || state === "unfinished" || state === "waiting" || kept !== null);

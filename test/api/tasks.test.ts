@@ -185,6 +185,7 @@ test("a committed task is described with its changed files, and each file's diff
     filesProblem: null,
     checks: null,
     evidence: [],
+    commandLists: [],
     reviewer: null,
     review: null,
     decision: null,
