@@ -20,7 +20,9 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.keyboard.type(botbench.token);
   await page.keyboard.press("Enter");
 
-  await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code \d+\.\d+\.\d+ · signed in · subscription$/);
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
+  // When all is well the header says nothing about the agent.
+  await expect(page.getByTestId("driver-state")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add context" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Model: / })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
@@ -44,12 +46,9 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await expect(page.locator('[data-event="usage"]')).toBeHidden();
   await page.locator('[data-event="turn_ended"] summary').click();
   await expect(page.locator('[data-event="usage"]')).toHaveText(/^Tokens: \d+ in, \d+ out$/);
-  // The model is named as Claude Code itself names it, with the exact id one tap away.
-  await expect(page.getByTestId("turn-model")).toHaveText(/^Model: Haiku [\d.]+$/);
-  const session = page.locator('[data-event="session_started"]');
-  await expect(session.locator("summary")).toHaveText(/^ModelHaiku [\d.]+$/);
-  await session.locator("summary").click();
-  await expect(session).toContainText(/Model id: claude-haiku-/);
+  // The model is named once, in the chip: the model that answered is the one asked for, so the transcript has no row for it.
+  await expect(page.getByTestId("turn-model")).toHaveCount(0);
+  await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByLabel("Message Claude Code")).toHaveValue("");
@@ -63,7 +62,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   // New chat begins again: the transcript is put away on this device, also after a reload, and the next prompt starts afresh.
   await page.getByRole("button", { name: "New chat" }).click();
   await expect(page.locator("[data-event]")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "No messages yet" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ask Claude Code anything" })).toBeVisible();
   await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
   await checkDesign(page, "chat, after New chat");
   await page.reload();
@@ -218,7 +217,8 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
 test("the chat box names the agent in its placeholder and for assistive technology, with no label drawn; the model is one chip that opens Add context; nothing idle shows in the header", async ({ page, botbench }) => {
   // The real Claude Code is asked whether it is signed in and which models it offers; no prompt is sent.
   await signIn(page, botbench);
-  await expect(page.getByTestId("driver-state")).toHaveText(/ · signed in · /);
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
+  await expect(page.getByTestId("driver-state")).toHaveCount(0);
   const box = page.getByRole("textbox", { name: "Message Claude Code" });
   await expect(box).toHaveAttribute("placeholder", "Message Claude Code");
   await expect(page.locator("form.ds-composer label")).toHaveCount(0);
@@ -291,7 +291,7 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, botbenc
   // The right token still works afterwards.
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByTestId("driver-state")).toContainText("Claude Code");
+  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
@@ -305,7 +305,7 @@ test("when Botbench restarts, the stream banner shows and goes once it is back, 
     second = await startBotbench({ home: first.home, port: first.port });
     await expect(page.getByTestId("stream-banner")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
-    await expect(page.getByTestId("driver-state")).toContainText("signed in");
+    await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   } finally {
     await second?.stop();
     fs.rmSync(path.dirname(first.home), { recursive: true, force: true });

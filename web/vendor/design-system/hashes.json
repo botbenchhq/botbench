@@ -2,7 +2,7 @@
   "files": {
     "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "NOTICE": "276cf2ebf3b6221086f2801c19b16ff808830b8a5394a1f25acee9311cc4d833",
-    "VERSION": "aaf6721dc37c40b4233accfc081f25776ff3bd1d2a4b9d5cea760d1c2cf86665",
+    "VERSION": "ceb9b2c03afb769df3b1e518520c4e1798e9a3313a1c5ffffcb054fef5d6d6fb",
     "behaviors/combobox.js": "ba504c769f14d9c4206e86f9236c7cc7b026bc177442679fb5e48319048493b8",
     "behaviors/command-palette.js": "35a0cb2181012e416be76ea66422ed2723309549fd215867d9cbb7f06c86af6b",
     "behaviors/elapsed.js": "0e37d3cd8306485c8f096f3a9a1dfe1fcf9725978e5929b32828865569dbe167",
@@ -34,7 +34,7 @@
     "checker/waivers.mjs": "666d612a82ee6449b7ec8cf05e1b8fbf1e2dd8d023d0080f84379034a8ed1603",
     "components-index.json": "0901e48cd5ff381c882fb4b8ae8f4ce713e968d4665a3a6c2b5c91961d33db15",
     "components.json": "90f1b4142a6597df9d473631d6ffeff42574171e82ad3800f3e6c42241381fdb",
-    "design-system.css": "c70cfe509331122e60db911b0b2dd16434075bda0fe1d7d540efc237a480c660",
+    "design-system.css": "743bdbd4541cc6014be5e2f85f8eee038066801a12354c0405d7aeabd2551ce0",
     "design-tokens.md": "b476dc739712d2314ca129e4cbad48d3f0c7a3996416822fdb5718cc519ede4e",
     "fonts/OFL-IBM-Plex-Mono.txt": "23b0a9d0c6d3f140a0b77e483c5cfa6bba574325ef5cb189ed9f2fec4884533f",
     "fonts/OFL-IBM-Plex-Sans.txt": "d0283623ef57e722fd0eb688a8041589670c608ab780cd3612d06ba6f153d3fd",

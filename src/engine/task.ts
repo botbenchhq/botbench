@@ -15,6 +15,7 @@ import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
+import { firstLine } from "../shorten.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
@@ -323,10 +324,6 @@ export async function checkRepository(input: unknown): Promise<string> {
 
 /** An error as the sentence it carries. */
 export const words = (err: unknown): string => (err instanceof Error ? err.message : String(err));
-const firstLine = (s: string, max = 60): string => {
-  const line = s.trim().split("\n")[0]!.trim();
-  return line.length > max ? `${line.slice(0, max)}…` : line;
-};
 
 export interface Tasks {
   /**

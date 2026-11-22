@@ -9,6 +9,7 @@ import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
 import { fullAutonomyRefusal, gate, READ_ONLY_TOOLS, real, summarize, type FloorSettings } from "./gate.ts";
+import { firstLine } from "../shorten.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
 
@@ -277,10 +278,6 @@ const text = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const int = (v: unknown): number | null => (typeof v === "number" ? v : null);
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const words = (err: unknown): string => (err instanceof Error ? err.message : String(err));
-const firstLine = (s: string, max = 60): string => {
-  const line = s.trim().split("\n")[0]!.trim();
-  return line.length > max ? `${line.slice(0, max)}…` : line;
-};
 
 function toApproval(row: Record<string, unknown>): Approval {
   return {

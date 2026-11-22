@@ -412,6 +412,8 @@ export const timedOut = (err: unknown): boolean => err instanceof DOMException &
 export interface RepoSettings {
   path: string;
   preapproved: string[];
+  /** Whether at least one check command is configured: a fully autonomous run needs one. */
+  hasChecks: boolean;
 }
 export const getRepoSettings = (path: string, giveUp: AbortSignal): Promise<RepoSettings> =>
   request("GET", `/api/repos/settings?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);

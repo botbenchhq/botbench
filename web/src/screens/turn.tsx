@@ -7,7 +7,7 @@ import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
 import { jumpCount } from "../components/follow.ts";
 import { Icon, SPRITE } from "../components/icon.tsx";
 import { MODES } from "../components/mode-choice.tsx";
-import { choiceName, modelWords, modelName, sessionModel, useModelChoice } from "../components/model-picker.tsx";
+import { choiceName, modelName, useModelChoice } from "../components/model-picker.tsx";
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -36,12 +36,11 @@ function saveConversation(ids: number[]): void {
   }
 }
 
-function driverWords(driver: DriverState | null, failed: boolean): string {
+/** What is wrong with the agent, or null: while it is being checked and when all is well, the header says nothing. */
+function driverProblem(driver: DriverState | null, failed: boolean): string | null {
   if (failed) return "Claude Code: could not be checked";
-  if (driver === null) return "Checking Claude Code";
-  if (driver.problem !== null) return !driver.installed ? "Claude Code: not installed" : !driver.supported ? "Claude Code: unsupported version" : !driver.signedIn ? "Claude Code: signed out" : "Claude Code: unavailable";
-  const billing = driver.billing === "subscription" ? "subscription" : driver.billing === "metered" ? "metered billing" : "billing unknown";
-  return `Claude Code ${driver.version ?? ""} · signed in · ${billing}`;
+  if (driver === null || driver.problem === null) return null;
+  return !driver.installed ? "Claude Code: not installed" : !driver.supported ? "Claude Code: unsupported version" : !driver.signedIn ? "Claude Code: signed out" : "Claude Code: unavailable";
 }
 
 /** What the composer remembers on this device: the repository, what to do, mode, review and delivery. */
@@ -283,6 +282,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     model: models.request(),
     buildModel: sameBuild ? null : buildModels.request(),
     commandTyped: repository.listed !== null && repository.adding.trim() !== "",
+    hasChecks: repository.listed?.hasChecks ?? null,
   };
   const stopReason = blockedBy(facts);
   const chatting = !inRepository(repo);
@@ -302,6 +302,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
         const next = conversationRef.current.includes(attemptId) ? conversationRef.current : [...conversationRef.current, attemptId];
         setConversation(next);
         saveConversation(next);
+        setAsked((have) => ({ ...have, [attemptId]: model }));
         setActive({ attemptId, turn });
         setStarting(false);
         setPrompt("");
@@ -389,7 +390,19 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   };
 
   const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
-  const session = useMemo(() => sessionModel(shown), [shown]);
+  const problem = driverProblem(driver, driverFailed);
+  /** The model each chat attempt was asked for, as this screen sent it; an attempt from before a reload has none recorded. */
+  const [asked, setAsked] = useState<Record<number, string | null | undefined>>({});
+  /** The name of the model asked for when the one that answered is a different one; null when it is the same or the ask is not known. */
+  const differs = useCallback(
+    (attemptId: number, answered: string): string | null => {
+      const wanted = asked[attemptId];
+      if (typeof wanted !== "string") return null;
+      const entry = models.list?.models.find((m) => m.id === wanted || m.resolved === wanted);
+      return answered === wanted || (entry !== undefined && (answered === entry.id || answered === entry.resolved)) ? null : nameOf(wanted);
+    },
+    [asked, models.list, nameOf],
+  );
 
   const run = inRepository(repo) && kind === "run";
   useEffect(() => {
@@ -426,12 +439,9 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
               ) : undefined
             }
           >
-            <p data-testid="driver-state" className="ds-page-header__description">
-              {driverWords(driver, driverFailed)}
-            </p>
-            {session !== null && (
-              <p data-testid="turn-model" className="ds-page-header__description">
-                {modelWords(session, nameOf)}
+            {problem !== null && (
+              <p data-testid="driver-state" className="ds-page-header__description">
+                {problem}
               </p>
             )}
           </PageHeader>
@@ -440,11 +450,10 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
         <div ref={scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
           <div ref={setLog} className="ds-container pb-lg">
             {shown.length > 0 ? (
-              <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} />
+              <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} modelDiffers={differs} />
             ) : chatting ? (
               <div className="ds-empty-state ds-empty-state--compact">
-                <h2 className="ds-empty-state__title">No messages yet</h2>
-                <p className="ds-empty-state__body">Claude Code answers here, in a folder of its own, outside your projects.</p>
+                <h2 className="ds-empty-state__title">Ask Claude Code anything</h2>
               </div>
             ) : (
               <div className="ds-empty-state ds-empty-state--compact" data-testid="composer-about">
@@ -483,8 +492,10 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   <BusyButton variant="quiet" size="small" className="ds-composer__chip" aria-haspopup="dialog" onClick={() => openSheet("models")}>
                     <span className="ds-composer__value">
                       <span className="ds-visually-hidden">Model: </span>
-                      {/* No hidden comma after the value: an absolutely placed span after a long value is not clipped by it and widens the page. */}
-                      {choiceName(builds)} <span className="ds-composer__qualifier">Claude Code</span>
+                      {choiceName(builds)}
+                      <span className="ds-visually-hidden">, </span>
+                      {" "}
+                      <span className="ds-composer__qualifier">Claude Code</span>
                     </span>
                   </BusyButton>
                 )}

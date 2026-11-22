@@ -17,9 +17,19 @@ const ready: Facts = {
   model: { ok: true, model: "haiku" },
   buildModel: null,
   commandTyped: false,
+  hasChecks: null,
 };
 const inRepo = (over: Partial<Facts> = {}): Facts => ({ ...ready, repo: { kind: "known", path: REPO }, repoStatus: { state: "usable" }, ...over });
 const extras = { preapproved: ["npm test"], reviewer: null, delivery: "branch" as const };
+
+test("Send is disabled for a fully autonomous run on a repository with no check commands, and only then", () => {
+  const why = /^Fully autonomous needs a check command for this repository\./;
+  assert.match(blocked(inRepo({ kind: "run", mode: "full", hasChecks: false }))!.reason, why);
+  assert.equal(sendFor(inRepo({ kind: "run", mode: "full", hasChecks: false }), extras).do, "blocked");
+  // With a check, other modes, a task, or checks not known yet, nothing is said that the server has not said.
+  for (const over of [{ hasChecks: true }, { hasChecks: null }, { mode: "semi" as const }, { kind: "task" as const }])
+    assert.equal(blocked(inRepo({ kind: "run", mode: "full", hasChecks: true, ...over })), null);
+});
 
 test("with no repository, Send posts a chat turn with the prompt and model, whatever kind was chosen before", () => {
   assert.deepEqual(sendFor(ready, extras), { do: "chat", prompt: "Add a README", model: "haiku" });

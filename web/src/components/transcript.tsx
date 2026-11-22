@@ -354,7 +354,7 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
 }
 
 /** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
-function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent; story: Story; modelName: (id: string) => string; promptBy: string; folded: boolean }) {
+function Row({ event, story, modelName, modelDiffers, promptBy, folded }: { event: StoredEvent; story: Story; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy: string; folded: boolean }) {
   const e = event.payload;
   switch (e.type) {
     case "user_prompt":
@@ -378,6 +378,9 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
     case "session_started":
       // Which model answers, by the name Claude Code gives it; the exact id is one tap away. A session that names no model gets no row.
       if (e.model === null) return null;
+      // Where the caller says which model was asked for, the row is there only to say that another one answered.
+      const instead = modelDiffers?.(event.attemptId, e.model) ?? null;
+      if (modelDiffers !== undefined && instead === null) return null;
       return (
         <li data-event={e.type} className="ds-message ds-message--session-start">
           <details className="ds-message__details">
@@ -389,6 +392,7 @@ function Row({ event, story, modelName, promptBy, folded }: { event: StoredEvent
               </span>
             </summary>
             <Body>
+              {instead !== null && `You asked for ${instead}. `}
               {"Model id: "}
               <Theirs>{e.model}</Theirs>
             </Body>
@@ -555,13 +559,13 @@ function StepGroup({ steps, live, children }: { steps: { call: Of<"tool_call">; 
  * transcript that sits behind a disclosure of its own, so its rows fold one level and not two, and its tool calls are
  * not grouped (a step group inside a disclosure would be a third level).
  */
-export function Transcript({ events, working, modelName, promptBy = "You", folded = false }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; promptBy?: string; folded?: boolean }) {
+export function Transcript({ events, working, modelName, modelDiffers, promptBy = "You", folded = false }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean }) {
   const story = useMemo(() => readStory(events, working !== null), [events, working]);
   const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
   const set = useCallback((id: string, open: boolean) => setOpened((have) => new Map(have).set(id, open)), []);
   const openedValue = useMemo(() => ({ opened, set }), [opened, set]);
   // The rows the transcript shows, in order: an event that is told by another row (a result with its call, a usage count) has none.
-  const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, promptBy, folded }) })).filter(({ row }) => row !== null);
+  const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, modelDiffers, promptBy, folded }) })).filter(({ row }) => row !== null);
   const rows: ReactNode[] = [];
   for (let at = 0; at < shown.length; ) {
     let end = at;

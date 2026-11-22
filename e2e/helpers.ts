@@ -24,7 +24,7 @@ export async function signIn(page: Page, botbench: Botbench): Promise<void> {
   await page.goto(botbench.base);
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await expect(messageBox(page)).toBeEnabled();
 }
 
 /*
