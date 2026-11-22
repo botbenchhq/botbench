@@ -69,7 +69,8 @@ async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT", path: string
     ...(signals.length === 0 ? {} : { signal: AbortSignal.any(signals) }),
     credentials: "same-origin",
     cache: "no-store",
-    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    // A recording goes as itself, with the type the browser recorded it in; everything else is JSON.
+    ...(body === undefined ? {} : body instanceof Blob ? { headers: { "content-type": body.type }, body } : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
   });
   let parsed: unknown = null;
   try {
@@ -101,6 +102,13 @@ export async function signIn(token: string): Promise<void> {
 }
 
 export const getDriver = (): Promise<DriverState> => request("GET", "/api/driver");
+
+/** Whether the Mac that runs Botbench can turn speech into text, and if not, why in words. */
+export type VoiceState = { available: true } | { available: false; reason: string };
+/** The Mac compiles its speech helper the first time, which can take a while. */
+export const getVoice = (): Promise<VoiceState> => request("GET", "/api/voice", undefined, 60_000);
+/** What was said in a recording, transcribed on the Mac. */
+export const transcribe = async (recording: Blob): Promise<string> => (await request<{ text: string }>("POST", "/api/voice/transcribe", recording, 120_000)).text;
 
 /** An agent as it reports itself, and the steps Botbench lets it work in ("planner", "builder", "reviewer"). */
 export interface AgentState extends Omit<DriverState, "driver"> {

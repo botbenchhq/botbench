@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getDriver, getTranscript, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
+import { ApiError, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
+import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { Alert, Frame, PageHeader, StreamBanner } from "../components/header.tsx";
 import { follow, jumpCount, nearBottom, type Follow, type FollowEvent } from "../components/follow.ts";
 import { choiceName, ModelPicker, modelName, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
@@ -65,6 +66,45 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     followRef.current = follow(followRef.current, event);
     setUnseen(followRef.current.following ? 0 : followRef.current.unseen);
   }, []);
+
+  /** Dictation: offered only when the Mac can transcribe and this browser can record. */
+  const [canDictate, setCanDictate] = useState(false);
+  const [dictation, setDictation] = useState<DictationState>({ kind: "idle" });
+  const dictationRef = useRef<Dictation | null>(null);
+  useEffect(() => {
+    if (cannotRecord() !== null) return;
+    let live = true;
+    // When the Mac cannot be asked, there is no button: a control is shown only once its behaviour is there.
+    getVoice().then((voice) => live && setCanDictate(voice.available), () => {});
+    const recorder = createDictation(setDictation, onSignedOut);
+    dictationRef.current = recorder;
+    return () => {
+      live = false;
+      recorder.cancel();
+    };
+  }, [onSignedOut]);
+  const toggleDictation = (): void => {
+    const recorder = dictationRef.current;
+    if (recorder === null || dictation.kind === "transcribing") return;
+    if (dictation.kind !== "listening") return void recorder.start();
+    // The words go where the cursor was, and are only put in the box: nothing is sent.
+    const box = promptRef.current;
+    const from = box?.selectionStart ?? prompt.length;
+    const to = box?.selectionEnd ?? from;
+    void recorder.stop().then((text) => {
+      if (text === null) return;
+      let cursor = 0;
+      setPrompt((current) => {
+        const put = insertAt(current, Math.min(from, current.length), Math.min(to, current.length), text);
+        cursor = put.cursor;
+        return put.value;
+      });
+      requestAnimationFrame(() => {
+        promptRef.current?.focus();
+        promptRef.current?.setSelectionRange(cursor, cursor);
+      });
+    });
+  };
 
   const checkDriver = useCallback((): void => {
     setDriver(null);
@@ -299,6 +339,11 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
             </label>
             <div className="ds-composer__row">
               <textarea id="prompt" name="prompt" ref={promptRef} rows={1} placeholder="Message Claude Code…" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="ds-composer__input" />
+              {canDictate && (
+                <button type="button" onClick={toggleDictation} aria-pressed={dictation.kind === "listening"} aria-busy={dictation.kind === "transcribing"} disabled={dictation.kind === "transcribing"} className="ds-button">
+                  Dictate
+                </button>
+              )}
               {running ? (
                 <button type="button" onClick={stop} aria-busy={stopping} className="ds-button">
                   Stop
@@ -312,6 +357,17 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
             {error !== null && (
               <p id="prompt-error" role="alert" className="ds-composer__error">
                 {error}
+              </p>
+            )}
+            {dictation.kind === "listening" && <p role="status">Listening. Press Dictate again when you have finished.</p>}
+            {dictation.kind === "transcribing" && (
+              <p role="status" className="ds-spinner">
+                Transcribing
+              </p>
+            )}
+            {dictation.kind === "error" && (
+              <p role="alert" className="ds-composer__error">
+                {dictation.message}
               </p>
             )}
             <div className="ds-composer__controls">
