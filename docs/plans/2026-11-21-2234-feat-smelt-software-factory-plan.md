@@ -41,6 +41,8 @@ Two open-source projects were studied as possible bases. OpenMausBot drives vend
 - **The product is named Smelt.** (session-settled: user-directed — chosen over Forge, Quench, Stoke and Cog: it carries the pitch as a verb, and no AI project on GitHub uses it.)
 - **Own codebase, inspired by OpenMausBot and Rakazo.** (session-settled: user-directed — chosen over forking OpenMausBot: the owner wants to take inspiration and make it their own.) Governs R18.
 - **Nothing fake.** No mocks in tests and no feature shipped without the real thing behind it. (session-settled: user-directed — chosen over a mock-data wireframe and fake CLIs: "we agree to never mock or make fake features".) Governs R21, R22.
+- **Captured real CLI sessions may be replayed in tests.** This is the one exception to "nothing fake": a session recorded from a real CLI run may be replayed through the driver contract for scenarios a live model cannot be made to produce. (session-settled: user-approved — chosen over leaving those scenarios to the owner's check alone.) Governs R22.
+- **The phone reaches Smelt over Tailscale with its HTTPS certificates on.** (session-settled: user-approved — chosen over plain HTTP on the private network, which cannot support a phone app with notifications.) Governs R19, R23.
 - **Small testable features, built test-first.** (session-settled: user-directed — chosen over nine large units.) Governs R22.
 - **Four vendor CLIs: Claude Code, Codex, Gemini CLI, Grok.** (session-settled: user-directed — chosen over Claude Code plus one other.) Governs R7.
 - **Usable from a phone, including a phone app.** (session-settled: user-directed — chosen over Mac-only access.) Governs R19, R23.
@@ -154,8 +156,6 @@ These steer choices throughout the build. They are not requirements of this plan
 
 ### Open Questions
 
-- **May captured real CLI sessions be replayed in tests? (owner decision, needed before U8)** A live model cannot be made to misbehave on demand. KTD15 proposes one exception to "no mocks": a session captured from a real CLI run may be stored and replayed through the driver contract. Without it, these scenarios have no automated test and rely on the owner's check alone: a re-issued request that does not match a stored approval (U8), an invalid plan sent back once (U11), a planner or reviewer edit attempt being refused (U11, U20), a metered login's running cost (U22), an expired push subscription (U23), and automatic rate-limit fallback (U21), which would ship only after a rate limit has been seen live.
-- **HTTPS on the private network (owner decision, blocks U23).** Phone notifications need a trusted HTTPS address for Smelt. With Tailscale that means turning on HTTPS certificates for the tailnet, which publishes the Mac's machine name in public certificate logs. Whether Tailscale is installed on the Mac and phone was not checked.
 - **Nexvyn UI licence (deferred, does not block).** GitHub reports no standard licence for `Nexvyn/Nexvyn-ui`. U4 reads its licence file first and uses plain shadcn components if it does not allow use in an Apache-2.0 project.
 - **Sign-in to the new CLIs (owner action, blocks U17 to U19).** Codex 0.171.0, Gemini CLI 0.70.0 and Grok 1.0.92 are installed on the owner's Mac. Codex reports "Not logged in"; Gemini CLI and Grok were not checked. Each needs the owner to sign in once.
 
@@ -185,7 +185,7 @@ These steer choices throughout the build. They are not requirements of this plan
 - KTD11. **Routing is configuration with ordered fallbacks, and a handoff starts fresh.** The next driver gets a new session with the task, its acceptance criteria, a note that an earlier attempt stopped, and the worktree's diff. Resume cursors never cross drivers.
 - KTD12. **The client is React with Vite and Tailwind, using Nexvyn UI for the shell where its licence allows and plain shadcn components elsewhere.** The built client is static files served by the Smelt process. It is laid out for a phone first.
 - KTD14. **One owner login guards every route, and the listen addresses are configuration.** Smelt creates a random token on first start, stores it under `~/.smelt` readable only by the owner, and shows it once. A device signs in with it and receives a session cookie that scripts cannot read. Requests from the same machine need the login too. Smelt listens on the loopback address plus any address the owner lists, such as the Mac's private-network address. The phone reaches Smelt over HTTPS under the Mac's private-network name, with the private network's own tool terminating TLS in front of Smelt's loopback listener (for Tailscale, `tailscale serve`). A phone app with notifications needs this, because browsers only run service workers and push on a trusted HTTPS origin. The session cookie is marked secure when reached that way.
-- KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Smelt process. Any scenario that needs an agent turn is a live test; files outside `test/live/` and `e2e/` never start a driver. The one allowed exception is replaying output captured from a real CLI run to test parsing (see Open Questions).
+- KTD15. **Tests use real things, in three layers.** Unit and integration tests use a real temporary git repository, the real database in a temporary directory, and a real HTTP server on a free port. Live tests under `test/live/` start the real vendor CLI with a tiny prompt on its cheapest model and are run before each driver unit merges. End-to-end tests drive the real client in a browser against a real Smelt process. Any scenario that needs an agent turn is a live test; files outside `test/live/` and `e2e/` never start a driver. The one allowed exception is replaying a session captured from a real CLI run through the driver contract, for scenarios a live model cannot be made to produce. Each recording is stored with the CLI version and date it came from.
 - KTD16. **The phone app is an installable web app with web push.** The client ships a manifest and a service worker, so it installs to the home screen on iOS and Android. Smelt sends notifications through the standard Web Push protocol with keys it generates and keeps locally. This passes notification text through Apple's or Google's push service, so notifications carry only "an approval is waiting" and the run name, never commands or code (R24).
 
 ### High-Level Technical Design
@@ -231,7 +231,7 @@ stateDiagram-v2
 
 - The owner's repositories are local git repositories with at least one commit.
 - Check, setup and pre-approved commands are supplied per repository. Smelt does not detect them.
-- The owner's Mac and phone are on the same private network, such as Tailscale, with its HTTPS certificates turned on (see Open Questions).
+- The owner's Mac and phone are on the same private network, such as Tailscale, with its HTTPS certificates turned on.
 - Live tests may spend a small amount of subscription usage.
 
 ### Risks
@@ -585,7 +585,7 @@ Every unit follows the same execution rule: write the listed tests first and wat
 **Requirements:** R9.
 **Dependencies:** U12, U17, U18.
 **Files:** `src/engine/handoff.ts`, `src/engine/stations.ts`, `web/src/screens/run.tsx`, `web/src/screens/settings.tsx`, `test/engine/handoff.test.ts`, `test/live/handoff.live.test.ts`, `e2e/handoff.e2e.ts`.
-**Approach:** Build the owner's "move to another driver" action first (KTD11). Settings gains the ordered fallback list per role in this unit, since this is where it starts to do something. Then trigger the same path from each driver's normalized rate-limit event, with the blocked state and automatic resume at the reset time when no fallback remains. The automatic trigger for a driver is enabled only once a real rate-limit event from that CLI has been captured and its parsing tested (see Open Questions).
+**Approach:** Build the owner's "move to another driver" action first (KTD11). Settings gains the ordered fallback list per role in this unit, since this is where it starts to do something. Then trigger the same path from each driver's normalized rate-limit event, with the blocked state and automatic resume at the reset time when no fallback remains. The automatic trigger for a driver is enabled only once a real rate-limit event from that CLI has been captured and its parsing tested.
 **Test scenarios:**
 - Covers AE4. Live: a task is moved from Claude Code to Gemini CLI mid-build and finishes in the same worktree, and the run records the switch.
 - Live: the second driver's first message is the handoff prompt, and its attempt row holds no resume cursor from the first driver.
