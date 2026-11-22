@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
-import { claudeArgs, parseClaudeLine } from "../../src/drivers/claude-code.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { blank, claudeArgs, parseClaudeLine, parsePermissionRequest, repositoryInstructions, shellWatch } from "../../src/drivers/claude-code.ts";
+import { PROXY_SCRIPT } from "../../src/approvals/permission-proxy.ts";
+import { tempDir } from "../support/repo.ts";
 import { buildChildEnv, checkVersion, killProcessGroup, launch, processGroupAlive } from "../../src/drivers/launch.ts";
 
 // Nothing in this file starts `claude`: the children are node and sh.
@@ -211,4 +215,156 @@ test("a permission the CLI denied becomes a permission_denied event naming the t
   assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"permission_denied"}'), [{ type: "permission_denied", id: "", name: "", reason: null }]);
   // Other system lines still carry nothing for the transcript.
   assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"task_summary","summary":"x"}'), []);
+});
+
+test("an attempt behind the permission gate asks Smelt about every tool call and answers the CLI's prompts itself; the repository's settings stay out", () => {
+  const args = claudeArgs({ model: "haiku", allowEdits: true, gated: true, instructionsFile: "/smelt-home/instructions/abc.md" });
+  const valueOf = (flag: string): string | undefined => {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  };
+  // The CLI's permission prompts come to Smelt on the protocol it is already driven over; nothing is auto-denied or auto-allowed.
+  assert.equal(valueOf("--permission-prompt-tool"), "stdio");
+  assert.equal(args.includes("--permission-prompts"), false, "prompts are answered, not dropped");
+  assert.equal(args.includes("--permission-mode"), false);
+  // The one settings object is Smelt's own, given on the command line: an ask rule for every shell command, and the pre-tool hook.
+  assert.equal(args.filter((a) => a === "--settings").length, 1);
+  const settings = JSON.parse(valueOf("--settings") ?? "null") as { permissions: { ask: string[]; allow?: unknown }; hooks: Record<string, { matcher: string; hooks: { type: string; command: string; timeout: number }[] }[]> };
+  assert.deepEqual(Object.keys(settings).sort(), ["hooks", "permissions"]);
+  assert.deepEqual(settings.permissions, { ask: ["Bash"] }, "shell commands always prompt, also when the hook did not run; no allow rule");
+  assert.deepEqual(Object.keys(settings.hooks), ["PreToolUse"]);
+  assert.equal(settings.hooks.PreToolUse!.length, 1);
+  assert.equal(settings.hooks.PreToolUse![0]!.matcher, "*", "every tool call goes to the hook");
+  const [hook] = settings.hooks.PreToolUse![0]!.hooks;
+  assert.equal(settings.hooks.PreToolUse![0]!.hooks.length, 1);
+  assert.equal(hook!.type, "command");
+  assert.equal(hook!.command, `'${process.execPath}' '${PROXY_SCRIPT}'`);
+  assert.equal(fs.existsSync(PROXY_SCRIPT), true);
+  assert.ok(hook!.timeout >= 10 && hook!.timeout <= 60);
+  // No secret is on the command line: it travels in the child's environment.
+  assert.equal(args.some((a) => /secret/i.test(a)), false);
+  // Settings files still do not load, so a repository's allow rules and hooks stay out; its instructions come as text.
+  assert.equal(valueOf("--setting-sources"), "");
+  assert.ok(args.includes("--strict-mcp-config"));
+  assert.equal(valueOf("--allowedTools"), "Edit(./**)");
+  assert.equal(valueOf("--append-system-prompt-file"), "/smelt-home/instructions/abc.md");
+  for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--plugin-dir", "--bare", "--add-dir"]) {
+    assert.equal(args.includes(flag), false, `${flag} must not be passed`);
+  }
+
+  // Without the gate nothing changes: every prompt is denied and no settings are given.
+  const ungated = claudeArgs({ model: "haiku", allowEdits: true });
+  assert.equal(ungated[ungated.indexOf("--permission-prompts") + 1], "none");
+  assert.equal(ungated.includes("--settings") || ungated.includes("--permission-prompt-tool") || ungated.includes("--append-system-prompt-file"), false);
+  // The gate is only for an attempt in a worktree: without the edit rule it is not switched on.
+  assert.equal(claudeArgs({ gated: true }).includes("--permission-prompt-tool"), false);
+  for (const flag of ["--settings", "--permission-prompt-tool", "--append-system-prompt-file"]) {
+    assert.ok(checkVersion("2.1.0").missingFlags.includes(flag), flag);
+    assert.equal(checkVersion("2.1.322").missingFlags.includes(flag), false);
+  }
+});
+
+test("a permission prompt from the CLI becomes a permission_request, and one that is not whole is refused", () => {
+  // The lines Claude Code 2.1.322 printed on 2026-11-22 when a turn asked to run `sh make-marker.sh` and to read /etc/hosts.
+  const bash = JSON.parse(
+    '{"type":"control_request","request_id":"61aaa015-9aa7-47fa-9803-6047dbd615dd","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"sh make-marker.sh","description":"Run make-marker.sh script"},"description":"Run make-marker.sh script","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"sh make-marker.sh"}],"behavior":"allow","destination":"localSettings"}],"decision_reason":"This command requires approval","decision_reason_type":"other","tool_use_id":"toolu_01HUucZ8GmAgc9Rr4KabZqdQ"}}',
+  ) as Record<string, unknown>;
+  assert.deepEqual(parsePermissionRequest(bash), {
+    type: "permission_request",
+    id: "61aaa015-9aa7-47fa-9803-6047dbd615dd",
+    toolCallId: "toolu_01HUucZ8GmAgc9Rr4KabZqdQ",
+    name: "Bash",
+    input: { command: "sh make-marker.sh", description: "Run make-marker.sh script" },
+    reason: "Run make-marker.sh script",
+  });
+  const read = JSON.parse(
+    '{"type":"control_request","request_id":"839195ad-1312-493e-9ab5-152e9c9623b1","request":{"subtype":"can_use_tool","tool_name":"Read","display_name":"Read","input":{"file_path":"/etc/hosts"},"description":"/etc/hosts","decision_reason":"Path is outside allowed working directories","decision_reason_type":"workingDir","tool_use_id":"toolu_01MSAwhGMNGxgiDqGb4gw3gh"}}',
+  ) as Record<string, unknown>;
+  // Only the agent's own account of a shell command is a stated reason; the CLI's label for a file is not.
+  assert.deepEqual(parsePermissionRequest(read), { type: "permission_request", id: "839195ad-1312-493e-9ab5-152e9c9623b1", toolCallId: "toolu_01MSAwhGMNGxgiDqGb4gw3gh", name: "Read", input: { file_path: "/etc/hosts" }, reason: null });
+
+  const request = bash.request as Record<string, unknown>;
+  for (const broken of [
+    { ...bash, request: { ...request, tool_name: "" } },
+    { ...bash, request: { ...request, tool_use_id: undefined } },
+    { ...bash, request: { ...request, input: "sh make-marker.sh" } },
+    { ...bash, request: { ...request, subtype: "hook_callback" } },
+    { ...bash, request: null },
+    { ...bash, request_id: 7 },
+  ]) {
+    assert.equal(parsePermissionRequest(broken), null, JSON.stringify(broken).slice(0, 120));
+  }
+  // The line itself adds nothing to the transcript; the session records the request once it has checked it.
+  assert.deepEqual(parseClaudeLine(JSON.stringify(bash)), []);
+});
+
+test("a repository's instructions file is handed over as text when it is an ordinary file of the repository, and not otherwise", (t) => {
+  const dir = tempDir("smelt-instructions-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const worktree = path.join(dir, "worktree");
+  fs.mkdirSync(worktree);
+  assert.equal(repositoryInstructions(worktree), null, "no file, no instructions");
+
+  fs.writeFileSync(path.join(worktree, "CLAUDE.md"), "Use tabs.\n");
+  const text = repositoryInstructions(worktree);
+  assert.ok(text?.endsWith("Use tabs.\n"));
+  assert.match(text ?? "", /^This repository's CLAUDE\.md file says:/);
+
+  // A link out of the worktree is not followed: its target is none of the repository's business.
+  fs.writeFileSync(path.join(dir, "private.txt"), "the owner's own notes\n");
+  fs.rmSync(path.join(worktree, "CLAUDE.md"));
+  fs.symlinkSync(path.join(dir, "private.txt"), path.join(worktree, "CLAUDE.md"));
+  assert.equal(repositoryInstructions(worktree), null);
+  // Nor is a directory, an empty file, or one too large to be instructions.
+  fs.rmSync(path.join(worktree, "CLAUDE.md"));
+  fs.mkdirSync(path.join(worktree, "CLAUDE.md"));
+  assert.equal(repositoryInstructions(worktree), null);
+  fs.rmSync(path.join(worktree, "CLAUDE.md"), { recursive: true });
+  fs.writeFileSync(path.join(worktree, "CLAUDE.md"), "");
+  assert.equal(repositoryInstructions(worktree), null);
+  fs.writeFileSync(path.join(worktree, "CLAUDE.md"), "x".repeat(70_000));
+  assert.equal(repositoryInstructions(worktree), null);
+});
+
+test("a shell command that ran without the owner having allowed it is noticed from the transcript", () => {
+  // The two lines Claude Code 2.1.322 printed on 2026-11-22 when it ran `ls` without asking anyone (long fields left out).
+  const call = parseClaudeLine('{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01WjxChzdxP4VivfVmLADLYr","name":"Bash","input":{"command":"ls","description":"List files in current directory"},"caller":{"type":"direct"}}]},"session_id":"9d6fe08c-0092-443b-9776-50c737f95496"}');
+  const result = parseClaudeLine('{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_01WjxChzdxP4VivfVmLADLYr","type":"tool_result","content":"CLAUDE.md\\nREADME.md\\nmake-marker.sh","is_error":false}]},"session_id":"9d6fe08c-0092-443b-9776-50c737f95496"}');
+  assert.deepEqual([call.map((e) => e.type), result.map((e) => e.type)], [["tool_call"], ["tool_result"]]);
+  const id = "toolu_01WjxChzdxP4VivfVmLADLYr";
+
+  // As it happened: called, then a result, with no request in between.
+  const unasked = shellWatch();
+  assert.deepEqual([...call, ...result].map(unasked), [false, true]);
+
+  // The same call with the owner's allow in between is what should happen.
+  const allowed = shellWatch();
+  const asked = [...call, { type: "permission_request", id: "r1", toolCallId: id, name: "Bash", input: { command: "ls" }, reason: null } as const, { type: "permission_resolved", id: "r1", toolCallId: id, decision: "allowed", note: null } as const, ...result];
+  assert.deepEqual(asked.map(allowed), [false, false, false, false]);
+
+  // A decline, or a request the CLI gave up on, allows nothing: a result that shows the command ran is noticed.
+  for (const decision of ["declined", "cancelled"] as const) {
+    const watch = shellWatch();
+    assert.deepEqual([...call, { type: "permission_resolved", id: "r1", toolCallId: id, decision, note: null } as const, ...result].map(watch), [false, false, true], decision);
+  }
+  // A result that says the command did not run is what a decline looks like, and is fine.
+  const refused = shellWatch();
+  assert.deepEqual([...call, { type: "tool_result", id, output: "The owner declined this request", isError: true } as const].map(refused), [false, false]);
+  // Tools other than the shell are the edit rule's and the CLI's own business.
+  const other = shellWatch();
+  assert.deepEqual([{ type: "tool_call", id: "toolu_w", name: "Write", input: { file_path: "y.txt" } } as const, { type: "tool_result", id: "toolu_w", output: "File created", isError: false } as const].map(other), [false, false]);
+});
+
+test("the attempt's gate secret is blanked out of an event before it is stored, wherever in the event it stands", () => {
+  const secret = "ab".repeat(32);
+  // What an allowed `env` would bring back.
+  const result = { type: "tool_result", id: "toolu_e", output: `HOME=/Users/owner\nSMELT_BROKER_SECRET=${secret}\nSMELT_BROKER_SOCKET=/home/broker.sock`, isError: false } as const;
+  const stored = blank(result, secret);
+  assert.equal(JSON.stringify(stored).includes(secret), false);
+  assert.match(stored.output, /^HOME=\/Users\/owner\nSMELT_BROKER_SECRET=\[the attempt's gate secret, removed by Smelt\]\nSMELT_BROKER_SOCKET=/);
+  const call = { type: "tool_call", id: "toolu_c", name: "Bash", input: { command: `echo ${secret} ${secret}` } } as const;
+  assert.equal(JSON.stringify(blank(call, secret)).includes(secret), false);
+  // An event without it is passed on as it is.
+  const text = { type: "text", text: "done" } as const;
+  assert.equal(blank(text, secret), text);
 });

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ApprovalTray } from "./approval-card.tsx";
 
 /** The product name, as every screen shows it. */
 export function Mark() {
@@ -13,7 +14,7 @@ const SCREENS = [
 ] as const;
 type ScreenName = (typeof SCREENS)[number]["name"];
 
-/** The top of every signed-in screen: the name, the navigation, and whatever the screen adds below. */
+/** The top of every signed-in screen: the name, the navigation, the approvals tray, and whatever the screen adds below. */
 export function Header({ current, children }: { current: ScreenName | null; children?: ReactNode }) {
   return (
     <header className="flex flex-col gap-xs border-b px-lg py-sm">
@@ -32,6 +33,7 @@ export function Header({ current, children }: { current: ScreenName | null; chil
           ))}
         </nav>
       </div>
+      <ApprovalTray />
       {children}
     </header>
   );

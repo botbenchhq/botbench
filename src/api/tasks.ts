@@ -1,4 +1,6 @@
 import type http from "node:http";
+import type { DatabaseSync } from "node:sqlite";
+import { waitingOnApproval } from "../approvals/broker.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
@@ -9,10 +11,13 @@ export const MAX_PROMPT = 20_000;
 /** A diff longer than this is cut, and the answer says so: a phone is not sent megabytes for one file. */
 export const MAX_DIFF = 400_000;
 
-/** A task as a client sees it: what it was given, where it stands, and the branch and commits its work is on. */
-function summary(task: Task): Record<string, unknown> {
+/**
+ * A task as a client sees it: what it was given, where it stands, and the branch and commits its work is on.
+ * `waitingOnApproval` is read from the pending approvals, not stored: a task that waits for the owner is still building.
+ */
+function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   const { id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
-  return { id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt };
+  return { id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId, waitingOnApproval: waitingOnApproval(db, id), createdAt, updatedAt };
 }
 
 /** The files the task changed, from its base commit to the commit Smelt made. Null with the reason when they cannot be read. */
@@ -59,7 +64,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
     } else if (method === "GET" && pathname === "/api/tasks") {
-      json(res, 200, { tasks: listTasks(ctx.db).map(summary) });
+      json(res, 200, { tasks: listTasks(ctx.db).map((task) => summary(ctx.db, task)) });
     } else if (method === "GET" && pathname === "/api/repos/check") {
       const given = url.searchParams.getAll("path");
       if (given.length !== 1) throw new TaskError(400, 'Give one "path".');
@@ -76,7 +81,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");
       if (one[2]) await diff(res, task, url);
-      else json(res, 200, { ...summary(task), ...(await changedFiles(task)) });
+      else json(res, 200, { ...summary(ctx.db, task), ...(await changedFiles(task)) });
     } else {
       return false;
     }

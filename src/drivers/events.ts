@@ -21,6 +21,16 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean }
   /** The CLI refused a tool call because it needed an approval nobody gave. `id` is the call's; `reason` is the CLI's own short account. */
   | { type: "permission_denied"; id: string; name: string; reason: string | null }
+  /**
+   * The CLI is waiting for permission to run a tool call, and the turn stands still until `respondToRequest` answers `id`.
+   * `reason` is the agent's own account of why, when the CLI passes one on.
+   */
+  | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
+  /**
+   * A permission request ended: the owner allowed or declined it (`note` is the owner's, for the agent), Smelt refused
+   * it without asking the owner (`denied`, `note` says why), or the CLI stopped waiting (`cancelled`).
+   */
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "declined" | "denied" | "cancelled"; note: string | null }
   /** Tokens one turn used. No money: whether a turn costs dollars depends on the login, not on the CLI's printout. */
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   /** The CLI reported where the login stands against its limit. `limited` means the limit was hit. */
@@ -31,3 +41,12 @@ export type DriverEvent =
   | { type: "error"; message: string; raw: string | null };
 
 export type DriverEventType = DriverEvent["type"];
+
+/** The answer to a `permission_request`, as `respondToRequest` takes it. Anything that is not an allow is a decline. */
+export interface PermissionResponse {
+  decision: "allow" | "decline";
+  /** What the owner wrote for the agent when declining. */
+  note?: string | null;
+  /** Set when the owner was never asked: why the request was refused. The transcript then says so, and not that the owner declined. */
+  refused?: string | null;
+}

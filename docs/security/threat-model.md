@@ -1,6 +1,6 @@
 # Smelt threat model (STRIDE)
 
-Scope: Smelt as built through units 1 to 6, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
+Scope: Smelt as built through units 1 to 7, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
 
 ## What is being protected
 
@@ -19,6 +19,17 @@ Scope: Smelt as built through units 1 to 6, plus the boundaries the plan adds ne
 | B4 | Data directory `~/.smelt` | The owner's account | Other local accounts |
 | B5 | Model provider | The owner's choice of vendor | Network, and what the vendor retains |
 | B6 | Push service (unit 23) | Smelt process | Apple and Google push relays |
+| B7 | Permission broker socket `broker.sock` in the data directory (U7) | Smelt process | The pre-tool hook the CLI runs, every command an agent runs, any other process of the owner's account |
+
+### How a tool call is decided (U7)
+
+A task's Claude Code is started with Smelt's own settings object on the command line (`--settings`), no settings files (`--setting-sources ""`), the edit rule `Edit(./**)`, and `--permission-prompt-tool stdio`. Three things then stand between a tool call and its running:
+
+1. **The pre-tool hook** (`src/approvals/permission-proxy.ts`, matcher `*`). The CLI runs it before every tool call. It asks the broker over B7 and prints `ask`, `deny`, or nothing. It never prints `allow`. Edits and reads inside the worktree pass (nothing printed); every shell command and every other tool gets `ask`.
+2. **The CLI's own rules.** The only allow rule is file edits below the worktree. An ask rule for `Bash` makes every shell command ask even when the hook did not run; a hook's answer cannot get past it.
+3. **The permission prompt**, which the CLI sends to the driver on its stdout and the driver answers on its stdin. It becomes an approval row and waits for the owner. Only `POST /api/approvals/:id` with a session resolves it.
+
+The socket answers one question (pass, ask or deny) and has no message that allows a call or answers an approval. The owner's decision travels only inside the Smelt process and down the CLI's own stdin.
 
 ## Threats and current state
 
@@ -31,6 +42,9 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | A client acts as the owner | B1 | Random login token, constant-time compare, session cookie `HttpOnly; SameSite=Strict`, required on every route including from loopback | Done (U2) |
 | A web page in the owner's browser calls Smelt | B1 | `Host` allowlist, `Origin` check on writes, JSON-only bodies | Done (U2) |
 | A local process reads the token | B4 | Token file mode 0600, directory 0700 | Done (U1, U2). Any process running as the owner can still read it: Accepted |
+| Another local process, or another attempt, answers an approval or forges an allow | B7, B1 | The socket has no message that answers or allows; an approval is answered only through the API with the owner's session, and only while its request is still waiting in this process. Tested: an answer without a session is 401, a second answer 409 | Done (U7) |
+| A process speaks to the gate as an attempt it is not | B7 | Each attempt gets its own 256-bit secret, held in memory (looked up by hash), handed to its CLI process in the environment and never on a command line. Smelt writes it nowhere, and blanks it out of every transcript event before the event is stored or sent to a client (a command the owner allowed can print its environment); tested. Such output still reaches the model provider. A wrong, unbound or released secret is denied and the refusal logged; tested. The socket is mode 0600 inside the 0700 data directory | Done (U7). The secret is readable by every command the attempt's agent runs, and by other processes of the owner's account that can read a process's environment: Accepted, because with it a process can only ask the gate for a verdict, put an "edit passed" entry for a path inside that attempt's worktree in the log, and set the directory a later card shows for a tool call id it would have to guess |
+| A process takes the socket's place and answers the hook itself | B7 | Only the owner's account can create files in the data directory. A squatter could answer "pass" for a shell command; the CLI's ask rule still sends that command to the owner | Accepted for the owner's own account; shell commands Done (U7) |
 | Agent-written code calls the API during checks | B1, B2 | Login required from loopback too | Done (U2). Such code runs as the owner and could read the token file: Accepted until checks are sandboxed |
 
 ### Tampering
@@ -39,13 +53,15 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 |---|---|---|---|
 | An agent changes the owner's checkout or branch | B2 | One worktree per task from a commit; no command writes the source tree, index or branch; tested byte for byte | Done (U5) |
 | A repository hook runs with Smelt's actions | B3 | Hooks disabled on every git call; commits skip verification and signing | Done (U5) |
-| A repository's CLI settings allow commands silently, or its CLI hooks run commands at session start | B3 | Task attempts load no settings file at all (`--setting-sources ""`): Claude Code 2.1.322 was seen to run a repository's `SessionStart` hook without asking when project settings were loaded. Live-tested with a repository carrying an allow rule and a hook. The pre-tool hook to the gate is still to come | Done for tasks (U6); gate Planned (U7) |
-| The transcript or action log is edited | B4 | Append-only tables enforced by triggers | Done for events (U1); action log Planned (U7) |
+| A repository's CLI settings allow commands silently, or its CLI hooks run commands at session start | B3 | Task attempts load no settings file at all (`--setting-sources ""`): Claude Code 2.1.322 was seen to run a repository's `SessionStart` hook without asking when project settings were loaded. The only settings are Smelt's own object. Live-tested with a repository carrying allow rules for `Bash` and `Write` and a hook: the command still waits for the owner and the hook does not run | Done (U6, U7) |
+| A repository's instructions file pulls a file from elsewhere on the machine into the prompt | B3 | With settings files off the CLI does not read `CLAUDE.md`; Smelt reads it and hands it over as appended system prompt text. Only an ordinary file at the top of the worktree, opened without following a link, at most 64 KB; files it refers to are not pulled in. Tested with a link, a directory and an oversized file. The text instructs the agent, never Smelt | Done (U7) |
+| The transcript or action log is edited | B4 | Append-only tables enforced by triggers; the store module has no function that changes or removes a log entry; an approval leaves `pending` once and is never deleted. Tested | Done for events (U1) and the action log and approvals (U7). A process of the owner's account can still replace the database file: Accepted |
+| The owner approves a command other than the one that runs | B2 | The card shows all of the input an allow lets run: a plain shell command as itself, and an edit, a shell call with further options or any other tool as the CLI's whole input. A request longer than 20,000 characters is denied by Smelt, not shown in part, and the transcript says Smelt denied it, not the owner. Characters that hide or reorder text are written out by code point. An allow re-sends the CLI the input that was shown, unchanged, and what a pending approval asks for cannot be changed in the store. A command can still do more than it appears to (a script's content is not shown) | Done (U7) for what is shown; reading it is the owner's |
 | Text from a model or a repository is rendered as markup in the client | B1, B2 | All transcript text is rendered as text, tested with markup in a prompt | Done (U4) |
 | Crafted run or task ids reach git or the filesystem | B1 | Ids must be slugs; arguments passed as arrays, file names after `--` | Done (U5) |
 | A client names a repository path that is not one (relative, a file, a subfolder, a path with a NUL) | B1 | The path must be absolute and is checked as the top level of a git repository with a commit before any task row, worktree or git write exists; tested over HTTP | Done (U6) |
 | A client asks for the diff of a file outside the task (`../`, an absolute path, a git option, a pathspec) | B1 | Task ids are digits only; the file must equal a name git itself listed among the task's changes, and only that listed name is handed to git, after `--` with literal pathspecs; tested | Done (U6) |
-| An agent's edits land outside its task's worktree | B2 | The attempt's working directory is the worktree and the one allow rule covers file edits below it (`--allowedTools "Edit(./**)"`); a write elsewhere, and to the CLI's own settings, is denied by the CLI; Smelt commits only in a linked worktree on a `smelt/` branch. Live-tested on Claude Code 2.1.322 with a write aimed at the owner's checkout | Done (U6), as far as the CLI's own rule holds; the gate is Planned (U7) |
+| An agent's edits land outside its task's worktree | B2 | The attempt's working directory is the worktree and the one allow rule covers file edits below it (`--allowedTools "Edit(./**)"`); a write elsewhere, and to the CLI's own settings, is denied by the CLI; Smelt commits only in a linked worktree on a `smelt/` branch. Live-tested on Claude Code 2.1.322 with a write aimed at the owner's checkout | Done (U6, U7): the CLI's rule, and Smelt's gate in front of it, which sends an edit outside the worktree to the owner with its whole content on the card |
 | Files a task wrote make Smelt's own git run a command (the worktree's `.git` repointed at a git folder with a filter command in its config) | B2, B3 | Before any commit, diff or removal the worktree's git folder must be the repository's own worktree entry and must not lie inside the worktree; tested with a real filter command that does not run. The owner's own repository config, filters included, still applies to Smelt's commits | Done (U6) |
 | A task is left at a station nothing is working at after Smelt stops | B4 | State and its event are written in one transaction; on start, tasks left queued or building are marked interrupted and their work committed | Done (U6). Stopping the CLI process such a task left behind: Planned (U15) |
 
@@ -53,7 +69,7 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 
 | Threat | Mitigation | Status |
 |---|---|---|
-| No record of what an agent did or who allowed it | Every event stored as it arrives; every approval decision and every action run on standing or pre-approved permission logged | Events Done (U3); approvals and action log Planned (U7, U10) |
+| No record of what an agent did or who allowed it | Every event stored as it arrives. The action log records each request put to the owner (`asked_owner`), each decision with its log entry in one transaction (`owner_allowed`, `owner_declined`), each request that ended with no answer (`ended_unanswered`), each edit the gate let pass to the CLI's edit rule (`auto_worktree_edit`, written before the edit; an edit that cannot be logged is denied), and each refusal by the broker (`broker_failure_denied`). No shell command runs without an `owner_allowed` entry | Events Done (U3); approvals and action log Done (U7); standing and pre-approved permissions Planned (U9, U10). The log has one owner and so records no "who" |
 
 ### Information disclosure
 
@@ -82,24 +98,41 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | A client starts many tasks | Tasks build one at a time, each a single turn whose CLI process is closed when it ends; prompts are capped at 20,000 characters and a diff answer at 400,000 | Partial (U6): the queue has no length limit and a task has no time limit or stop control. Time limits Planned (U13) |
 | Idle CLI sessions pile up | Sessions close after 15 minutes idle and resume from their cursor; all close with the server | Done (U4) |
 | A vendor rate limit stalls a run | Handoff to another driver, resume at reset time | Planned (U21) |
+| A pending approval holds a task, and with it the queue, for as long as it is unanswered | By design: the task waits for the owner. Claude Code 2.1.322 was seen to keep a permission request open for seven minutes and carry on when answered; no limit was found. Stopping Smelt ends the wait: the request is marked superseded and the task interrupted | Accepted (U7). Approvals that survive a restart: Planned (U8) |
+| A second Smelt is started on the same data directory | It finds the first one's broker answering on the socket and refuses to start, before it touches the socket or any pending approval; tested | Done (U7) |
+| A process of the owner's account floods the socket | Messages are capped at 256 KB and 10 seconds; every refusal adds a row to the action log, with no limit | Accepted (U7): only the owner's own account can reach the socket |
 
 ### Elevation of privilege
 
 | Threat | Boundary | Mitigation | Status |
 |---|---|---|---|
-| Text in a repository or a web page instructs the agent to run something harmful (prompt injection) | B2, B3 | Approvals for everything but worktree edits; safety floor that no grant overrides; narrow grants | Planned (U7, U9, U10) |
-| An agent runs commands outside its worktree | B2 | Until U7, every prompt is denied (`--permission-prompts none`); then the broker. Live-tested for a task: a script in the repository is denied and its marker file exists nowhere | Partial (U3, U6): the CLI decides what needs a prompt. Seen on 2.1.322: it runs, unasked, shell commands it classes as read-only (`ls`, `cat`, `git status`) and ones that only write below the worktree with shell builtins (`printf hi > file`). Closing that is the broker's pre-tool hook, Planned (U7) |
+| Text in a repository or a web page instructs the agent to run something harmful (prompt injection) | B2, B3 | Model output and repository text can cause a request, never an allow: nothing they produce reaches `answer`. Everything but edits and reads inside the worktree waits for the owner. The agent's stated reason is shown on the card as its own words | Approvals Done (U7). The owner can still be talked into allowing something; safety floor and narrow grants Planned (U9, U10) |
+| An agent runs a command without the owner being asked | B2 | In a task, every shell command waits for the owner, including the ones Claude Code runs unasked by itself (`ls`, `cat`, `git status`, `printf hi > file`). Live-tested: `ls` and a redirect each wait and have no result before their answer; a declined script's marker file exists nowhere. Turns outside a task still have every prompt denied (`--permission-prompts none`) | Done (U7) for shell commands, as far as the CLI honours an ask rule and its own prompt. See "What can still run without the owner" below |
+| The hook or the broker fails, and a call runs because nothing objected | B7, B2 | The hook answers deny when the socket is missing, slow, wrong or says anything but pass, ask or deny; the broker denies a malformed message, a wrong secret, and a request it cannot record; a prompt the driver cannot read is denied. A hook that never runs or is killed counts for the CLI as silence: shell commands still ask (the ask rule), edits and reads follow the CLI's own rules, and what those would ask a person still comes to the owner. Tested without a driver for every broker and proxy case | Done (U7), except for tools other than the shell on a hook failure: see below |
+| A newer CLI silently ignores Smelt's settings object, so neither hook nor ask rule exists | B2 | The driver watches each gated attempt: a shell result with no allow from the owner stops the attempt at once and says why. One command has run by then. The live `ls` test is the check to run after every CLI update | Partial (U7): detection after the first command, not prevention |
 | A signed-in client points Smelt at any repository the owner's account can read | B1 | By design: the owner chooses the repository. The session is required; the repository is only read (its objects, a new branch and a worktree entry are added to its git folder, nothing in its working tree, index or current branch changes); live-tested byte for byte | Accepted (U6). A stolen session can start an agent on any of the owner's repositories and read its diffs |
 | A pre-approved command is stretched with chaining or pipes | B2 | Prefix match with no shell operators | Planned (U9) |
 | Checks execute code the agent just wrote, on the host | B2 | None. A worktree separates changes; it is not a sandbox | Accepted. Sandboxed checks are deferred |
 | The planner or reviewer writes files | B2 | Read-only roles | Planned (U11, U20) |
+
+## What can still run without the owner (U7)
+
+Stated exactly, for a task's attempt on Claude Code 2.1.322:
+
+- **Edits and reads inside the worktree** run without asking, by design. Edits are logged before they run; reads are not logged. Writes to anything named `.git` or `.claude` at any depth, also through a link, are sent to the owner, and so is a search whose pattern is absolute or contains `..`.
+- **Shell commands** never run unasked.
+- **Other tools** (web search and fetch, sub-agents, scheduling and messaging tools the CLI ships) are sent to the owner by the hook. If the hook fails for such a call (it crashes, or takes more than 20 seconds because Smelt is stalled), the CLI's own default applies to that one call, and for a tool the CLI runs without a prompt that means it runs. The ask rule covers only `Bash`. Narrowing the CLI's tool list is the fix and belongs with the safety floor (U9).
+- A command the owner allows runs with the owner's rights, anywhere. A worktree separates changes; it is not a sandbox.
 
 ## Open items, most serious first
 
 1. Checks run agent-written code on the host with the owner's privileges. Until a sandbox exists, the README must say so, and the owner should point Smelt only at repositories they trust.
 2. The stop-on-API-key guard is untested on its failing path.
 3. Sign-in slow-down is global, sessions never expire, and there is no sign-out.
-5. Any signed-in client can start turns in Smelt's scratch directory with every tool prompt denied. That is safe as built; it must be revisited when the approval broker (U7) lets turns run commands.
-6. Until the broker's pre-tool hook exists (U7), "denied" means what Claude Code itself would have asked about. Commands it classes as read-only, and shell redirects into the worktree, run in a task without an approval and are in the transcript. A worktree separates changes; it is not a sandbox.
-7. A task cannot be stopped from the client and has no time limit; stopping Smelt interrupts it and commits its work.
-4. Interception for Codex, Gemini CLI and Grok is unproven; a driver without it is limited to read-only roles.
+4. Any signed-in client can start turns in Smelt's scratch directory with every tool prompt denied. Those turns are not behind the gate (U7 gates tasks only): there, "denied" still means what Claude Code itself would have asked about, so commands it classes as read-only run in the scratch directory unasked.
+5. On a failure of the pre-tool hook, tools other than the shell fall back to the CLI's own defaults for that call (see "What can still run without the owner"). A CLI update that dropped Smelt's settings object would be noticed only after one shell command had run.
+6. A pending approval does not survive a restart: it is marked superseded and its task interrupted (U8).
+7. The repository's instructions are handed to the CLI in a file in an owner-only temporary directory, removed when the CLI process exits. A Smelt that is killed outright leaves that copy behind. The text goes in as appended system prompt, which is more weight than the CLI gives the file when it reads it itself.
+8. Two plan scenarios have no test: a command the owner's personal CLI settings allow (not testable without changing the owner's own settings; covered by the argument check that no settings file loads), and the driver's handling of a cancelled or duplicate permission request (reached only with a live CLI).
+9. A task cannot be stopped from the client and has no time limit; stopping Smelt interrupts it and commits its work.
+10. Interception for Codex, Gemini CLI and Grok is unproven; a driver without it is limited to read-only roles.

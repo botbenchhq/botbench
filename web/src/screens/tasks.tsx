@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, listTasks, openEventStream, type TaskSummary } from "../api/client.ts";
 import { Header } from "../components/header.tsx";
-import { STATUS_WORD } from "../components/task-status.ts";
+import { statusWord } from "../components/task-status.ts";
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
 
@@ -22,10 +22,10 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
     );
   }, [onSignedOut]);
 
-  // Read the list whenever the stream comes up, and again each time any task reaches a new state.
+  // Read the list whenever the stream comes up, and again each time any task reaches a new state or starts or stops waiting on an approval.
   useEffect(() => {
     load();
-    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && load(), onSignedOut, onTask: load });
+    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && load(), onSignedOut, onTask: load, onApproval: load });
   }, [load, onSignedOut]);
 
   return (
@@ -55,7 +55,7 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 <a href={`#/tasks/${task.id}`} className="flex min-h-touch flex-col gap-xs py-md">
                   <span className="font-mono text-mono">
                     <span className="font-semibold">{`Task ${task.id}`}</span>
-                    {` · ${STATUS_WORD[task.status]}`}
+                    {` · ${statusWord(task)}`}
                   </span>
                   <span className="break-words">{firstLine(task.prompt)}</span>
                   <span className="break-all font-mono text-mono text-muted">{task.repo}</span>

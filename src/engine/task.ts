@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import type { Broker } from "../approvals/broker.ts";
+import { summarize } from "../approvals/gate.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
@@ -42,6 +44,9 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
 }
+
+/** The role a task's one attempt works in. Other roles arrive with the stations that need them. */
+const IMPLEMENTER = "implementer";
 
 /** A request about a task that cannot be met; `status` is the HTTP answer for it. */
 export class TaskError extends Error {
@@ -185,6 +190,8 @@ export interface TasksOptions {
   /** Smelt's data directory; worktrees go under it. */
   home: string;
   driver: Driver;
+  /** Where the attempt's permission requests go to wait for the owner. */
+  broker: Broker;
   model?: string;
   /** Called when a transcript event was stored. */
   onEvent: () => void;
@@ -195,14 +202,16 @@ export interface TasksOptions {
 /**
  * Builds tasks, one at a time. A task is one implementer turn in its own
  * worktree: Smelt makes the worktree from the repository's current commit,
- * starts an attempt there that may edit files in it and nothing else, sends
- * the prompt, and when the turn ends commits everything to the task branch
- * itself, however the turn ended.
+ * starts an attempt there that may edit files in it and must ask the owner,
+ * through the broker, for everything else, sends the prompt, and when the turn
+ * ends commits everything to the task branch itself, however the turn ended.
  */
 export function createTasks(options: TasksOptions): Tasks {
-  const { db, home, driver } = options;
+  const { db, home, driver, broker } = options;
   let closed = false;
   let current: DriverSession | null = null;
+
+  const report = (what: string) => (err: unknown): void => console.error(`${what} failed: ${words(err)}`);
 
   const move = (id: number, to: TaskStatus, change?: TaskChange): Task => {
     const task = moveTask(db, id, to, change);
@@ -237,11 +246,14 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     const task = move(id, "building", { worktree });
 
+    // The attempt's own way to the permission gate. It is released whichever way the build ends.
+    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: worktree.path });
     let session: DriverSession;
     try {
       if (closed) throw new Error("Smelt is stopping.");
-      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, ...(options.model ? { model: options.model } : {}) });
+      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(options.model ? { model: options.model } : {}) });
     } catch (err) {
+      admission.release();
       // Nothing happened in the worktree, so it and its branch go again.
       const reason = await removeWorktree({ repo: task.repo, path: worktree.path, deleteBranch: true }).then(
         () => words(err),
@@ -251,9 +263,26 @@ export function createTasks(options: TasksOptions): Tasks {
     }
 
     current = session;
+    admission.bind(session.attemptId);
     let detail: string | null = null;
+    /** Permission requests the CLI is still waiting on, by request id. */
+    const asking = new Set<string>();
     session.onEvent((event) => {
       if (event.type === "turn_ended") detail = event.detail;
+      if (event.type === "permission_request") {
+        asking.add(event.id);
+        // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
+        void broker
+          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), reason: event.reason, toolCallId: event.toolCallId })
+          // A request the CLI has stopped waiting for has no one to tell.
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused }) : undefined))
+          .catch(report(`Answering a permission request of task ${id}`));
+      }
+      if (event.type === "permission_resolved") {
+        asking.delete(event.id);
+        // The CLI gave up on the request (the turn was stopped): its card must not stay answerable.
+        if (event.decision === "cancelled") admission.supersede(event.toolCallId);
+      }
       options.onEvent();
     });
     move(id, "building", { attemptId: session.attemptId });
@@ -273,6 +302,7 @@ export function createTasks(options: TasksOptions): Tasks {
       leftover = `Its Claude Code process could not be stopped: ${words(err)}`;
     }
     current = null;
+    admission.release();
     options.onEvent();
 
     // However the turn ended, what it wrote is committed and the task says where it stands.
@@ -294,7 +324,6 @@ export function createTasks(options: TasksOptions): Tasks {
     }
   };
 
-  const report = (what: string) => (err: unknown): void => console.error(`${what} failed: ${words(err)}`);
   // One chain: recovery first, then each task in the order it was started.
   let chain: Promise<void> = recover().catch(report("Recovering tasks"));
 

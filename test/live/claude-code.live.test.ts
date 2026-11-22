@@ -178,7 +178,7 @@ test("live: interrupting a long turn ends it as interrupted and leaves no child 
   const rows = eventRows(db, session.attemptId);
   assert.deepEqual(JSON.parse(String(rows.at(-1)!.payload)), last);
   await assert.rejects(session.sendTurn("more"));
-  await assert.rejects(session.respondToRequest("x", {}), /permission broker/);
+  await assert.rejects(session.respondToRequest("x", { decision: "allow" }), /No permission request x is waiting/);
 });
 
 test("live: the real CLI with an empty configuration directory is signed out and no turn starts", { timeout: TURN_TIMEOUT }, async (t) => {

@@ -57,7 +57,16 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.getByTestId("branch")).toHaveText(/^smelt\/run-[0-9a-f]{8}\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
 
-  await expect(page.getByTestId("task-status")).toHaveText("Built. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
+  // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
+  // pauses for the owner. This test is about the edit, so any such request is declined, as an owner could.
+  const built = "Built. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+  await expect(async () => {
+    const pending = (await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
+    for (const approval of pending.approvals) {
+      await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Not needed for this task; just create the file." } });
+    }
+    await expect(page.getByTestId("task-status")).toHaveText(built, { timeout: 2_000 });
+  }).toPass({ timeout: 180_000, intervals: [1_000] });
   await expect(page.locator('[data-event="turn_ended"]')).toContainText("Turn completed.");
   // No working note is left once the turn is over.
   await expect(page.getByRole("log").getByRole("status")).toHaveCount(0);
@@ -90,7 +99,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
   await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code was allowed to change files only inside this task's worktree. Commands it treats as read-only, and ones that only write files there, could run; every command that needs approval was denied. Approvals for commands arrive in a later version.",
+    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.",
   );
   // No primary action on this screen, and nothing that claims to accept, reject, merge or push.
   await expect(page.getByRole("button", { name: /accept|reject|merge|push|approve|stop/i })).toHaveCount(0);

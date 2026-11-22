@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { createBroker } from "../../src/approvals/broker.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
 import { checkRepository, createTask, createTasks, getTask, listTasks, moveTask, TaskError } from "../../src/engine/task.ts";
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
@@ -71,7 +72,7 @@ test("a database at the previous schema version gains the task tables and keeps 
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 3);
+  assert.equal(schemaVersion(db), 4);
   assert.deepEqual({ ...db.prepare("SELECT * FROM attempts").get() }, {
     id: 1, driver: "claude-code", model: "haiku", resume_cursor: "cursor-abc", status: "ended", pgid: null,
     created_at: "2026-11-21T10:00:00.000Z", updated_at: "2026-11-21T10:05:00.000Z",
@@ -237,7 +238,7 @@ test("on start, a task left building by a Smelt that stopped has its work commit
   write(worktree.path, "partial.txt", "written before the stop\n");
 
   const announced: number[] = [];
-  const tasks = createTasks({ db, home, driver: new ClaudeCodeDriver(), onEvent: () => {}, onTaskChange: (task) => announced.push(task.id) });
+  const tasks = createTasks({ db, home, driver: new ClaudeCodeDriver(), broker: createBroker({ db, home, onChange: () => {} }), onEvent: () => {}, onTaskChange: (task) => announced.push(task.id) });
   await tasks.idle();
   t.after(() => tasks.close());
 
@@ -270,7 +271,7 @@ test("a task whose worktree cannot be made fails with the reason, without a driv
   const before = checkoutState(dir);
 
   const announced: string[] = [];
-  const tasks = createTasks({ db, home, driver: new ClaudeCodeDriver(), onEvent: () => {}, onTaskChange: (task) => announced.push(`${task.id}:${task.status}`) });
+  const tasks = createTasks({ db, home, driver: new ClaudeCodeDriver(), broker: createBroker({ db, home, onChange: () => {} }), onEvent: () => {}, onTaskChange: (task) => announced.push(`${task.id}:${task.status}`) });
   const started = await tasks.start(dir, "anything");
   assert.equal(started.status, "queued", "the answer comes before the build");
   await tasks.idle();

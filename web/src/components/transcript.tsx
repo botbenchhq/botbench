@@ -62,9 +62,34 @@ function Row({ event, calls }: { event: StoredEvent; calls: Map<string, string> 
       return (
         <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
           <span className="font-medium uppercase">Denied</span>
-          <span className="whitespace-pre-wrap break-words">{`${calls.get(e.id) ?? e.name} was not run. It needs an approval, and nothing can give one in this version.`}</span>
+          <span className="whitespace-pre-wrap break-words">{`${calls.get(e.id) ?? e.name} was not run. It needed an approval, and this turn had no way to ask you for one.`}</span>
         </li>
       );
+    case "permission_request":
+      return (
+        <Line kind={e.type} label="Asked you">
+          {`${calls.get(e.toolCallId) ?? e.name} needs your answer before it runs.`}
+        </Line>
+      );
+    case "permission_resolved": {
+      const what = calls.get(e.toolCallId) ?? "the request";
+      const said =
+        e.decision === "allowed"
+          ? `You allowed ${what}.`
+          : e.decision === "declined"
+            ? `You declined ${what}. It was not run.`
+            : e.decision === "denied"
+              ? `Smelt denied ${what} without asking you. It was not run.`
+              : `The request for ${what} ended without an answer. It was not run.`;
+      const label = { allowed: "Allowed", declined: "Declined", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
+      return (
+        <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
+          <span className="font-medium uppercase">{label}</span>
+          <span className="whitespace-pre-wrap break-words">{said}</span>
+          {e.note !== null && <span className="whitespace-pre-wrap break-words">{e.decision === "denied" ? `Why: ${e.note}` : `Your note: ${e.note}`}</span>}
+        </li>
+      );
+    }
     case "tool_result":
       return (
         <Line kind={e.type} label={e.isError ? "Tool error" : "Tool result"}>
