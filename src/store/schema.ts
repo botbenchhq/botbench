@@ -1041,4 +1041,18 @@ WHEN NOT EXISTS (SELECT 1 FROM reviews WHERE task_id = NEW.task_id AND round = N
 BEGIN SELECT RAISE(ABORT, 'a round of fixes follows the review of the same round'); END;
 `,
   },
+  {
+    // A device stays signed in across restarts. Only the SHA-256 of a session's secret is kept, never the secret.
+    name: "browser_sessions",
+    sql: `
+CREATE TABLE browser_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  secret_hash TEXT NOT NULL UNIQUE CHECK (length(secret_hash) = 64),
+  device TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+`,
+  },
 ];

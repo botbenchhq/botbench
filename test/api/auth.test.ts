@@ -9,7 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { LOGIN_TOKEN_FILE, MAX_WAITING_SIGN_INS, SESSION_COOKIE } from "../../src/api/auth.ts";
+import { deviceLabel, SESSION_MAX_AGE_S } from "../../src/api/sessions.ts";
 import { DEFAULT_CONFIG_FILE, loadConfig, type Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 
@@ -143,6 +145,7 @@ test("signing in with the token sets a session cookie scripts cannot read; a wro
   assert.ok(attrs.includes("httponly"), cookie.header);
   assert.ok(attrs.includes("samesite=strict"), cookie.header);
   assert.ok(attrs.includes("path=/"), cookie.header);
+  assert.ok(attrs.includes(`max-age=${90 * 24 * 60 * 60}`), `the device stays signed in for 90 days: ${cookie.header}`);
   assert.ok(!attrs.includes("secure"), "plain HTTP on a listen address: a Secure cookie would never be sent back");
 
   // fetch works with the cookie too: this is what a browser does.
@@ -259,8 +262,8 @@ test("the token file is owner-only and the token is in no response after sign-in
   assert.equal(again.newLoginToken, undefined);
   assert.equal(fs.readFileSync(file, "utf8").trim(), token);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  // Sessions live in memory: the restart signed the earlier session out, and the same token signs in again.
-  assert.equal((await request({ port: again.port, path: "/health", headers: { cookie } })).status, 401);
+  // Sessions are kept in the database: the restart left the earlier session signed in, and the token still signs in.
+  assert.equal((await request({ port: again.port, path: "/health", headers: { cookie } })).status, 200);
   assert.equal((await signIn(again.port, token)).status, 200);
 });
 
@@ -300,6 +303,7 @@ test("the entry point prints the token only on the start that created it", async
   };
 
   let token = "";
+  let secret = "";
   const first = await run(async (port) => {
     token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
     assert.equal((await signIn(port, token)).status, 200);
@@ -314,9 +318,14 @@ test("the entry point prints the token only on the start that created it", async
     const signedIn = await signIn(port, token);
     assert.equal(signedIn.status, 200);
     assert.equal((await request({ port, path: "/health", headers: { cookie: sessionCookie(signedIn).pair } })).status, 200);
+    secret = sessionCookie(signedIn).pair.split("=")[1]!;
+    // A wrong session and an ended one are logged nowhere with their value either.
+    await request({ port, path: "/health", headers: { cookie: `${SESSION_COOKIE}=${secret}x` } });
   });
   assert.ok(!second.stdout.includes(token), "a later start does not print the token");
   assert.ok(!second.stderr.includes(token));
+  assert.ok(secret.length >= 43);
+  assert.ok(!`${first.stdout}${first.stderr}${second.stdout}${second.stderr}`.includes(secret), "the session secret is in no log line");
 });
 
 test("a foreign Origin, or a body that is not JSON, is refused on a write route", async (t) => {
@@ -366,7 +375,7 @@ test("a Host listed in publicHosts is accepted and its session cookie is Secure;
   assert.equal(viaProxy.status, 200);
   const secure = sessionCookie(viaProxy);
   const attrs = attributes(secure.header);
-  for (const flag of ["secure", "httponly", "samesite=strict", "path=/"]) assert.ok(attrs.includes(flag), `${flag} in ${secure.header}`);
+  for (const flag of ["secure", "httponly", "samesite=strict", "path=/", `max-age=${90 * 24 * 60 * 60}`]) assert.ok(attrs.includes(flag), `${flag} in ${secure.header}`);
   assert.equal((await request({ port, path: "/health", headers: { host: name, cookie: secure.pair } })).status, 200);
   assert.equal((await request({ port, path: "/health", headers: { host: name } })).status, 401, "the HTTPS name needs a session like any other");
   assert.equal((await signIn(port, token, { headers: { host: name.toUpperCase(), origin: `https://${name}` } })).status, 200, "host names compare without case");
@@ -403,4 +412,194 @@ test("a Host listed in publicHosts is accepted and its session cookie is Secure;
   // Without the name in the configuration the same request is refused.
   const { server: plain, token: plainToken } = await start(t);
   assert.equal((await signIn(plain.port, plainToken, { headers: { host: name, origin: `https://${name}` } })).status, 403);
+});
+
+// Staying signed in (a device keeps its session for 90 days, across restarts) and the owner's list of signed-in devices.
+
+const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1";
+const IPHONE_HOME_SCREEN = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+const MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
+
+test("a device is labelled from its browser's User-Agent, and an unknown one is just a browser", () => {
+  assert.equal(deviceLabel(IPHONE_SAFARI), "iPhone · Safari");
+  assert.equal(deviceLabel(IPHONE_HOME_SCREEN), "iPhone · Home Screen app");
+  assert.equal(deviceLabel(MAC_CHROME), "Mac · Chrome");
+  assert.equal(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15"), "Mac · Safari");
+  assert.equal(deviceLabel("Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/142.0.0.0 Mobile/15E148 Safari/604.1"), "iPhone · Chrome");
+  assert.equal(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"), "Mac · Edge");
+  assert.equal(deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 15.7; rv:145.0) Gecko/20100101 Firefox/145.0"), "Mac · Firefox");
+  assert.equal(deviceLabel("curl/8.7.1"), "Browser");
+  assert.equal(deviceLabel(""), "Browser");
+  assert.equal(deviceLabel(undefined), "Browser");
+});
+
+interface SessionRow {
+  id: number;
+  secret_hash: string;
+  device: string;
+  created_at: string;
+  last_used_at: string;
+  expires_at: string;
+}
+const rows = (server: BotbenchServer): SessionRow[] => server.db.prepare("SELECT * FROM browser_sessions ORDER BY id").all() as unknown as SessionRow[];
+const secretOf = (reply: Reply): string => sessionCookie(reply).pair.split("=")[1]!;
+const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
+const daysFromNow = (days: number): string => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+
+/** Every byte of every file in the data folder, the database's write-ahead log included. */
+function dataFolderBytes(home: string): string {
+  return fs.readdirSync(home, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => fs.readFileSync(path.join(e.parentPath, e.name)).toString("latin1")).join("\n");
+}
+
+test("a session is stored as a hash only, survives the server being closed and started again over the same data folder, and works there", async (t) => {
+  const { server, home, token } = await start(t);
+  const reply = await signIn(server.port, token, { headers: { "user-agent": IPHONE_SAFARI } });
+  const secret = secretOf(reply);
+  assert.ok(Buffer.from(secret, "base64url").length >= 16, "at least 128 bits");
+  const [row] = rows(server);
+  assert.equal(row!.secret_hash, sha256(secret), "the SHA-256 of the secret");
+  assert.equal(row!.device, "iPhone · Safari");
+  assert.ok(Math.abs(Date.parse(row!.expires_at) - Date.now() - SESSION_MAX_AGE_S * 1000) < 60_000, "expires in 90 days");
+  assert.equal(row!.last_used_at, row!.created_at);
+  assert.ok(!dataFolderBytes(home).includes(secret), "the secret itself is in no file of the data folder");
+
+  await server.close();
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const again = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => again.close());
+  assert.equal((await request({ port: again.port, path: "/api/session", headers: { cookie: sessionCookie(reply).pair } })).status, 200);
+  // Something that merely looks like the stored hash is no session.
+  assert.equal((await request({ port: again.port, path: "/health", headers: { cookie: `${SESSION_COOKIE}=${row!.secret_hash}` } })).status, 401);
+  assert.ok(!dataFolderBytes(home).includes(secret));
+});
+
+test("an expired session is refused and its row removed, on use and at start", async (t) => {
+  const { server, home, token } = await start(t);
+  const a = await signIn(server.port, token);
+  const b = await signIn(server.port, token);
+  server.db.prepare("UPDATE browser_sessions SET expires_at = ? WHERE secret_hash = ?").run(daysFromNow(-1 / 24), sha256(secretOf(a)));
+  const refused = await request({ port: server.port, path: "/health", headers: { cookie: sessionCookie(a).pair } });
+  assert.equal(refused.status, 401);
+  assert.deepEqual(rows(server).map((r) => r.secret_hash), [sha256(secretOf(b))], "the expired row is gone, the other kept");
+
+  // One that expires while Botbench is stopped is gone after the next start, before anything uses it.
+  server.db.prepare("UPDATE browser_sessions SET expires_at = ?").run(daysFromNow(-1));
+  await server.close();
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const again = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => again.close());
+  assert.deepEqual(rows(again), []);
+  assert.equal((await request({ port: again.port, path: "/health", headers: { cookie: sessionCookie(b).pair } })).status, 401);
+});
+
+test("a session used more than a day after it was last renewed gets a fresh 90 days and the same cookie again; otherwise no cookie is sent", async (t) => {
+  const { server, token } = await start(t, { publicHosts: ["mac.tailnet.ts.net"] });
+  const reply = await signIn(server.port, token, { headers: { host: "mac.tailnet.ts.net", origin: "https://mac.tailnet.ts.net" } });
+  const cookie = sessionCookie(reply).pair;
+  const fresh = await request({ port: server.port, path: "/health", headers: { host: "mac.tailnet.ts.net", cookie } });
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.headers["set-cookie"], undefined, "renewed less than a day ago: nothing to send");
+
+  // Signed in 89 days ago and last renewed then: one day of the 90 is left.
+  server.db.prepare("UPDATE browser_sessions SET expires_at = ?").run(daysFromNow(1));
+  const renewed = await request({ port: server.port, path: "/health", headers: { host: "mac.tailnet.ts.net", cookie } });
+  assert.equal(renewed.status, 200);
+  const again = sessionCookie(renewed);
+  assert.equal(again.pair, cookie, "the same secret, sent again with a new lifetime");
+  for (const flag of ["secure", "httponly", "samesite=strict", "path=/", `max-age=${SESSION_MAX_AGE_S}`]) assert.ok(attributes(again.header).includes(flag), `${flag} in ${again.header}`);
+  assert.ok(Math.abs(Date.parse(rows(server)[0]!.expires_at) - Date.now() - SESSION_MAX_AGE_S * 1000) < 60_000, "the stored expiry moved too");
+
+  // Renewed just now, so the next request sends nothing again.
+  assert.equal((await request({ port: server.port, path: "/health", headers: { host: "mac.tailnet.ts.net", cookie } })).headers["set-cookie"], undefined);
+  // On loopback a renewal is not Secure, as at sign-in.
+  server.db.prepare("UPDATE browser_sessions SET expires_at = ?").run(daysFromNow(80));
+  const direct = await request({ port: server.port, path: "/health", headers: { cookie } });
+  assert.ok(!attributes(sessionCookie(direct).header).includes("secure"));
+});
+
+test("the last-used time is written at most once a minute", async (t) => {
+  const { server, token } = await start(t);
+  const cookie = sessionCookie(await signIn(server.port, token)).pair;
+  const signedInAt = rows(server)[0]!.last_used_at;
+  for (let i = 0; i < 3; i++) assert.equal((await request({ port: server.port, path: "/health", headers: { cookie } })).status, 200);
+  assert.equal(rows(server)[0]!.last_used_at, signedInAt, "used within the minute: not written");
+
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60_000).toISOString();
+  server.db.prepare("UPDATE browser_sessions SET last_used_at = ?").run(twoMinutesAgo);
+  await request({ port: server.port, path: "/health", headers: { cookie } });
+  const touched = rows(server)[0]!.last_used_at;
+  assert.ok(Date.parse(touched) > Date.parse(twoMinutesAgo) + 60_000, "a minute later: written");
+  await request({ port: server.port, path: "/health", headers: { cookie } });
+  assert.equal(rows(server)[0]!.last_used_at, touched);
+});
+
+/** Open the event stream with a session; resolves once it is connected, with a promise for its end. */
+function openStream(port: number, cookie: string): Promise<{ ended: Promise<void>; isOpen: () => boolean }> {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: "127.0.0.1", port, path: "/api/stream", headers: { cookie }, agent: false }, (res) => {
+      assert.equal(res.statusCode, 200);
+      let open = true;
+      const ended = new Promise<void>((done) => {
+        res.on("close", () => ((open = false), done()));
+        res.on("error", () => ((open = false), done()));
+      });
+      res.once("data", () => resolve({ ended, isOpen: () => open }));
+    });
+    req.on("error", () => undefined);
+    req.setTimeout(5000, () => reject(new Error("the stream did not open")));
+  });
+}
+
+test("the owner lists the signed-in devices, signs one out, and signs out everywhere else; each ends at once, its open live updates included", async (t) => {
+  const { server, token } = await start(t);
+  const port = server.port;
+  const phone = sessionCookie(await signIn(port, token, { headers: { "user-agent": IPHONE_SAFARI } })).pair;
+  const homeScreen = sessionCookie(await signIn(port, token, { headers: { "user-agent": IPHONE_HOME_SCREEN } })).pair;
+  const mac = sessionCookie(await signIn(port, token, { headers: { "user-agent": MAC_CHROME } })).pair;
+  const own = { ...JSON_TYPE, origin: `http://127.0.0.1:${port}` };
+
+  assert.equal((await request({ port, path: "/api/devices" })).status, 401, "the list needs a session");
+  const listed = await request({ port, path: "/api/devices", headers: { cookie: mac } });
+  assert.equal(listed.status, 200);
+  const { devices } = JSON.parse(listed.body) as { devices: Array<{ id: number; device: string; signedInAt: string; lastUsedAt: string; current: boolean }> };
+  assert.deepEqual(devices.map((d) => [d.device, d.current]), [["iPhone · Safari", false], ["iPhone · Home Screen app", false], ["Mac · Chrome", true]]);
+  for (const d of devices) assert.deepEqual(Object.keys(d).sort(), ["current", "device", "id", "lastUsedAt", "signedInAt"]);
+  for (const r of rows(server)) assert.ok(!listed.body.includes(r.secret_hash), "no hash in the list");
+
+  // The Home Screen app has the live updates open; signing it out from the Mac ends them at once, and its session.
+  const homeStream = await openStream(port, homeScreen);
+  const macStream = await openStream(port, mac);
+  const homeId = devices[1]!.id;
+  const ended = await request({ port, method: "POST", path: `/api/devices/${homeId}/sign-out`, headers: { cookie: mac, ...own }, body: "{}" });
+  assert.equal(ended.status, 200);
+  assert.equal(ended.headers["set-cookie"], undefined, "another device's sign-out leaves this one's cookie alone");
+  await homeStream.ended;
+  assert.equal((await request({ port, path: "/health", headers: { cookie: homeScreen } })).status, 401);
+  assert.equal(macStream.isOpen(), true, "the Mac's own live updates stay open");
+  assert.equal(rows(server).length, 2);
+  assert.equal((await request({ port, method: "POST", path: `/api/devices/${homeId}/sign-out`, headers: { cookie: mac, ...own }, body: "{}" })).status, 404, "already gone");
+  assert.equal((await request({ port, method: "POST", path: "/api/devices/x/sign-out", headers: { cookie: mac, ...own }, body: "{}" })).status, 404);
+
+  // Everywhere else: the phone goes, the Mac stays.
+  const others = await request({ port, method: "POST", path: "/api/devices/sign-out-others", headers: { cookie: mac, ...own }, body: "{}" });
+  assert.equal(others.status, 200);
+  assert.equal((await request({ port, path: "/health", headers: { cookie: phone } })).status, 401);
+  assert.equal((await request({ port, path: "/health", headers: { cookie: mac } })).status, 200);
+  assert.equal(rows(server).length, 1);
+  assert.equal(macStream.isOpen(), true);
+
+  // Signing this device out deletes its row, clears its cookie and ends its live updates.
+  const self = await request({ port, method: "POST", path: `/api/devices/${devices[2]!.id}/sign-out`, headers: { cookie: mac, ...own }, body: "{}" });
+  assert.equal(self.status, 200);
+  const cleared = sessionCookie(self);
+  assert.equal(cleared.pair, `${SESSION_COOKIE}=`);
+  for (const flag of ["httponly", "samesite=strict", "path=/", "max-age=0"]) assert.ok(attributes(cleared.header).includes(flag), `${flag} in ${cleared.header}`);
+  await macStream.ended;
+  assert.deepEqual(rows(server), []);
+  assert.equal((await request({ port, path: "/health", headers: { cookie: mac } })).status, 401);
+
+  // The routes are writes like any other: a foreign origin cannot sign a device out.
+  const next = sessionCookie(await signIn(port, token)).pair;
+  const foreign = await request({ port, method: "POST", path: "/api/devices/sign-out-others", headers: { cookie: next, ...JSON_TYPE, origin: "https://evil.example" }, body: "{}" });
+  assert.equal(foreign.status, 403);
 });

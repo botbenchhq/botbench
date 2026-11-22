@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { ApiError, getAgents, getDefaultMode, openEventStream, setDefaultMode, type AgentState, type RunMode } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
+import { DeviceSettings } from "../app/device-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
@@ -163,6 +164,8 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </div>
 
           <NotificationSettings onSignedOut={onSignedOut} />
+
+          <DeviceSettings onSignedOut={onSignedOut} />
       </Page>
     </Frame>
   );

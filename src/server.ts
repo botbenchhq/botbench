@@ -142,7 +142,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, deliveries, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
-  const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
+  const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
 
   const handler: http.RequestListener = (req, res) => {
     // The gate answers sign-in and every refusal itself; only a request with a session reaches the routes.

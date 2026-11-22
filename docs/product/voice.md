@@ -58,6 +58,8 @@ On screen since dictation: Dictate (the message box's microphone button, pressed
 
 On screen since the refine loop: "Up to 2 rounds of fixes." beside Review on New run (the cap from the settings); on the task, under "Codex's review", a plain outcome line ("Codex raised 3 concerns. Claude Code addressed 2 and explained 1. Codex is satisfied.", "… Still disagree after 2 rounds: needs your judgment.", "Codex found nothing to fix."), then "Review 1", "Claude Code's fixes 1", "Review 2" and so on, each with its own words one tap away. A round of fixes reads "Addressed 2, explained 1", "Changed nothing, explained 1" or "Changed the work"; while it runs, "Claude Code is working on fixes: round 1 of up to 2."
 
+On screen since devices stay signed in: Settings → Signed-in devices, each device by a label from its browser ("iPhone · Safari", "iPhone · Home Screen app", "Mac · Chrome", or "Browser"), with "Signed in …. Last used …." and This device; Sign out on each row (for this device behind "Sign out this device?" with Stay signed in) and Sign out everywhere else. The sign-in screen's notice after a sign-out is "This device was signed out. Sign in again."
+
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.

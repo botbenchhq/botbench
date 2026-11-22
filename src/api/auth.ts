@@ -2,10 +2,12 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import type http from "node:http";
 import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "../store/atomic.ts";
 import { audioFormat } from "../dictation/dictation.ts";
 import { BodyError, json, readJsonBody, requestUrl } from "./router.ts";
+import { createSessions, deviceLabel, SESSION_MAX_AGE_S } from "./sessions.ts";
 import { isShellRequest } from "./static.ts";
 
 /** The owner's login token, inside Botbench's data directory. */
@@ -31,6 +33,8 @@ export function loadOrCreateLoginToken(home: string): { token: string; created: 
 
 export interface AuthOptions {
   token: string;
+  /** Where the sessions are kept, so a device stays signed in across restarts. */
+  db: DatabaseSync;
   /** The addresses Botbench listens on. */
   listen: readonly string[];
   /** The bound port; a function because port 0 is only known once the first listener is up. */
@@ -88,8 +92,27 @@ export function createAuth(options: AuthOptions): Auth {
   const publicHosts = new Set(options.publicHosts.map((h) => h.toLowerCase()));
   const baseDelay = options.signInDelayMs ?? DEFAULT_SIGN_IN_DELAY_MS;
 
-  // Sessions live in memory only: restarting Botbench signs every device out, and the same token signs them in again.
-  const sessions = new Set<string>();
+  // Sessions are kept in the database (as hashes), so a restart signs nobody out. They are not tied to the login
+  // token: replacing the token file changes what signs in from then on, and leaves signed-in devices signed in.
+  const sessions = createSessions(options.db);
+  /** Each session's requests in flight, the event stream included, so ending a session ends them at once. */
+  const inFlight = new Map<number, Set<http.ServerResponse>>();
+  const track = (id: number, res: http.ServerResponse): void => {
+    let open = inFlight.get(id);
+    if (open === undefined) inFlight.set(id, (open = new Set()));
+    open.add(res);
+    res.on("close", () => {
+      open.delete(res);
+      if (open.size === 0 && inFlight.get(id) === open) inFlight.delete(id);
+    });
+  };
+  /** Cut off what an ended session still has open, except the reply that is ending it. */
+  const cutOff = (id: number, except: http.ServerResponse): void => {
+    for (const res of inFlight.get(id) ?? []) if (res !== except) res.destroy();
+  };
+
+  const sessionCookie = (secret: string, secure: boolean, maxAge = SESSION_MAX_AGE_S): string =>
+    `${SESSION_COOKIE}=${secret}; Max-Age=${maxAge}; HttpOnly; SameSite=Strict; Path=/${secure ? "; Secure" : ""}`;
 
   /** `Host` values of Botbench's own plain-HTTP listeners. */
   const directHosts = (): Set<string> => {
@@ -151,9 +174,34 @@ export function createAuth(options: AuthOptions): Auth {
     const outcome = await attempt(candidate);
     if (outcome === "busy") return json(res, 429, { error: "too many tries at signing in; wait a moment, then try again" });
     if (!outcome) return json(res, 401, { error: "wrong token" });
-    const id = randomBytes(32).toString("base64url");
-    sessions.add(id);
-    json(res, 200, { signedIn: true }, { "set-cookie": `${SESSION_COOKIE}=${id}; HttpOnly; SameSite=Strict; Path=/${secure ? "; Secure" : ""}` });
+    const { secret } = sessions.create(deviceLabel(req.headers["user-agent"]));
+    json(res, 200, { signedIn: true }, { "set-cookie": sessionCookie(secret, secure) });
+  };
+
+  /** The signed-in devices: listing them, signing one out, signing out every other. Answered here; false when not one of them. */
+  const deviceRoutes = (req: http.IncomingMessage, res: http.ServerResponse, pathname: string, current: number, secure: boolean): boolean => {
+    if (req.method === "GET" && pathname === "/api/devices") {
+      json(res, 200, { devices: sessions.list().map((d) => ({ ...d, current: d.id === current })) });
+      return true;
+    }
+    if (req.method === "POST" && pathname === "/api/devices/sign-out-others") {
+      for (const id of sessions.endAllBut(current)) cutOff(id, res);
+      json(res, 200, { signedOut: "others" });
+      return true;
+    }
+    const one = /^\/api\/devices\/([^/]+)\/sign-out$/.exec(pathname);
+    if (req.method === "POST" && one !== null) {
+      const id = /^\d{1,15}$/.test(one[1]!) ? Number(one[1]) : NaN;
+      if (!Number.isSafeInteger(id) || !sessions.end(id)) {
+        json(res, 404, { error: "That device is not signed in." });
+        return true;
+      }
+      cutOff(id, res);
+      // Signing this device out also clears its cookie.
+      json(res, 200, { signedOut: id }, id === current ? { "set-cookie": sessionCookie("", secure, 0) } : {});
+      return true;
+    }
+    return false;
   };
 
   const gate = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> => {
@@ -173,8 +221,9 @@ export function createAuth(options: AuthOptions): Auth {
     // The sign-in screen has to load before there is a session. Only these static files are open.
     if (isShellRequest(req.method, pathname)) return true;
     const signingIn = req.method === "POST" && pathname === SIGN_IN_PATH;
-    const session = cookieValue(req, SESSION_COOKIE);
-    if (!signingIn && (session === undefined || !sessions.has(session))) {
+    const secret = cookieValue(req, SESSION_COOKIE);
+    const session = signingIn || secret === undefined || secret === "" ? null : sessions.find(secret);
+    if (!signingIn && session === null) {
       json(res, 401, { error: "sign in required" });
       return false;
     }
@@ -187,10 +236,14 @@ export function createAuth(options: AuthOptions): Auth {
       json(res, 415, { error: "body must be application/json" });
       return false;
     }
-    if (signingIn) {
+    if (signingIn || session === null) {
       await signIn(req, res, viaHttps);
       return false;
     }
+    track(session.id, res);
+    // Used a day or more after its last renewal: the device gets a fresh 90 days.
+    if (session.renewed) res.setHeader("set-cookie", sessionCookie(secret!, viaHttps));
+    if (deviceRoutes(req, res, pathname, session.id, viaHttps)) return false;
     return true;
   };
   return { gate };

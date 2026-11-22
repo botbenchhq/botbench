@@ -825,3 +825,16 @@ export const savePushSubscription = (subscription: DeviceSubscription): Promise<
 export const removePushSubscription = (endpoint: string): Promise<unknown> => request("POST", "/api/push/unsubscribe", { endpoint }, 10_000);
 export const pushSubscribed = async (endpoint: string): Promise<boolean> => (await request<{ subscribed: boolean }>("POST", "/api/push/check", { endpoint }, 10_000)).subscribed;
 export const sendTestNotification = (endpoint: string): Promise<unknown> => request("POST", "/api/push/test", { endpoint }, 20_000);
+
+/** A device signed in to Botbench: its label from the browser it signed in with, and when it signed in and was last used. */
+export interface SignedInDevice {
+  id: number;
+  device: string;
+  signedInAt: string;
+  lastUsedAt: string;
+  /** The device this request came from. */
+  current: boolean;
+}
+export const listDevices = async (): Promise<SignedInDevice[]> => (await request<{ devices: SignedInDevice[] }>("GET", "/api/devices", undefined, 10_000)).devices;
+export const signOutDevice = (id: number): Promise<unknown> => request("POST", `/api/devices/${id}/sign-out`, {}, 10_000);
+export const signOutOtherDevices = (): Promise<unknown> => request("POST", "/api/devices/sign-out-others", {}, 10_000);

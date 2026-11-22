@@ -293,7 +293,7 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, botbenc
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("when Botbench restarts, the stream banner shows and the client returns to sign-in, since sessions do not outlive the process", async ({ page }) => {
+test("when Botbench restarts, the stream banner shows and goes once it is back, and the device is still signed in, since sessions are kept across restarts", async ({ page }) => {
   const first = await startBotbench();
   let second: Botbench | undefined;
   try {
@@ -301,12 +301,9 @@ test("when Botbench restarts, the stream banner shows and the client returns to 
     expect((await first.stop()).leftover).toEqual([]);
     await expect(page.getByTestId("stream-banner")).toBeVisible();
     second = await startBotbench({ home: first.home, port: first.port });
-    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-    await expect(page.getByRole("status")).toContainText("Your session ended");
-    await page.getByLabel("Login token").fill(second.token);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByTestId("driver-state")).toContainText("signed in");
     await expect(page.getByTestId("stream-banner")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
+    await expect(page.getByTestId("driver-state")).toContainText("signed in");
   } finally {
     await second?.stop();
     fs.rmSync(path.dirname(first.home), { recursive: true, force: true });

@@ -10,7 +10,7 @@ const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly
 const PARKED_STATUS = "Needs input. Claude Code asked for permission before Botbench restarted and is stopped. Your answer starts it again where it left off.";
 const PARKED_CARD = "Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.";
 
-test("LIVE: a task waits on an approval, Botbench is restarted, and after signing in again the card is still there and says it predates the restart; Allow resumes the task, which finishes with its changed file and exactly one approval", async ({ page, botbench }) => {
+test("LIVE: a task waits on an approval, Botbench is restarted, and after a reload, still signed in, the card is still there and says it predates the restart; Allow resumes the task, which finishes with its changed file and exactly one approval", async ({ page, botbench }) => {
   const repo = path.join(path.dirname(botbench.home), "sample-repo");
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });
   const before = checkoutState(repo);
@@ -32,9 +32,11 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after signin
   const branch = await page.getByTestId("branch").inputValue();
   const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
 
-  // Botbench stops and starts again. The session ended with the old process, so the owner signs in again.
+  // Botbench stops and starts again. The device stays signed in across the restart, so the owner only reloads.
   await botbench.restart();
-  await signIn(page, botbench);
+  await page.goto(botbench.base);
+  await expect(page.getByTestId("driver-state")).toContainText("signed in");
+  await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
