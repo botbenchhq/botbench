@@ -103,7 +103,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   return (
-    <Frame current="trust">
+    <Frame current={null} back={{ href: "#/settings", label: "Settings" }}>
       <Page>
         <PageHeader title="Permissions" />
         {problem !== null && (

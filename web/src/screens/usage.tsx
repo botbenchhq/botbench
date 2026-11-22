@@ -130,7 +130,7 @@ export function UsageScreen({ onSignedOut }: { onSignedOut: () => void }) {
   }, [onSignedOut]);
 
   return (
-    <Frame current="usage">
+    <Frame current={null} back={{ href: "#/settings", label: "Settings" }}>
       <Page>
         <PageHeader title="Usage" />
         {failed !== null && (

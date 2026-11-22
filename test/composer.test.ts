@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { arrive, blocked, commandsWords, DEFAULTS, issueWords, ISSUE_NOT_FULL, readRemembered, repoName, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { arrive, blocked, commandsWords, DEFAULTS, folderName, issueWords, ISSUE_NOT_FULL, readRemembered, repoName, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -78,8 +78,11 @@ test("Send is disabled, with the reason in words, while something it needs is mi
   assert.deepEqual(blocked({ ...ready, builder: { state: "checking" } }), { reason: "Checking that Claude Code is ready.", required: null });
   assert.deepEqual(blocked({ ...ready, builder: { state: "problem", words: "Claude Code is signed out." } }), { reason: "Claude Code is signed out. Nothing can be sent until this is fixed.", required: null });
   // A repository is needed and none is chosen: the required chip stands in for the model chip.
-  assert.deepEqual(blocked({ ...ready, repo: { kind: "needed" } }), { reason: "Choose a repository for the task, or None to just chat.", required: "repository" });
-  assert.deepEqual(blocked({ ...ready, kind: "run", repo: { kind: "needed" } }), { reason: "Choose a repository for the run, or None to just chat.", required: "repository" });
+  // Only New task and New run make a repository needed (see arrive): the reason is short, and the chip opens the view.
+  assert.deepEqual(blocked({ ...ready, repo: { kind: "needed" } }), { reason: "Choose a repository", required: "repository" });
+  assert.deepEqual(blocked({ ...ready, kind: "run", repo: { kind: "needed" } }), { reason: "Choose a repository", required: "repository" });
+  // With no repository and no kind chosen on arrival, Send is a chat and nothing is required, whatever kind is remembered.
+  for (const kind of ["task", "run"] as const) assert.equal(blocked({ ...ready, kind, repo: { kind: "none" } }), null);
   assert.deepEqual(blocked(inRepo({ repo: { kind: "other", path: " " }, repoStatus: { state: "none" } })), { reason: "Enter the full path of a git repository on this Mac.", required: "repository" });
   assert.deepEqual(blocked(inRepo({ repoStatus: { state: "checking" } })), { reason: "Checking the repository.", required: null });
   assert.deepEqual(blocked(inRepo({ repoStatus: { state: "refused", words: "This folder is not a git repository." } })), { reason: "This folder is not a git repository.", required: "repository" });
@@ -123,10 +126,20 @@ test("the repository, kind, mode, review and delivery are remembered on the devi
   assert.deepEqual(readRemembered(JSON.stringify({ ...chosen, repo: { kind: "needed" } })).repo, { kind: "none" });
 });
 
-test("New task and New run arrive with their kind chosen, and ask for a repository only when none is remembered", () => {
-  assert.deepEqual(arrive(DEFAULTS, "run"), { repo: { kind: "needed" }, kind: "run" });
-  assert.deepEqual(arrive({ ...DEFAULTS, repo: { kind: "known", path: REPO } }, "run"), { repo: { kind: "known", path: REPO }, kind: "run" });
-  assert.deepEqual(arrive({ ...DEFAULTS, kind: "run" }, null), { repo: { kind: "none" }, kind: "run" });
+test("New task and New run arrive with their kind chosen, and ask for a repository, opening its view, only when none is remembered", () => {
+  assert.deepEqual(arrive(DEFAULTS, "run"), { repo: { kind: "needed" }, kind: "run", opens: "repository" });
+  assert.deepEqual(arrive(DEFAULTS, "task"), { repo: { kind: "needed" }, kind: "task", opens: "repository" });
+  assert.deepEqual(arrive({ ...DEFAULTS, repo: { kind: "known", path: REPO } }, "run"), { repo: { kind: "known", path: REPO }, kind: "run", opens: null });
+  // Arriving on the home screen itself chooses no kind: no repository means a chat, and no sheet opens.
+  assert.deepEqual(arrive({ ...DEFAULTS, kind: "run" }, null), { repo: { kind: "none" }, kind: "run", opens: null });
+  assert.equal(sendFor({ ...ready, ...arrive({ ...DEFAULTS, kind: "run" }, null) }, extras).do, "chat");
+  assert.equal(sendFor({ ...ready, ...arrive(DEFAULTS, "run") }, extras).do, "blocked");
+});
+
+test("a folder's name is its last part, for a repository shown by name", () => {
+  assert.equal(folderName("/Users/owner/code/api"), "api");
+  assert.equal(folderName("/Users/owner/code/api/"), "api");
+  assert.equal(folderName("api"), "api");
 });
 
 test("row values in words", () => {

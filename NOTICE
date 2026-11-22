@@ -8,8 +8,8 @@ Copied files (stored in this repository)
 ----------------------------------------
 
 web/vendor/design-system/ is a copy of the owner's shared design system, from
-its repository https://github.com/jon-lange/design-system: version 0.8.2,
-source commit cc180905ceb2743d510baef285682a8ba410b4cb (cc18090), the `dist/` directory of that repository,
+its repository https://github.com/jon-lange/design-system: version 0.9.0,
+source commit 7245e30661394ef67d4f7cf36d93b1f154c1f40d (7245e30), the `dist/` directory of that repository,
 unmodified, written by its own `scripts/sync.mjs`. `hashes.json` in the copy
 holds the SHA-256 of every file. (Versions up to 0.5 were called Groundwork and
 were copied to web/vendor/groundwork/.)
@@ -48,6 +48,12 @@ NOTICE lists them:
 - The reset in web/vendor/design-system/design-system.css is written for the
   design system. It keeps the same element defaults as the preflight
   stylesheet of Tailwind CSS (Copyright (c) Tailwind Labs, Inc., MIT License).
+
+One more Lucide icon, outside the copy: the path of Lucide's message-circle
+icon, written into web/src/components/icon.tsx for the Chat destination,
+which the design system's icon set does not have yet. Same licence and notice
+as the Lucide icons above (ISC License, Copyright (c) 2026 Lucide Icons and
+Contributors).
 
 To update the copy, run the design system's sync script again (docs:
 web/vendor/design-system/rules/core.md and the design system's consumer

@@ -7,9 +7,9 @@ It is for one developer on macOS. It is early, and built so far for its author's
 *Walk away. Come back to the branch.*
 
 <p>
-  <img src="docs/images/approval-card.png" alt="Task 1, Needs input: Claude Code asks to run a command, shown in full, with Allow once, Deny, and Deny and say what to do instead" width="260">
+  <img src="docs/images/approval-card.png" alt="A task titled by its own words, showing one approval card: Claude Code asks to run a command, sh make-marker.sh, with its folder and reason, Allow once, Deny, and Deny and say what to do instead; below it the transcript line Needs input, Wants to run sh make-marker.sh" width="260">
   &nbsp;
-  <img src="docs/images/ready-for-review.png" alt="The same task, ready for review: no checks set up, hello.txt added, the branch botbench/run-1/task-1, and Accept and Reject" width="260">
+  <img src="docs/images/ready-for-review.png" alt="The same task, ready for review: the command ran once you allowed it, no checks set up, marker.txt added, the branch botbench/run-1/task-1, and Nothing has been merged or pushed" width="260">
 </p>
 
 *From the quickstart below, at phone size. Left: Claude Code waits for your answer before running a command. Right: the finished task with its checks, changed files and branch, waiting for your decision.*
@@ -80,9 +80,9 @@ Login token (shown this once, kept in /Users/you/.botbench/login-token): …
 
 The token is printed only on the first start. Later, read it with `cat ~/.botbench/login-token`. To use another port or data folder for one start, set `BOTBENCH_PORT` and `BOTBENCH_HOME`, for example `BOTBENCH_PORT=4781 BOTBENCH_HOME=/tmp/botbench-trial npm start`.
 
-**3. Sign in.** Open http://127.0.0.1:4780 in a browser on the Mac, paste the token and choose Sign in. You arrive on Chat, whose header reads "Claude Code 2.1.322 · signed in · subscription" (with your version). Under Settings (the gear, top right), Agents lists Claude Code as Available. If it says Signed out, run `claude auth login` in a terminal.
+**3. Sign in.** Open http://127.0.0.1:4780 in a browser on the Mac, paste the token and choose Sign in. You arrive on Chat: an empty screen above the message box. Under Settings (the gear, top right), Agents lists Claude Code as Available. If it says Signed out, run `claude auth login` in a terminal.
 
-<img src="docs/images/agents-available.png" alt="Settings, Agents: Claude Code, version 2.1.322, signed in with a subscription, plans and builds tasks, Available; Codex, version 0.171.0, reviews a run's tasks, Available" width="260">
+<img src="docs/images/agents-available.png" alt="Settings: links to Permissions and Usage, then Agents: Claude Code, version 2.1.322, signed in with a subscription, plans and builds tasks, Available; Codex, version 0.171.0, reviews a run's tasks, Available" width="260">
 
 **4. Make a practice repository**, in a second terminal:
 
@@ -102,7 +102,7 @@ Add a file hello.txt that says hello, then run ls to show that it is there.
 
 Any model will do; the chip under the box shows the one in use, and a small one such as Haiku is enough (tap the chip to change it). Choose Send.
 
-**6. Answer the approval.** Within a minute the task reads Needs input and shows the command Claude Code wants to run (the model chooses the exact command). Choose Allow once.
+**6. Answer the approval.** Within a minute the task shows a card, "Claude Code asks to run a command", with the command it wants to run (the model chooses the exact command). Choose Allow once.
 
 **7. Review and accept.** The task reads Ready for review, with "No checks are set up for this repository", `hello.txt` under Changed files, and its branch, for example `botbench/run-1/task-1`. Choose Accept. Botbench keeps the branch and removes the task's copy.
 
@@ -117,7 +117,7 @@ The new branch holds one commit by Botbench that adds `hello.txt`. Your own bran
 
 **Clean up:** Ctrl+C in the first terminal, then `rm -rf ~/botbench-try`. Botbench keeps its database and login token in `~/.botbench`; delete that folder only if you want to start again from nothing.
 
-From here, try Runs → New run on a real repository (or, in Add context, What to do → Plan a run): Claude Code proposes a plan first, and you can add checks and a reviewer.
+From here, try Work → New run on a real repository (or, in Add context, What to do → Plan a run): Claude Code proposes a plan first, and you can add checks and a reviewer.
 
 ## Configure a repository
 

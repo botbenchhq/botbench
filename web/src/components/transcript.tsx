@@ -3,7 +3,7 @@ import type { DriverEvent, StoredEvent } from "../api/client.ts";
 import { DiffLine } from "./diff.tsx";
 import { duration as took } from "./evidence.tsx";
 import { Icon, type IconName } from "./icon.tsx";
-import { callLine, callReason, callTarget, confinedWords, duration, editChange, ranFor, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, duration, editChange, ranFor, stepGroupOpen, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
 export function mergeEvents(have: StoredEvent[], more: StoredEvent[]): StoredEvent[] {
@@ -39,6 +39,10 @@ interface Story {
   outside: Set<string>;
   /** The exchanges that have ended, as "attempt:exchange". */
   ended: Set<string>;
+  /** The exchanges in which the agent called a tool. */
+  calledIn: Set<string>;
+  /** When each exchange that completed ended. */
+  completedAt: Map<string, string>;
   /** When each exchange began, and the tokens the agent reported for it. */
   exchanges: Map<string, { from: string; tokensIn: number; tokensOut: number; counted: boolean }>;
 }
@@ -46,12 +50,12 @@ interface Story {
 const exchangeOf = (event: StoredEvent): string => `${event.attemptId}:${event.turn}`;
 
 function readStory(events: readonly StoredEvent[], live: boolean): Story {
-  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), allowedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), exchanges: new Map() };
+  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), allowedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), calledIn: new Set(), completedAt: new Map(), exchanges: new Map() };
   for (const event of events) {
     const e = event.payload;
     const key = exchangeOf(event);
     if (!story.exchanges.has(key)) story.exchanges.set(key, { from: event.ts, tokensIn: 0, tokensOut: 0, counted: false });
-    if (e.type === "tool_call") (story.calls.set(e.id, e), story.calledAt.set(e.id, event.ts));
+    if (e.type === "tool_call") (story.calls.set(e.id, e), story.calledAt.set(e.id, event.ts), story.calledIn.add(key));
     else if (e.type === "tool_result") (story.results.set(e.id, e), story.returnedAt.set(e.id, event.ts));
     else if (e.type === "permission_request") story.asked.add(e.toolCallId);
     else if (e.type === "permission_resolved") {
@@ -62,7 +66,10 @@ function readStory(events: readonly StoredEvent[], live: boolean): Story {
       story.refused.add(e.id);
       if (e.code === "outside_reads_blocked") story.outside.add(e.id);
     }
-    else if (e.type === "turn_ended") story.ended.add(key);
+    else if (e.type === "turn_ended") {
+      story.ended.add(key);
+      if (e.reason === "completed") story.completedAt.set(key, event.ts);
+    }
     else if (e.type === "usage") {
       const exchange = story.exchanges.get(key)!;
       exchange.tokensIn += e.inputTokens + e.cacheReadTokens + e.cacheWriteTokens;
@@ -268,8 +275,9 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
   // Under a second in milliseconds, as the design system writes it ("38 ms"), so a quick call does not read "0 s".
   const time = ms === null ? null : ms < 1000 ? { words: `${ms} ms`, iso: `PT${ms / 1000}S` } : took(ms);
   const { opened, set } = useContext(Opened);
-  // Open without a tap: a call that failed, one that ended without a result, and one that waits for an answer.
-  const open = opened.get(call.id) ?? (state === "failed" || state === "unfinished" || state === "waiting" || kept !== null);
+  // Open without a tap: a call that failed and one that ended without a result. One that waits for an answer is one
+  // line here, its details a tap away: its approval card, on the same screen, shows the request in full.
+  const open = opened.get(call.id) ?? (state === "failed" || state === "unfinished" || kept !== null);
   // While a command runs, the state says Working and the line is the command alone, as the design system has it.
   const verb = state === "running" && call.name === "Bash" && line.verb !== null ? null : line.verb;
   return (
@@ -353,6 +361,9 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
   );
 }
 
+/** The tokens Claude Code reported for one reply. */
+const Tokens = ({ exchange }: { exchange: { tokensIn: number; tokensOut: number } }) => <p data-event="usage" className="ds-message__body">{`Tokens: ${exchange.tokensIn} in, ${exchange.tokensOut} out`}</p>;
+
 /** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
 function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: { event: StoredEvent; story: Story; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy: string; folded: boolean; who: (attemptId: number) => string | null }) {
   const e = event.payload;
@@ -418,18 +429,10 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: {
           <Body>{e.code === "outside_reads_blocked" ? OUTSIDE : "It was not run. It needed your approval, and there was no way to ask you here."}</Body>
         </Line>
       );
-    case "permission_request": {
-      // A request Botbench answered itself, because the command was allowed in advance, never waited for the owner: its outcome row says what happened.
-      const answer = story.answers.get(e.toolCallId);
-      // Nor did one Botbench refused by itself.
-      if (answer === "preapproved" || answer === "standing" || answer === "mode" || answer === "denied") return null;
-      return (
-        <Line kind={e.type} look="asked" label="Asked you">
-          <What call={story.calls.get(e.toolCallId)} fallback={e.name} />
-          <Body>{answer === undefined ? "It needs your answer before it runs." : "Botbench asked you first."}</Body>
-        </Line>
-      );
-    }
+    case "permission_request":
+      // The call's own line says it waits ("Needs input", "Wants to run …"), and the answer's row says what became of
+      // it: a row for the asking itself would say it a third time.
+      return null;
     case "permission_resolved": {
       const said = {
         allowed: "You allowed it once.",
@@ -478,11 +481,12 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: {
       );
     case "turn_ended": {
       const exchange = story.exchanges.get(exchangeOf(event));
-      const tokens = exchange?.counted === true && (
-        <p data-event="usage" className="ds-message__body">{`Tokens: ${exchange.tokensIn} in, ${exchange.tokensOut} out`}</p>
-      );
+      const tokens = exchange?.counted === true && <Tokens exchange={exchange} />;
       if (e.reason === "completed") {
-        // A reply that finished needs no line saying so. What is known from stored times and counts sits here, quietly.
+        // A reply that finished needs no line saying so. A reply with no step of its own needs no row at all: its time
+        // and tokens would say nothing the answer does not (Usage keeps the counts). One whose steps make a group says
+        // them on the group's line; one with a step or two keeps this quiet row.
+        if (!story.calledIn.has(exchangeOf(event))) return null;
         const took = exchange === undefined ? null : duration(exchange.from, event.ts);
         if (took === null && tokens === false) return null;
         return (
@@ -525,12 +529,15 @@ const GROUP_FROM = 3;
 /**
  * Consecutive tool calls folded under one line, as the design system's step group: the line counts what they did,
  * in plain words, and says in words of its own a call that failed, one at work and one waiting for an answer. Every
- * call stays a row inside it. The group opens with the transcript and stays open until the reader closes it: what the
- * agent did is kept in view, and the line only adds the count. (The system's rule closes a group whose steps all ended
- * well; Botbench keeps the calls in view, because seeing them builds trust.)
+ * call stays a row inside it. While the reply is still arriving the group is open, so each call is seen as it happens;
+ * once the reply has finished well it folds to its line, one tap from the calls; a call that failed, was not run, did
+ * not finish or waits keeps it open; and what the reader opened or closed stays so (`stepGroupOpen`). `worked` is the
+ * reply's own time and tokens, for the last group of a reply that completed: the time is the group's duration, at the
+ * end of its line, and the tokens a quiet row after the calls, in place of a row of their own after the answer.
  */
-function StepGroup({ steps, live, children }: { steps: { call: Of<"tool_call">; state: CallState }[]; live: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(true);
+function StepGroup({ steps, live, worked, children }: { steps: { call: Of<"tool_call">; state: CallState }[]; live: boolean; worked: { took: string | null; tokens: { tokensIn: number; tokensOut: number } | null } | null; children: ReactNode }) {
+  const [touched, setTouched] = useState<boolean | null>(null);
+  const open = stepGroupOpen({ touched, live, states: steps.map((step) => step.state) });
   const failed = steps.filter((step) => step.state === "failed").length;
   const counted = stepsSummary(steps.map((step) => ({ name: step.call.name, state: step.state })));
   const callouts: { state: "failed" | "running" | "awaiting-approval"; words: string }[] = [];
@@ -539,7 +546,8 @@ function StepGroup({ steps, live, children }: { steps: { call: Of<"tool_call">; 
   if (steps.some((step) => step.state === "waiting")) callouts.push({ state: "awaiting-approval", words: "Needs input" });
   return (
     <li>
-      <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} className="ds-step-group">
+      {/* The browser fires toggle also when the open attribute is set from here: only a change the reader made is kept. */}
+      <details open={open} onToggle={(e) => e.currentTarget.open !== open && setTouched(e.currentTarget.open)} className="ds-step-group">
         <summary className="ds-step-group__summary">
           <span className="ds-step-group__title">
             {counted !== "" && (live ? `${counted} so far` : counted)}
@@ -549,8 +557,21 @@ function StepGroup({ steps, live, children }: { steps: { call: Of<"tool_call">; 
               </span>
             ))}
           </span>
+          {worked?.took != null && (
+            <span data-testid="worked-for" className="ds-step-group__duration">
+              <span className="ds-visually-hidden">Worked for </span>
+              {worked.took}
+            </span>
+          )}
         </summary>
-        <ol className="ds-step-group__steps">{children}</ol>
+        <ol className="ds-step-group__steps">
+          {children}
+          {worked?.tokens != null && (
+            <li className="ds-message ds-message--usage">
+              <Tokens exchange={worked.tokens} />
+            </li>
+          )}
+        </ol>
       </details>
     </li>
   );
@@ -558,7 +579,7 @@ function StepGroup({ steps, live, children }: { steps: { call: Of<"tool_call">; 
 
 /**
  * The transcript of one or more attempts, oldest first. `working` is a note shown last while something is still
- * running. `modelName` gives the name Claude Code has for a model id, or the id itself when it has none. `promptBy`
+ * running; an empty note means it is running and another part of the screen says what it waits for. `modelName` gives the name Claude Code has for a model id, or the id itself when it has none. `promptBy`
  * says who wrote the prompts (the owner, unless Botbench wrote them, as it does for planning). `folded` is for a
  * transcript that sits behind a disclosure of its own, so its rows fold one level and not two, and its tool calls are
  * not grouped (a step group inside a disclosure would be a third level).
@@ -570,38 +591,51 @@ export function Transcript({ events, working, modelName, modelDiffers, promptBy 
   const openedValue = useMemo(() => ({ opened, set }), [opened, set]);
   // The rows the transcript shows, in order: an event that is told by another row (a result with its call, a usage count) has none.
   const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, modelDiffers, promptBy, folded, who }) })).filter(({ row }) => row !== null);
-  const rows: ReactNode[] = [];
+  // The rows in order, with runs of tool calls long enough to group taken together.
+  const parts: ({ one: (typeof shown)[number] } | { group: typeof shown })[] = [];
   for (let at = 0; at < shown.length; ) {
     let end = at;
     while (end < shown.length && shown[end]!.event.payload.type === "tool_call") end++;
-    if (folded || end - at < GROUP_FROM) {
-      const { event, row } = shown[at]!;
-      rows.push(<Fragment key={event.id}>{row}</Fragment>);
-      at++;
-      continue;
+    if (folded || end - at < GROUP_FROM) parts.push({ one: shown[at++]! });
+    else {
+      parts.push({ group: shown.slice(at, end) });
+      at = end;
     }
-    const run = shown.slice(at, end);
+  }
+  // The last group of each reply that completed carries the reply's time and tokens, in place of a row after the answer.
+  const lastGroup = new Map<string, number>();
+  parts.forEach((part, i) => "group" in part && lastGroup.set(exchangeOf(part.group.at(-1)!.event), i));
+  const rows: ReactNode[] = parts.map((part, i) => {
+    if ("one" in part) {
+      const { event, row } = part.one;
+      const told = event.payload.type === "turn_ended" && event.payload.reason === "completed" && lastGroup.has(exchangeOf(event));
+      return told ? null : <Fragment key={event.id}>{row}</Fragment>;
+    }
+    const run = part.group;
     const steps = run.map(({ event }) => {
       const call = event.payload as Of<"tool_call">;
       return { event, call, state: stateOf(story, call.id, exchangeOf(event)) };
     });
+    const key = exchangeOf(run.at(-1)!.event);
     // Still arriving while the exchange of its last call is going on.
-    const live = story.live && !story.ended.has(exchangeOf(run.at(-1)!.event));
-    rows.push(
-      <StepGroup key={`group-${run[0]!.event.id}`} steps={steps} live={live}>
+    const live = story.live && !story.ended.has(key);
+    const end = story.completedAt.get(key);
+    const exchange = story.exchanges.get(key);
+    const worked = lastGroup.get(key) === i && end !== undefined && exchange !== undefined ? { took: duration(exchange.from, end), tokens: exchange.counted ? exchange : null } : null;
+    return (
+      <StepGroup key={`group-${run[0]!.event.id}`} steps={steps} live={live} worked={worked}>
         {steps.map(({ event, call, state }) => (
           <Action key={event.id} call={call} story={story} state={state} folded />
         ))}
-      </StepGroup>,
+      </StepGroup>
     );
-    at = end;
-  }
+  });
   return (
     <Opened.Provider value={openedValue}>
       <ol role="log" aria-live="polite" aria-label="Transcript" className="ds-stack ds-gap-sm">
         {rows}
         {after}
-        {working !== null && (
+        {working !== null && working !== "" && (
           <li className="ds-streaming ds-streaming--row">
             <span role="status">{working}</span>
           </li>

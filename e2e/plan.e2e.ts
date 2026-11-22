@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { allowCommands, checkDesign, chooseRepository, closeContext, copyShot, expect, messageBox, openRow, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { allowCommands, checkDesign, chooseRepository, closeContext, copyShot, expect, messageBox, nav, openRow, openWork, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -40,11 +40,9 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
 
   // The navigation, the composer for a new run and the run's allowed list are drawn without a model: see "the navigation lists
   // the destinations…" below. Here the run is started from the Runs view, as an owner would.
-  const nav = page.getByRole("navigation", { name: "Screens" });
-  await nav.getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
+  await openWork(page);
   await page.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeAttached();
 
   // The repository is checked as it is typed; its pre-approved commands are confirmed here, for this run.
   await chooseRepository(page, repo);
@@ -165,18 +163,16 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\.$/);
   await checkDesign(page, "task of a cancelled run");
 
-  // The runs board and the tasks list both know it: the board under Finished, the one group that holds anything.
-  await nav.getByRole("link", { name: "Runs", exact: true }).click();
+  // Work knows it: the run, once, under Finished, the one group that holds anything. Its tasks are on its own screen.
+  await openWork(page);
   await expect(page.getByRole("group", { name: "Show" }).getByLabel(/^Finished/)).toBeChecked();
   const listed = page.getByTestId("board-group").getByRole("listitem");
   await expect(listed).toHaveCount(1);
   await expect(listed).toContainText("Add three files");
   await expect(listed).toContainText("Cancelled");
-  await checkDesign(page, "runs, one run");
-  await copyShot(page, "runs");
+  await checkDesign(page, "work, one run");
+  await copyShot(page, "work");
   await shot(page, "u11-runs.png");
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(page.getByTestId("task-list").getByRole("listitem")).toHaveCount(2);
 
   // Nothing of the owner's was touched.
   expect(checkoutState(repo)).toEqual(before);
@@ -187,16 +183,15 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
 test("the navigation lists the destinations; New run opens the composer asking for a repository, and the run's allowed list starts empty and takes a command", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
-  // Starting something new is a button in its list's view, not a destination.
-  const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
-  await nav.getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Runs");
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
-  await checkDesign(page, "runs, none yet");
+  // Starting something new is a button in Work, not a destination.
+  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await openWork(page);
+  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Work");
+  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
+  await checkDesign(page, "work, none yet");
   await page.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository for the run, or None to just chat.");
+  await closeContext(page);
+  await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
   await checkDesign(page, "composer, a new run with no repository");
 
   await chooseRepository(page, repo);
@@ -242,8 +237,8 @@ test("a spec file that does not exist is reported in words and nothing starts; a
   await checkDesign(page, "composer, spec file refused");
 
   // Nothing started: no run is listed, and no planner was launched.
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No runs yet");
+  await openWork(page);
+  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
   const runs = (await (await page.request.get(`${botbench.base}/api/runs`)).json()) as { runs: unknown[] };
   expect(runs.runs).toEqual([]);
   expect(worktreeCount(repo)).toBe(1);

@@ -8,14 +8,13 @@ import { RunScreen } from "../screens/run.tsx";
 import { SettingsScreen } from "../screens/settings.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
 import { TaskScreen } from "../screens/task.tsx";
-import { TasksScreen } from "../screens/tasks.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
 import { TurnScreen } from "../screens/turn.tsx";
 import { UsageScreen } from "../screens/usage.tsx";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn"; start: Kind | null } | { screen: "redirect"; to: string } | { screen: "tasks" } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "runs" } | { screen: "settings" } | { screen: "run"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn"; start: Kind | null } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "work" } | { screen: "settings" } | { screen: "run"; id: number } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -26,10 +25,11 @@ function parseRoute(hash: string): Route {
   // The addresses of the New task and New run forms the composer replaced.
   if (at === "/tasks/new") return { screen: "redirect", to: "#/turn?start=task" };
   if (at === "/runs/new") return { screen: "redirect", to: "#/turn?start=run" };
-  if (at === "/tasks") return { screen: "tasks" };
+  // Work lists the runs and the tasks started on their own, where Runs and Tasks were.
+  if (at === "/work") return { screen: "work" };
+  if (at === "/runs" || at === "/tasks") return { screen: "redirect", to: "#/work" };
   if (at === "/trust") return { screen: "trust" };
   if (at === "/usage") return { screen: "usage" };
-  if (at === "/runs") return { screen: "runs" };
   if (at === "/settings") return { screen: "settings" };
   const one = /^\/(tasks|runs)\/([1-9]\d{0,14})$/.exec(at);
   return one ? { screen: one[1] === "runs" ? "run" : "task", id: Number(one[2]) } : { screen: "none", what: at };
@@ -54,10 +54,9 @@ function Redirect({ to }: { to: string }) {
 function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "turn") return <TurnScreen key={route.start ?? ""} start={route.start} onSignedOut={onSignedOut} />;
   if (route.screen === "redirect") return <Redirect to={route.to} />;
-  if (route.screen === "tasks") return <TasksScreen onSignedOut={onSignedOut} />;
   if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
   if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
-  if (route.screen === "runs") return <BoardScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "work") return <BoardScreen onSignedOut={onSignedOut} />;
   if (route.screen === "settings") return <SettingsScreen onSignedOut={onSignedOut} />;
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.

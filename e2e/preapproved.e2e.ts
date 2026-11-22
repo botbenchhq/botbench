@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, chooseRepository, closeContext, expect, messageBox, MONO_FAMILY, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
+import { checkDesign, chooseRepository, closeContext, expect, messageBox, MONO_FAMILY, openCanDo, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Pre-approved commands in the real client, at a phone's size: a real Botbench process whose settings list commands
@@ -86,7 +86,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   expect(await primaries(page)).toEqual(["Send"]);
 
   await send.click();
-  await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
   // The task screen says in words what may run without asking, from the start.
   const granted = page.getByTestId("task-preapproved");
   await expect(granted.getByRole("listitem")).toHaveText(["git status", "sh make-marker.sh"]);
@@ -112,7 +112,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added/);
   const branch = await page.getByTestId("branch").inputValue();
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
-  await expect(page.getByTestId("not-merged")).toContainText("The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first");
+  await expect((await openCanDo(page)).getByTestId("can-do-text")).toContainText("The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first");
   await expect(page.getByRole("button", { name: /always|standing|every time|remember/i })).toHaveCount(0);
   await checkDesign(page, "task, finished on a pre-approved command");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-task.png"), fullPage: true });

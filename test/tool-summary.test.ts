@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
 import { bannedIn } from "../e2e/voice.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
@@ -119,4 +119,18 @@ test("a step's time is how long it ran: from when it was allowed when it was ask
   // No result yet, or times out of order: no time.
   assert.equal(ranFor({ calledAt, asked: false }), null);
   assert.equal(ranFor({ calledAt, asked: true, allowedAt: "2026-11-22T10:05:00.000Z", returnedAt: "2026-11-22T10:04:00.000Z" }), null);
+});
+
+test("a step group is open while its reply is arriving, closes to its line once the reply has finished, stays open on trouble, and keeps what the reader chose", () => {
+  const done = ["done", "done", "done"] as const;
+  // The tool calls are seen as they happen.
+  assert.equal(stepGroupOpen({ touched: null, live: true, states: [...done, "running"] }), true);
+  assert.equal(stepGroupOpen({ touched: null, live: true, states: done }), true);
+  // Once the reply has finished, a group of calls that all went well folds to its one line.
+  assert.equal(stepGroupOpen({ touched: null, live: false, states: done }), false);
+  // A call that failed, was not run, did not finish or waits for an answer keeps the group open.
+  for (const trouble of ["failed", "refused", "unfinished", "waiting"] as const) assert.equal(stepGroupOpen({ touched: null, live: false, states: [...done, trouble] }), true, trouble);
+  // What the reader opened or closed by hand stays so, whatever happens after.
+  assert.equal(stepGroupOpen({ touched: true, live: false, states: done }), true);
+  assert.equal(stepGroupOpen({ touched: false, live: true, states: [...done, "failed"] }), false);
 });

@@ -10,9 +10,10 @@ import { CopyField, DecisionControls, DecisionOutcome } from "../components/deci
 import { MODE_SENTENCE } from "../components/mode-choice.tsx";
 import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
-import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
+import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { statusSentence } from "../components/task-status.ts";
+import { answeredOther, notMergedLine, statusSentence, taskTitle } from "../components/task-status.ts";
+import { folderName } from "../app/composer.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
@@ -76,7 +77,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   const [diffs, setDiffs] = useState<Record<string, DiffState>>({});
   const [open, setOpen] = useState<string[]>([]);
   const missing = useRef(false);
-  const nameOf = useModelNames(onSignedOut);
+  const models = useModelList(onSignedOut);
+  const nameOf = useCallback((model: string) => modelName(models, model), [models]);
   /** Counts reads of the task, so an answer that arrives after a newer one was asked for is dropped. */
   const reads = useRef(0);
 
@@ -150,18 +152,25 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
       },
     );
   };
-
-
-
   // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
-  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : asking.parkedAt === null ? "Claude Code is paused until you answer." : "Claude Code is stopped until you answer.") : null;
+  // While a request waits, its card says so: the transcript is still live, with no line of its own ("").
+  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
+  // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
+  const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
 
   return (
-    <Frame current={null} banner={connected ? undefined : <StreamBanner />}>
+    <Frame current={null} banner={connected ? undefined : <StreamBanner />} showing={waiting.map((approval) => approval.id)}>
       <Page>
-        {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be. */}
-        <PageHeader title={`Task ${id}`}>
+        {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be: the task's own words, once read. */}
+        <PageHeader title={taskTitle(id, task?.prompt ?? null)} theirs={task !== null}>
           {task !== null && (
+            <p data-testid="task-name" className="ds-page-header__description">
+              {`Task ${id} · `}
+              <span data-ds-content="">{folderName(task.repo)}</span>
+            </p>
+          )}
+          {/* While its card is shown, the card says what the task waits for. */}
+          {task !== null && asking === undefined && (
             <p data-testid="task-status" role="status" className="ds-page-header__description">
               {statusSentence(task)}
             </p>
@@ -186,18 +195,14 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
           )
         ) : (
           <>
-            <dl className="ds-key-value">
-              <div className="ds-key-value__item">
-                <dt className="ds-key-value__label">Model</dt>
-                <dd data-testid="task-model" className="ds-key-value__value">{`${modelState(session, nameOf)}. You asked for: ${task.requestedModel === null ? "Claude Code's default" : nameOf(task.requestedModel)}.`}</dd>
-              </div>
-              <div className="ds-key-value__item">
-                <dt className="ds-key-value__label">Repository</dt>
-                <dd data-testid="task-repo" data-ds-content="" className="ds-key-value__value ds-key-value__value--mono">
-                  {task.repo}
-                </dd>
-              </div>
-            </dl>
+            {answeredOther(models, session?.model ?? null, task.requestedModel) && (
+              <dl className="ds-key-value">
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Model</dt>
+                  <dd data-testid="task-model" className="ds-key-value__value">{`${modelState(session, nameOf)}. You asked for: ${nameOf(task.requestedModel!)}.`}</dd>
+                </div>
+              </dl>
+            )}
 
             {task.preapproved.length > 0 && (
               <section className="ds-stack ds-gap-sm">
@@ -219,7 +224,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               </section>
             )}
 
-            {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
+            {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />}
 
             {task.evidence.some((row) => row.kind === "setup") && (
               <section aria-labelledby="setup-heading" className="ds-stack ds-gap-sm">
@@ -234,7 +239,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 {task.earlierAttempts > 0 && (
                   <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
                 )}
-                <Transcript events={shown} working={working} modelName={nameOf} />
+                {/* The model is named above when it is not the one asked for; the transcript adds no row of its own for it. */}
+                <Transcript events={shown} working={working} modelName={nameOf} modelDiffers={() => null} />
               </section>
             ) : (
               attemptId === null && (
@@ -335,10 +341,16 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             ) : (
               task.branch !== null && task.remains?.discardedAt == null && (
                 <section className="ds-stack ds-gap-sm">
-                  <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />
-                  <p data-testid="not-merged">
-                    {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.mode === "manual" ? `${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well.` : task.mode === "semi" ? "Its run is semi-autonomous, so its shell commands run without asking, apart from those the safety rules always ask you about; Botbench sends you anything else it wants to do as well." : "Its run is fully autonomous, so its shell commands run without asking, and what would need your answer is refused instead: those the safety rules always ask about, and anything else it wants to do."} The separate copy (a git worktree) keeps changes apart from your own files. A command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.`}
-                  </p>
+                  {task.status === "awaiting_decision" && <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />}
+                  <p data-testid="not-merged">{notMergedLine(task)}</p>
+                  <details data-testid="can-do" className="ds-disclosure">
+                    <summary className="ds-disclosure__summary">What Claude Code can do here</summary>
+                    <div className="ds-disclosure__content">
+                      <p data-testid="can-do-text">
+                        {`Claude Code may read and change files inside this task's copy of the project without asking. ${task.mode === "manual" ? `${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well.` : task.mode === "semi" ? "Its run is semi-autonomous, so its shell commands run without asking, apart from those the safety rules always ask you about; Botbench sends you anything else it wants to do as well." : "Its run is fully autonomous, so its shell commands run without asking, and what would need your answer is refused instead: those the safety rules always ask about, and anything else it wants to do."} The separate copy (a git worktree) keeps changes apart from your own files. A command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.`}
+                      </p>
+                    </div>
+                  </details>
                 </section>
               )
             )}
@@ -362,6 +374,21 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={load} onSignedOut={onSignedOut} />
               </section>
             )}
+
+            <details data-testid="task-details" className="ds-disclosure">
+              <summary className="ds-disclosure__summary">Details</summary>
+              <div className="ds-disclosure__content ds-stack ds-gap-sm">
+                <dl className="ds-key-value">
+                  <div className="ds-key-value__item">
+                    <dt className="ds-key-value__label">Repository</dt>
+                    <dd data-testid="task-repo" data-ds-content="" className="ds-key-value__value ds-key-value__value--mono">
+                      {task.repo}
+                    </dd>
+                  </div>
+                </dl>
+                {branchInDetails && <CopyField label="Branch" value={task.branch!} testId="branch" buttonName="Copy branch name" />}
+              </div>
+            </details>
           </>
         )}
       </Page>

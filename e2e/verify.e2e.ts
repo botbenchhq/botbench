@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, signIn, startTaskIn, tallShot } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, openWork, signIn, startTaskIn, tallShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The verify station in the real client, at a phone's size: a real Botbench process whose settings give two real
@@ -48,7 +48,7 @@ async function shot(page: Page, name: string): Promise<void> {
 /** Start a task in `repo` from New task, decline whatever its agent asks, and wait on its screen until it is Ready for review. */
 async function buildTask(page: Page, botbench: Botbench, repo: string, o: { checking: boolean } = { checking: true }): Promise<void> {
   await startTaskIn(page, repo, "Create the file hello.txt containing the single word hi, with your Write tool. Run no command.");
-  await expect(page.getByRole("heading", { name: /^Task \d+$/, level: 1 })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
   // The checks take two seconds each, so the screen is seen saying Checking while they run.
   await expect(async () => {
     for (const approval of ((await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] }).approvals) {
@@ -94,12 +94,12 @@ test("LIVE: a task whose check fails says so in words with an icon, opens the fa
   await expect(page.getByText(/Checks passed|Passed/)).toHaveCount(0);
   await checkDesign(page, "task, no checks set up");
 
-  // The tasks list says the same in words.
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Tasks", exact: true }).click();
-  const listed = page.getByTestId("task-list").getByRole("listitem");
+  // Work says the same in words.
+  await openWork(page);
+  const listed = page.getByTestId("board-group").getByRole("listitem");
   await expect(listed).toHaveCount(3);
   await expect(listed.nth(0)).toContainText("No checks set up");
   await expect(listed.nth(1)).toContainText("Checks passed");
   await expect(listed.nth(2)).toContainText("Checks failed");
-  await checkDesign(page, "tasks, with checks");
+  await checkDesign(page, "work, with checks");
 });

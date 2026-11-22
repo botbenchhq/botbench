@@ -196,6 +196,12 @@ export function modelName(list: ModelList | null, id: string): string {
 
 /** The names Claude Code gives its models, for a screen that shows a model and does not choose one. Until the list is read, and when it cannot be, a model is shown by its id. */
 export function useModelNames(onSignedOut: () => void): (id: string) => string {
+  const list = useModelList(onSignedOut);
+  return useCallback((id: string) => modelName(list, id), [list]);
+}
+
+/** The agent's list of models, once it is read; null until then and when it cannot be. */
+export function useModelList(onSignedOut: () => void): ModelList | null {
   const [list, setList] = useState<ModelList | null>(null);
   useEffect(() => {
     let stale = false;
@@ -209,7 +215,7 @@ export function useModelNames(onSignedOut: () => void): (id: string) => string {
       stale = true;
     };
   }, [onSignedOut]);
-  return useCallback((id: string) => modelName(list, id), [list]);
+  return list;
 }
 
 /** The session's model in words that claim an answer only when a reply completed. */

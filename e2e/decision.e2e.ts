@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, git, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, openFromSettings, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Decisions in the real client, at a phone's size: a real Botbench process, real temporary repositories, and the
@@ -52,7 +52,7 @@ async function declineWhile(page: Page, botbench: Botbench, until: () => Promise
 /** Start a task from New task and wait on its screen until it is Ready for review. */
 async function readyTask(page: Page, botbench: Botbench, repo: string): Promise<void> {
   await startTaskIn(page, repo, "Create the file hello.txt containing the single word hi, with your Write tool. Run no command.");
-  await expect(page.getByRole("heading", { name: /^Task \d+$/, level: 1 })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
   await declineWhile(page, botbench, () => expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 1_000 }));
 }
 
@@ -64,7 +64,7 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   await signIn(page, botbench);
 
   await readyTask(page, botbench, repos.checked);
-  const taskId = Number(/Task (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const taskId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { branch: string; leftovers: string[] };
   // The task's copy, wherever under its run Botbench made it.
   const copy = fs.readdirSync(path.join(botbench.home, "worktrees")).map((run) => path.join(botbench.home, "worktrees", run, `task-${taskId}`)).find((dir) => fs.existsSync(dir))!;
@@ -121,7 +121,7 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
 
   // Reject: the dialog asks whether to keep the branch; discard deletes it with the copy.
   await readyTask(page, botbench, repos.plain);
-  const rejectedId = Number(/Task (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const rejectedId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   const rejected = (await (await page.request.get(`${botbench.base}/api/tasks/${rejectedId}`)).json()) as { branch: string };
   expect(botbenchBranches(repos.plain)).toEqual([rejected.branch]);
   await page.getByRole("button", { name: "Reject" }).click();
@@ -141,7 +141,7 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   expect(worktreeCount(repos.plain)).toBe(1);
 
   // The decisions are on the Activity list, in words.
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Permissions", exact: true }).click();
+  await openFromSettings(page, "Permissions");
   const log = page.getByTestId("action-log");
   await expect(log).toContainText("You rejected");
   await expect(log).toContainText("You accepted");

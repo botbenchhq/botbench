@@ -32,17 +32,53 @@ export async function signIn(page: Page, botbench: Botbench): Promise<void> {
  * steps are the one place the tests drive it, so a change to the composer changes the tests here.
  */
 
-/** The home screen, from the navigation. */
+/** The two destinations of the navigation: Chat (the home screen) and Work. */
+export const nav = (page: Page): Locator => page.getByRole("navigation", { name: "Screens" });
+
+/** The home screen, from the navigation. Its one h1, Chat, is for assistive technology only. */
 export async function openComposer(page: Page): Promise<void> {
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Chat", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+  await nav(page).getByRole("link", { name: "Chat", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
+  await expect(messageBox(page)).toBeVisible();
 }
 
-/** New task the way the client offers it: the Tasks destination, then that view's own action, which opens the composer with One task chosen. */
+/** Work, the list of runs and of tasks started on their own, from the navigation. */
+export async function openWork(page: Page): Promise<void> {
+  await nav(page).getByRole("link", { name: "Work", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
+}
+
+/** Permissions or Usage, reached from Settings (the header's gear), as the client offers them. */
+export async function openFromSettings(page: Page, screen: "Permissions" | "Usage"): Promise<void> {
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByTestId("settings-links").getByRole("link", { name: new RegExp(`^${screen}`) }).click();
+  await expect(page.getByRole("heading", { name: screen, level: 1 })).toBeVisible();
+}
+
+/**
+ * New task: the composer with One task chosen, at the address New task always had. With no repository remembered the
+ * Add context sheet opens on its Repository view, since the owner came to work in one; that view is closed here, so a
+ * test starts from the composer as it was.
+ */
 export async function openNewTask(page: Page): Promise<void> {
-  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Tasks", exact: true }).click();
-  await page.getByRole("link", { name: "New task" }).click();
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+  await page.evaluate(() => (window.location.hash = "#/turn?start=task"));
+  await expect(messageBox(page)).toBeVisible();
+  const sheet = contextSheet(page);
+  if (await sheet.evaluate((d: HTMLDialogElement) => d.open)) await closeContext(page);
+}
+
+/** The task screen's Details: the repository's full path and, while the task is worked on, its branch. Opened, and returned. */
+export async function openDetails(page: Page): Promise<Locator> {
+  const details = page.getByTestId("task-details");
+  if (!(await details.evaluate((d: HTMLDetailsElement) => d.open))) await details.locator("summary").click();
+  return details;
+}
+
+/** The task screen's disclosure of what Claude Code may do in the task's copy. Opened, and returned. */
+export async function openCanDo(page: Page): Promise<Locator> {
+  const details = page.getByTestId("can-do");
+  if (!(await details.evaluate((d: HTMLDetailsElement) => d.open))) await details.locator("summary").click();
+  return details;
 }
 
 /** The composer's message box, whatever it is named for (a chat, a task, a run). */
@@ -193,9 +229,8 @@ export const pageMode = (page: Page): Promise<Mode> =>
 
 // The colours of each mode: a light value drawn on the dark page is off the palette, and a dark one on the light page.
 const PALETTE: Record<Mode, string[]> = { dark: Object.keys(THEME.color).map((name) => token(name, "dark")), light: Object.keys(THEME.color).map((name) => token(name, "light")) };
-// A corner on the scale, or one nested inside a bordered corner on the scale, which the system draws a border's width
-// smaller so the two curves stay parallel (the first and last row of a context list).
-const RADII = Object.values(THEME.radius).flatMap(({ $value }) => [`${$value.value}${$value.unit}`, `${$value.value - THEME["border-width"].DEFAULT.$value.value}${$value.unit}`]);
+// A corner on the scale.
+const RADII = Object.values(THEME.radius).map(({ $value }) => `${$value.value}${$value.unit}`);
 /** A type size of the theme, as the browser reports it. */
 const TEXT = (name: string): string => `${THEME.text[name]!.$value.value}${THEME.text[name]!.$value.unit}`;
 /** The first family of a font token: the one the theme names first, which the browser reports first. */
@@ -232,7 +267,8 @@ export async function checkStatuses(page: Page, screen: string): Promise<void> {
 
 /** The primary button's look and a secondary button's, from the theme's tokens, in the default mode. */
 export const PRIMARY_LOOK = { background: token("accent"), text: token("on-accent"), border: token("accent") };
-export const SECONDARY_LOOK = { background: token("surface-sunken"), text: token("on-surface"), border: token("border") };
+// A secondary control rests on the theme's `fill` (design system 0.9.0), with the faint border.
+export const SECONDARY_LOOK = { background: token("fill"), text: token("on-surface"), border: token("border") };
 
 /** The buttons drawn as the primary action: filled with the theme's accent colour in the mode the page is drawn in. */
 export const primaries = async (page: Page): Promise<(string | null)[]> => {
@@ -295,7 +331,8 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
     // The view's headings outside an open dialog: the one h1, and the size each plain heading is drawn at.
     const headings = [...document.querySelectorAll("h1, h2, h3")].filter((el) => el.getClientRects().length > 0 && el.closest("dialog") === null);
     const plain = (level: string): string[] => [...new Set(headings.filter((el) => el.tagName === level && el.className === "").map((el) => getComputedStyle(el).fontSize))];
-    const mono = document.querySelector(".ds-app-header__name, .ds-sign-in__product, code, pre");
+    // The app header's name is in the interface font since the design system 0.8.3; the sign-in's product name, code and output are mono.
+    const mono = document.querySelector(".ds-sign-in__product, code, pre");
     return {
       small,
       colours,

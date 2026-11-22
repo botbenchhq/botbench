@@ -88,7 +88,7 @@ test("LIVE modes: semi-autonomous runs a task's command without an approval card
   await page.getByRole("button", { name: "Approve 1 task" }).click();
   await neverAsked(page, botbench, () => expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./, { timeout: 1_000 }));
   await page.getByTestId("run-tasks").getByRole("link").first().click();
-  const semiTask = Number(/Task (\d+)/.exec((await page.getByRole("heading", { name: /^Task \d+$/, level: 1 }).textContent()) ?? "")![1]);
+  const semiTask = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
   await expect(page.getByTestId("task-mode")).toHaveText(/^Semi-autonomous: /);
   const log = (await (await page.request.get(`${botbench.base}/api/action-log?taskId=${semiTask}`)).json()) as { entries: { rule: string; command: string }[] };

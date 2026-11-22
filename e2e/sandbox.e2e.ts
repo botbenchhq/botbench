@@ -14,7 +14,7 @@ test("LIVE: a command the owner allowed that tries to reach a host the repositor
   initRepo(repo, { "README.md": "# Sample\n" });
   await signIn(page, botbench);
   await startTaskIn(page, repo, PROMPT);
-  await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 
   // The permission check still asks first, with the sandbox on.
   const card = page.getByTestId("approval-card");

@@ -34,13 +34,18 @@ export function stepWord(role: string): string {
  * waiting it is a link to the oldest request's task, where its card is. With
  * nothing waiting it is empty, and stays in the page as the live region that
  * announces the next one. When the approvals could not be read, it says so.
+ * `here`: every request waiting is shown on this screen by its card, so the
+ * tray is not drawn and only says, to a screen reader, that it is here.
  */
-export function ApprovalTray() {
+export function ApprovalTray({ here }: { here: boolean }) {
   const { pending, problem, open } = useContext(ApprovalsContext);
   const oldest = pending?.[0];
   return (
     <div data-testid="approval-tray" aria-live="polite" aria-atomic="true" className="ds-pending-tray">
-      {oldest === undefined ? (
+      {here ? (
+        // The card on this screen shows the request: the tray would say it again, so only a screen reader hears it, once.
+        <span className="ds-visually-hidden">{pending!.length === 1 ? "An approval is waiting on this screen." : `${pending!.length} approvals are waiting on this screen.`}</span>
+      ) : oldest === undefined ? (
         pending === null && problem !== null && <span className="ds-pending-tray__text">{problem}</span>
       ) : (
         <a href={oldest.taskId === null ? `#/runs/${oldest.runId}` : `#/tasks/${oldest.taskId}`} onClick={open} className="ds-pending-tray__link">
@@ -65,8 +70,9 @@ function Fact({ term, testId, theirs = false, children }: { term: string; testId
 }
 
 /**
- * One request waiting for the owner: what would run, where, for which role and
- * task, and the agent's reason when it gave one. A task's screen shows one card
+ * One request waiting for the owner: what would run, where, and the agent's
+ * reason when it gave one. `on` is the screen it is shown on: on a run's screen
+ * it also names the task, or says that the planner asks. A task's screen shows one card
  * at a time, so Allow is that view's one primary action; Decline sits at the far
  * end of the same row, and a note for the agent can go with it from the
  * disclosure below (a note that was typed is never dropped: either Decline sends it). `more` is how many further requests of the same task wait
@@ -74,7 +80,7 @@ function Fact({ term, testId, theirs = false, children }: { term: string; testId
  * enough, the card also offers standing permission, last: a secondary step that
  * states the grant's scope in a dialog and does nothing until it is confirmed.
  */
-export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approval; more: number; onSignedOut: () => void }) {
+export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Approval; more: number; on: "task" | "run"; onSignedOut: () => void }) {
   const { refresh, opened } = useContext(ApprovalsContext);
   const [note, setNote] = useState("");
   /** The answer being sent, while it is. */
@@ -142,10 +148,16 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
         <Fact term="Folder" testId="approval-directory">
           {directoryWords(approval.cwd)}
         </Fact>
-        <Fact term="Step" testId="approval-role">
-          {stepWord(approval.role)}
-        </Fact>
-        <Fact term={approval.taskId === null ? "Run" : "Task"} testId="approval-task" theirs>{`${approval.taskId === null ? `Run ${approval.runId}` : `Task ${approval.taskId}`} · ${approval.taskTitle}`}</Fact>
+        {/* Which step asks matters only for a planner's request on its run's screen; a task's requests are all its builder's. */}
+        {on === "run" && approval.taskId === null && (
+          <Fact term="Step" testId="approval-role">
+            {stepWord(approval.role)}
+          </Fact>
+        )}
+        {/* The task's own screen already says which task this is; the run's screen names it, as its first line cut at a word. */}
+        {on === "run" && approval.taskId !== null && (
+          <Fact term="Task" testId="approval-task" theirs>{`Task ${approval.taskId} · ${approval.taskTitle}`}</Fact>
+        )}
         {approval.reason !== null && (
           <Fact term="Claude Code's reason" testId="approval-reason" theirs>
             {visible(approval.reason)}

@@ -2,7 +2,7 @@
 version: alpha
 name: Botbench
 # Generated: everything from here to the closing line is web/vendor/design-system/themes/botbench.design-tokens.md
-# (the design system 0.8.1, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
+# (the design system 0.9.0, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
 colors:
   accent: "#1C1C1E"
   accent-hover: "#3A3A3C"
@@ -10,6 +10,7 @@ colors:
   surface: "#F2F2F7"
   surface-raised: "#FFFFFF"
   surface-sunken: "#EDEDF1"
+  fill: "#E9E9EE"
   on-surface: "#1C1C1E"
   muted: "#636366"
   border: "#E6E6EB"
@@ -38,6 +39,7 @@ colors-dark:
   surface: "#161618"
   surface-raised: "#212124"
   surface-sunken: "#0F0F10"
+  fill: "#2C2C30"
   on-surface: "#F5F5F7"
   muted: "#A1A1A8"
   border: "#29292D"

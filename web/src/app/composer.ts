@@ -70,7 +70,8 @@ export function blocked(f: Facts): Blocked | null {
   const say = (reason: string, required: "repository" | null = null): Blocked => ({ reason, required });
   if (f.builder.state === "checking") return say("Checking that Claude Code is ready.");
   if (f.builder.state === "problem") return say(`${f.builder.words} Nothing can be sent until this is fixed.`);
-  if (f.repo.kind === "needed") return say(`Choose a repository for the ${f.kind}, or None to just chat.`, "repository");
+  // Only New task and New run make a repository needed; with no repository otherwise, Send is a chat.
+  if (f.repo.kind === "needed") return say("Choose a repository", "repository");
   const run = inRepository(f.repo) && f.kind === "run";
   if (inRepository(f.repo)) {
     if (f.repo.path.trim() === "") return say(REPO_HINT, "repository");
@@ -160,21 +161,26 @@ export function readRemembered(raw: string | null): Remembered {
   };
 }
 
-/** Where the composer starts: what was remembered, or, coming from New task or New run, that kind, asking for a repository when none is remembered. */
-export function arrive(remembered: Remembered, start: Kind | null): { repo: RepoPick; kind: Kind } {
-  if (start === null) return { repo: remembered.repo, kind: remembered.kind };
-  return { repo: remembered.repo.kind === "none" ? { kind: "needed" } : remembered.repo, kind: start };
+/**
+ * Where the composer starts: what was remembered, or, coming from New task or New run, that kind. Coming from those
+ * with no repository remembered, a repository is needed, and the Add context sheet opens on its view (`opens`): the
+ * owner came to start work in a repository. On the home screen itself no kind is chosen, and no repository is a chat.
+ */
+export function arrive(remembered: Remembered, start: Kind | null): { repo: RepoPick; kind: Kind; opens: "repository" | null } {
+  if (start === null) return { repo: remembered.repo, kind: remembered.kind, opens: null };
+  const needed = remembered.repo.kind === "none";
+  return { repo: needed ? { kind: "needed" } : remembered.repo, kind: start, opens: needed ? "repository" : null };
 }
 
-/** The last folder of a path, without a trailing slash. */
-const lastFolder = (path: string): string => path.replace(/\/+$/, "").split("/").at(-1) ?? "";
+/** The last folder of a path, without a trailing slash: how a repository is named on a screen. */
+export const folderName = (path: string): string => path.replace(/\/+$/, "").split("/").at(-1) ?? "";
 
 /** The Repository row's value. */
 export function repoName(repo: RepoPick, known: readonly KnownRepository[]): string {
   if (repo.kind === "none") return "None (just chat)";
   if (repo.kind === "needed") return "Choose";
-  if (repo.kind === "known") return known.find((k) => k.path === repo.path)?.name ?? lastFolder(repo.path);
-  return lastFolder(repo.path.trim()) || "Another folder";
+  if (repo.kind === "known") return known.find((k) => k.path === repo.path)?.name ?? folderName(repo.path);
+  return folderName(repo.path.trim()) || "Another folder";
 }
 
 /** The From an issue row's value: the issue's number and the start of its title, which people outside the project wrote. */

@@ -5,15 +5,13 @@ import { createTask, moveTask } from "../src/engine/task.ts";
 import type { DriverEvent } from "../src/drivers/events.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, signIn, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, openFromSettings, signIn, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The Usage screen at a phone's size, against a real Botbench process. No model turn is started. The turns it shows were
 // stored the way the driver stores them: the usage events are the ones a real Claude Code run produced (the recording
 // test/recordings/planner-plans.json, from Claude Code 2.1.322), written to the real database before Botbench starts, for a task
 // of a run and for a chat.
-
-const nav = (page: import("@playwright/test").Page) => page.getByRole("navigation", { name: "Screens" });
 
 const test = base.extend<{ dir: string }>({
   dir: async ({}, use) => {
@@ -25,8 +23,9 @@ const test = base.extend<{ dir: string }>({
 
 async function open(page: import("@playwright/test").Page, botbench: Botbench): Promise<void> {
   await signIn(page, botbench);
-  await nav(page).getByRole("link", { name: "Usage", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Usage", level: 1 })).toBeVisible();
+  // Usage is reached from Settings, and leads back to it.
+  await openFromSettings(page, "Usage");
+  await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
 }
 
 test("with no replies stored, Usage says so in words", async ({ page, dir }) => {
