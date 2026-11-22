@@ -3,27 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Smelt UI direction: dense industrial</title>
+<title>Smelt UI reference</title>
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* Design reference only. Sample content illustrates layout; it is not product code. */
 :root {
-  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; /* the only spacing values used */
-  --accent: #e8590c;            /* the one accent: primary action and "needs you" count only */
-  --on-accent: #14110f;
-  --bg: #161514; --panel: #1e1d1b; --raise: #272523; --sunk: #111010;
-  --ink: #ece9e4; --ink-2: #b3aea6; --ink-3: #7d7870; --rule: #33302d;
-  --sans: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-}
-@media (prefers-color-scheme: light) {
-  :root { --bg: #e9e6e0; --panel: #f3f1ec; --raise: #dfdbd4; --sunk: #d6d2ca; --ink: #1a1816; --ink-2: #4b4741; --ink-3: #7a756d; --rule: #c9c4bb; --accent: #c2410c; --on-accent: #fff8f3; }
+  /* Tokens from DESIGN.md. Nothing outside these values is used. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --accent: #1A1A1A; --on-accent: #FAFAF9;
+  --bg: #FAFAF9; --panel: #FAFAF9; --raise: #E5E5E5; --sunk: #FAFAF9;
+  --ink: #171717; --ink-2: #171717; --ink-3: #737373; --rule: #E5E5E5;
+  --r-sm: 4px; --r-md: 8px;
+  --sans: "Geist", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Geist Mono", ui-monospace, Menlo, monospace;
 }
 * { box-sizing: border-box; margin: 0; }
-body { background: var(--sunk); color: var(--ink); font: 15px/1.35 var(--sans); padding: var(--s5); }
+body { background: var(--sunk); color: var(--ink); font: 14px/1.4 var(--sans); padding: var(--s5); }
 h1 { font-size: 22px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
 .lede { color: var(--ink-2); max-width: 720px; margin-top: var(--s2); }
 .sheet { display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: var(--s6); align-items: start; margin-top: var(--s6); }
@@ -37,13 +35,13 @@ h1 { font-size: 22px; font-weight: 700; letter-spacing: .02em; text-transform: u
 .wide .brief { order: 0; }
 
 /* ---------- device ---------- */
-.screen { background: var(--bg); width: 390px; min-height: 760px; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; }
+.screen { background: var(--bg); width: 390px; min-height: 760px; display: flex; flex-direction: column; border-radius: var(--r-sm); overflow: hidden; }
 .desk { width: 100%; max-width: 1180px; min-height: 0; }
 .bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); background: var(--panel); }
 .mark { font: 600 13px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
 .crumb { color: var(--ink-3); font: 12px/1 var(--mono); }
 .grow { flex: 1; }
-.need { font: 600 12px/1 var(--mono); background: var(--accent); color: var(--on-accent); padding: var(--s1) var(--s2); border-radius: 2px; }
+.need { font: 600 12px/1 var(--mono); background: var(--accent); color: var(--on-accent); padding: var(--s1) var(--s2); border-radius: var(--r-sm); }
 .body { padding: var(--s4); display: flex; flex-direction: column; gap: var(--s4); flex: 1; }
 .foot { padding: var(--s3) var(--s4) var(--s4); background: var(--panel); display: flex; flex-direction: column; gap: var(--s2); }
 
@@ -51,30 +49,30 @@ h1 { font-size: 22px; font-weight: 700; letter-spacing: .02em; text-transform: u
 .eyebrow { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
 .title { font-size: 18px; font-weight: 600; }
 .meta { font: 12px/1.4 var(--mono); color: var(--ink-3); }
-.mono { font-family: var(--mono); font-size: 12.5px; }
+.mono { font-family: var(--mono); font-size: 13px; }
 .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------- controls ---------- */
-button { font: 600 15px/1 var(--sans); letter-spacing: .03em; border: 0; border-radius: 2px; padding: var(--s3) var(--s4); min-height: 44px; cursor: pointer; color: var(--ink); background: var(--raise); }
+button { font: 500 14px/1 var(--sans); letter-spacing: .03em; border: 0; border-radius: var(--r-sm); padding: var(--s3) var(--s4); min-height: 44px; cursor: pointer; color: var(--ink); background: var(--raise); }
 button.primary { background: var(--accent); color: var(--on-accent); width: 100%; text-transform: uppercase; }
 button.quiet { background: none; color: var(--ink-2); text-decoration: underline; text-underline-offset: 4px; padding: var(--s2) 0; min-height: 44px; text-align: left; }
 .split { display: flex; gap: var(--s2); } .split > * { flex: 1; }
-.tabs { display: flex; gap: var(--s1); background: var(--sunk); padding: var(--s1); border-radius: 2px; }
-.tabs span { flex: 1; text-align: center; font: 500 12px/1 var(--mono); text-transform: uppercase; padding: var(--s2) var(--s1); color: var(--ink-3); border-radius: 2px; }
+.tabs { display: flex; gap: var(--s1); background: var(--sunk); padding: var(--s1); border-radius: var(--r-sm); }
+.tabs span { flex: 1; text-align: center; font: 500 12px/1 var(--mono); text-transform: uppercase; padding: var(--s2) var(--s1); color: var(--ink-3); border-radius: var(--r-sm); }
 .tabs .on { background: var(--raise); color: var(--ink); }
 
 /* ---------- rows: borderless, separated by tone ---------- */
 .group { display: flex; flex-direction: column; gap: var(--s1); }
-.row { background: var(--panel); padding: var(--s3); display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--s3); align-items: baseline; border-radius: 2px; }
+.row { background: var(--panel); padding: var(--s3); display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--s3); align-items: baseline; border-radius: var(--r-sm); }
 .row.hot { background: var(--raise); }
 .state { font: 600 11px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
 .state.dim { color: var(--ink-3); }
 .row b { font-weight: 600; display: block; }
 .row small { color: var(--ink-3); font: 12px/1.4 var(--mono); display: block; }
-.pre { background: var(--sunk); padding: var(--s3); border-radius: 2px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
-.kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: var(--s1) var(--s3); font: 12.5px/1.5 var(--mono); }
+.pre { background: var(--sunk); padding: var(--s3); border-radius: var(--r-sm); font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: var(--s1) var(--s3); font: 13px/1.5 var(--mono); }
 .kv span:nth-child(odd) { color: var(--ink-3); text-transform: uppercase; font-size: 11px; }
-.task { background: var(--panel); padding: var(--s3); border-radius: 2px; display: flex; flex-direction: column; gap: var(--s2); }
+.task { background: var(--panel); padding: var(--s3); border-radius: var(--r-sm); display: flex; flex-direction: column; gap: var(--s2); }
 .task .n { font: 600 11px/1 var(--mono); color: var(--ink-3); }
 .task ul { padding-left: var(--s4); color: var(--ink-2); font-size: 14px; }
 .edit { font: 500 12px/1 var(--mono); color: var(--ink-3); text-decoration: underline; text-underline-offset: 4px; }
@@ -82,13 +80,27 @@ button.quiet { background: none; color: var(--ink-2); text-decoration: underline
 /* ---------- desktop run detail ---------- */
 .cols { display: grid; grid-template-columns: 260px minmax(0, 1fr) 320px; gap: var(--s1); background: var(--sunk); }
 .col { background: var(--bg); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
-.diff { font: 12.5px/1.55 var(--mono); background: var(--sunk); border-radius: 2px; padding: var(--s2) 0; overflow-x: auto; }
+.diff { font: 13px/1.55 var(--mono); background: var(--sunk); border-radius: var(--r-sm); padding: var(--s2) 0; overflow-x: auto; }
 .diff div { padding: 0 var(--s3); white-space: pre; }
 .diff .add { background: var(--raise); color: var(--ink); }
 .diff .del { color: var(--ink-3); text-decoration: line-through; }
 .diff .hunk { color: var(--ink-3); }
-.file { display: flex; justify-content: space-between; gap: var(--s3); overflow-wrap: anywhere; font: 12.5px/1.4 var(--mono); padding: var(--s2) var(--s3); background: var(--panel); border-radius: 2px; }
+.file { display: flex; justify-content: space-between; gap: var(--s3); overflow-wrap: anywhere; font: 13px/1.4 var(--mono); padding: var(--s2) var(--s3); background: var(--panel); border-radius: var(--r-sm); }
 .file.on { background: var(--raise); }
+
+
+/* ---------- DESIGN.md: separation by 1px border or the border tone as a fill ---------- */
+.screen { border: 1px solid var(--rule); border-radius: var(--r-md); }
+.bar { border-bottom: 1px solid var(--rule); } .foot { border-top: 1px solid var(--rule); }
+.row, .task, .file, .pre, .diff { border: 1px solid var(--rule); }
+.row.hot, .file.on { background: var(--raise); }
+.tabs { background: var(--raise); } .tabs .on { background: var(--bg); }
+.cols { background: var(--rule); }
+.diff .add { background: var(--raise); }
+button { border: 1px solid var(--rule); background: var(--bg); }
+button.primary { border-color: var(--accent); }
+button.quiet { border: 0; }
+h1 { font-weight: 600; } .title, .row b, .task b { font-weight: 600; }
 
 @media (max-width: 860px) {
   body { padding: var(--s3); }
@@ -102,7 +114,7 @@ button.quiet { background: none; color: var(--ink-2); text-decoration: underline
 </head>
 <body>
 <h1>Smelt / UI direction</h1>
-<p class="lede">Direction chosen: <strong>dense industrial</strong>. Graphite surfaces, one orange accent, IBM Plex Sans Condensed for reading and IBM Plex Mono for anything a machine produced. State is carried by words, never by colour. This page is a design reference; the sample content shows layout and is not product code.</p>
+<p class="lede">Built from <code>DESIGN.md</code>: dense technical tool, phone-first, one primary action per screen. Near-black accent on a warm white surface, Geist for the interface and Geist Mono for anything a machine produced. State is carried by words, never by colour. This page is a design reference; the sample content shows layout and is not product code.</p>
 
 <!-- 1 -->
 <section class="sheet">
