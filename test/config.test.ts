@@ -175,7 +175,7 @@ test("a repository's settings are keyed by its full path: lists of plain command
 });
 
 test("the number of approvals after which a card offers standing permission is 3 as shipped, can be set by the owner, and must be a whole number of at least 1", (t) => {
-  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3 });
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual" });
   assert.equal(offerStandingAfter(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 3);
   // A config that says nothing of it still means 3.
   const silent = loadConfig(configFiles(t, BASE));
@@ -200,6 +200,12 @@ test("the number of approvals after which a card offers standing permission is 3
     [{ autonomy: { offerStandingAfte: 3 } }, /"autonomy" has unknown setting "offerStandingAfte"/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, ...(over as object) })), words, JSON.stringify(over));
+});
+
+test("the mode a new run is given is manual as shipped, the owner may set semi or full, and nothing else is a mode", (t) => {
+  assert.equal(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy?.mode, "manual");
+  assert.equal(loadConfig(configFiles(t, { ...BASE, autonomy: { mode: "full" } })).autonomy?.mode, "full");
+  for (const mode of ["yolo", "", null, 1, "Semi"]) assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { mode } })), /"autonomy.mode" must be "manual", "semi" or "full"/, JSON.stringify(mode));
 });
 
 test("a repository's setup and check commands are each a command, or a command with its own time limit in seconds; the limit is 10 minutes when none is given", (t) => {

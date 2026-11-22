@@ -39,6 +39,8 @@ export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval
 
 /** A task's station as a sentence that says only what is so. */
 export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision">): string {
+  // A fully autonomous run that did not accept the task says why it needs the owner.
+  const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
     return task.parked
       ? "Needs input. Claude Code asked for permission before Botbench restarted and is stopped. Your answer starts it again where it left off."
@@ -57,10 +59,10 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       return "In review. Botbench committed the work and ran the checks; the run's reviewer is reading the changes. You can decide once its review is in.";
     case "awaiting_decision":
       return task.headCommit === task.baseCommit
-        ? "Ready for review. No file was changed, so nothing was committed."
-        : "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.";
+        ? `Ready for review. No file was changed, so nothing was committed.${why}`
+        : `Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.${why}`;
     case "accepted":
-      return "Accepted. Botbench kept the branch and removed the task's copy of the project.";
+      return task.decision?.decidedBy === "mode" ? "Accepted without you, as its run is fully autonomous. Botbench kept the branch and removed the task's copy of the project." : "Accepted. Botbench kept the branch and removed the task's copy of the project.";
     case "rejected":
       return task.decision?.branch === "deleted" ? "Rejected. The branch was deleted, and the task's copy of the project was removed." : "Rejected. Botbench kept the branch and removed the task's copy of the project.";
     case "interrupted":

@@ -6,6 +6,7 @@ import { DiffLine } from "../components/diff.tsx";
 import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
+import { MODE_SENTENCE } from "../components/mode-choice.tsx";
 import { DiscardSection } from "../components/discard.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
@@ -163,6 +164,11 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               {statusSentence(task)}
             </p>
           )}
+          {task !== null && task.ofPlan !== null && (
+            <p data-testid="task-mode" className="ds-page-header__description">
+              {MODE_SENTENCE[task.mode]}
+            </p>
+          )}
         </PageHeader>
         {problem !== null && (
           <Alert tone="error" role="alert">
@@ -289,7 +295,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
 
             {task.decision !== null ? (
               <section aria-labelledby="decision-heading" className="ds-stack ds-gap-sm">
-                <h2 id="decision-heading">{task.decision.decision === "accept" ? "Accepted" : "Rejected"}</h2>
+                <h2 id="decision-heading">{task.decision.decision === "accept" ? (task.decision.decidedBy === "mode" ? "Accepted without you" : "Accepted") : "Rejected"}</h2>
+                {task.decision.reasons !== null && <p data-testid="decided-by">{task.decision.reasons}</p>}
                 <DecisionOutcome decision={task.decision} repo={task.repo} />
               </section>
             ) : (
@@ -297,7 +304,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <section className="ds-stack ds-gap-sm">
                   <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />
                   <p data-testid="not-merged">
-                    {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.`}
+                    {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.mode === "manual" ? `${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well.` : task.mode === "semi" ? "Its run is semi-autonomous, so its shell commands run without asking, apart from those the safety rules always ask you about; Botbench sends you anything else it wants to do as well." : "Its run is fully autonomous, so its shell commands run without asking, and what would need your answer is refused instead: those the safety rules always ask about, and anything else it wants to do."} The separate copy (a git worktree) keeps changes apart from your own files. A command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.`}
                   </p>
                 </section>
               )

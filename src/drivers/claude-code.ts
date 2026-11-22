@@ -52,7 +52,8 @@ const READ_ONLY_TOOLS = "Read,Glob,Grep,Bash";
 /** Named as denied as well, should a CLI version hand a tool out in spite of the list above. */
 const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
+// Commands are confined: the sandbox is on with `failIfUnavailable` and `allowUnsandboxedCommands` false (`sandboxSettings`).
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true };
 
 /** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Botbench one question and never waits for a person. */
 const HOOK_TIMEOUT_S = 20;
@@ -358,7 +359,7 @@ export function shellWatch(): (event: DriverEvent) => boolean {
   const allowed = new Set<string>();
   return (event) => {
     if (event.type === "tool_call" && event.name === "Bash") shellCalls.add(event.id);
-    else if (event.type === "permission_resolved" && (event.decision === "allowed" || event.decision === "preapproved" || event.decision === "standing")) allowed.add(event.toolCallId);
+    else if (event.type === "permission_resolved" && (event.decision === "allowed" || event.decision === "preapproved" || event.decision === "standing" || event.decision === "mode")) allowed.add(event.toolCallId);
     else if (event.type === "tool_result" && !event.isError) return shellCalls.has(event.id) && !allowed.has(event.id);
     return false;
   };
@@ -560,7 +561,7 @@ class ClaudeCodeSession implements DriverSession {
     if (given.decision === "allow") {
       // An allow runs the input the owner was shown, unchanged.
       this.answerControl(requestId, { behavior: "allow", updatedInput: request.input });
-      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : "allowed", note: null });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
       this.answerControl(requestId, { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` });

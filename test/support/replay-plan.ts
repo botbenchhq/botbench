@@ -34,7 +34,8 @@ export function loadPlanRecording(): PlanRecording {
   return JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "planner-plans.json"), "utf8")) as PlanRecording;
 }
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
+// As the real Claude Code driver reports them: its sessions were recorded with every command in its sandbox.
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true };
 const now = (): string => new Date().toISOString();
 
 export interface PlanReplay extends Driver {

@@ -14,6 +14,7 @@ import { pushRoutes } from "./push.ts";
 import { connectRoutes } from "./connect.ts";
 import { turnRoutes } from "./routes.ts";
 import { runRoutes } from "./runs.ts";
+import { settingsRoutes } from "./settings.ts";
 import { isShellRequest, serveShell } from "./static.ts";
 import type { EventStream } from "./stream.ts";
 import { taskRoutes } from "./tasks.ts";
@@ -116,6 +117,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await turnRoutes(req, res, ctx, url)) return;
   if (await taskRoutes(req, res, ctx, url)) return;
   if (await runRoutes(req, res, ctx, url)) return;
+  if (await settingsRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;

@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
-import { ApiError, startRun } from "../api/client.ts";
+import { useEffect, useState, type FormEvent } from "react";
+import { ApiError, getDefaultMode, startRun, type RunMode } from "../api/client.ts";
+import { ModePicker } from "../components/mode-choice.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { ModelPicker, useModelChoice } from "../components/model-picker.tsx";
 import { PreapprovedEditor, REPO_HINT, RepositoryField, useRepository } from "../components/repository.tsx";
@@ -14,6 +15,20 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const models = useModelChoice(onSignedOut);
   const review = useReviewChoice(onSignedOut);
   const { listed } = repository;
+  // Preselected with the default from Settings; until it is read, nothing is chosen.
+  const [mode, setMode] = useState<RunMode | null>(null);
+  useEffect(() => {
+    let live = true;
+    getDefaultMode().then(
+      (found) => live && setMode((chosen) => chosen ?? found),
+      (err: unknown) => {
+        if (live && err instanceof ApiError && err.status === 401) onSignedOut();
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [onSignedOut]);
 
   const submit = (event: FormEvent): void => {
     event.preventDefault();
@@ -24,6 +39,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
     const hasPrompt = prompt.trim() !== "";
     const hasSpec = specPath.trim() !== "";
     if (!hasPrompt && !hasSpec) return refuse("Give a prompt or the path of a spec file.");
+    if (mode === null) return refuse("Choose a mode.");
     if (hasPrompt && hasSpec) return refuse("Give a prompt or a spec file, not both.");
     const model = models.request();
     if (!model.ok) return refuse(model.why);
@@ -33,7 +49,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
     setBusy(true);
     // The server checks the repository and the spec file itself; what this screen knows is only for the owner's benefit.
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, preapproved: listed?.commands ?? [], reviewer: review.choice() }).then(
+    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, preapproved: listed?.commands ?? [], reviewer: review.choice(), mode }).then(
       ({ runId }) => {
         window.location.hash = `#/runs/${runId}`;
       },
@@ -67,6 +83,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </div>
           <ModelPicker state={models} />
           <ReviewChoice state={review} />
+          <ModePicker name="run-mode" legend="Mode" hint="How much the run does without you. It cannot be changed once the run starts." value={mode} onChange={setMode} />
           <PreapprovedEditor choice={repository} scope="run" />
           {error !== null && (
             <Alert tone="error" role="alert">
@@ -76,7 +93,10 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
           <button type="submit" aria-busy={busy} className="ds-button ds-button--primary">
             {busy ? "Starting" : "Start run"}
           </button>
-          <p>The model above plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks. Nothing is built until you approve the plan. Your own files and your branch are not touched.</p>
+          <p>
+            The model above plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks.{" "}
+            {mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."} Your own files and your branch are not touched.
+          </p>
         </form>
       </Page>
     </Frame>

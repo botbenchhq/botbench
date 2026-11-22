@@ -11,6 +11,9 @@ import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHea
 import { stopSurvivor } from "./recover.ts";
 import { agentName, correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
+import { confinementProblem } from "../confinement.ts";
+import { isRunMode, MODE_WORDS, type RunMode } from "./modes.ts";
+import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 
@@ -25,7 +28,8 @@ import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, word
  *
  * The planner is read-only. It works in a detached worktree of the run's base commit under the Botbench home, never in
  * the owner's checkout; the driver starts it without any tool that writes; every shell command it wants goes to the
- * owner through the gate under the planner role, where no grant applies. The worktree is removed when planning ends,
+ * owner through the gate under the planner role, where no grant applies, unless the run's mode lets a confined one run
+ * (engine/modes.ts). A fully autonomous run's plan is approved by the mode as soon as it is stored. The worktree is removed when planning ends,
  * however it ends. What the planner replies is data: it is validated and stored as text.
  */
 
@@ -53,6 +57,8 @@ export interface Run {
   attemptId: number | null;
   /** The agent and model that review each built task, chosen when the run was started; null when nobody reviews. */
   reviewer: RoleChoice | null;
+  /** How much the run does without the owner, chosen when it was started and never changed (engine/modes.ts). */
+  mode: RunMode;
   /** Counts the plan's changes. An edit or an approval names the version it saw and is refused when the plan has moved on. */
   planVersion: number;
   createdAt: string;
@@ -92,6 +98,7 @@ function toRun(row: Record<string, unknown>): Run {
     attemptId: int(row.attempt_id),
     planVersion: Number(row.plan_version),
     reviewer: typeof row.reviewer_agent === "string" ? { agent: row.reviewer_agent, model: text(row.reviewer_model) } : null,
+    mode: isRunMode(row.mode) ? row.mode : "manual",
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -140,7 +147,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode }): Run {
   if ((o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two.");
   return transaction(db, () => {
     const at = now();
@@ -148,8 +155,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, base_commit, reviewer_agent, reviewer_model, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, base_commit, reviewer_agent, reviewer_model, mode, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "planning", null);
@@ -246,14 +253,16 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
 
 /**
  * The owner approves the plan as it stands: one queued task row per plan task, each naming the run, and the run is
- * running. All in one write. No worktree is made here: building a task is the build station's.
+ * running. All in one write. No worktree is made here: building a task is the build station's. `by` "mode" is a fully
+ * autonomous run approving its own plan as the planner gave it; only such a run's plan is approved that way.
  */
-export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknown, implementerModel: string | null = null): { run: Run; tasks: Task[] } {
+export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknown, implementerModel: string | null = null, by: "owner" | "mode" = "owner"): { run: Run; tasks: Task[] } {
   return transaction(db, () => {
     const run = known(db, runId);
     versionGiven(planVersion);
     if (run.status !== "awaiting_plan_approval") throw notWaiting(run, "approve");
     sameVersion(run, planVersion);
+    if (by === "mode" && run.mode !== "full") throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}, so its plan waits for your approval.`);
     const plan = planTasks(db, runId);
     // What is approved is checked once more as it is stored: nothing reaches a builder that a plan may not hold.
     const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) });
@@ -264,7 +273,8 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
       link.run(made, runId, task.position);
       return made;
     });
-    writeRun(db, runId, "running", { reason: null, planChanged: true, detail: `plan approved by the owner: ${tasksWord(tasks.length)} queued` });
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    writeRun(db, runId, "running", { reason: null, planChanged: true, detail: `plan approved ${by === "owner" ? "by the owner" : "by the run's mode, fully autonomous"}: ${tasksWord(tasks.length)} queued` });
     return { run: getRun(db, runId)!, tasks: tasks.map((id) => getTask(db, id)!) };
   });
 }
@@ -389,6 +399,8 @@ export interface StartRun {
   preapproved?: unknown;
   /** Who reviews each built task: null or left out for nobody, else `{ agent, model }` (a model name, or null for the agent's own default). */
   reviewer?: unknown;
+  /** "manual", "semi" or "full"; left out, the default mode (Settings). */
+  mode?: unknown;
 }
 
 export interface Runs {
@@ -428,6 +440,10 @@ export interface RunsOptions {
   onTaskChange: (task: Task) => void;
   /** The build line: it builds an approved run's tasks and stops what it does for a cancelled run. */
   line: Pick<Tasks, "buildRun" | "stopRun">;
+  /** The check commands of a repository. A run with none cannot be fully autonomous. None when left out. */
+  repoCommands?: (repo: string) => { checks: readonly StationCommand[] };
+  /** The mode a run is given when the request names none; manual when left out. */
+  defaultMode?: () => RunMode;
 }
 
 /** How one go of the planner ended. */
@@ -467,7 +483,7 @@ export function createRuns(options: RunsOptions): Runs {
   const ask = async (run: Run, dir: string, change?: { current: PlanTask[]; feedback: string }): Promise<Outcome> => {
     const gone = (): boolean => getRun(db, run.id)?.status !== "planning";
     if (closed) return { problem: STOPPED };
-    const admission: Admission = broker.admit({ runId: run.id, role: PLANNER, worktree: dir, readOnly: true });
+    const admission: Admission = broker.admit({ runId: run.id, role: PLANNER, worktree: dir, readOnly: true, confined: driver.capabilities.confinedCommands === true });
     let session: DriverSession;
     try {
       // The planner only reads: its commands reach no network, whatever hosts the repository allows its builder.
@@ -493,7 +509,7 @@ export function createRuns(options: RunsOptions): Runs {
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
           .request({ taskId: null, runId: run.id, attemptId: session.attemptId, role: PLANNER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined }) : undefined))
           .catch(report(`Answering a permission request of run ${run.id}'s planner`));
       }
       if (event.type === "permission_resolved") {
@@ -576,7 +592,12 @@ export function createRuns(options: RunsOptions): Runs {
     const now_ = getRun(db, id);
     // Cancelled while the planner worked: the run already says so, and a plan that arrived late is not stored.
     if (!now_ || now_.status !== "planning" || "cancelled" in outcome) return;
-    if ("tasks" in outcome) return void announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: leftover }));
+    if ("tasks" in outcome) {
+      const stored = announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: leftover }));
+      // A fully autonomous run does not wait at the plan gate: building starts on the plan as the planner gave it.
+      if (stored.mode === "full") approveNow(id, stored.planVersion, "mode");
+      return;
+    }
     // Botbench is stopping: the run is left planning, and the next start plans it again (see `recover`).
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     if (closed) return void move(id, "planning", { detail: "Botbench stopped while this run was being planned; left for the next start to plan again" });
@@ -657,6 +678,18 @@ export function createRuns(options: RunsOptions): Runs {
     if (probe.problem !== null) throw new RunError(400, `${agentName(reviewer.agent)} cannot review this run: ${probe.problem}`);
   };
 
+  /**
+   * A fully autonomous run accepts work when its checks pass, so a repository with none cannot have one; and its
+   * commands run without the owner only confined, so neither can an agent whose commands cannot be confined here.
+   */
+  const fullyAutonomousUsable = (repo: string): void => {
+    if ((options.repoCommands?.(repo).checks.length ?? 0) === 0) {
+      throw new RunError(400, 'This repository has no checks set up, so a run on it cannot be fully autonomous: without checks, "fully autonomous" would mean agents agreeing with each other. Add check commands for it to Botbench\'s settings file, or choose semi-autonomous.');
+    }
+    const unconfined = driver.capabilities.confinedCommands === true ? confinementProblem() : `${agentName(driver.name)} does not run every command it is given inside Botbench's protection.`;
+    if (unconfined !== null) throw new RunError(400, `A run cannot be fully autonomous here: the commands its agents run cannot be kept away from your sign-ins and the network. ${unconfined}`);
+  };
+
   const start = async (input: StartRun): Promise<Run> => {
     const stopping = (): void => {
       if (closed) throw new RunError(503, "Botbench is shutting down.");
@@ -670,6 +703,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (hasPrompt && (input.prompt as string).length > MAX_PROMPT) throw new RunError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
     const preapproved = preapprovedList(input.preapproved);
     const reviewer = reviewerChoice(input.reviewer);
+    const mode = input.mode === undefined ? (options.defaultMode?.() ?? "manual") : modeChoice(input.mode);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -684,9 +718,10 @@ export function createRuns(options: RunsOptions): Runs {
     } catch (err) {
       throw new RunError(400, words(err));
     }
+    if (mode === "full") fullyAutonomousUsable(repo);
     if (reviewer !== null) await reviewerUsable(reviewer);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, baseCommit, preapproved, reviewer });
+    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, baseCommit, preapproved, reviewer, mode });
     announce(run);
     enqueue(run.id);
     return run;
@@ -700,14 +735,15 @@ export function createRuns(options: RunsOptions): Runs {
     }
   };
 
-  const approve = (id: number, planVersion: unknown): { run: Run; tasks: Task[] } => {
+  const approveNow = (id: number, planVersion: unknown, by: "owner" | "mode"): { run: Run; tasks: Task[] } => {
     if (closed) throw new RunError(503, "Botbench is shutting down.");
-    const approved = approvePlan(db, id, planVersion, options.implementerModel ?? null);
+    const approved = approvePlan(db, id, planVersion, options.implementerModel ?? null, by);
     announce(approved.run);
     for (const task of approved.tasks) announceTask(task);
     options.line.buildRun(id);
     return approved;
   };
+  const approve = (id: number, planVersion: unknown): { run: Run; tasks: Task[] } => approveNow(id, planVersion, "owner");
 
   const requestChanges = (id: number, feedback: unknown, planVersion: unknown): Run => {
     const { run, plan: sent, words: said } = transaction(db, () => {
@@ -763,6 +799,12 @@ export function preapprovedList(given: unknown): string[] {
   const problem = given.map(entryProblem).find((p) => p !== null);
   if (problem) throw new RunError(400, problem);
   return given as string[];
+}
+
+/** The mode a request names. Anything else is refused with the reason, before anything exists. */
+export function modeChoice(given: unknown): RunMode {
+  if (isRunMode(given)) return given;
+  throw new RunError(400, '"mode" must be "manual", "semi" or "full".');
 }
 
 /** The reviewer a request names: null for none, else a known agent and a model name or null. Anything else is refused with the reason, before anything exists. */

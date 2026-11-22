@@ -35,7 +35,7 @@ export function runFacts(run: RunSummary): string {
 }
 
 /** A run's state as a sentence that says only what is so. */
-export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingOnApproval" | "tasks" | "attemptId">): string {
+export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingOnApproval" | "tasks" | "attemptId" | "mode">): string {
   switch (run.status) {
     case "planning":
       // No planner has been started for it yet: one planner works at a time.
@@ -53,6 +53,7 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
       return `Ready for review. Every task has been built or has stopped; each says how it went.${run.tasks.some((task) => task.status === "awaiting_decision") ? " Accept or reject each task that is ready for review." : ""}`;
     case "done":
       if (nothingReviewed(run)) return "Nothing to review. Every task failed, was stopped or was cancelled before it was ready for review, so there is nothing to decide. Each task's own screen says why. A task Botbench's restarts stopped can be resumed, and what a task left can be discarded.";
+      if (run.tasks.some((task) => task.decision?.decidedBy === "mode")) return "Done. Every task that was built is decided: this run is fully autonomous, so each task that qualified was accepted without you, and you decided the rest. Nothing has been merged or pushed.";
       return "Done. Every task that was built has your decision. Nothing has been merged or pushed.";
     case "cancelled":
       return run.tasks.length === 0 ? "Cancelled. Nothing was built, and no task was made from this run." : "Cancelled. Tasks that had finished keep their branches; the task being built was stopped and what it did is committed; the rest were not built.";

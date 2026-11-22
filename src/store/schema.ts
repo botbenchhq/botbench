@@ -760,4 +760,95 @@ CREATE TABLE push_subscriptions (
 );
 `,
   },
+  {
+    // Modes (manual, semi-autonomous, fully autonomous): a run's mode is chosen when it starts and never changed after.
+    // A fully autonomous run may accept a task without the owner: `decisions` then names the mode as who decided, with
+    // the reasons the task qualified, and only for an accept that keeps the branch, of a task of a fully autonomous
+    // run whose checks passed, with nothing left by the checks in its copy. The action log gains a rule for a command a
+    // mode let run without asking, one for what a fully autonomous run refused, and one for its accept, which names its
+    // task. `owner_settings` keeps what the owner chose in Settings: the mode a new run is given when none is named.
+    // A check cannot be altered in place, so both tables are made again with every row kept, ids included, and their
+    // indexes and triggers put back; the trigger on tasks that reads `decisions` is dropped first and made again.
+    name: "modes",
+    sql: `
+ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'manual' CHECK (mode IN ('manual', 'semi', 'full'));
+CREATE TRIGGER runs_mode_fixed BEFORE UPDATE OF mode ON runs
+BEGIN SELECT RAISE(ABORT, 'a run''s mode is chosen when it starts and never changed'); END;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full'))
+);
+
+DROP TRIGGER decisions_no_update;
+DROP TRIGGER decisions_no_delete;
+DROP TRIGGER decisions_ready_only;
+DROP TRIGGER tasks_decided_with_decision;
+ALTER TABLE decisions RENAME TO decisions_before_modes;
+CREATE TABLE decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL UNIQUE REFERENCES tasks (id),
+  decided_by TEXT NOT NULL CHECK (decided_by IN ('owner', 'mode')),
+  decision TEXT NOT NULL CHECK (decision IN ('accept', 'reject')),
+  branch TEXT NOT NULL CHECK (branch IN ('kept', 'deleted')),
+  branch_name TEXT NOT NULL,
+  head_commit TEXT,
+  leftovers TEXT NOT NULL DEFAULT '[]',
+  decided_at TEXT NOT NULL,
+  reasons TEXT,
+  CHECK (decision <> 'accept' OR branch = 'kept'),
+  CHECK (decided_by = 'owner' OR (decision = 'accept' AND reasons IS NOT NULL AND leftovers = '[]'))
+);
+INSERT INTO decisions (id, task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at, reasons)
+  SELECT id, task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at, NULL FROM decisions_before_modes ORDER BY id;
+DROP TABLE decisions_before_modes;
+CREATE TRIGGER decisions_no_update BEFORE UPDATE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions are append-only'); END;
+CREATE TRIGGER decisions_no_delete BEFORE DELETE ON decisions
+BEGIN SELECT RAISE(ABORT, 'decisions are append-only'); END;
+CREATE TRIGGER decisions_ready_only BEFORE INSERT ON decisions
+WHEN (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'awaiting_decision'
+BEGIN SELECT RAISE(ABORT, 'a decision is made only on a task that is ready for review'); END;
+CREATE TRIGGER decisions_by_mode_only_full BEFORE INSERT ON decisions
+WHEN NEW.decided_by = 'mode' AND ((SELECT r.mode FROM tasks t JOIN runs r ON r.id = t.run_id WHERE t.id = NEW.task_id) IS NOT 'full' OR (SELECT checks FROM tasks WHERE id = NEW.task_id) IS NOT 'passed')
+BEGIN SELECT RAISE(ABORT, 'only a fully autonomous run decides without the owner, and only on a task whose checks passed'); END;
+CREATE TRIGGER tasks_decided_with_decision BEFORE UPDATE OF status ON tasks
+WHEN NEW.status IN ('accepted', 'rejected') AND NOT EXISTS (SELECT 1 FROM decisions WHERE task_id = NEW.id AND decision = (CASE NEW.status WHEN 'accepted' THEN 'accept' ELSE 'reject' END))
+BEGIN SELECT RAISE(ABORT, 'a task is accepted or rejected only with its decision'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_modes;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted') OR task_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id FROM action_log_before_modes ORDER BY id;
+DROP TABLE action_log_before_modes;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

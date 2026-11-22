@@ -11,6 +11,7 @@ import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
+import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview } from "./review.ts";
 import { agentName, IMPLEMENTER } from "./roles.ts";
 import { commandProblem, nextRound, runCommand, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
@@ -34,7 +35,8 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   verifying: ["verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   reviewing: ["awaiting_decision", "failed", "cancelled"],
-  awaiting_decision: ["accepted", "rejected"],
+  // To itself: a fully autonomous run that could not accept the task records why it waits for the owner.
+  awaiting_decision: ["awaiting_decision", "accepted", "rejected"],
   accepted: [],
   rejected: [],
   interrupted: ["building", "verifying"],
@@ -384,6 +386,8 @@ export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
   /** What the commands of a task in `repo` are kept from (U27). */
   const confinement = (repo: string): Confinement => ({ dataDir: home, allowedHosts: options.repoHosts?.(repo) ?? [] });
+  /** Whether the builder's driver runs every shell command confined: only then may a run's mode let one run without asking. */
+  const confined = driver.capabilities.confinedCommands === true;
   let closed = false;
   let current: DriverSession | null = null;
   /** Set while a turn runs: called when Botbench begins to stop, it decides whether that turn's task is parked. */
@@ -500,7 +504,7 @@ export function createTasks(options: TasksOptions): Tasks {
    */
   const review = async (task: Task, from: "building" | "verifying", change: TaskChange, stopped?: AbortSignal): Promise<void> => {
     const assigned = reviewAssignment(db, task.id);
-    if (assigned === null) return void moveFrom(task.id, from, "awaiting_decision", change);
+    if (assigned === null) return handOver(task, from, change);
     const at = moveFrom(task.id, from, "reviewing", change);
     if (at === null) return;
     const done = await runReview({
@@ -509,7 +513,31 @@ export function createTasks(options: TasksOptions): Tasks {
     });
     options.onTaskChange(getTask(db, task.id)!);
     if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });
-    moveFrom(task.id, "reviewing", "awaiting_decision");
+    await handOver(task, "reviewing", {});
+  };
+
+  /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now. */
+  const qualifies = (id: number, checks: Task["checks"]): ReturnType<typeof autoAccept> => autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id) });
+
+  /**
+   * The task is ready for review. In a fully autonomous run it is accepted by the mode when it qualifies, as the owner's
+   * Accept would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it
+   * waits for the owner with a plain line saying why.
+   */
+  const handOver = async (task: Task, from: "building" | "verifying" | "reviewing", change: TaskChange): Promise<void> => {
+    if (runModeOf(db, task.runId) !== "full") return void moveFrom(task.id, from, "awaiting_decision", change);
+    const verdict = qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null);
+    const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why });
+    if (ready === null || !verdict.accept) return;
+    try {
+      // Loaded here: decision.ts builds on this module, which must not need it before both are loaded.
+      const { acceptByMode } = await import("./decision.ts");
+      const decided = await acceptByMode(db, task.id, verdict.reasons);
+      options.onTaskChange(decided.task);
+      if (decided.run) options.onRunChange?.(decided.run);
+    } catch (err) {
+      moveFrom(task.id, "awaiting_decision", "awaiting_decision", { reason: `It needs your review: Botbench could not accept it without you. ${words(err)}` });
+    }
   };
 
   /**
@@ -574,7 +602,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
 
     // The attempt's own way to the permission gate. It is released whichever way the build ends.
-    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath! });
+    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, confined });
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
@@ -643,7 +671,7 @@ export function createTasks(options: TasksOptions): Tasks {
         void broker
           .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined }) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));
       }
       if (event.type === "permission_resolved") {
@@ -752,7 +780,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // The model stays the one the task was started with, whatever is configured by now.
     const previous = task.attemptId!;
     const resumeCursor = String(db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(previous)!.resume_cursor);
-    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, resumes: previous });
+    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, resumes: previous, confined });
     let session: DriverSession;
     try {
       const gitDir = await sharedGitDir(task.repo);
@@ -798,7 +826,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
     const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
-    const admission = broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath! });
+    const admission = broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath!, confined });
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
@@ -840,7 +868,10 @@ export function createTasks(options: TasksOptions): Tasks {
       const assigned = reviewAssignment(db, id);
       transaction(db, () => {
         storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `Botbench stopped before ${agentName(assigned?.agent ?? "the reviewer")} finished its review.`);
-        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish" });
+        // A fully autonomous run accepts no task whose review did not finish: it says why it waits for the owner.
+        const left = getTask(db, id)!;
+        const verdict = runModeOf(db, left.runId) === "full" ? qualifies(id, left.checks) : null;
+        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish", ...(verdict === null || verdict.accept ? {} : { reason: verdict.why }) });
       });
       options.onTaskChange(getTask(db, id)!);
     }

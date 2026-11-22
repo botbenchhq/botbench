@@ -84,7 +84,7 @@ test("Accept keeps the branch at Botbench's commit, removes the clean worktree, 
   assert.deepEqual(checkoutState(s.repo), before, "nothing was merged into or changed in the owner's checkout");
 
   const decision = taskDecision(s.db, task.id)!;
-  assert.deepEqual({ ...decision, id: 0, decidedAt: "" }, { id: 0, taskId: task.id, decision: "accept", branch: "kept", branchName: task.branch, headCommit: task.headCommit, leftovers: [], decidedBy: "owner", decidedAt: "" });
+  assert.deepEqual({ ...decision, id: 0, decidedAt: "" }, { id: 0, taskId: task.id, decision: "accept", branch: "kept", branchName: task.branch, headCommit: task.headCommit, leftovers: [], decidedBy: "owner", reasons: null, decidedAt: "" });
   assert.ok(Date.parse(decision.decidedAt) > 0);
   const events = s.db.prepare("SELECT status FROM task_events WHERE task_id = ? ORDER BY id").all(task.id).map((row) => String(row.status));
   assert.equal(events.at(-1), "accepted");

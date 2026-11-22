@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import type { Driver, DriverCapabilities, DriverProbe, DriverSession, StartAttemptOptions } from "../../src/drivers/contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "../../src/drivers/events.ts";
+import fs from "node:fs";
 import { loadRecording } from "./replay.ts";
 import { loadPlanRecording } from "./replay-plan.ts";
 
@@ -16,6 +17,8 @@ import { loadPlanRecording } from "./replay-plan.ts";
  *   "done"  the first turn of test/recordings/planner-plans.json: the real CLI opened a session, wrote text and ended.
  *   "ask"   the resumed attempt of test/recordings/redrive-other-request.json: the real CLI asked to run `sh other.sh`,
  *           waited for permission, was allowed, ran it and ended.
+ *   "refused" test/recordings/full-refused-push.json: as the builder of a fully autonomous run the real CLI asked to run
+ *           `git push origin HEAD`, Botbench refused it without asking anyone, and the CLI ended its turn.
  * What is real: every event after the prompt is one the real CLI produced, in its order, and each recorded tool call is
  * put to the real permission gate as the CLI's pre-tool hook put it.
  * What is not: the CLI produced those events for the prompts in the recordings, and the replay plays them after
@@ -25,17 +28,20 @@ import { loadPlanRecording } from "./replay-plan.ts";
  * what a CLI does.
  */
 
-export type BuildTurn = "done" | "ask";
+export type BuildTurn = "done" | "ask" | "refused";
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
+// As the real Claude Code driver reports them: its sessions were recorded with every command in its sandbox.
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true };
 const now = (): string => new Date().toISOString();
 
 function recordedTurns(): Record<BuildTurn, { events: DriverEvent[]; hookCwd: Map<string, string> }> {
   const plan = loadPlanRecording();
   const redrive = loadRecording("redrive-other-request.json");
+  const refused = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "full-refused-push.json"), "utf8")) as { events: DriverEvent[]; refused: { toolCallId: string; cwd: string }[] };
   return {
     done: { events: plan.turns[0]!.events, hookCwd: new Map() },
     ask: { events: redrive.attempts[1]!, hookCwd: new Map(redrive.approvals.filter((a) => a.attempt === 2).map((a) => [a.toolCallId, a.cwd])) },
+    refused: { events: refused.events, hookCwd: new Map(refused.refused.map((r) => [r.toolCallId, r.cwd])) },
   };
 }
 

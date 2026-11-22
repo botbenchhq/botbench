@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { ApiError, getAgents, openEventStream, type AgentState } from "../api/client.ts";
+import { ApiError, getAgents, getDefaultMode, openEventStream, setDefaultMode, type AgentState, type RunMode } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { NotificationSettings } from "../app/notification-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
-import { Frame, Page, PageHeader } from "../components/header.tsx";
+import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
+import { ModePicker } from "../components/mode-choice.tsx";
 
 /** An agent's state in a word or two, from the probe: what the CLI itself reported. */
 function agentState(agent: AgentState): string {
@@ -41,7 +42,8 @@ const MODES: { value: Appearance; label: string }[] = [
 
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
- * now, and what Botbench lets it do: Claude Code plans and builds, Codex reviews. Appearance: the mode this device shows, saved as it is chosen.
+ * now, and what Botbench lets it do: Claude Code plans and builds, Codex reviews. Runs: the mode New run starts with,
+ * kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
  * Notifications: this device's notifications, on or off (unit 23).
  */
 export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
@@ -49,6 +51,26 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [problem, setProblem] = useState<string | null>(null);
   const { choice } = useAppearance();
   const id = useId();
+  const [runMode, setRunMode] = useState<RunMode | null>(null);
+  const [modeProblem, setModeProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    getDefaultMode().then(setRunMode, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setModeProblem(err instanceof ApiError ? `The default mode could not be read. ${err.message}` : "The default mode could not be read: Botbench could not be reached.");
+    });
+  }, [onSignedOut]);
+
+  const chooseMode = (mode: RunMode): void => {
+    const before = runMode;
+    setRunMode(mode);
+    setModeProblem(null);
+    setDefaultMode(mode).then(setRunMode, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setRunMode(before);
+      setModeProblem(err instanceof ApiError ? `The default mode was not saved. ${err.message}` : "The default mode was not saved: Botbench could not be reached.");
+    });
+  };
 
   /** How often the agents were read: each row's Connect reads its sign-in again with them. */
   const [version, setVersion] = useState(0);
@@ -97,6 +119,18 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 </div>
               );
             })}
+          </div>
+
+          <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-runs`}>
+            <h2 className="ds-settings-row__heading" id={`${id}-runs`}>
+              Runs
+            </h2>
+            <ModePicker name="default-mode" legend="Default mode" hint="New run starts with this mode chosen. You can pick another for each run." value={runMode} onChange={chooseMode} />
+            {modeProblem !== null && (
+              <Alert tone="error" role="alert">
+                {modeProblem}
+              </Alert>
+            )}
           </div>
 
           <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-appearance`}>
