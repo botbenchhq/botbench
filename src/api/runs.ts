@@ -38,11 +38,11 @@ export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
  * (titles, criteria) is text, to be shown as text.
  */
 async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknown>> {
-  const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, delivery, createdAt, updatedAt } = run;
+  const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds, createdAt, updatedAt } = run;
   const plan = planTasks(db, id);
   const titles = new Map(plan.map((task) => [task.taskId, task.title]));
   return {
-    id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, ...(buildModel === undefined ? {} : { buildModel }), baseCommit, attemptId, planVersion, reviewer, mode, delivery,
+    id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, ...(buildModel === undefined ? {} : { buildModel }), baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds,
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.

@@ -1,9 +1,9 @@
+import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import type { Driver, DriverCapabilities, DriverProbe, DriverSession, StartAttemptOptions } from "../../src/drivers/contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "../../src/drivers/events.ts";
-import fs from "node:fs";
 import { loadRecording } from "./replay.ts";
 import { loadPlanRecording } from "./replay-plan.ts";
 
@@ -19,31 +19,44 @@ import { loadPlanRecording } from "./replay-plan.ts";
  *           waited for permission, was allowed, ran it and ended.
  *   "refused" test/recordings/full-refused-push.json: as the builder of a fully autonomous run the real CLI asked to run
  *           `git push origin HEAD`, Botbench refused it without asking anyone, and the CLI ended its turn.
+ *   "refine" the refine turn of test/recordings/refine-round.json: sent Botbench's refine prompt with a real Codex
+ *           review, the real CLI read calc.py, changed `a - b` to `a + b` with its Edit tool and replied in the asked form.
  * What is real: every event after the prompt is one the real CLI produced, in its order, and each recorded tool call is
  * put to the real permission gate as the CLI's pre-tool hook put it.
  * What is not: the CLI produced those events for the prompts in the recordings, and the replay plays them after
- * whatever prompt its caller sends, in a worktree the recording never saw; nothing is written to the worktree by a
- * replayed tool call. The replay's own are the answers to `probe` and `models`, the hold a test puts on a turn, and the
+ * whatever prompt its caller sends, in a worktree the recording never saw. Nothing is written to the worktree by a
+ * replayed tool call, with one exception: when the "refine" turn's edit returns, the files the real turn left changed in
+ * its copy (recorded with it) are written into the worktree, so that the work changes as it did. The replay's own are the answers to `probe` and `models`, the hold a test puts on a turn, and the
  * turn's end when it is stopped or given an answer the recording has no continuation for. No test may read those as
  * what a CLI does.
  */
 
-export type BuildTurn = "done" | "ask" | "refused";
+export type BuildTurn = "done" | "ask" | "refused" | "refine";
+
+interface RefineRecording {
+  refine: { events: DriverEvent[]; files: Record<string, string> };
+}
+export const loadRefineRecording = (): RefineRecording & { sessions: Record<string, { lines: string[] }> } =>
+  JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "refine-round.json"), "utf8"));
 
 // As the real Claude Code driver reports them: its sessions were recorded with every command in its sandbox.
 const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true };
 const now = (): string => new Date().toISOString();
 
-function recordedTurns(): Record<BuildTurn, { events: DriverEvent[]; hookCwd: Map<string, string> }> {
+function recordedTurns(): Record<BuildTurn, { events: DriverEvent[]; hookCwd: Map<string, string>; files?: Record<string, string> }> {
   const plan = loadPlanRecording();
   const redrive = loadRecording("redrive-other-request.json");
   const refused = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "full-refused-push.json"), "utf8")) as { events: DriverEvent[]; refused: { toolCallId: string; cwd: string }[] };
+  const refine = loadRefineRecording().refine;
   return {
     done: { events: plan.turns[0]!.events, hookCwd: new Map() },
     ask: { events: redrive.attempts[1]!, hookCwd: new Map(redrive.approvals.filter((a) => a.attempt === 2).map((a) => [a.toolCallId, a.cwd])) },
     refused: { events: refused.events, hookCwd: new Map(refused.refused.map((r) => [r.toolCallId, r.cwd])) },
+    refine: { events: refine.events, hookCwd: new Map(), files: refine.files },
   };
 }
+
+const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 export interface BuildReplay extends Driver {
   /** What each attempt was started with, in order. */
@@ -118,12 +131,16 @@ export function buildReplayDriver(script: readonly BuildTurn[], o: { hold?: read
         if (gate) await Promise.race([gate, stopping]);
       }
       const recorded = turns[kind];
+      const edits = new Set(recorded.events.flatMap((event) => (event.type === "tool_call" && EDIT_TOOLS.has(event.name) ? [event.id] : [])));
       let given: unknown = null;
       for (const event of recorded.events) {
         if (event.type === "user_prompt") continue;
         await new Promise((resolve) => setImmediate(resolve));
         if (stopped) return end("interrupted", "The replay was stopped.");
         if (event.type === "turn_ended") return end(event.reason, event.detail);
+        if (event.type === "tool_result" && edits.has(event.id) && !event.isError && recorded.files) {
+          for (const [file, content] of Object.entries(recorded.files)) fs.writeFileSync(path.join(options.cwd, file), content);
+        }
         if (event.type === "permission_resolved") {
           const allowed = typeof given === "object" && given !== null && (given as PermissionResponse).decision === "allow";
           if ((event.decision === "allowed") !== allowed) {

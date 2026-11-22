@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { now } from "../store/db.ts";
-import { reviewAssignment, taskReview } from "./review.ts";
+import { loopRecord, reviewOutcome as loopOutcome } from "./refine.ts";
+import { reviewAssignment } from "./review.ts";
 
 /*
  * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it).
@@ -38,15 +39,17 @@ export function setDefaultMode(db: DatabaseSync, mode: RunMode): void {
 
 /**
  * Where a task's review stands: "none" (its run has no reviewer), "satisfied", "unresolved" (concerns, or no verdict in
- * the asked form) or "failed" (the review did not finish, or there is none yet). Read from the stored review's verdict
- * until the refine loop stores its own outcome on the task; then this is the one line to change.
+ * the asked form, after the last round of fixes) or "failed" (a review or a round of fixes did not finish, or there is no
+ * review yet). Read from the refine loop's records (engine/refine.ts).
  */
 export type ReviewOutcome = "none" | "satisfied" | "unresolved" | "failed";
 export function reviewOutcome(db: DatabaseSync, taskId: number): ReviewOutcome {
-  if (reviewAssignment(db, taskId) === null) return "none";
-  const review = taskReview(db, taskId);
-  if (review === null || review.outcome !== "reviewed") return "failed";
-  return review.verdict === "looks_right" ? "satisfied" : "unresolved";
+  const assigned = reviewAssignment(db, taskId);
+  if (assigned === null) return "none";
+  // The refine loop's outcome: "satisfied" only when the loop ended with the reviewer saying it looks right. A review
+  // that has not happened yet is not a satisfied one.
+  const record = loopRecord(db, taskId, assigned.agent);
+  return record.reviews.length === 0 ? "failed" : loopOutcome(record);
 }
 
 /** What a fully autonomous run refused during a task: each refused request's command, oldest first. */

@@ -134,7 +134,9 @@ test("fully autonomous: a task whose check failed is not accepted, and says why 
 });
 
 test("fully autonomous: a task whose reviewer raised concerns is not accepted, and says why", async (t) => {
-  const e = await line(t, ["done"], { reviewer: true });
+  // Changed with the refine loop: the builder is given the review once (its replayed round changes nothing), and the
+  // loop ends unresolved.
+  const e = await line(t, ["done", "done"], { reviewer: true });
   const id = await oneTask(e, "full", true);
   const task = getTask(e.db, id)!;
   assert.equal(task.status, "awaiting_decision");

@@ -12,14 +12,16 @@ import type { Confinement } from "../confinement.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
-import { reviewAssignment, runReview, storeUnfinishedReview } from "./review.ts";
-import { agentName, IMPLEMENTER } from "./roles.ts";
+import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
+import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
+import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
  * commands there and its builder's turn. `verifying` is the repository's check commands running on the work Botbench
- * committed. `reviewing` is the run's reviewer reading the work, after the checks (engine/review.ts). `awaiting_decision` means nothing further happens until the owner decides; `accepted` and `rejected` are
+ * committed. `reviewing` is the run's reviewer reading the work, after the checks (engine/review.ts); after a review with
+ * concerns the task goes back to `building` for a round of fixes, then `verifying` and `reviewing` again (engine/refine.ts). `awaiting_decision` means nothing further happens until the owner decides; `accepted` and `rejected` are
  * the owner's decision (engine/decision.ts); `interrupted`, `failed` and `cancelled` are ends that carry a reason.
  */
 export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
@@ -34,7 +36,7 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
   building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   verifying: ["verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
-  reviewing: ["awaiting_decision", "failed", "cancelled"],
+  reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
   // To itself: a fully autonomous run that could not accept the task records why it waits for the owner.
   awaiting_decision: ["awaiting_decision", "accepted", "rejected"],
   accepted: [],
@@ -476,6 +478,11 @@ export function createTasks(options: TasksOptions): Tasks {
   const verify = async (task: Task, stopped?: AbortSignal): Promise<void> => {
     const headCommit = await commit(task);
     if (headCommit === null) return;
+    await checkCommitted(task, headCommit, stopped);
+  };
+
+  /** Run the repository's checks on the work committed at `headCommit`, then go on to the review. */
+  const checkCommitted = async (task: Task, headCommit: string, stopped?: AbortSignal): Promise<void> => {
     const checks = options.repoCommands?.(task.repo).checks ?? [];
     // No checks: said so as such, never as a pass.
     if (checks.length === 0) return review(task, "building", { headCommit, checks: "none" }, stopped);
@@ -507,14 +514,24 @@ export function createTasks(options: TasksOptions): Tasks {
   const review = async (task: Task, from: "building" | "verifying", change: TaskChange, stopped?: AbortSignal): Promise<void> => {
     const assigned = reviewAssignment(db, task.id);
     if (assigned === null) return handOver(task, from, change);
+    const reviews = taskReviews(db, task.id);
+    const fixes = taskRefinements(db, task.id);
+    const lastFix = fixes.at(-1);
+    // The loop ends at a round of fixes that did not finish or changed nothing: there is nothing new to review.
+    if (lastFix !== undefined && lastFix.round === reviews.length && (lastFix.outcome !== "finished" || !lastFix.changed)) return handOver(task, from, change);
     const at = moveFrom(task.id, from, "reviewing", change);
     if (at === null) return;
+    const round = reviews.length + 1;
+    const before = reviews.at(-1);
     const done = await runReview({
-      db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
+      db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, round, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
+      ...(before === undefined ? {} : { previous: { round, review: before.text, reasons: parseRefineReply(lastFix?.reply ?? "")?.notAddressed ?? null } }),
       confinement: { ...confinement(task.repo), gitDir: await sharedGitDir(task.repo) }, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
     });
     options.onTaskChange(getTask(db, task.id)!);
     if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });
+    // Concerns, and rounds of fixes left: the builder is asked for fixes. Only the verdict line is read for this.
+    if (loopVerdict(done) === "concerns" && fixes.length < refineCap(db, task.id) && !closed && stopped?.aborted !== true) return refine(at, assigned.agent, stopped);
     await handOver(task, "reviewing", {});
   };
 
@@ -540,6 +557,61 @@ export function createTasks(options: TasksOptions): Tasks {
     } catch (err) {
       moveFrom(task.id, "awaiting_decision", "awaiting_decision", { reason: `It needs your review: Botbench could not accept it without you. ${words(err)}` });
     }
+  };
+
+  /**
+   * What the builder is sent for a round of fixes: the latest review as another model's opinion. A builder that takes
+   * up its earlier session already has the task; one started without it is also given the task and the files its work
+   * changed. `again`: Botbench stopped while the builder was on this round, and it is taken up again.
+   */
+  const refinePromptFor = async (task: Task, reviewer: string, fresh: boolean, again = false): Promise<string> => {
+    const latest = taskReview(db, task.id)!;
+    let files: string[] = [];
+    if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
+    const prompt = refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null });
+    // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
+    return again ? prompt.replace("[From Botbench, not from the owner] ", "[From Botbench, not from the owner] Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.\n\n") : prompt;
+  };
+
+  /**
+   * A round of fixes: the builder is started again in the task's copy, under the same permission check and
+   * confinement as for its build, taking up its earlier session when it reported one, and sent the review. Its turn
+   * is driven as a build's is; how it ended is recorded when it ends (`refined`).
+   */
+  const refine = async (task: Task, reviewer: string, stopped?: AbortSignal): Promise<void> => {
+    const at = moveFrom(task.id, "reviewing", "building", { note: `round ${refineRoundOf(db, task.id)} of fixes` });
+    if (at === null) return;
+    const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
+    const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const admission = broker.admit({ taskId: at.id, role: IMPLEMENTER, worktree: at.worktreePath! });
+    let session: DriverSession;
+    try {
+      if (closed) throw new Error("Botbench is stopping.");
+      const gitDir = await sharedGitDir(at.repo);
+      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at.repo), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+    } catch (err) {
+      admission.release();
+      if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
+      return refined(at, refineRoundOf(db, at.id)!, null, "error", "", `${agentName(driver.name)} could not be started for the round of fixes: ${words(err)}`, stopped);
+    }
+    await drive(at, session, admission, await refinePromptFor(at, reviewer, cursor === null), null, stopped, cursor !== null);
+  };
+
+  /**
+   * A round of fixes ended, completed or failed: what the builder wrote is committed, the round is recorded, and the
+   * loop goes on. Work that changed is checked again and reviewed again; a round that failed or changed nothing ends
+   * the loop, and the task is Ready for review.
+   */
+  const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal): Promise<void> => {
+    const from = taskReviews(db, task.id).at(-1)?.headCommit ?? task.headCommit!;
+    const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
+    const headCommit = await commit(task);
+    const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
+    insertRefinement(db, { taskId: task.id, round, attemptId, outcome: end === "completed" ? "finished" : "failed", changed: headCommit !== null && headCommit !== from, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
+    options.onTaskChange(getTask(db, task.id)!);
+    if (headCommit === null) return;
+    if (headCommit === from) return review(task, "building", {}, stopped);
+    await checkCommitted(task, headCommit, stopped);
   };
 
   /**
@@ -659,6 +731,9 @@ export function createTasks(options: TasksOptions): Tasks {
     current = session;
     admission.bind(session.attemptId);
     let detail: string | null = null;
+    let reply = "";
+    // A task with a review whose round has no fixes yet is on a round of fixes (engine/refine.ts).
+    const refineRound = refineRoundOf(db, id);
     let sessionStarted = false;
     let parking = false;
     parkCurrent = () => void (parking = waitingOnApproval(db, id));
@@ -666,6 +741,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const asking = new Set<string>();
     session.onEvent((event) => {
       if (event.type === "session_started") sessionStarted = true;
+      if (event.type === "text") reply = event.text;
       if (event.type === "turn_ended") detail = event.detail;
       if (event.type === "permission_request") {
         asking.add(event.id);
@@ -718,7 +794,15 @@ export function createTasks(options: TasksOptions): Tasks {
     // However the turn ended, what it wrote is committed and the task says where it stands.
     if (leftover !== null) await finish(task, "failed", leftover);
     // A turn that finished before the cancel reached it is a finished task like any other.
-    else if (cancelled(task) && end !== "completed") await finish(task, "cancelled", CANCELLED);
+    else if (cancelled(task) && end !== "completed") {
+      if (refineRound !== null) {
+        const from = taskReviews(db, id).at(-1)?.headCommit ?? task.headCommit!;
+        insertRefinement(db, { taskId: id, round: refineRound, attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled during this round of fixes.", fromCommit: from, headCommit: null, startedAt: now() });
+      }
+      await finish(task, "cancelled", CANCELLED);
+    }
+    // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
+    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped);
     else if (end === "completed") await verify(task, stopped);
     // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
     else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");
@@ -840,7 +924,10 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(task.id, "building", "this task was being taken up again");
       return finish(task, "interrupted", `Claude Code could not be started again for this task: ${words(err)} The work done up to then is committed.`);
     }
-    await drive(task, session, admission, cursor === null ? task.prompt : CONTINUE_PROMPT, by, stop.signal, cursor !== null);
+    // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
+    const reviewer = refineRoundOf(db, task.id) === null ? null : reviewAssignment(db, task.id)?.agent ?? null;
+    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? task.prompt : CONTINUE_PROMPT;
+    await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 
   /** A task a restart left at work for the second time is stopped for the owner, who can resume it. */

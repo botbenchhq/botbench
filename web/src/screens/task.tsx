@@ -3,7 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
-import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
+import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { MODE_SENTENCE } from "../components/mode-choice.tsx";
@@ -229,6 +229,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
 
             {shown.length > 0 || working !== null ? (
               <section aria-label="Transcript">
+                {task.earlierAttempts > 0 && (
+                  <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
+                )}
                 <Transcript events={shown} working={working} modelName={nameOf} />
               </section>
             ) : (
@@ -262,7 +265,34 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">
                 <h2 id="review-heading">{`${agentName(task.reviewer.agent)}'s review`}</h2>
                 <p data-testid="review-by">{`By ${reviewerWords(task.review ?? task.reviewer)}. ${REVIEW_RISK}`}</p>
-                {task.review !== null ? <ReviewEvidence review={task.review} /> : <p role="status">{`${agentName(task.reviewer.agent)} is reading the changes.`}</p>}
+                {task.reviewLine !== null && (
+                  <p data-testid="review-outcome" role="status">
+                    {task.reviewLine}
+                  </p>
+                )}
+                {task.reviews.length > 0 && (
+                  <ol data-testid="review-rounds" className="ds-stack ds-gap-sm">
+                    {task.reviews.map((review) => {
+                      const fix = task.refinements.find((r) => r.round === review.round);
+                      return (
+                        <li key={review.id} data-testid="review-round" className="ds-stack ds-gap-sm">
+                          <h3>{`Review ${review.round}`}</h3>
+                          <ReviewEvidence review={review} />
+                          {fix !== undefined && (
+                            <div data-testid="fixes-round" className="ds-stack ds-gap-sm">
+                              <h3>{`${agentName("claude-code")}'s fixes ${fix.round}`}</h3>
+                              <FixesEvidence fix={fix} />
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+                {task.status === "reviewing" && <p role="status">{`${agentName(task.reviewer.agent)} is reading the changes.`}</p>}
+                {task.status === "building" && task.reviews.length > task.refinements.length && (
+                  <p role="status" data-testid="fixes-working">{`${agentName("claude-code")} is working on fixes: round ${task.reviews.length} of up to ${task.maxRefineRounds}.`}</p>
+                )}
               </section>
             )}
 

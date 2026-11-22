@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, getAgentModels, getAgents, type ModelList, type ReviewerChoice } from "../api/client.ts";
+import { ApiError, getAgentModels, getAgentsAndCap, type ModelList, type ReviewerChoice } from "../api/client.ts";
 import { agentName } from "./evidence.tsx";
 
 /** The model part of a select value for an agent with its own default model, when it lists none. It holds a character no model name may. */
@@ -9,7 +9,7 @@ const DEFAULT = "?default";
 const valueOf = (agent: string, model: string): string => `${agent} ${model}`;
 
 /** The reviewers that can review now, as their own probes say, with the models each offers; and, for the others, why not. */
-type Offer = { state: "checking" } | { state: "offered"; reviewers: { agent: string; models: ModelList }[]; notOffered: string[] } | { state: "not-offered"; why: string };
+type Offer = { state: "checking" } | { state: "offered"; reviewers: { agent: string; models: ModelList }[]; notOffered: string[]; rounds: number } | { state: "not-offered"; why: string };
 
 /**
  * New run's one choice of reviewer: Off, the default, or one of the agents that review (Codex, Grok, Antigravity) with
@@ -26,14 +26,14 @@ export function useReviewChoice(onSignedOut: () => void): { offer: Offer; value:
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       setOffer({ state: "not-offered", why: "Review is not offered: Botbench could not check the agents that review just now." });
     };
-    getAgents().then((agents) => {
+    getAgentsAndCap().then(({ agents, maxRefineRounds }) => {
       if (!live) return;
       const reviewers = agents.filter((agent) => agent.roles.includes("reviewer"));
       if (reviewers.length === 0) return setOffer({ state: "not-offered", why: "Review is not offered by this Botbench." });
       const usable = reviewers.filter((agent) => agent.problem === null);
       const notOffered = reviewers.filter((agent) => agent.problem !== null).map((agent) => `Review by ${agentName(agent.agent)} is not offered: ${agent.problem}`);
       if (usable.length === 0) return setOffer({ state: "not-offered", why: notOffered.join(" ") });
-      return Promise.all(usable.map((agent) => getAgentModels(agent.agent).then((models) => ({ agent: agent.agent, models })))).then((offered) => live && setOffer({ state: "offered", reviewers: offered, notOffered }), failed);
+      return Promise.all(usable.map((agent) => getAgentModels(agent.agent).then((models) => ({ agent: agent.agent, models })))).then((offered) => live && setOffer({ state: "offered", reviewers: offered, notOffered, rounds: maxRefineRounds }), failed);
     }, failed);
     return () => {
       live = false;
@@ -72,7 +72,8 @@ export function ReviewChoice({ state }: { state: ReturnType<typeof useReviewChoi
         </select>
       </div>
       <p id="run-review-about" className="ds-field__description">
-        Off by default. With a reviewer, each task Claude Code builds is read by it after its checks, where it can change nothing and reach no network: Codex in the task's copy, Grok and Antigravity from the changes Botbench sends them, with no tools. Its review is a model's opinion, shown on the task before you decide.
+        <span data-testid="review-rounds-cap">{offer.rounds === 0 ? "No rounds of fixes." : `Up to ${offer.rounds} ${offer.rounds === 1 ? "round" : "rounds"} of fixes.`}</span>{" "}
+        Off by default. With a reviewer, each task Claude Code builds is read by it after its checks, where it can change nothing and reach no network: Codex in the task's copy, Grok and Antigravity from the changes Botbench sends them, with no tools. When it has concerns, Claude Code is given its review to fix what it agrees with and say why for the rest, the checks run again, and the same reviewer looks again. Its reviews are a model's opinion, shown on the task before you decide.
         {offer.notOffered.length > 0 ? ` ${offer.notOffered.join(" ")}` : ""}
       </p>
     </div>
