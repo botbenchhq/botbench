@@ -60,7 +60,7 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after signin
   await allow.click();
   await expect(card).toHaveCount(0);
   await expect(tray).toHaveText("No approvals are waiting.");
-  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 150_000 });
+  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.", { timeout: 150_000 });
   const files = page.getByTestId("changed-files");
   await expect(files.getByRole("listitem")).toHaveCount(1);
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added.*\+1 line added.*−0 lines removed/);

@@ -43,9 +43,9 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
       if (run.waitingOnApproval) return `Needs input. Claude Code asked for permission while building a task and is paused until you allow or deny; the tasks after it wait. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
       return `Working. Botbench builds the tasks one at a time, in plan order, each by Claude Code in a separate copy of the project. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
     case "awaiting_decision":
-      return "Ready for review. Every task has been built or has stopped; each says how it went.";
+      return `Ready for review. Every task has been built or has stopped; each says how it went.${run.tasks.some((task) => task.status === "awaiting_decision") ? " Accept or reject each task that is ready for review." : ""}`;
     case "done":
-      return "Done.";
+      return "Done. Every task that was built has your decision. Nothing has been merged or pushed.";
     case "cancelled":
       return run.tasks.length === 0 ? "Cancelled. Nothing was built, and no task was made from this run." : "Cancelled. Tasks that had finished keep their branches; the task being built was stopped and what it did is committed; the rest were not built.";
     case "failed":

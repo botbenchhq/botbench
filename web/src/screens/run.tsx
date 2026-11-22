@@ -3,6 +3,7 @@ import { ApiError, approvePlan, cancelRun, getRun, getTranscript, openEventStrea
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
+import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { CHECKS_RISK, ChecksResult, CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
@@ -97,7 +98,7 @@ function taskFacts(task: RunTask): string {
   if (task.status === "queued") return "Starts when the tasks before it have finished";
   if (task.status === "verifying") return "Botbench is running this repository's checks";
   if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
-  if (task.status === "awaiting_decision") return task.branch ?? "Built";
+  if (task.decision?.branch === "deleted") return "Branch deleted";
   return task.branch ?? "No branch";
 }
 
@@ -443,13 +444,18 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                             <span className="gw-run-status__station">
                               <span className={statusLook({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}</span>
                             </span>
-                            <span className="gw-run-status__facts">{`Task ${task.id} · ${taskFacts(task)}`}</span>
+                            <span className="gw-run-status__facts">
+                              {`Task ${task.id} · `}
+                              <span data-testid="run-task-branch">{taskFacts(task)}</span>
+                            </span>
                           </span>
                         </a>
                         {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-gw-content="">{task.reason}</p>}
                         <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
                         {task.checks !== null && <ChecksResult checks={task.checks} rows={task.evidence.filter((row) => row.kind === "check")} />}
                         <CommandEvidence rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                        {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
+                        {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} compact />}
                       </div>
                     </li>
                   ))}

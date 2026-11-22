@@ -64,7 +64,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
   // pauses for the owner. This test is about the edit, so any such request is declined, as an owner could.
-  const built = "Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+  const built = "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.";
   await expect(async () => {
     const pending = (await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
     for (const approval of pending.approvals) {
@@ -105,13 +105,15 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   const branch = await page.getByTestId("branch").inputValue();
   expect(git(repo, "show", `${branch}:hello.txt`).trim()).toBe("hi");
   await page.getByRole("button", { name: "Copy branch name" }).click();
-  await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
+  await expect(page.getByTestId("branch-copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
   await expect(page.getByTestId("not-merged")).toHaveText(
     "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow runs with your account's rights.",
   );
-  // No primary action on this screen, and nothing that claims to accept, reject, merge or push.
-  await expect(page.getByRole("button", { name: /accept|reject|merge|push|approve|stop/i })).toHaveCount(0);
+  // The screen's one primary action is Accept, beside Reject; nothing claims to merge, push, approve or stop.
+  await expect(page.locator(".gw-button--primary")).toHaveText(["Accept"]);
+  await expect(page.getByRole("button", { name: /accept|reject/i })).toHaveText(["Accept", "Reject"]);
+  await expect(page.getByRole("button", { name: /merge|push|approve|stop/i })).toHaveCount(0);
 
   await checkDesign(page, "task, finished with a diff open");
   // One tap on an action shows what is behind its line.
