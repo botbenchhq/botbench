@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
+import { ApprovalsContext } from "../app/approvals.tsx";
 import darkMark from "../brand/mark-dark.svg";
 import lightMark from "../brand/mark-light.svg";
 import { useAppearance } from "../app/appearance.ts";
@@ -28,6 +29,9 @@ export type ScreenName = "turn" | "runs" | "tasks" | "trust" | "usage";
 export function Frame({ current, banner, fill = false, children }: { current: ScreenName | null; banner?: ReactNode; fill?: boolean; children: ReactNode }) {
   // The mark drawn for the page's surface: the dark-surface variant in dark mode, the light-surface one in light.
   const { drawn } = useAppearance();
+  // The tray takes a row of the header only while it has something to say. Its live region stays in the page either way.
+  const { pending, problem } = useContext(ApprovalsContext);
+  const trayShown = (pending?.length ?? 0) > 0 || (pending === null && problem !== null);
   return (
     <div className={fill ? "ds-app-shell h-screen" : "ds-app-shell"}>
       <header className="ds-app-header ds-app-header--sticky">
@@ -37,12 +41,11 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
           Botbench
         </a>
         <div className="ds-app-header__actions">
-          {/* A link to another view, in words: the icon set has no settings icon (recorded in web/design-gaps.json). */}
-          <a className="ds-app-header__action" href="#/settings">
-            Settings
+          <a className="ds-app-header__action" href="#/settings" aria-label="Settings">
+            <Icon name="settings" className="ds-app-header__icon" />
           </a>
         </div>
-        <div className="ds-app-header__tray">
+        <div className={trayShown ? "ds-app-header__tray" : undefined}>
           <ApprovalTray />
         </div>
       </header>

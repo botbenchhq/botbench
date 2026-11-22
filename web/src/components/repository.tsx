@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, getRepoSettings, timedOut, type RepoCheck } from "../api/client.ts";
+import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, getRepoSettings, listRepos, timedOut, type RepoCheck } from "../api/client.ts";
 import { Alert } from "./header.tsx";
 
 const CHECK_DELAY_MS = 250;
@@ -46,6 +46,21 @@ export function useRepository(onSignedOut: () => void): RepositoryChoice {
   const [repoState, setRepoState] = useState<RepoState>({ kind: "empty" });
   const [preapproved, setPreapproved] = useState<Preapproved | null>(null);
   const [adding, setAdding] = useState("");
+
+  // Start with the most recently used repository (else the first in the settings file), unless a path was typed first.
+  // When the list cannot be read the field simply starts empty.
+  useEffect(() => {
+    let stale = false;
+    listRepos().then(
+      (known) => !stale && known.length > 0 && setRepo((typed) => (typed === "" ? known[0]!.path : typed)),
+      (err: unknown) => {
+        if (!stale && err instanceof ApiError && err.status === 401) onSignedOut();
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [onSignedOut]);
 
   // Ask the server about the path a moment after the owner stops typing. A newer path ends the request for an older one,
   // and a request with no answer ends at its own time limit, so the screen never stays on "Checking.".

@@ -251,6 +251,13 @@ export interface RepoSettings {
 }
 export const getRepoSettings = (path: string, giveUp: AbortSignal): Promise<RepoSettings> =>
   request("GET", `/api/repos/settings?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
+/** A repository used before or named in the settings file: its folder name and full path. */
+export interface KnownRepository {
+  name: string;
+  path: string;
+}
+/** The repositories used before, most recent first, then the configured ones. */
+export const listRepos = (): Promise<KnownRepository[]> => request<{ repositories: KnownRepository[] }>("GET", "/api/repos", undefined, CHECK_REPO_LIMIT_MS).then((r) => r.repositories);
 /** `preapproved` is exactly what this task's run may use without asking: the server grants nothing the request does not list. */
 export const startTask = (repo: string, prompt: string, model: string | null | undefined, preapproved: string[]): Promise<{ taskId: number }> =>
   request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved }, 30_000);

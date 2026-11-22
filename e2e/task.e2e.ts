@@ -199,6 +199,24 @@ test("a repository path that cannot be used is reported in words, and Start task
   }
 });
 
+test("New task starts with the repository Botbench knows of in the path field, checked as one typed", async ({ page }) => {
+  const dir = fs.realpathSync(tempDir("botbench-e2e-known-"));
+  const repo = path.join(dir, "services", "shipment-tracking-api");
+  initRepo(repo);
+  const botbench = await startBotbench({ home: path.join(dir, "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [repo]: {} } } });
+  try {
+    await signIn(page, botbench);
+    await openNewTask(page);
+    await expect(page.getByLabel("Repository path")).toHaveValue(repo);
+    await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
+    await checkDesign(page, "new task, repository filled in");
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-new-task.png"), fullPage: true });
+  } finally {
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("an address that names no screen says so in words, and a long one stays inside the screen", async ({ page, botbench }) => {
   await signIn(page, botbench);
   const address = `/${"nowhere".repeat(40)}`;
