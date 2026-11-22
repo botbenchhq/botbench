@@ -193,4 +193,58 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // `grants`: what the owner has said may run without asking. A pre-approved grant belongs to one run and is written
+    // with the task that starts it; `standing` is named so that unit 10 can add its rows. A grant is never changed or
+    // removed. Every new task is its own one-task run until runs have a table: `tasks.run_id` is filled from here on.
+    // The action log gains the rule for a command that ran on a pre-approved grant, and the grant it ran on. A check
+    // cannot be altered in place, so the table is made again with every row kept, its ids included.
+    name: "grants",
+    sql: `
+CREATE TABLE grants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('preapproved', 'standing')),
+  role TEXT NOT NULL,
+  repo_path TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  words TEXT NOT NULL,
+  run_id INTEGER,
+  task_id INTEGER REFERENCES tasks (id),
+  created_at TEXT NOT NULL,
+  CHECK (kind <> 'preapproved' OR run_id IS NOT NULL)
+);
+CREATE INDEX grants_run ON grants (run_id, id);
+CREATE TRIGGER grants_no_update BEFORE UPDATE ON grants
+BEGIN SELECT RAISE(ABORT, 'a grant is never changed'); END;
+CREATE TRIGGER grants_no_delete BEFORE DELETE ON grants
+BEGIN SELECT RAISE(ABORT, 'a grant is never removed'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+ALTER TABLE action_log RENAME TO action_log_before_grants;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  CHECK (rule <> 'preapproved' OR grant_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail FROM action_log_before_grants ORDER BY id;
+DROP TABLE action_log_before_grants;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

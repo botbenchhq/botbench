@@ -29,7 +29,7 @@ function Line({ kind, label, children }: { kind: string; label: string; children
 }
 
 /** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
-function Row({ event, calls }: { event: StoredEvent; calls: Map<string, string> }) {
+function Row({ event, calls, preapproved }: { event: StoredEvent; calls: Map<string, string>; preapproved: Set<string> }) {
   const e = event.payload;
   switch (e.type) {
     case "user_prompt":
@@ -66,6 +66,8 @@ function Row({ event, calls }: { event: StoredEvent; calls: Map<string, string> 
         </li>
       );
     case "permission_request":
+      // A request Smelt answered itself from the pre-approved list never waited for the owner: its outcome row says what happened.
+      if (preapproved.has(e.toolCallId)) return null;
       return (
         <Line kind={e.type} label="Asked you">
           {`${calls.get(e.toolCallId) ?? e.name} needs your answer before it runs.`}
@@ -73,15 +75,14 @@ function Row({ event, calls }: { event: StoredEvent; calls: Map<string, string> 
       );
     case "permission_resolved": {
       const what = calls.get(e.toolCallId) ?? "the request";
-      const said =
-        e.decision === "allowed"
-          ? `You allowed ${what}.`
-          : e.decision === "declined"
-            ? `You declined ${what}. It was not run.`
-            : e.decision === "denied"
-              ? `Smelt denied ${what} without asking you. It was not run.`
-              : `The request for ${what} ended without an answer. It was not run.`;
-      const label = { allowed: "Allowed", declined: "Declined", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
+      const said = {
+        allowed: `You allowed ${what}.`,
+        preapproved: `${what} ran without asking you: it is on this task's pre-approved list.`,
+        declined: `You declined ${what}. It was not run.`,
+        denied: `Smelt denied ${what} without asking you. It was not run.`,
+        cancelled: `The request for ${what} ended without an answer. It was not run.`,
+      }[e.decision];
+      const label = { allowed: "Allowed", preapproved: "Pre-approved", declined: "Declined", denied: "Denied by Smelt", cancelled: "Not answered" }[e.decision];
       return (
         <li data-event={e.type} className="flex flex-col gap-xs rounded-sm border border-accent p-md">
           <span className="font-medium uppercase">{label}</span>
@@ -136,10 +137,11 @@ export function Transcript({ events, working }: { events: StoredEvent[]; working
     for (const { payload } of events) if (payload.type === "tool_call") byId.set(payload.id, callWords(payload.name, payload.input));
     return byId;
   }, [events]);
+  const preapproved = useMemo(() => new Set(events.flatMap(({ payload }) => (payload.type === "permission_resolved" && payload.decision === "preapproved" ? [payload.toolCallId] : []))), [events]);
   return (
     <ol role="log" aria-live="polite" className="flex flex-col gap-sm font-mono text-mono">
       {events.map((event) => (
-        <Row key={event.id} event={event} calls={calls} />
+        <Row key={event.id} event={event} calls={calls} preapproved={preapproved} />
       ))}
       {working !== null && (
         <li role="status" className="px-md text-muted">

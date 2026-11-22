@@ -99,7 +99,9 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await page.getByLabel("Prompt").fill("Create a file named hello.txt containing exactly: hi");
-  await expect(page.getByRole("button")).toHaveCount(1);
+  // Start task is the one primary action; the only other control is the plain Add of the pre-approved list, which is empty here.
+  await expect(page.getByRole("button")).toHaveText(["Add", "Start task"]);
+  expect(await page.getByRole("button").evaluateAll((buttons) => buttons.filter((b) => getComputedStyle(b).backgroundColor === "rgb(26, 26, 26)").map((b) => b.textContent))).toEqual(["Start task"]);
   await checkDesign(page, "new task, with a model picked");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u25-new-task-model.png"), fullPage: true });
   await page.getByRole("button", { name: "Start task" }).click();

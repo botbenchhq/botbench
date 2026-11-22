@@ -136,3 +136,33 @@ test("a model may be set for a role and for a driver, and a driver may list its 
   assert.throws(() => loadConfig(configFiles(t, BASE, { drivers: { "claude-code": { models: ["haiku", "-p"] } } })), /driver "claude-code": "models".*model name/);
   assert.throws(() => loadConfig(configFiles(t, BASE, { roles: { implementer: { driver: "claude-code", model: "hai ku" } } })), /role "implementer": "model".*model name/);
 });
+
+test("a repository's settings are keyed by its full path: lists of plain commands, and extra entries for the safety floor", (t) => {
+  const repositories = { "/Users/owner/code/sample": { preapproved: ["npm test", "sh make-marker.sh"], setup: ["npm ci"], checks: ["npm test"] }, "/Users/owner/code/bare": {} };
+  const floor = [{ name: "no-publish", command: "npm publish" }];
+  const config = loadConfig(configFiles(t, { ...BASE, repositories, floor }));
+  assert.deepEqual(config.repositories, repositories);
+  assert.deepEqual(config.floor, floor);
+  assert.equal(loadConfig(configFiles(t, BASE)).repositories, undefined);
+  // The owner's local file adds repositories and keeps the ones it does not name.
+  const merged = loadConfig(configFiles(t, { ...BASE, repositories }, { repositories: { "/Users/owner/code/other": { preapproved: ["make"] } } }));
+  assert.deepEqual(Object.keys(merged.repositories ?? {}), ["/Users/owner/code/sample", "/Users/owner/code/bare", "/Users/owner/code/other"]);
+
+  const refused: [unknown, RegExp][] = [
+    [{ repositories: [] }, /"repositories" must be an object keyed by the full path/],
+    [{ repositories: { "code/sample": {} } }, /"code\/sample".*full path/],
+    [{ repositories: { "/r": [] } }, /repository "\/r" must be an object/],
+    [{ repositories: { "/r": { preapproved: "npm test" } } }, /repository "\/r": "preapproved" must be a list of commands/],
+    [{ repositories: { "/r": { preapproved: ["npm test && ls"] } } }, /repository "\/r": "preapproved".*"npm test && ls".*one plain command/],
+    [{ repositories: { "/r": { preapproved: [""] } } }, /repository "\/r": "preapproved".*empty/],
+    [{ repositories: { "/r": { setup: [7] } } }, /repository "\/r": "setup" must be a list of commands/],
+    [{ repositories: { "/r": { checks: "npm test" } } }, /repository "\/r": "checks" must be a list of commands/],
+    [{ repositories: { "/r": { preaproved: [] } } }, /repository "\/r" has unknown setting "preaproved"/],
+    [{ floor: {} }, /"floor" must be a list/],
+    [{ floor: [{ name: "x" }] }, /"floor".*"name" and a "command"/],
+    [{ floor: [{ name: "", command: "npm publish" }] }, /"floor".*"name" and a "command"/],
+    [{ floor: [{ name: "git-push", command: "npm publish" }] }, /"floor".*"git-push".*built-in/],
+    [{ floor: [{ name: "x", command: "npm publish | cat" }] }, /"floor".*"x".*one plain command/],
+  ];
+  for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, ...(over as object) })), words, JSON.stringify(over));
+});

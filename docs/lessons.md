@@ -2,6 +2,12 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: the first safety floor passed its own table and was walked round fourteen ways (unit 9)
+Found by the critique pass, before merge. The floor's tests listed the dangerous commands as their author would type them, and the rules passed. A critic acting as the agent got past `rm -r` with an operand that starts with a dash (`rm -rf sub -x/../../outside`, checked against the real `rm`), reached guarded files through `~user`, `~+` and option values (`--output=/path`, `-o/path`, `of=/path`), pushed with `git subtree push` and a `git config alias`, and hid a command inside one quoted argument (`env -S 'sudo ls'`). Also: the server code was written before the live and browser tests, so their failing lines had to be taken against a copy of the previous source. Rules going forward:
+- A rule that reads a command line is tested by someone trying to get round it, in a fresh context, running the real functions: not by its author's table alone. Every way round becomes a row in the table.
+- A reader of command lines treats a word as a path wherever a program might: after `=`, glued to an option, and as an operand that starts with a dash. What the shell may rewrite (`~…`) is unknown, and unknown asks.
+- Live and browser tests are written, and seen failing, before the first line of the code they exercise, the server's included.
+
 ## 2026-11-22: a process's start time was read in the wrong time zone, and "after a restart" was judged without a clock (unit 8)
 Found by the critique pass, before merge. To tell its own surviving CLI process from an unrelated one under a reused number, Smelt compared the start time `ps` printed with the attempt's time; `ps` printed local time and Node read it in Smelt's own zone, so with a different `TZ` a survivor was left running beside a re-driven agent, or a stranger killed. And an answer the owner gave while start-up recovery was still running was taken for one left by the previous run, and thrown away. Rules going forward:
 - A time taken from another program's output is asked for in UTC and read as UTC, and its test runs under two far-apart `TZ` values.

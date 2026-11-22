@@ -1,10 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { now, transaction } from "../store/db.ts";
-import { gate } from "./gate.ts";
+import type { FloorEntry } from "./floor.ts";
+import { gate, summarize, type FloorSettings } from "./gate.ts";
+import { realRepo, runGrants, showWords, type Grant } from "./grants.ts";
 
 /*
  * The permission broker. Everything an agent wants to do that is not an edit
@@ -19,6 +22,11 @@ import { gate } from "./gate.ts";
  *               reply is pass, ask or deny. It cannot allow anything and
  *               cannot answer an approval.
  * Whatever goes wrong on either way, the outcome is a refusal.
+ *
+ * Grants are read in request() only. A command on its run's pre-approved list is allowed there without an
+ * approval, after the safety floor had its say, and logged with the grant it ran on. The socket is never told
+ * of a grant: for every shell command, pre-approved or not, the hook hears "ask", and the CLI's request that
+ * follows is what request() answers.
  *
  * Across a restart: an approval that was pending when Smelt stopped stays pending and is marked parked. Nothing
  * waits for it in this process, so the owner's answer cannot be handed to anyone: it is stored on the approval.
@@ -43,7 +51,7 @@ export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 export const APPROVAL_STATUSES: readonly ApprovalStatus[] = ["pending", "allowed", "declined", "superseded"];
 export type Decision = "allow" | "decline";
 /** Why something ran or did not: the rule that decided. */
-export type LogRule = "asked_owner" | "owner_allowed" | "owner_declined" | "ended_unanswered" | "auto_worktree_edit" | "broker_failure_denied" | "stored_answer_applied" | "stored_answer_discarded";
+export type LogRule = "asked_owner" | "owner_allowed" | "owner_declined" | "ended_unanswered" | "auto_worktree_edit" | "broker_failure_denied" | "stored_answer_applied" | "stored_answer_discarded" | "preapproved";
 
 export interface Approval {
   id: number;
@@ -77,6 +85,8 @@ export interface LogEntry {
   taskId: number | null;
   attemptId: number | null;
   approvalId: number | null;
+  /** The grant a pre-approved command ran on. */
+  grantId: number | null;
   rule: LogRule;
   tool: string;
   command: string;
@@ -90,6 +100,8 @@ export interface ApprovalRequest {
   role: string;
   tool: string;
   command: string;
+  /** The tool call's input as the CLI gave it. Only with it can a grant apply: a grant is matched on the input an allow would let run. */
+  input?: unknown;
   /** Relative to the worktree. Left out, the broker uses the directory its hook saw for this tool call. */
   cwd?: string;
   reason: string | null;
@@ -103,6 +115,8 @@ export interface Answer {
   approvalId: number | null;
   /** Set when the broker itself refused the request and the owner was never asked: why, in words. */
   refused: string | null;
+  /** Set when the request was allowed on the run's pre-approved list and the owner was not asked: the grant it ran on. */
+  preapproved?: { grantId: number };
 }
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
@@ -213,6 +227,7 @@ export function actionLog(db: DatabaseSync, taskId?: number): LogEntry[] {
     taskId: int(row.task_id),
     attemptId: int(row.attempt_id),
     approvalId: int(row.approval_id),
+    grantId: int(row.grant_id),
     rule: String(row.rule) as LogRule,
     tool: String(row.tool),
     command: String(row.command),
@@ -225,6 +240,7 @@ interface LogWrite {
   taskId: number | null;
   attemptId: number | null;
   approvalId?: number | null;
+  grantId?: number | null;
   rule: LogRule;
   tool: string;
   command: string;
@@ -233,7 +249,7 @@ interface LogWrite {
 }
 
 function appendLog(db: DatabaseSync, e: LogWrite): void {
-  db.prepare("INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.attemptId, e.approvalId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null);
+  db.prepare("INSERT INTO action_log (ts, task_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null);
 }
 
 interface Ticket {
@@ -256,8 +272,9 @@ interface Reply {
 const hashOf = (secret: string): string => createHash("sha256").update(secret).digest("hex");
 const shorten = (s: string, max = 500): string => (s.length > max ? `${s.slice(0, max)}…` : s);
 
-export function createBroker(options: { db: DatabaseSync; home: string; onChange: (approval: Approval) => void }): Broker {
+export function createBroker(options: { db: DatabaseSync; home: string; onChange: (approval: Approval) => void; /** Entries the owner's config adds to the safety floor. */ floor?: readonly FloorEntry[] }): Broker {
   const { db } = options;
+  const floorSettings: FloorSettings = { home: os.homedir(), dataDir: options.home, ...(options.floor ? { extra: options.floor } : {}) };
   const socketPath = path.join(options.home, SOCKET_FILE);
   /** Admissions by the hash of their secret: the secret itself is held only by the admission and the CLI child. */
   const tickets = new Map<string, Ticket>();
@@ -316,6 +333,35 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
     }
   };
 
+  type RequestVerdict = { verdict: "ask"; floor?: string } | { verdict: "deny"; reason: string } | { verdict: "allow"; rule: "preapproved"; grant: Grant };
+
+  /**
+   * The gate's word on a permission request of the CLI. Only a shell command can come out allowed, and only when
+   * everything about it is known: the attempt's own admission, the directory its hook reported, the input an allow
+   * would let run, and the task's run and repository. Anything missing or unreadable means the owner is asked.
+   */
+  const decideRequest = (r: ApprovalRequest, ticket: Ticket | undefined, cwd: string): RequestVerdict => {
+    if (r.tool !== "Bash" || !ticket || ticket.taskId !== r.taskId || ticket.role !== r.role) return { verdict: "ask" };
+    try {
+      // Grants are looked up only when the directory was reported and the input is the one the card would show.
+      // Without them the gate still asks the floor, at the worktree's top, so that the record says why this asks.
+      const known = cwd !== "" && isObject(r.input) && summarize(r.tool, r.input) === r.command;
+      const at = path.resolve(ticket.worktree, cwd === "" ? "." : cwd);
+      const input = known ? r.input : { command: r.command };
+      const task = db.prepare("SELECT repo_path, run_id FROM tasks WHERE id = ?").get(r.taskId);
+      const runId = known && task && typeof task.run_id === "number" ? task.run_id : null;
+      const grants = runId === null ? [] : runGrants(db, runId);
+      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, ...(task && runId !== null ? { scope: { role: r.role, repo: realRepo(String(task.repo_path)), runId } } : {}) }, grants, floorSettings);
+      if (verdict.verdict !== "allow") return verdict;
+      const grant = verdict.rule === "preapproved" ? grants.find((g) => g.id === verdict.grantId) : undefined;
+      return grant ? { verdict: "allow", rule: "preapproved", grant } : { verdict: "ask" };
+    } catch (err) {
+      // The gate could not be asked: nothing is allowed on it, and the owner decides.
+      console.error(`The gate could not decide about a request of task ${r.taskId}: ${words(err)}`);
+      return { verdict: "ask" };
+    }
+  };
+
   const request = (r: ApprovalRequest): Promise<Answer> => {
     const ticket = [...tickets.values()].find((t) => t.attemptId === r.attemptId);
     const stillCarried = "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL";
@@ -358,6 +404,20 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
         supersedeWhere(`After the restart the agent asked for something else first (${shorten(r.tool, 100)}: ${shorten(r.command, 300)}), so the owner's stored answer was not used.`, stillCarried, ticket.taskId, ticket.resumes);
       }
     }
+    // What Smelt itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list.
+    const verdict = decideRequest(r, ticket, cwd);
+    if (verdict.verdict === "deny") return deny(verdict.reason);
+    if (verdict.verdict === "allow" && verdict.rule === "preapproved") {
+      const grant = verdict.grant;
+      try {
+        // What cannot be logged does not run.
+        appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, grantId: grant.id, rule: "preapproved", tool: r.tool, command: r.command, cwd, detail: `Pre-approved for this task's run when it was started: ${showWords(grant.words)}` });
+      } catch (err) {
+        return deny(`This pre-approved command could not be recorded, so it was not let through: ${words(err)}`);
+      }
+      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, preapproved: { grantId: grant.id } });
+    }
+    const always = verdict.verdict === "ask" && verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null;
     let id: number;
     try {
       id = transaction(db, () => {
@@ -365,7 +425,7 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
           .prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)")
           .run(r.taskId, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now());
         const approvalId = Number(inserted.lastInsertRowid);
-        appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd });
+        appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
       });
     } catch (err) {
@@ -440,15 +500,18 @@ export function createBroker(options: { db: DatabaseSync; home: string; onChange
     if (typeof tool !== "string" || tool === "" || typeof toolCallId !== "string" || toolCallId === "" || typeof cwd !== "string" || !path.isAbsolute(cwd) || !isObject(input)) {
       return denied("Smelt's permission gate was sent a tool call it cannot read.", { ...about, tool: typeof tool === "string" ? tool : "" });
     }
-    const verdict = gate({ tool, input, worktree: ticket.worktree, cwd });
+    // Asked without grants: nothing a grant allows is ever said over the socket. A shell command hears "ask" here, and
+    // the CLI's own request for it is then decided in request(), with the grants, inside this process.
+    const verdict = gate({ tool, input, worktree: ticket.worktree, cwd }, [], floorSettings);
     const relative = path.relative(ticket.worktree, cwd);
     const from = relative === "" ? "." : relative;
-    if (verdict.verdict === "ask") {
+    if (verdict.verdict === "deny") return denied(`Smelt's permission gate refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
+    if (verdict.verdict === "ask" || verdict.rule === "preapproved") {
       if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
       ticket.seen.set(toolCallId, from);
       return { verdict: "ask", reason: "Smelt asks the owner before this runs." };
     }
-    if (verdict.rule !== null) {
+    if (verdict.rule === "auto_worktree_edit") {
       const file = String(input.file_path ?? input.notebook_path);
       try {
         appendLog(db, { ...about, rule: verdict.rule, tool, command: path.relative(ticket.worktree, path.resolve(cwd, file)), cwd: from });

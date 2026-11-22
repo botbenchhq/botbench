@@ -1,6 +1,9 @@
 import type http from "node:http";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
+import { entryProblem, MAX_ENTRIES, realRepo, runGrants, showWords } from "../approvals/grants.ts";
+import { repositorySettings } from "../config.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
@@ -17,6 +20,7 @@ export const MAX_DIFF = 400_000;
  * `waitingOnApproval`: a request of its agent waits for the owner's answer. `parked`: such a request was asked before a
  * restart, so the agent is stopped and the answer will resume the task. `resuming`: the owner's answer to such a request
  * is stored and the task is being started again to receive it.
+ * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
@@ -27,6 +31,7 @@ function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,
+    preapproved: task.runId === null ? [] : runGrants(db, task.runId).map((grant) => showWords(grant.words)),
     createdAt, updatedAt,
   };
 }
@@ -41,13 +46,26 @@ async function changedFiles(task: Task): Promise<{ files: FileChange[] | null; f
   }
 }
 
+/**
+ * The commands a request pre-approves for its task's run: only what the request itself lists, each one plain command.
+ * Anything else is refused with the reason, before a task exists.
+ */
+function preapprovedList(given: unknown): string[] {
+  if (given === undefined) return [];
+  if (!Array.isArray(given)) throw new TaskError(400, '"preapproved" must be a list of commands.');
+  if (given.length > MAX_ENTRIES) throw new TaskError(400, `"preapproved" may hold ${MAX_ENTRIES} commands at most.`);
+  const problem = given.map(entryProblem).find((p) => p !== null);
+  if (problem) throw new TaskError(400, problem);
+  return given as string[];
+}
+
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
-  if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "...", "model"?: string | null }');
+  if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "...", "model"?: string | null, "preapproved"?: ["command", ...] }');
   // Checked before the repository is looked at, and long before a task row or a worktree exists.
   const model = modelChoice(body);
   if (body.prompt.length > MAX_PROMPT) throw new TaskError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
-  const task = await ctx.tasks.start(body.repo, body.prompt, model);
+  const task = await ctx.tasks.start(body.repo, body.prompt, model, preapprovedList(body.preapproved));
   json(res, 200, { taskId: task.id });
 }
 
@@ -90,6 +108,11 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
         },
       );
       json(res, 200, answer);
+    } else if (method === "GET" && pathname === "/api/repos/settings") {
+      const given = url.searchParams.getAll("path");
+      if (given.length !== 1 || given[0]!.includes("\0") || !path.isAbsolute(given[0]!)) throw new TaskError(400, 'Give one "path": the full path of a repository, starting with /.');
+      // What the owner's config offers for this repository. It grants nothing: a task gets only what its own start request lists.
+      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [] });
     } else if (method === "GET" && one) {
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");

@@ -14,7 +14,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean }
   | { type: "permission_denied"; id: string; name: string; reason: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -147,6 +147,8 @@ export interface TaskSummary {
   parked: boolean;
   /** The owner's answer to such a request is stored, and the task is being started again to receive it. */
   resuming: boolean;
+  /** The commands this task may run without asking, as the owner listed them when starting it. */
+  preapproved: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -179,7 +181,16 @@ export const checkRepo = (path: string, giveUp: AbortSignal): Promise<RepoCheck>
   request("GET", `/api/repos/check?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
 /** Whether a request ended because its time limit passed. */
 export const timedOut = (err: unknown): boolean => err instanceof DOMException && err.name === "TimeoutError";
-export const startTask = (repo: string, prompt: string, model?: string | null): Promise<{ taskId: number }> => request("POST", "/api/tasks", { repo, prompt, ...withModel(model) }, 30_000);
+/** What the owner's settings offer for a repository: the commands a task there may be started with as pre-approved. It grants nothing by itself. */
+export interface RepoSettings {
+  path: string;
+  preapproved: string[];
+}
+export const getRepoSettings = (path: string, giveUp: AbortSignal): Promise<RepoSettings> =>
+  request("GET", `/api/repos/settings?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
+/** `preapproved` is exactly what this task's run may use without asking: the server grants nothing the request does not list. */
+export const startTask = (repo: string, prompt: string, model: string | null | undefined, preapproved: string[]): Promise<{ taskId: number }> =>
+  request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved }, 30_000);
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>

@@ -2,6 +2,7 @@ import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { schemaVersion } from "../store/db.ts";
 import type { Broker } from "../approvals/broker.ts";
+import type { Config } from "../config.ts";
 import { modelNameProblem, type Driver } from "../drivers/contract.ts";
 import type { Tasks } from "../engine/task.ts";
 import { approvalRoutes } from "./approvals.ts";
@@ -14,6 +15,7 @@ import type { Turns } from "./turns.ts";
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
   db: DatabaseSync;
+  config: Config;
   driver: Driver;
   turns: Turns;
   tasks: Tasks;

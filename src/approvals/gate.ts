@@ -1,11 +1,19 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { floor, type FloorEntry } from "./floor.ts";
+import { matchGrant, type Grant } from "./grants.ts";
+import { splitPlain } from "./shell.ts";
 
 /*
- * The gate: what Smelt itself decides about a tool call before anyone is asked.
- * It can let a call pass on to the CLI's own rules, or send it to the owner.
- * It never allows anything by itself: a pass means "Smelt has no objection",
- * and the CLI's rules, which allow only file edits below the worktree, still apply.
+ * The gate: what Smelt itself decides about a tool call before anyone is asked. It is a function of the
+ * request, the grants and the safety floor: it writes nothing and asks nobody, and reads the file system only to
+ * follow the links in a path.
+ *   allow   the call may run, and `rule` says why: an edit or a read inside the worktree, or a command the
+ *           owner pre-approved for this run
+ *   ask     the owner decides; `floor` names the floor rule when it is the floor that says so
+ *   deny    the call cannot be put to anyone as it is
+ * The floor is asked before any grant, so no grant gets past it.
  */
 
 /** What one tool call is, as far as the gate needs to know. */
@@ -16,13 +24,27 @@ export interface GateRequest {
   worktree: string;
   /** The directory the agent stands in, as a full path. */
   cwd: string;
+  /** Whose request this is, for matching grants. Left out, no grant applies. */
+  scope?: { role: string; /** The source repository's real path. */ repo: string; runId: number | null };
+}
+
+/** The part of the floor that is not the request: the owner's home, and the entries the owner's config adds. */
+export interface FloorSettings {
+  home: string;
+  /** Smelt's data directory, which the floor guards. */
+  dataDir?: string;
+  extra?: readonly FloorEntry[];
 }
 
 export type GateVerdict =
-  /** Passed on to the CLI's own rules. `rule` names the entry this leaves in the action log: an edit does, a read does not. */
-  | { verdict: "pass"; rule: "auto_worktree_edit" | null }
-  /** The owner decides. */
-  | { verdict: "ask" };
+  /** An edit inside the worktree, left to the CLI's own edit rule and logged; or a read inside it, which is not logged. */
+  | { verdict: "allow"; rule: "auto_worktree_edit" | "worktree_read" }
+  /** A command on the run's pre-approved list. */
+  | { verdict: "allow"; rule: "preapproved"; grantId: number }
+  /** The owner decides. `floor` is the floor rule that makes this always ask, when one does. */
+  | { verdict: "ask"; floor?: string }
+  /** Refused without asking anyone. */
+  | { verdict: "deny"; reason: string };
 
 /** The tools that change a file, and the field of their input that names it. */
 const EDIT_TOOLS: Record<string, string> = { Edit: "file_path", Write: "file_path", NotebookEdit: "notebook_path" };
@@ -34,7 +56,7 @@ const GUARDED = new Set([".git", ".claude"]);
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** `target` with every link in it followed, as far as it exists; what does not exist yet is kept as written. */
-function real(target: string, hops = 0): string {
+export function real(target: string, hops = 0): string {
   let existing = target;
   const rest: string[] = [];
   for (;;) {
@@ -78,29 +100,49 @@ const guarded = (relative: string): boolean => relative.split(path.sep).some((se
 /** A search pattern that reaches out of the directory it starts in. */
 const reachesOut = (pattern: unknown): boolean => typeof pattern === "string" && (path.isAbsolute(pattern) || pattern.startsWith("~") || pattern.split(/[\\/]/).includes(".."));
 
-/** Decide about one tool call. Any tool the gate does not know goes to the owner. */
-export function gate(request: GateRequest): GateVerdict {
+/** The fields of a shell call that say nothing about what runs beyond the command itself. */
+const PLAIN_SHELL_FIELDS = new Set(["command", "description"]);
+
+/** Decide about a shell command: the floor first, then the run's pre-approved list. */
+function shellVerdict(request: GateRequest, input: Record<string, unknown>, grants: readonly Grant[], settings: FloorSettings): GateVerdict {
+  const { command } = input;
+  if (typeof command !== "string" || command === "") return { verdict: "ask" };
+  if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
+  const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
+  if (rule !== null) return { verdict: "ask", floor: rule };
+  // A call that carries more than its command (a time limit, a background run) is not the command alone.
+  if (!Object.keys(input).every((name) => PLAIN_SHELL_FIELDS.has(name))) return { verdict: "ask" };
+  const words = splitPlain(command);
+  if (words === null || request.scope === undefined) return { verdict: "ask" };
+  const relative = path.relative(request.worktree, request.cwd);
+  const grant = matchGrant({ ...request.scope, cwd: relative === "" ? "." : relative, words }, grants);
+  return grant === null ? { verdict: "ask" } : { verdict: "allow", rule: "preapproved", grantId: grant.id };
+}
+
+/**
+ * Decide about one tool call, given the grants that exist and the floor. Any tool the gate does not know goes
+ * to the owner. Without grants nothing but edits and reads inside the worktree is allowed.
+ */
+export function gate(request: GateRequest, grants: readonly Grant[] = [], settings: FloorSettings = { home: os.homedir() }): GateVerdict {
   const input = isObject(request.input) ? request.input : {};
+  if (request.tool === "Bash") return shellVerdict(request, input, grants, settings);
   const editField = EDIT_TOOLS[request.tool];
   if (editField !== undefined) {
     const relative = insideWorktree(request.worktree, request.cwd, input[editField]);
     if (relative === null || guarded(relative)) return { verdict: "ask" };
-    return { verdict: "pass", rule: "auto_worktree_edit" };
+    return { verdict: "allow", rule: "auto_worktree_edit" };
   }
   const readField = READ_TOOLS[request.tool];
   if (readField !== undefined) {
     const where = input[readField];
     if (request.tool !== "Read" && (reachesOut(input.pattern) || reachesOut(input.glob))) return { verdict: "ask" };
-    if (where === undefined && request.tool !== "Read") return { verdict: "pass", rule: null };
+    if (where === undefined && request.tool !== "Read") return { verdict: "allow", rule: "worktree_read" };
     const target = typeof where === "string" ? path.resolve(request.cwd, where) : null;
     const inside = target !== null && (target === path.resolve(request.worktree) || insideWorktree(request.worktree, request.cwd, where) !== null);
-    return inside ? { verdict: "pass", rule: null } : { verdict: "ask" };
+    return inside ? { verdict: "allow", rule: "worktree_read" } : { verdict: "ask" };
   }
   return { verdict: "ask" };
 }
-
-/** The fields of a shell call that say nothing about what runs beyond the command itself. */
-const PLAIN_SHELL_FIELDS = new Set(["command", "description"]);
 
 /**
  * What a card shows for a request, which is all of what an allow lets run: a

@@ -8,7 +8,7 @@ import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, loadConfig, ROOT, smeltHome, type Config } from "./config.ts";
+import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, floorEntries, loadConfig, ROOT, smeltHome, type Config } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { createTasks } from "./engine/task.ts";
 import { openStore } from "./store/db.ts";
@@ -72,7 +72,7 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   const stream = createEventStream(db, options.heartbeatMs);
   const model = turnModel(config);
   const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
-  const broker = createBroker({ db, home, onChange: stream.announceApproval });
+  const broker = createBroker({ db, home, onChange: stream.announceApproval, floor: floorEntries(config) });
   try {
     // Without its socket the gate could only refuse, so Smelt does not start half-working.
     await broker.listen();
@@ -83,7 +83,7 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), onEvent: stream.notify, onTaskChange: stream.announceTask });
-  const ctx = { db, driver, turns, tasks, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, config, driver, turns, tasks, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
