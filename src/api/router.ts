@@ -2,6 +2,7 @@ import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { schemaVersion } from "../store/db.ts";
 import type { Broker } from "../approvals/broker.ts";
+import { modelNameProblem, type Driver } from "../drivers/contract.ts";
 import type { Tasks } from "../engine/task.ts";
 import { approvalRoutes } from "./approvals.ts";
 import { turnRoutes } from "./routes.ts";
@@ -13,6 +14,7 @@ import type { Turns } from "./turns.ts";
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
   db: DatabaseSync;
+  driver: Driver;
   turns: Turns;
   tasks: Tasks;
   broker: Broker;
@@ -65,6 +67,19 @@ export async function readJsonBody(req: http.IncomingMessage, maxBytes = 64 * 10
   } catch {
     throw new BodyError(400, "body is not valid JSON");
   }
+}
+
+/**
+ * The model a request asks for: a name, null for the CLI's own default, or undefined when the request names none
+ * and the configured one applies. Anything that is not a plain model name is refused here, before the request does
+ * anything else, because the name becomes an argument of the CLI.
+ */
+export function modelChoice(body: Record<string, unknown>): string | null | undefined {
+  const { model } = body;
+  if (model === undefined || model === null) return model;
+  const problem = modelNameProblem(model);
+  if (problem !== null) throw new BodyError(400, `"model" is not a model name. ${problem}`);
+  return model as string;
 }
 
 /**

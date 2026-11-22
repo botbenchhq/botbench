@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { waitingOnApproval } from "../approvals/broker.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
-import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
+import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -16,8 +16,8 @@ export const MAX_DIFF = 400_000;
  * `waitingOnApproval` is read from the pending approvals, not stored: a task that waits for the owner is still building.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
-  const { id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
-  return { id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId, waitingOnApproval: waitingOnApproval(db, id), createdAt, updatedAt };
+  const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
+  return { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, waitingOnApproval: waitingOnApproval(db, id), createdAt, updatedAt };
 }
 
 /** The files the task changed, from its base commit to the commit Smelt made. Null with the reason when they cannot be read. */
@@ -32,9 +32,11 @@ async function changedFiles(task: Task): Promise<{ files: FileChange[] | null; f
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
-  if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "..." }');
+  if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "...", "model"?: string | null }');
+  // Checked before the repository is looked at, and long before a task row or a worktree exists.
+  const model = modelChoice(body);
   if (body.prompt.length > MAX_PROMPT) throw new TaskError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
-  const task = await ctx.tasks.start(body.repo, body.prompt);
+  const task = await ctx.tasks.start(body.repo, body.prompt, model);
   json(res, 200, { taskId: task.id });
 }
 

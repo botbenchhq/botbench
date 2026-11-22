@@ -3,6 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { Header } from "../components/header.tsx";
+import { modelWords, sessionModel } from "../components/model-picker.tsx";
 import { statusSentence } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
@@ -111,6 +112,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   const attemptId = task?.attemptId ?? null;
   const shown = useMemo(() => events.filter((e) => e.attemptId === attemptId), [events, attemptId]);
 
+  // The model that answered is the one the driver's own session event names; what was asked for is on the task.
+  const session = useMemo(() => sessionModel(shown), [shown]);
+
   const toggle = (file: string): void => {
     if (open.includes(file)) return setOpen(open.filter((f) => f !== file));
     setOpen([...open, file]);
@@ -163,6 +167,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               <h1 className="font-semibold">{`Task ${task.id}`}</h1>
               <p data-testid="task-status" role="status" className="break-words font-medium">
                 {statusSentence(task)}
+              </p>
+              <p data-testid="task-model" className="break-all font-mono text-mono text-muted">
+                {`${modelWords(session)}. Requested: ${task.requestedModel ?? "the CLI default"}.`}
               </p>
               <p data-testid="task-repo" className="break-all font-mono text-mono text-muted">
                 {task.repo}

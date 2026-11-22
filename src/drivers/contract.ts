@@ -33,6 +33,38 @@ export interface DriverProbe {
   problem: string | null;
 }
 
+/** One model the owner can choose. `id` is what the CLI takes; `label` is the CLI's own name for it, when it gives one. */
+export interface ModelChoice {
+  id: string;
+  label?: string;
+}
+
+/** The models a driver offers, and where the list came from. Smelt never makes a list up. */
+export interface DriverModels {
+  /** "cli": the CLI itself reported the list. "config": it reported none, and the list is the owner's configuration. */
+  source: "cli" | "config";
+  models: ModelChoice[];
+  /** The configured model, preselected for the owner. Null means the CLI's own default. */
+  default: string | null;
+  /** What the CLI says its own default is, in its words. Null when it does not say. */
+  cliDefault: string | null;
+}
+
+export const MAX_MODEL_NAME = 100;
+/** What a model name may be, in words. */
+export const MODEL_NAME_RULE = `A model name starts with a letter or a digit, continues with letters, digits and . _ : / @ [ ] -, and is at most ${MAX_MODEL_NAME} characters long.`;
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@[\]-]*$/;
+
+/**
+ * Why `value` cannot be used as a model name, or null when it can. A model name becomes an argument of the CLI,
+ * so it must not be readable as a flag and holds no blank or control character. Whether the name is a model
+ * that exists is not decided here: the CLI says so itself.
+ */
+export function modelNameProblem(value: unknown): string | null {
+  if (typeof value === "string" && value.length <= MAX_MODEL_NAME && MODEL_NAME.test(value)) return null;
+  return MODEL_NAME_RULE;
+}
+
 export interface StartAttemptOptions {
   /** The store the attempt row and its events are written to. */
   db: DatabaseSync;
@@ -80,6 +112,8 @@ export interface Driver {
   readonly name: string;
   readonly capabilities: DriverCapabilities;
   probe(): Promise<DriverProbe>;
+  /** The models the owner can choose from. Starts no turn. Never rejects: a CLI that reports nothing leaves the configured list. */
+  models(): Promise<DriverModels>;
   /** Probe, then start the CLI. Rejects with `DriverUnavailableError` and starts nothing when the probe finds a problem. */
   startAttempt(options: StartAttemptOptions): Promise<DriverSession>;
 }

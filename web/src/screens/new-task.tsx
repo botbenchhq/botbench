@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, startTask, timedOut, type RepoCheck } from "../api/client.ts";
 import { Header } from "../components/header.tsx";
+import { ModelPicker, useModelChoice } from "../components/model-picker.tsx";
 
 const CHECK_DELAY_MS = 250;
 const HINT = "Enter the full path of a git repository on this Mac.";
@@ -21,6 +22,7 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const models = useModelChoice(onSignedOut);
 
   // Ask the server about the path a moment after the owner stops typing. A newer path ends the request for an older one,
   // and a request with no answer ends at its own time limit, so the screen never stays on "Checking.".
@@ -55,10 +57,12 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
     if (repo.trim() === "") return setError(`The task was not started. ${HINT}`);
     if (refused) return setError(`The task was not started. ${repoWords(repoState)}`);
     if (prompt.trim() === "") return setError("The task was not started. Say what the task is.");
+    const model = models.request();
+    if (!model.ok) return setError(`The task was not started. ${model.why}`);
     setError(null);
     setBusy(true);
     // The server checks the path again itself; what this screen knows is only for the owner's benefit.
-    startTask(repo.trim(), prompt).then(
+    startTask(repo.trim(), prompt, model.model).then(
       ({ taskId }) => {
         window.location.hash = `#/tasks/${taskId}`;
       },
@@ -103,6 +107,7 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
             </label>
             <textarea id="task-prompt" name="prompt" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} className="min-h-touch rounded-sm border bg-surface p-md" />
           </div>
+          <ModelPicker state={models} />
           {error !== null && (
             <p role="alert" className="break-words font-medium">
               {error}
