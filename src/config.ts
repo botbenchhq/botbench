@@ -42,7 +42,7 @@ export interface RepositoryConfig {
   preapproved?: string[];
   /** Commands Smelt runs in each new worktree before its builder starts, in order; one that fails ends the task. */
   setup?: CommandConfig[];
-  /** Commands that verify a task's work. Read and checked here; run by the verify station when it exists. */
+  /** Commands Smelt runs in the worktree after the work is committed, each with its time limit; their results are evidence on the task. */
   checks?: CommandConfig[];
 }
 /** A command Smelt runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */

@@ -6,7 +6,9 @@ import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import type { PlanTask } from "../../src/engine/roles.ts";
-import { createRun, MAX_SPEC_BYTES, storePlan } from "../../src/engine/run.ts";
+import { approvePlan, createRun, MAX_SPEC_BYTES, storePlan } from "../../src/engine/run.ts";
+import { insertEvidence } from "../../src/engine/stations.ts";
+import { moveTask } from "../../src/engine/task.ts";
 import { startServer, type SmeltServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 
@@ -345,4 +347,27 @@ test("a run that is building is cancelled over HTTP: the setup command at work i
   assert.deepEqual((task.evidence as Body[]).map((row) => [row.kind, row.position, row.command, row.outcome]), [["setup", 1, "sleep 30", "stopped"]]);
   assert.equal(count(api, "attempts"), 0);
   assert.equal((await call(api, "POST", `/api/runs/${run.id}/cancel`, {})).status, 409);
+});
+
+test("a task's checks are read with it: the mark that says how they went and each check's evidence, on the task and on its run", async (t) => {
+  const api = await start(t);
+  const run = planned(api, THREE.slice(0, 1));
+  const { tasks } = approvePlan(api.server.db, run.id, run.planVersion);
+  const id = tasks[0]!.id;
+  // A task as the build line leaves it once its checks ran: built, checked, one check failed.
+  moveTask(api.server.db, id, "building");
+  moveTask(api.server.db, id, "verifying");
+  const ran = (command: string, outcome: "passed" | "failed", exitCode: number, output: string) => ({ command, outcome, exitCode, signal: null, output, truncated: false, limitMs: 600_000, startedAt: "2026-11-22T10:00:00.000Z", endedAt: "2026-11-22T10:00:02.000Z", durationMs: 2000 });
+  insertEvidence(api.server.db, id, "check", 1, ran("npm test", "failed", 1, "1 failing"));
+  insertEvidence(api.server.db, id, "check", 2, ran("npm run lint", "passed", 0, "clean"));
+  moveTask(api.server.db, id, "awaiting_decision", { checks: "failed" });
+
+  const task = (await call(api, "GET", `/api/tasks/${id}`)).body;
+  assert.equal(task.checks, "failed");
+  assert.deepEqual((task.evidence as Body[]).map((row) => [row.kind, row.position, row.command, row.outcome, row.exitCode, row.output]), [["check", 1, "npm test", "failed", 1, "1 failing"], ["check", 2, "npm run lint", "passed", 0, "clean"]]);
+  const listed = ((await call(api, "GET", "/api/tasks")).body.tasks as Body[]).find((row) => row.id === id)!;
+  assert.equal(listed.checks, "failed");
+  const row = ((await call(api, "GET", `/api/runs/${run.id}`)).body.tasks as Body[])[0]!;
+  assert.equal(row.checks, "failed");
+  assert.equal((row.evidence as Body[]).length, 2);
 });

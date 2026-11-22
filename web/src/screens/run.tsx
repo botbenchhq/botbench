@@ -3,7 +3,7 @@ import { ApiError, approvePlan, cancelRun, getRun, getTranscript, openEventStrea
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
-import { CommandEvidence } from "../components/evidence.tsx";
+import { CHECKS_RISK, ChecksResult, CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
@@ -95,6 +95,7 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
 /** What a task of the run is doing, in words, for its row. */
 function taskFacts(task: RunTask): string {
   if (task.status === "queued") return "Starts when the tasks before it have finished";
+  if (task.status === "verifying") return "Smelt is running this repository's checks";
   if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
   if (task.status === "awaiting_decision") return task.branch ?? "Built";
   return task.branch ?? "No branch";
@@ -447,10 +448,13 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                         </a>
                         {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-gw-content="">{task.reason}</p>}
                         <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
+                        {task.checks !== null && <ChecksResult checks={task.checks} rows={task.evidence.filter((row) => row.kind === "check")} />}
+                        <CommandEvidence rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
                       </div>
                     </li>
                   ))}
                 </ul>
+                {run.tasks.some((task) => task.evidence.some((row) => row.kind === "check")) && <p>{CHECKS_RISK}</p>}
               </section>
             )}
 

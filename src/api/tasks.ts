@@ -26,11 +26,13 @@ export const MAX_DIFF = 400_000;
  * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
-  const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
+  const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, checks, createdAt, updatedAt } = task;
   const pending = status === "building" ? pendingApprovals(db, id) : [];
   const waiting = pending.filter((approval) => approval.storedDecision === null);
   return {
     id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
+    // What the checks found: "passed", "failed" (one failed or ran out of time), "none" (no checks are set up), or null before.
+    checks,
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,

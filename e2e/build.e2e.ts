@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
 
 // Building a run in the real client, at a phone's size, against a real Smelt process whose settings give the
@@ -49,13 +49,7 @@ function declineBuilders(page: Page, smelt: Smelt): () => Promise<void> {
 }
 
 async function shot(page: Page, name: string): Promise<void> {
-  if (!SHOTS) return;
-  await page.evaluate(() => document.querySelectorAll("[style]").forEach((el) => el.setAttribute("data-styled-before-shot", "")));
-  await page.screenshot({ path: path.join(SHOTS, name), fullPage: true });
-  await page.evaluate(() => {
-    document.querySelectorAll("[style]:not([data-styled-before-shot])").forEach((el) => el.removeAttribute("style"));
-    document.querySelectorAll("[data-styled-before-shot]").forEach((el) => el.removeAttribute("data-styled-before-shot"));
-  });
+  if (SHOTS) await tallShot(page, path.join(SHOTS, name));
 }
 
 /** Start a run on the run screen, decline what its planner asks, and set its plan to `tasks` as the owner can over the API. */

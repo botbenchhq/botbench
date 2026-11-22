@@ -54,7 +54,7 @@ async function line(t: T, script: BuildTurn[], o: { hold?: number[]; setup?: Sta
   const driver = buildReplayDriver(script, { hold: o.hold ?? [] });
   const runChanges: string[] = [];
   const taskChanges: string[] = [];
-  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`), onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`) });
+  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [], checks: [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`), onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`) });
   const runs = createRuns({ db, home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`), onTaskChange: () => {} });
   // Everything is stopped before the folder goes, so nothing still at work writes into it afterwards.
   t.after(async () => {

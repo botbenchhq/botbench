@@ -1,6 +1,6 @@
 # Smelt threat model (STRIDE)
 
-Scope: Smelt as built through units 1 to 12, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
+Scope: Smelt as built through units 1 to 13, plus the boundaries the plan adds next. Update this file in the same pull request as any unit that adds or changes a trust boundary.
 
 ## What is being protected
 
@@ -116,6 +116,16 @@ New boundary: commands Smelt runs itself, outside the permission gate, in a work
 - **Cancel after approval.** The run and its tasks not yet started are cancelled in one write; the task at work has its setup command or its turn stopped, what it did committed to its branch, and is recorded as cancelled; finished tasks keep their branches; the run's pending approvals are closed as superseded, never allowed. A task cancelled while its worktree was being made has that unused worktree and branch removed again. A cancelled run stays cancelled (a trigger keeps an end an end).
 - **Restart.** A task that was building when Smelt stopped is ended by the existing recovery (interrupted, its work committed) and is not built again; the run then goes on with its tasks that had not started, and reaches its end. A task parked on an approval across a restart holds up its run until it is resumed. Full run recovery is unit 15.
 
+### The verify station: check commands (U13)
+
+After a task's builder finishes and Smelt has committed its work, Smelt runs the repository's configured check commands in that task's worktree, the same way it runs setup commands (owner's settings only, `/bin/sh -c`, own process group, time limit of 10 minutes or `timeoutSeconds`, killed with the group at the limit, on a cancel and on shutdown, leftovers in the group killed when it ends).
+
+- **Checks run code the agent may have just written (elevation of privilege).** This is the open risk the plan names. `npm test` runs the test files and the `package.json` scripts the agent may have edited, on the host, with the owner's rights, with no card. The approval gate does not stand in front of it: the owner configured the command, the agent chose what it does. A worktree separates changes; it is not a sandbox. The task and run screens say so in plain words beside every check result: "Checks run this repository's own commands on the agent's work, on this Mac, with your account's rights. The agent may have changed the code they run, so read the output, not only the result." Accepted until sandboxed checks exist; point Smelt only at repositories you trust, and read the diff before accepting.
+- **A check cannot forge its own result into the work (tampering).** Checks run after Smelt's commit; nothing they write is committed, so the branch is what the builder produced. What a check prints is stored as text and shown as text. A check can still lie about passing (exit 0); the output and the diff are the evidence.
+- **Evidence is immutable (repository).** Check rows go into the same append-only `evidence` table as setup rows (migration 11 rebuilds it to allow the new kind, keeping every row and id, and puts the triggers back; tested from a literal copy of the version 10 schema). The task's `checks` mark (passed, failed, none) is written once; a trigger refuses changing or clearing it. A timed-out check counts as not passed. A repository with no checks is marked `none` and shown as "No checks are set up for this repository", never as a pass.
+- **Restart and cancel.** A task found at Checking on start is ended as interrupted with its committed work; nothing a check left in the worktree is committed. A cancel stops the running check (recorded as stopped) and ends the task as cancelled.
+- **Files a check leaves behind** (coverage output, caches) stay uncommitted in the worktree. Unit 14's clean-worktree removal will refuse such a worktree until they are dealt with.
+
 ## Threats and current state
 
 Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Accepted** (known and not addressed).
@@ -212,7 +222,7 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | A standing permission is stretched: more arguments, an operator, another repository, directory or role, a floor-listed command | B2 | Whole-command match on plain words; the floor first. Tested as a table over the gate and through the broker, including a grant forged in the store for `git push` | Done (U10) |
 | A standing permission survives being taken back, across two tabs, a race or a restart | B1, B4 | Revocation is a row in the store read on every request; nothing is cached in the process. Two cards for one command yield one grant (the second answers 409); a second take-back answers 409. Tested, including a broker reopened on the same store | Done (U10) |
 | An agent edits the script behind a pre-approved command and then runs it | B2 | None: edits inside the worktree do not ask, and the grant names the command, not the file's content | Accepted (U9), stated on the task screen as "runs with your account's rights". Sandboxed runs are deferred |
-| Checks execute code the agent just wrote, on the host | B2 | None. A worktree separates changes; it is not a sandbox | Accepted. Sandboxed checks are deferred |
+| Checks execute code the agent just wrote, on the host | B2 | None beyond the time limit and process-group kill. A worktree separates changes; it is not a sandbox. Said in plain words beside every check result | Accepted (U13). Sandboxed checks are deferred |
 | A command runs outside the gate that the owner did not configure | B1, B3 | Smelt runs only the setup commands in the owner's settings file, read once at start; no route, request, repository file or agent output adds one. Each has a time limit and its process group is killed at the limit, on a cancel, on shutdown and when it ends | Done (U12). Setup commands themselves run with the owner's rights, unsandboxed |
 | The planner or reviewer writes files | B2 | Read-only roles | Planned (U11, U20) |
 

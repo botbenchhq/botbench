@@ -338,7 +338,7 @@ INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, grant_id, rule
  * built up to its setup and fails there, before any builder could start: these tests replay planner turns only.
  */
 function noBuilder(db: DatabaseSync, home: string, driver: PlanReplay, broker: Broker): Tasks {
-  return createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: [{ command: "exit 1", limitMs: 10_000 }] }), onEvent: () => {}, onTaskChange: () => {} });
+  return createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: [{ command: "exit 1", limitMs: 10_000 }], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
 }
 
 async function engine(t: T, order: number[], hold?: () => Promise<void>): Promise<{ db: DatabaseSync; home: string; repo: string; base: string; driver: PlanReplay; runs: Runs; broker: Broker; line: Tasks; changes: string[] }> {

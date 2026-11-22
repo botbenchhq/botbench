@@ -490,4 +490,45 @@ CREATE TRIGGER evidence_no_delete BEFORE DELETE ON evidence
 BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
 `,
   },
+  {
+    // Checks (unit 13): the commands that verify a task's work are stored as evidence too, beside its setup commands.
+    // A CHECK constraint cannot be altered, so the evidence table is made again with every row kept, ids included, and
+    // its append-only triggers put back. A task gains `checks`, what its checks found once it was built: passed,
+    // failed (one failed or ran out of time), or none (the repository has no check commands). It is written once.
+    name: "checks",
+    sql: `
+DROP TRIGGER evidence_no_update;
+DROP TRIGGER evidence_no_delete;
+DROP INDEX evidence_task;
+ALTER TABLE evidence RENAME TO evidence_before_checks;
+CREATE TABLE evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  position INTEGER NOT NULL CHECK (position >= 1),
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  UNIQUE (task_id, kind, position)
+);
+INSERT INTO evidence (id, task_id, kind, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms)
+  SELECT id, task_id, kind, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms FROM evidence_before_checks ORDER BY id;
+DROP TABLE evidence_before_checks;
+CREATE INDEX evidence_task ON evidence (task_id, id);
+CREATE TRIGGER evidence_no_update BEFORE UPDATE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+CREATE TRIGGER evidence_no_delete BEFORE DELETE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+ALTER TABLE tasks ADD COLUMN checks TEXT CHECK (checks IN ('passed', 'failed', 'none'));
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once'); END;
+`,
+  },
 ];

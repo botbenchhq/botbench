@@ -3,7 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
-import { CommandEvidence } from "../components/evidence.tsx";
+import { CHECKS_RISK, ChecksResult, CommandEvidence } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
@@ -248,6 +248,15 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 {task.filesProblem}
               </Alert>
             )}
+            {(task.checks !== null || task.status === "verifying") && (
+              <section aria-labelledby="checks-heading" className="gw-stack gw-gap-sm">
+                <h2 id="checks-heading">Checks</h2>
+                {task.checks !== null && <ChecksResult checks={task.checks} rows={task.evidence.filter((row) => row.kind === "check")} />}
+                {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
+                <CommandEvidence testId="checks" rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+              </section>
+            )}
+
             {task.files !== null && (
               <section className="gw-stack gw-gap-sm">
                 <h2>Changed files</h2>

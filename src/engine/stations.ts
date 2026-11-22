@@ -5,8 +5,10 @@ import { gitEnv } from "../worktrees.ts";
 
 /*
  * The commands Smelt itself runs in a task's worktree: the repository's setup commands before its builder starts
- * (unit 12). They are the owner's configured commands, not an agent's, so they do not pass through the permission
- * gate; what they print and how they ended is stored as evidence on the task, append-only.
+ * (unit 12), and its check commands once the builder's work is committed (unit 13). They are the owner's configured
+ * commands, not an agent's, so they do not pass through the permission gate; what they print and how they ended is
+ * stored as evidence on the task, append-only. A check runs the project's own code as the agent left it: the agent
+ * may have changed what it runs.
  *
  * Each runs as `/bin/sh -c <command>` in the worktree, in a process group of its own, with the caller's environment
  * less every GIT_* variable (as for Smelt's own git calls), no input, and a time limit. When the limit passes, or Smelt
@@ -109,7 +111,7 @@ export function runCommand(o: { command: string; cwd: string; limitMs: number; s
   });
 }
 
-export type EvidenceKind = "setup";
+export type EvidenceKind = "setup" | "check";
 
 /** One command's result, stored on a task. Rows are only ever added. */
 export interface Evidence extends Omit<CommandRun, "command"> {

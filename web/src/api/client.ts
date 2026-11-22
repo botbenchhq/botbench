@@ -129,12 +129,14 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-export type TaskStatus = "queued" | "building" | "awaiting_decision" | "interrupted" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "interrupted" | "failed" | "cancelled";
+/** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
+export type ChecksMark = "passed" | "failed" | "none";
 
-/** One command Smelt ran on a task, as stored: a setup command before its builder started. */
+/** One command Smelt ran on a task, as stored: a setup command before its builder started, or a check after. */
 export interface Evidence {
   id: number;
-  kind: "setup";
+  kind: "setup" | "check";
   /** Its place in its list, from 1. */
   position: number;
   /** The command as the owner configured it. */
@@ -164,6 +166,8 @@ export interface TaskSummary {
   baseCommit: string | null;
   headCommit: string | null;
   attemptId: number | null;
+  /** What its checks found once it was built; null before that. */
+  checks: ChecksMark | null;
   /** The task's agent asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
   /** A request that waits for the owner was asked before Smelt restarted: the agent is stopped, and the answer resumes the task. */
@@ -276,6 +280,7 @@ export interface RunTask {
   reason: string | null;
   attemptId: number | null;
   branch: string | null;
+  checks: ChecksMark | null;
   waitingOnApproval: boolean;
   evidence: Evidence[];
 }

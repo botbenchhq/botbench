@@ -17,7 +17,7 @@ function title(run: Run): string {
 /** Whether something of the run waits for the owner's answer: its planner's request while planning, or a builder's while building. */
 const waiting = (db: DatabaseSync, run: Run): boolean =>
   (run.status === "planning" && runWaitingOnApproval(db, run.id)) || (run.status === "running" && runTasks(db, run.id).some((task) => task.status === "building" && waitingOnApproval(db, task.id)));
-const AT_WORK = new Set(["queued", "building"]);
+const AT_WORK = new Set(["queued", "building", "verifying"]);
 
 /** A run as a list shows it. */
 function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
@@ -40,7 +40,7 @@ function detail(db: DatabaseSync, run: Run): Record<string, unknown> {
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Smelt ran on it; its transcript and diff are on its own route.
     tasks: runTasks(db, id).map((task) => ({
-      id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch,
+      id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch, checks: task.checks,
       waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),
       evidence: taskEvidence(db, task.id),
     })),

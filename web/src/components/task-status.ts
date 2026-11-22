@@ -3,6 +3,7 @@ import type { TaskStatus, TaskSummary } from "../api/client.ts";
 const STATUS_WORD: Record<TaskStatus, string> = {
   queued: "Queued",
   building: "Working",
+  verifying: "Checking",
   awaiting_decision: "Ready for review",
   interrupted: "Stopped",
   failed: "Failed",
@@ -21,6 +22,7 @@ export const statusWord = (task: Pick<TaskSummary, "status" | "waitingOnApproval
 const STATUS_LOOK: Record<TaskStatus, string> = {
   queued: "gw-badge",
   building: "gw-badge gw-badge--info",
+  verifying: "gw-badge gw-badge--info",
   awaiting_decision: "gw-badge gw-badge--success",
   interrupted: "gw-badge gw-badge--danger",
   failed: "gw-badge gw-badge--danger",
@@ -42,6 +44,8 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
     case "building":
       // Before its agent starts, Smelt makes the task's copy and runs the repository's setup commands in it.
       return task.attemptId === null ? "Working. Smelt is preparing a separate copy of the project for Claude Code." : "Working. Claude Code is working in a separate copy of the project.";
+    case "verifying":
+      return "Checking. Smelt committed the work to the task's branch and is running this repository's checks on it.";
     case "awaiting_decision":
       return task.headCommit === task.baseCommit
         ? "Ready for review. No file was changed, so nothing was committed."

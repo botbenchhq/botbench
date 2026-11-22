@@ -1,4 +1,5 @@
-import type { Evidence } from "../api/client.ts";
+import type { ChecksMark, Evidence } from "../api/client.ts";
+import { Icon } from "./icon.tsx";
 
 /** A duration in words with its unit, and as an ISO 8601 duration for the time element. */
 export function duration(ms: number): { words: string; iso: string } {
@@ -46,13 +47,16 @@ function summary(rows: readonly Evidence[], what: { one: string; many: string })
  * result in words, how long it took, and its output behind a disclosure. The commands and their output are the
  * owner's and the program's text, marked as such.
  */
-export function CommandEvidence({ rows, what }: { rows: readonly Evidence[]; what: { one: string; many: string } }) {
+export function CommandEvidence({ rows, what, failedFirst = false, testId }: { rows: readonly Evidence[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
   if (rows.length === 0) return null;
+  // Checks are read by what needs the reader first; setup commands in the order they ran, which is why a later one never ran.
+  const RANK: Record<Evidence["outcome"], number> = { failed: 0, timed_out: 1, stopped: 2, passed: 3 };
+  const shownRows = failedFirst ? [...rows].sort((a, b) => RANK[a.outcome] - RANK[b.outcome] || a.position - b.position) : rows;
   return (
-    <div className="gw-check-list">
+    <div data-testid={testId} className="gw-check-list">
       <p className="gw-check-list__summary">{summary(rows, what)}</p>
       <ul className="gw-check-list__items">
-        {rows.map((row) => {
+        {shownRows.map((row) => {
           const shown = result(row);
           const took = duration(row.durationMs);
           return (
@@ -80,3 +84,29 @@ export function CommandEvidence({ rows, what }: { rows: readonly Evidence[]; wha
     </div>
   );
 }
+
+/** What a task's checks found, in a word or two, for lists. */
+export function checksWords(checks: ChecksMark): string {
+  return checks === "passed" ? "Checks passed" : checks === "failed" ? "Checks failed" : "No checks set up";
+}
+
+/**
+ * What a task's checks found, as a badge with its icon and a sentence: the words always say it, the icon and tone only
+ * repeat it. A repository with no check commands says so, with no badge: nothing that reads as a pass.
+ */
+export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: readonly Evidence[] }) {
+  if (checks === "none") return <p data-testid="checks-result">No checks are set up for this repository.</p>;
+  const notPassed = rows.filter((row) => row.outcome !== "passed").length;
+  return (
+    <p data-testid="checks-result">
+      <span className={checks === "passed" ? "gw-badge gw-badge--success" : "gw-badge gw-badge--danger"}>
+        <Icon name={checks === "passed" ? "circle-check" : "circle-alert"} className="gw-badge__icon" />
+        {checks === "passed" ? "Checks passed:" : "Checks failed:"}
+      </span>
+      {checks === "passed" ? ` ${rows.length} of ${plural(rows.length, "check", "checks")} passed.` : ` ${notPassed} of ${plural(rows.length, "check", "checks")} did not pass.`}
+    </p>
+  );
+}
+
+/** The plain sentence about what checks are, shown wherever their results are. */
+export const CHECKS_RISK = "Checks run this repository's own commands on the agent's work, on this Mac, with your account's rights. The agent may have changed the code they run, so read the output, not only the result.";
