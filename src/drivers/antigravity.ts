@@ -9,8 +9,8 @@ import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
 import { startOneTurn, type LineResult } from "./one-turn.ts";
 
 /*
- * Antigravity CLI (`agy`, Google's successor to the Gemini CLI), driven for one thing only: a read-only review turn,
- * with no tools. Seen on 1.5.14:
+ * Antigravity CLI (`agy`, Google's successor to the Gemini CLI), driven for one thing only: a read-only turn with no
+ * tools, for a review or a chat message (src/api/chat.ts). Seen on 1.5.14:
  *   `agy --input-format stream-json --output-format stream-json …` reads one message per input line,
  *   {"event":"user","message":{"content":"…"}}, runs a turn for each, exits when its input is closed, and prints:
  *     {"event":"init","conversation_id":"…","init":{"model":"…","cwd":"…","agent":"…","tools":[…],…}}
@@ -62,14 +62,14 @@ export const AGY_EXTRA_ENV: Record<string, string> = { AGY_CLI_DISABLE_AUTO_UPDA
 /** The environment a review runs in: the allowlist of src/drivers/launch.ts, no provider key, no auto-update. */
 export const agyEnv = (parent: NodeJS.ProcessEnv = process.env): Record<string, string> => buildChildEnv(parent, AGY_EXTRA_ENV);
 
-/** Write Botbench's reviewer agent into `folder`, where Antigravity finds a workspace's agents. */
+/** Write Botbench's agent with no tools into `folder`, where Antigravity finds a workspace's agents; a review and a chat turn both use it. */
 export function writeReviewAgent(folder: string): void {
   const dir = path.join(folder, ".agents", "agents");
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const definition = [
     "---",
     `name: ${REVIEW_AGENT}`,
-    "description: Reviews a code change given in full in the message, and replies in text. Uses no tools.",
+    "description: Answers from what is given in full in the message, a code change to review or a chat, and replies in text. Uses no tools.",
     "tools: []",
     "mainAgent: true",
     "subagent: false",
@@ -77,7 +77,7 @@ export function writeReviewAgent(folder: string): void {
     "mcpServers: []",
     "skills: []",
     "---",
-    "You review a code change that is given to you in full in the message, and reply in text only.",
+    "Everything you need is given to you in full in the message: a code change to review, or a chat to answer. Do what the message asks, and reply in text only.",
     "",
   ].join("\n");
   fs.writeFileSync(path.join(dir, `${REVIEW_AGENT}.md`), definition, { mode: 0o600 });

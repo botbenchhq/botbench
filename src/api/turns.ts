@@ -25,9 +25,9 @@ export interface Turns {
    * Resolves as soon as the turn has been handed to the CLI.
    * `model` is the model asked for: a name, null for the CLI's own default, or left out for the configured one.
    * An open session keeps the model it was started on, so a turn that asks for another one continues the
-   * conversation in a new attempt on that model.
+   * conversation in a new attempt on that model. `onAttempt` is called with a new attempt's id before its prompt is sent.
    */
-  start(prompt: string, attemptId?: number, model?: string | null): Promise<{ attemptId: number; turn: number }>;
+  start(prompt: string, attemptId?: number, model?: string | null, onAttempt?: (attemptId: number) => void): Promise<{ attemptId: number; turn: number }>;
   /** Stop the attempt's running turn. Resolves once it has ended. */
   interrupt(attemptId: number): Promise<void>;
   /** Whether a turn is running in the attempt right now. */
@@ -108,7 +108,7 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
 
   // Attempts being started. Shutdown waits for them, so none comes up after the database has closed.
   const starting = new Set<Promise<unknown>>();
-  const begin = async (prompt: string, model: string | undefined, resumeCursor?: string): Promise<{ attemptId: number; turn: number }> => {
+  const begin = async (prompt: string, model: string | undefined, resumeCursor?: string, onAttempt?: (attemptId: number) => void): Promise<{ attemptId: number; turn: number }> => {
     // A chat works in no repository: its commands reach no network.
     const launching = driver.startAttempt({ db, cwd, confinement: { dataDir: options.home, allowedHosts: [] }, ...(model ? { model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
     starting.add(launching);
@@ -122,13 +122,14 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
     session.onEvent(options.onEvent);
     const entry: Open = { session, model, busy: false };
     open.set(session.attemptId, entry);
+    onAttempt?.(session.attemptId);
     return send(session.attemptId, entry, prompt);
   };
 
-  const start = async (prompt: string, attemptId?: number, choice?: string | null): Promise<{ attemptId: number; turn: number }> => {
+  const start = async (prompt: string, attemptId?: number, choice?: string | null, onAttempt?: (attemptId: number) => void): Promise<{ attemptId: number; turn: number }> => {
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
     const model = choice === undefined ? options.model : (choice ?? undefined);
-    if (attemptId === undefined) return begin(prompt, model);
+    if (attemptId === undefined) return begin(prompt, model, undefined, onAttempt);
     const row = attemptRow(attemptId);
     if (!row) throw new TurnError(404, "Botbench has no record of that conversation.");
     const entry = open.get(attemptId);
@@ -138,7 +139,7 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
     await drop(attemptId);
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
     if (typeof row.resume_cursor !== "string" || row.resume_cursor === "") throw new TurnError(409, "This conversation cannot be continued: it ended before Claude Code saved its place. Start a new chat.");
-    return begin(prompt, model, row.resume_cursor);
+    return begin(prompt, model, row.resume_cursor, onAttempt);
   };
 
   const interrupt = async (attemptId: number): Promise<void> => {

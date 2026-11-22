@@ -31,6 +31,22 @@ async function startTurn(req: http.IncomingMessage, res: http.ServerResponse, ct
   json(res, 200, await ctx.turns.start(body.prompt, attemptId, model));
 }
 
+/** POST /api/chat: one message, or a request to compare a round's answers, to one agent or several. */
+async function sendChat(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
+  const body = await readJsonBody(req);
+  const shape = 'expected { "prompt": "...", "conversation": [ids of the earlier replies], "agents": [{ "agent": "codex", "model"?: string | null }], "compare"?: round id }';
+  if (!isObject(body) || !Array.isArray(body.conversation) || !Array.isArray(body.agents)) return json(res, 400, { error: shape });
+  const compare = body.compare;
+  if (compare !== undefined && !(typeof compare === "number" && Number.isSafeInteger(compare) && compare > 0)) return json(res, 400, { error: '"compare" must be the id of the answers to compare' });
+  if (compare === undefined && (typeof body.prompt !== "string" || body.prompt.trim() === "")) return json(res, 400, { error: shape });
+  if (!body.conversation.every((id) => typeof id === "number" && Number.isSafeInteger(id) && id > 0)) return json(res, 400, { error: '"conversation" must be a list of ids' });
+  const agents = body.agents.map((a) => {
+    if (!isObject(a) || typeof a.agent !== "string") throw new BodyError(400, shape);
+    return { agent: a.agent, model: modelChoice(a) };
+  });
+  json(res, 200, { replies: await ctx.chat.send({ message: typeof body.prompt === "string" ? body.prompt : "", conversation: body.conversation as number[], agents, ...(compare === undefined ? {} : { compare }) }) });
+}
+
 /**
  * The turn routes: the driver's state, sending and stopping a turn, an
  * attempt's transcript, and the live stream. Returns false when the request is
@@ -66,8 +82,11 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       ctx.stream.handle(req, res);
     } else if (method === "POST" && pathname === "/api/turns") {
       await startTurn(req, res, ctx);
+    } else if (method === "POST" && pathname === "/api/chat") {
+      await sendChat(req, res, ctx);
     } else if (method === "POST" && /^\/api\/turns\/\d{1,15}\/interrupt$/.test(pathname)) {
-      await ctx.turns.interrupt(Number(pathname.split("/")[3]));
+      const attemptId = Number(pathname.split("/")[3]);
+      if (!(await ctx.chat.interrupt(attemptId))) await ctx.turns.interrupt(attemptId);
       json(res, 200, { interrupted: true });
     } else if (method === "GET" && /^\/api\/attempts\/\d{1,15}\/events$/.test(pathname)) {
       const attemptId = Number(pathname.split("/")[3]);
@@ -75,7 +94,8 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       if (after === null) return (json(res, 400, { error: '"after" must be an event id' }), true);
       const attempt = ctx.db.prepare("SELECT status FROM attempts WHERE id = ?").get(attemptId);
       if (!attempt) return (json(res, 404, { error: "Botbench has no record of that conversation" }), true);
-      json(res, 200, { attemptId, status: attempt.status, turnRunning: ctx.turns.turnRunning(attemptId), events: eventsAfter(ctx.db, after, attemptId) });
+      const info = ctx.chat.info(attemptId);
+      json(res, 200, { attemptId, status: attempt.status, turnRunning: ctx.turns.turnRunning(attemptId) || ctx.chat.turnRunning(attemptId), agent: info?.agent ?? CLAUDE_CODE, model: info?.model ?? null, round: info?.round ?? null, events: eventsAfter(ctx.db, after, attemptId) });
     } else {
       return false;
     }

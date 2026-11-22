@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, startRun, startTask, startTurn, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, commandsWords, issueWords, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { agentName, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
+import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
 import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
@@ -75,14 +77,16 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const [driverFailed, setDriverFailed] = useState(false);
   const [conversation, setConversation] = useState<number[]>(loadConversation);
   const [events, setEvents] = useState<StoredEvent[]>([]);
-  /** The chat turn the screen is waiting on. */
-  const [active, setActive] = useState<{ attemptId: number; turn: number } | null>(null);
+  /** The chat turns the screen is waiting on: one, or one per agent asked at once. */
+  const [active, setActive] = useState<{ attemptId: number; turn: number }[]>([]);
+  /** Who answered in each attempt of the chat, and the message it answered. */
+  const [infos, setInfos] = useState<ReadonlyMap<number, AttemptInfo>>(new Map());
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const startRef = useRef<Promise<{ attemptId: number; turn: number }> | null>(null);
+  const startRef = useRef<Promise<{ attemptId: number; turn: number }[]> | null>(null);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -196,13 +200,15 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
       try {
         const transcript = await getTranscript(id);
         kept.push(id);
+        setInfos((have) => new Map(have).set(id, { agent: transcript.agent, model: transcript.model, round: transcript.round }));
         setEvents((have) => mergeEvents(have, transcript.events));
         newest = Math.max(newest, transcript.events.at(-1)?.id ?? 0);
-        if (id === ids.at(-1)) {
-          const turn = Math.max(0, ...transcript.events.map((e) => e.turn));
-          // A turn started after this request was sent is newer than what it says, and is left alone.
-          setActive((current) => (transcript.turnRunning ? { attemptId: id, turn } : current !== null && (current.attemptId !== id || current.turn > turn) ? current : null));
-        }
+        const turn = Math.max(0, ...transcript.events.map((e) => e.turn));
+        // A turn started after this request was sent is newer than what it says, and is left alone.
+        setActive((current) => {
+          const others = current.filter((a) => a.attemptId !== id || a.turn > turn);
+          return transcript.turnRunning && !others.some((a) => a.attemptId === id) ? [...others, { attemptId: id, turn }] : others;
+        });
       } catch (err) {
         // An attempt this server does not know (another data directory) drops out of the conversation.
         if (!(err instanceof ApiError && err.status === 404)) throw err;
@@ -248,14 +254,17 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   }, [refresh, onSignedOut]);
 
   const shown = useMemo(() => events.filter((e) => conversation.includes(e.attemptId)), [events, conversation]);
-  const activeEnded = active !== null && events.some((e) => e.attemptId === active.attemptId && e.turn === active.turn && e.type === "turn_ended");
-  const running = (starting && !inRepository(repo)) || (active !== null && !activeEnded);
+  const chat = useMemo(() => chatView(shown, infos, conversation), [shown, infos, conversation]);
+  const endedOf = (a: { attemptId: number; turn: number }): boolean => events.some((e) => e.attemptId === a.attemptId && e.turn === a.turn && e.type === "turn_ended");
+  const working = active.filter((a) => !endedOf(a));
+  const anyEnded = working.length !== active.length;
+  const running = (starting && !inRepository(repo)) || working.length > 0;
   useEffect(() => {
-    if (activeEnded) {
-      setActive(null);
-      setStopping(false);
+    if (anyEnded) {
+      setActive((current) => current.filter((a) => !endedOf(a)));
+      if (working.length === 0) setStopping(false);
     }
-  }, [activeEnded]);
+  });
 
   // The transcript follows its newest row while the reader is at the bottom (the design system's own hook). It counts
   // the rows the log shows, read from the page once React has put them there.
@@ -273,7 +282,14 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     [logRef],
   );
 
-  const builder: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
+  // Who a chat asks. The agents are checked once the owner opens the choice, or when another agent than Claude Code is remembered.
+  const agents = useChatAgents(onSignedOut, view === "models");
+  const offered = agents.offer.state === "ready" ? agents.offer.agents : null;
+  const targets = chatTargets(agents.choice, models.request(), offered);
+  const asksClaude = !targets.ok || targets.targets.some((t) => t.agent === CLAUDE);
+  const claudeState: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
+  // A chat that asks only other agents does not wait on Claude Code.
+  const builder: Facts["builder"] = !inRepository(repo) && !asksClaude ? { state: "ready" } : claudeState;
   const facts: Facts = {
     text: prompt,
     repo,
@@ -288,30 +304,39 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     hasChecks: repository.listed?.hasChecks ?? null,
     issue: kind === "run" ? issue.attached : null,
   };
-  const stopReason = blockedBy(facts);
   const chatting = !inRepository(repo);
+  const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null } : null);
+  const askedCount = chatting && targets.ok ? targets.targets.length : 1;
   /** While a chat reply runs and the composer would send a chat, the button is Stop. */
   const showStop = chatting && running;
 
-  const sendChat = (text: string, model: string | null | undefined): void => {
+  /** Send a chat message to the agents asked, or, with `compare`, ask one to compare a round's answers. */
+  const sendChat = (text: string, to: readonly ChatTarget[], compare?: number): void => {
     setError(null);
     setStarting(true);
     // Whoever sends wants to see the answer: the transcript follows again.
     jumpToLatest();
-    // A model other than the one the conversation is on continues it in a new attempt on that model.
-    const started = startTurn(text, conversation.at(-1), model);
-    startRef.current = started;
+    const started = sendChatMessage({ prompt: text, conversation: conversationRef.current, agents: to, ...(compare === undefined ? {} : { compare }) });
+    const turns = started.then((replies) => replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
+    startRef.current = turns;
     started.then(
-      ({ attemptId, turn }) => {
-        const next = conversationRef.current.includes(attemptId) ? conversationRef.current : [...conversationRef.current, attemptId];
+      (replies) => {
+        // What each reply answers is known now, so the screen never shows what Botbench framed for an agent.
+        setInfos((have) => {
+          const next = new Map(have);
+          for (const r of replies) next.set(r.attemptId, { agent: r.agent, model: r.model, round: r.roundId === null ? null : { id: r.roundId, kind: compare === undefined ? "ask" : "compare", message: text, compares: compare ?? null } });
+          return next;
+        });
+        const ids = replies.map((r) => r.attemptId).filter((id) => !conversationRef.current.includes(id));
+        const next = [...conversationRef.current, ...ids];
         setConversation(next);
         saveConversation(next);
-        setAsked((have) => ({ ...have, [attemptId]: model }));
-        setActive({ attemptId, turn });
+        setAsked((have) => ({ ...have, ...Object.fromEntries(replies.map((r) => [r.attemptId, r.model])) }));
+        setActive(replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
         setStarting(false);
-        setPrompt("");
-        // Events stored before the attempt was known here may have been missed by a stream that was reconnecting.
-        getTranscript(attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), () => {});
+        if (compare === undefined) setPrompt("");
+        // Events stored before the attempts were known here may have been missed by a stream that was reconnecting.
+        for (const { attemptId } of replies) getTranscript(attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), () => {});
       },
       (err: unknown) => {
         setStarting(false);
@@ -345,27 +370,34 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
-    if (action.do === "chat") return sendChat(action.prompt, action.model);
+    if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets) : undefined;
     if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved).then(({ taskId }) => `#/tasks/${taskId}`));
     const { do: _, ...run } = action;
     startWork("run", () => startRun(run).then(({ runId }) => `#/runs/${runId}`));
   };
 
-  const stop = (): void => {
-    if (stopping) return;
-    setStopping(true);
+  /** Stop the running turns: every one, or `only` one agent's. */
+  const stop = (only?: number): void => {
+    if (stopping && only === undefined) return;
+    if (only === undefined) setStopping(true);
     // A turn that is still being started is stopped as soon as its attempt is known.
-    const target = active !== null ? Promise.resolve(active) : startRef.current;
-    if (!target) return setStopping(false);
+    const target = working.length > 0 ? Promise.resolve(working) : (startRef.current ?? Promise.resolve([]));
     target.then(
-      ({ attemptId }) =>
-        interruptTurn(attemptId).catch((err: unknown) => {
-          setStopping(false);
-          // 409: the turn ended on its own first, which the transcript already shows.
-          if (err instanceof ApiError && err.status === 409) return;
-          if (err instanceof ApiError && err.status === 401) return onSignedOut();
-          setError(err instanceof ApiError ? `Claude Code was not stopped. ${err.message}` : "Claude Code was not stopped: Botbench could not be reached.");
-        }),
+      (turns) =>
+        Promise.all(
+          turns
+            .filter((t) => only === undefined || t.attemptId === only)
+            .map(({ attemptId }) =>
+              interruptTurn(attemptId).catch((err: unknown) => {
+                // 409: the turn ended on its own first, which the transcript already shows.
+                if (err instanceof ApiError && err.status === 409) return;
+                setStopping(false);
+                if (err instanceof ApiError && err.status === 401) return onSignedOut();
+                const who = agentName(infos.get(attemptId)?.agent ?? CLAUDE);
+                setError(err instanceof ApiError ? `${who} was not stopped. ${err.message}` : `${who} was not stopped: Botbench could not be reached.`);
+              }),
+            ),
+        ),
       // The turn never started, and `send` has already said why.
       () => setStopping(false),
     );
@@ -387,7 +419,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     if (running) return;
     setConversation([]);
     saveConversation([]);
-    setActive(null);
+    setActive([]);
     setError(null);
     jumpToLatest();
     promptRef.current?.focus();
@@ -413,6 +445,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     if (run) setRunWanted(true);
   }, [run]);
   const builds = run && !sameBuild ? buildModels : models;
+  const chip = chatChip(agents, models);
   const values: Record<Row, string> = {
     repository: repoName(repo, known),
     kind: kind === "task" ? "One task" : "Plan a run",
@@ -421,11 +454,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     review: review.offer.state === "checking" ? "Checking" : review.words,
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
     commands: commandsWords(repository.listed?.commands.length ?? 0),
-    models: run && !sameBuild ? `${choiceName(models)}, then ${choiceName(buildModels)}` : choiceName(models),
+    models: chatting ? `${chip.value}, ${chip.qualifier}` : run && !sameBuild ? `${choiceName(models)}, then ${choiceName(buildModels)}` : choiceName(models),
     issue: issueWords(issue.attached),
   };
   const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
-  const label = chatting ? "Message Claude Code" : kind === "task" ? "Describe the task" : "Describe what to plan";
+  const label = chatting ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
   const builderDown = builder.state !== "ready";
   const name = repoName(repo, known);
@@ -455,10 +488,32 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
         <div ref={scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
           <div ref={setLog} className="ds-container pb-lg">
             {shown.length > 0 ? (
-              <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} modelDiffers={differs} />
+              <Transcript
+                events={chat.events}
+                working={running && working.length <= 1 ? (stopping ? `Stopping ${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)}.` : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? (askedCount === 1 && targets.ok ? targets.targets[0]!.agent : CLAUDE))} is working.`) : null}
+                modelName={nameOf}
+                modelDiffers={differs}
+                who={chat.who}
+                after={
+                  <>
+                    {working.length > 1 &&
+                      working.map(({ attemptId }) => (
+                        <li key={`working-${attemptId}`} className="ds-split">
+                          <p className="ds-streaming ds-streaming--row">
+                            <span role="status">{`${agentName(infos.get(attemptId)?.agent ?? CLAUDE)} is working.`}</span>
+                          </p>
+                          <button type="button" className="ds-button ds-button--small" onClick={() => stop(attemptId)}>
+                            Stop {agentName(infos.get(attemptId)?.agent ?? CLAUDE)}
+                          </button>
+                        </li>
+                      ))}
+                    {chat.compare !== null && !running && <CompareAction agents={agents} claude={models} onCompare={(to) => sendChat("", [to], chat.compare!.roundId)} busy={starting} />}
+                  </>
+                }
+              />
             ) : chatting ? (
               <div className="ds-empty-state ds-empty-state--compact">
-                <h2 className="ds-empty-state__title">Ask Claude Code anything</h2>
+                <h2 className="ds-empty-state__title">{agents.choice.pick.kind === "one" ? `Ask ${agentName(agents.choice.pick.agent)} anything` : "Ask several agents at once"}</h2>
               </div>
             ) : (
               <div className="ds-empty-state ds-empty-state--compact" data-testid="composer-about">
@@ -497,10 +552,10 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   <BusyButton variant="quiet" size="small" className="ds-composer__chip" aria-haspopup="dialog" onClick={() => openSheet("models")}>
                     <span className="ds-composer__value">
                       <span className="ds-visually-hidden">Model: </span>
-                      {choiceName(builds)}
+                      {chatting ? chip.value : choiceName(builds)}
                       <span className="ds-visually-hidden">, </span>
                       {" "}
-                      <span className="ds-composer__qualifier">Claude Code</span>
+                      <span className="ds-composer__qualifier">{chatting ? chip.qualifier : "Claude Code"}</span>
                     </span>
                   </BusyButton>
                 )}
@@ -519,11 +574,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 </button>
               )}
               {showStop ? (
-                <BusyButton busy={stopping} busyLabel="Stopping" onClick={stop} aria-describedby="composer-reason">
+                <BusyButton busy={stopping} busyLabel="Stopping" onClick={() => stop()} aria-describedby="composer-reason">
                   Stop
                 </BusyButton>
               ) : (
-                <BusyButton type="submit" variant="primary" busy={starting} busyLabel={chatting ? "Sending" : "Starting"} disabled={stopReason !== null} aria-describedby={describedBy}>
+                <BusyButton type="submit" variant="primary" busy={starting} busyLabel={chatting ? "Sending" : "Starting"} disabled={stopReason !== null} aria-describedby={describedBy} {...(chatting && askedCount > 1 ? { "aria-label": sendWords(askedCount).label } : {})}>
                   Send
                 </BusyButton>
               )}
@@ -531,7 +586,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
           </div>
           {showStop ? (
             <p id="composer-reason" className="ds-composer__reason">
-              Claude Code is working. You can send again when it has answered.
+              {working.length > 1 ? "The agents are working. You can send again when each has answered or stopped." : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)} is working. You can send again when it has answered.`}
             </p>
           ) : (
             stopReason !== null && (
@@ -539,6 +594,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 {stopReason.reason}
               </p>
             )
+          )}
+          {!showStop && stopReason === null && chatting && sendWords(askedCount).line !== null && (
+            <p data-testid="asked-line" className="ds-composer__reason">
+              {sendWords(askedCount).line}
+            </p>
           )}
           {builder.state === "problem" && (
             // Asks the agent again, for real, once the owner has fixed what the reason names.
@@ -594,6 +654,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             sameBuild,
             setSameBuild,
             buildModels,
+            agents,
           }}
         />
       </main>

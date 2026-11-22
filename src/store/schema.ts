@@ -1099,4 +1099,34 @@ WHEN NEW.outside_text = 1 AND NEW.mode = 'full'
 BEGIN SELECT RAISE(ABORT, 'a run that read outside text is never fully autonomous'); END;
 `,
   },
+  {
+    // Chat with any agent (src/api/chat.ts). `chat_rounds`: one row per message the owner sent to agents that are given
+    // the conversation by Botbench, or per request to compare a round's answers (`compares` names that round).
+    // `chat_attempts`: every attempt a chat started, so only a chat's own text is ever passed on as its conversation;
+    // `round_id` is null for a Claude Code session that kept the conversation itself. Both are append-only.
+    name: "chat_rounds",
+    sql: `
+CREATE TABLE chat_rounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('ask', 'compare')),
+  message TEXT NOT NULL,
+  compares INTEGER REFERENCES chat_rounds (id),
+  created_at TEXT NOT NULL,
+  CHECK ((kind = 'compare') = (compares IS NOT NULL))
+);
+CREATE TABLE chat_attempts (
+  attempt_id INTEGER PRIMARY KEY REFERENCES attempts (id),
+  round_id INTEGER REFERENCES chat_rounds (id),
+  created_at TEXT NOT NULL
+);
+CREATE TRIGGER chat_rounds_no_update BEFORE UPDATE ON chat_rounds
+BEGIN SELECT RAISE(ABORT, 'chat rounds are append-only'); END;
+CREATE TRIGGER chat_rounds_no_delete BEFORE DELETE ON chat_rounds
+BEGIN SELECT RAISE(ABORT, 'chat rounds are append-only'); END;
+CREATE TRIGGER chat_attempts_no_update BEFORE UPDATE ON chat_attempts
+BEGIN SELECT RAISE(ABORT, 'chat attempts are append-only'); END;
+CREATE TRIGGER chat_attempts_no_delete BEFORE DELETE ON chat_attempts
+BEGIN SELECT RAISE(ABORT, 'chat attempts are append-only'); END;
+`,
+  },
 ];

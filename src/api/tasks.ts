@@ -15,7 +15,7 @@ import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
 import { commitsFileDiff, describeCommits, describeWork, fileDiff, type FileChange } from "../worktrees.ts";
-import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
+import { BodyError, builderOnly, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -178,6 +178,7 @@ async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ct
   // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
   if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "...", "model"?: string | null, "preapproved"?: ["command", ...] }');
   // Checked before the repository is looked at, and long before a task row or a worktree exists.
+  builderOnly(body);
   const model = modelChoice(body);
   if (body.prompt.length > MAX_PROMPT) throw new TaskError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
   const task = await ctx.tasks.start(body.repo, body.prompt, model, preapprovedList(body.preapproved));

@@ -1,0 +1,80 @@
+{
+  "about": "What each CLI printed, line for line, for one real chat message started the way its driver starts a chat turn, by test/support/capture-chat.ts, on the owner's subscription sign-ins. codex, grok, antigravity: Botbench's chat prompt with one earlier exchange and a one-line question. compare: Codex asked to compare the three answers. Nothing was removed.",
+  "clis": {
+    "codex": "codex-cli 0.171.0",
+    "grok": "grok 1.0.92 (b06756fd6256)",
+    "antigravity": "1.5.14"
+  },
+  "models": {
+    "codex": "gpt-6-luna",
+    "grok": "grok-4.7-build-fast",
+    "antigravity": "gemini-3.8-flash-low"
+  },
+  "recordedAt": "2026-11-22T22:52:21.405Z",
+  "question": "Name one more primary colour, in one word, and say in one short sentence why it is primary.",
+  "sessions": {
+    "codex": {
+      "lines": [
+        "{\"type\":\"thread.started\",\"thread_id\":\"01a20575-c25d-7140-8aac-4ba1ab72fa2d\"}",
+        "{\"type\":\"turn.started\"}",
+        "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"Blue. It is a primary colour because it cannot be made by mixing other colours.\"}}",
+        "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12325,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":21,\"reasoning_output_tokens\":0}}"
+      ],
+      "exitCode": 0
+    },
+    "grok": {
+      "lines": [
+        "{\"type\":\"available_commands\",\"tools\":[],\"commands\":[\"compact\",\"always-approve\",\"context\",\"session-info\",\"feedback\",\"build-with-ai\",\"code-review\",\"create-skill\",\"create-workflow\",\"design\",\"execute-plan\",\"game-assets\",\"bundled:imagine\",\"implement\",\"learn\",\"long-running-background-tasks\",\"pr-babysit\",\"resume-claude\",\"resume-codex\",\"resume-cursor\",\"review\",\"skill-design-principles\",\"statusline\",\"threejs-frame-conventions\"]}",
+        "{\"type\":\"available_commands\",\"tools\":[],\"commands\":[\"compact\",\"always-approve\",\"context\",\"session-info\",\"feedback\",\"build-with-ai\",\"code-review\",\"create-skill\",\"create-workflow\",\"design\",\"execute-plan\",\"game-assets\",\"bundled:imagine\",\"implement\",\"learn\",\"long-running-background-tasks\",\"pr-babysit\",\"resume-claude\",\"resume-codex\",\"resume-cursor\",\"review\",\"skill-design-principles\",\"statusline\",\"threejs-frame-conventions\"]}",
+        "{\"type\":\"thought\",\"data\":\"I need to name a second\"}",
+        "{\"type\":\"thought\",\"data\":\" primary colour and \"}",
+        "{\"type\":\"thought\",\"data\":\"explain why it is primary.\"}",
+        "{\"type\":\"thought\",\"data\":\"\\n\\nBlue is the best choice.\"}",
+        "{\"type\":\"thought\",\"data\":\" It cannot be made by\"}",
+        "{\"type\":\"thought\",\"data\":\" mixing other colours.\"}",
+        "{\"type\":\"text\",\"data\":\"Blue\"}",
+        "{\"type\":\"text\",\"data\":\".\"}",
+        "{\"type\":\"text\",\"data\":\" It\"}",
+        "{\"type\":\"text\",\"data\":\" is\"}",
+        "{\"type\":\"text\",\"data\":\" a\"}",
+        "{\"type\":\"text\",\"data\":\" primary\"}",
+        "{\"type\":\"text\",\"data\":\" colour\"}",
+        "{\"type\":\"text\",\"data\":\" because\"}",
+        "{\"type\":\"text\",\"data\":\" it\"}",
+        "{\"type\":\"text\",\"data\":\" cannot\"}",
+        "{\"type\":\"text\",\"data\":\" be\"}",
+        "{\"type\":\"text\",\"data\":\" made\"}",
+        "{\"type\":\"text\",\"data\":\" by\"}",
+        "{\"type\":\"text\",\"data\":\" mixing\"}",
+        "{\"type\":\"text\",\"data\":\" other\"}",
+        "{\"type\":\"text\",\"data\":\" colours\"}",
+        "{\"type\":\"text\",\"data\":\".\"}",
+        "{\"type\":\"available_commands\",\"tools\":[],\"commands\":[\"compact\",\"always-approve\",\"context\",\"session-info\",\"feedback\",\"build-with-ai\",\"code-review\",\"create-skill\",\"create-workflow\",\"design\",\"execute-plan\",\"game-assets\",\"bundled:imagine\",\"implement\",\"learn\",\"long-running-background-tasks\",\"pr-babysit\",\"resume-claude\",\"resume-codex\",\"resume-cursor\",\"review\",\"skill-design-principles\",\"statusline\",\"threejs-frame-conventions\"]}",
+        "{\"type\":\"usage\",\"usage\":{\"input_tokens\":3858,\"output_tokens\":271,\"cache_read_input_tokens\":2048,\"cache_creation_input_tokens\":0,\"reasoning_tokens\":254},\"signature\":\"dmVvnJqG98cE2wyq0CwqUPQz4jmT0GT50t3sKmjwW1dZAiV/ApuW/Pfih+0ePY37IoM7mRsUBckECEyWZxG8+2XWqPddMjFyKD11SXCywZ08oPZeu8g/CkXtIJenVa0mlvqPTyYjzBX83PQV6fHOqrSCvyy1gaBBOpcqLswPi9B0av9P4zOradECMtVhef0+0PwfVrTRSvBxDQd/hn4uHCMNpG+wr89jkOz+N+nXkiLZt0c0IiX/7qKPM45+gmAbqcnGq4yi9FxFSDvywra/IqoOKqvQAsDbrSc2JKq5b4TSFEy7mjAFEhQMNZ4wIKwRObZ96VHSIpVryreIfQsFovAj4MfolGX9+dFDUyaeuKfSGGAYNqA6wmxcgStI91jZ3JyX/V/IBcykvSxlx9lYWyE5aEfDrFIQoJVOLwfq1hn96XusOc/NA7xb4R+8QvqgqxL1og46FnB3tA55Lzo2EyMLaPF1XgSAflY7XhFFELY/0EDhlMz7R0VAkPQuoSWWqD00Zq8cZecvcsk3D+3PCsgVPFW8s3GvJGds3AYbFAiUq1tsXBCtzo2Tm7WeZrOv7PIk0NYzZGlzoucpIebPFWQMe27iQVcRAXdTUb8yWmcCmDuYCxhFMgSC+EWdSB8GMFhkuhh3hxogJHIxkC2nqfchpdd1ylWrIkdkrHwXyVUv7K+4OMrtc5SOzP03jkkBsdiCRLlTph6I/FIn3uaiCL3ii+yiKeEE6uSl2lZzSRm544tW198an/YsGx6jcHWXj0f63lgejT1xFWo00/1/EiMzu9R+kCUXcO5E53uc2t0Y4lxDCru70Hxk6Yyo26upY+6RtRlvdBjuXL8smqaAfbRbkztySWlxiMQ6IzjtVtBRdD3KdtTvkziJ6c8VWioWe+1zM+na+ohqObrRzXUdFSX9yYUj9pyWIbRMy18gFZImlN31YhRPiw6dpmkbAkgM1gQ0S4fRXug98mslLfUJsSfJkB2gA0+qhdVIEvUrfeGQGdsiOSna0zwyJVghKseEO7Kgpw+nYJ3Y1/2rrqbcIcj2O03Sh5PqJxid9aXu6b3u3LiEavYMZbyqN3rfK2s0rHhhQ55wUfhHvUUocmLZtYaBKx3R8uwq8c+Qt0WNV41ZkIJkt779XYvU3C2Lvjlu8deWSSv98wvak8WNa5PCuiR9cg2TiZ2ZlmkrPSvDRbsyHhW/7kZ0fc+0py+ol4ZxXKVV3go+rFN5reZkeGtPJVHxlimnrBOAcKEIvMprJyoWIIRIx6o9zKDTDCsA1y1WDIReuSLFI02vCEGJG0TO3/7G3YmmldprRJYo/fEDRZXDqbOm6396ZutaCzaaOSrpS3faYSE89565Uw7oHLRSgOR3Qmmu9rchm3bxoXECn9gxenPSab6uP1t+iFJWk+c/OvcCMjw0tT16n8yMkgAvZ6ZU4Yg5Ep4/is4trEKKag3fM6ivqH6s516EobFdww8LEIpQ\"}",
+        "{\"type\":\"end\",\"stopReason\":\"end_turn\",\"sessionId\":\"01a20575-c26c-7212-82d7-abf39a796ce0\",\"requestId\":\"84bf8af8-41dc-4107-99f8-6aaf396668bc\",\"cwd\":\"/private/var/folders/z3/sq8j29y13zj43qhy7my8733w0000gn/T/botbench-capture-chat-LJKBwc/home/reviewers/c15eb965-56a1-4432-90d8-148dee15de63\",\"usage\":{\"input_tokens\":3858,\"cache_read_input_tokens\":2048,\"cache_creation_input_tokens\":0,\"output_tokens\":271,\"reasoning_tokens\":254,\"total_tokens\":6177},\"num_turns\":1,\"total_cost_usd\":0.020732,\"total_cost_usd_ticks\":207320000,\"modelUsage\":{\"grok-4.7-build-fast\":{\"inputTokens\":3858,\"outputTokens\":271,\"cacheReadInputTokens\":2048,\"cacheCreationInputTokens\":0,\"modelCalls\":1,\"costUSD\":0.020732}}}"
+      ],
+      "exitCode": 0
+    },
+    "antigravity": {
+      "lines": [
+        "{\"event\":\"init\",\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"init\":{\"model\":\"gemini-3.8-flash-low\",\"cwd\":\"/private/var/folders/z3/sq8j29y13zj43qhy7my8733w0000gn/T/botbench-capture-chat-LJKBwc/home/reviewers/e029aa51-a8b8-4ee7-a8df-f6f168ebc46e\",\"agent\":\"botbench-review\",\"tools\":[\"ask_custom_permission\",\"ask_permission\",\"ask_question\",\"browser_click_element\",\"browser_drag_pixel_to_pixel\",\"browser_get_dom\",\"browser_get_network_request\",\"browser_input\",\"browser_list_network_requests\",\"browser_mouse_down\",\"browser_mouse_up\",\"browser_move_mouse\",\"browser_press_key\",\"browser_refresh_page\",\"browser_resize_window\",\"browser_scroll\",\"browser_scroll_dom\",\"browser_select_option\",\"browser_subagent\",\"call_mcp_tool\",\"capture_browser_console_logs\",\"capture_browser_screenshot\",\"click_browser_pixel\",\"command_status\",\"define_subagent\",\"delete_knowledge\",\"execute_browser_javascript\",\"find_by_name\",\"finish\",\"generate_image\",\"grep_search\",\"invoke_subagent\",\"list_browser_pages\",\"list_dir\",\"list_permissions\",\"list_plugin_accounts\",\"list_resources\",\"manage_inbox\",\"manage_subagents\",\"manage_task\",\"multi_replace_file_content\",\"notebook_edit\",\"notebook_execution\",\"open_browser_url\",\"read_browser_page\",\"read_resource\",\"read_url_content\",\"replace_file_content\",\"run_command\",\"run_workflow\",\"schedule\",\"search_marketplace\",\"search_web\",\"sed_file\",\"send_command_input\",\"send_message\",\"view_file\",\"wait\",\"wait_5_seconds\",\"write_to_file\"],\"permission_mode\":\"request-review\"}}",
+        "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"step_index\":0,\"state\":\"DONE\",\"step_type\":\"user_input\"}}",
+        "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"step_index\":1,\"state\":\"ACTIVE\",\"step_type\":\"agent_response\",\"text_delta\":\"Blue.\"}}",
+        "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"step_index\":1,\"state\":\"ACTIVE\",\"step_type\":\"agent_response\",\"text_delta\":\" It cannot be created by\"}}",
+        "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"step_index\":1,\"state\":\"ACTIVE\",\"step_type\":\"agent_response\",\"text_delta\":\" mixing other colors together.\"}}",
+        "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"step_index\":1,\"state\":\"DONE\",\"step_type\":\"agent_response\",\"text_delta\":\"\\n\",\"duration_seconds\":2.246165,\"usage\":{\"input_tokens\":2332,\"output_tokens\":12,\"thinking_tokens\":0,\"cache_read_tokens\":0,\"total_tokens\":2344}}}",
+        "{\"event\":\"result\",\"result\":{\"conversation_id\":\"680746fe-09ab-420b-9059-c2b6cf560306\",\"status\":\"SUCCESS\",\"response\":\"Blue. It cannot be created by mixing other colors together.\\n\",\"duration_seconds\":2.2626910000000002,\"num_turns\":1,\"usage\":{\"input_tokens\":2332,\"output_tokens\":12,\"thinking_tokens\":0,\"cache_read_tokens\":0,\"total_tokens\":2344}}}"
+      ],
+      "exitCode": 0
+    },
+    "compare": {
+      "lines": [
+        "{\"type\":\"thread.started\",\"thread_id\":\"01a20575-d4d6-7bb1-928e-7db41b6c7078\"}",
+        "{\"type\":\"turn.started\"}",
+        "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"All three name **blue** and agree that a primary colour cannot be made by mixing other colours. Codex and Grok give the same answer; Antigravity says the reason more briefly. I’d act on any of them, since they answer the question consistently.\"}}",
+        "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12399,\"cached_input_tokens\":8448,\"cache_write_input_tokens\":0,\"output_tokens\":58,\"reasoning_output_tokens\":0}}"
+      ],
+      "exitCode": 0
+    }
+  }
+}

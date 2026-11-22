@@ -1,0 +1,301 @@
+import type { DatabaseSync } from "node:sqlite";
+import { CLAUDE_CODE } from "../drivers/claude-code.ts";
+import { makeReviewFolder } from "../drivers/cli-sandbox.ts";
+import { DriverUnavailableError, type Driver, type DriverSession } from "../drivers/contract.ts";
+import type { DriverEvent } from "../drivers/events.ts";
+import { REVIEW_LIMIT_MS } from "../engine/review.ts";
+import { agentName, chatPrompt, comparePrompt, type ChatEntry } from "../engine/roles.ts";
+import { now, transaction } from "../store/db.ts";
+import { TurnError, type Turns } from "./turns.ts";
+
+/*
+ * Chat with any agent, or several at once. Claude Code keeps a conversation in its own session and is continued from
+ * it (api/turns.ts) while it is the only agent that has answered since its last reply. Codex, Grok and Antigravity keep
+ * none here (capability `resume: false`): each message to one of them is one turn in the same confinement as a review
+ * (a new empty folder, Codex's read-only profile or the process sandbox, no tools for Grok and Antigravity, no network
+ * for commands, key variables stripped), and Botbench sends it the chat so far, as data, before the new message
+ * (engine/roles.ts, `chatPrompt`). Claude Code is sent the same when another agent answered since its last reply.
+ *
+ * What a chat is made of is stored: every attempt a chat started (`chat_attempts`), and each message sent to agents
+ * given the conversation by Botbench, or each request to compare answers (`chat_rounds`). Only a chat's own attempts
+ * are read back as its conversation, so nothing a task or a review wrote is ever passed on. The owner's device keeps
+ * which attempts make up the chat on screen, as before. Nothing an agent writes is run: it is shown as text and passed
+ * on as data.
+ */
+
+/** The most agents one message is sent to. */
+export const MAX_ASKED = 4;
+
+export interface ChatTarget {
+  agent: string;
+  /** A model name, null for the agent's own default, undefined for the configured one. */
+  model: string | null | undefined;
+}
+
+export interface ChatReply {
+  attemptId: number;
+  turn: number;
+  agent: string;
+  model: string | null;
+  roundId: number | null;
+}
+
+export interface ChatRound {
+  id: number;
+  kind: "ask" | "compare";
+  message: string;
+  compares: number | null;
+}
+
+/** What a screen needs to show an attempt of a chat: who answered, and the message it answered. */
+export interface ChatAttemptInfo {
+  agent: string;
+  model: string | null;
+  /** Null for an attempt no chat started, or a Claude Code session that kept the conversation itself. */
+  round: ChatRound | null;
+  /** True for an attempt a chat started. */
+  chat: boolean;
+}
+
+export interface Chat {
+  /** Send one message, or a request to compare a round's answers, to each agent asked. Resolves once each has started or is recorded as failed. */
+  send(o: { message: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number }): Promise<ChatReply[]>;
+  /** Stop a running chat turn of an agent with no conversation of its own. False when no such turn runs in this attempt. */
+  interrupt(attemptId: number): Promise<boolean>;
+  turnRunning(attemptId: number): boolean;
+  info(attemptId: number): ChatAttemptInfo | null;
+  close(): Promise<void>;
+}
+
+const words = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+const minutes = (ms: number): string => (ms < 120_000 ? `${Math.round(ms / 1000)} seconds` : `${Math.round(ms / 60_000)} minutes`);
+
+function roundOf(db: DatabaseSync, id: number | null): ChatRound | null {
+  if (id === null) return null;
+  const row = db.prepare("SELECT id, kind, message, compares FROM chat_rounds WHERE id = ?").get(id);
+  return row ? { id: Number(row.id), kind: String(row.kind) as ChatRound["kind"], message: String(row.message), compares: row.compares === null ? null : Number(row.compares) } : null;
+}
+
+export function chatAttemptInfo(db: DatabaseSync, attemptId: number): ChatAttemptInfo | null {
+  const row = db.prepare("SELECT a.driver, a.model, c.attempt_id AS chat, c.round_id FROM attempts a LEFT JOIN chat_attempts c ON c.attempt_id = a.id WHERE a.id = ?").get(attemptId);
+  if (!row) return null;
+  return { agent: String(row.driver), model: row.model === null ? null : String(row.model), round: roundOf(db, row.round_id === null ? null : Number(row.round_id)), chat: row.chat !== null };
+}
+
+/** The model an attempt answered with, as its session named it, else as it was asked for. */
+function answeredModel(events: readonly DriverEvent[], asked: string | null): string {
+  const started = events.find((e): e is Extract<DriverEvent, { type: "session_started" }> => e.type === "session_started" && typeof e.model === "string");
+  return started?.model ?? asked ?? "its default model";
+}
+
+/** An agent's reply as another agent is told who wrote it: "Codex (gpt-6-luna)". */
+const replyFrom = (agent: string, model: string): string => `${agentName(agent)} (${model})`;
+
+/** An attempt's events by turn, oldest first. */
+function turnsOf(db: DatabaseSync, attemptId: number): DriverEvent[][] {
+  const turns = new Map<number, DriverEvent[]>();
+  for (const row of db.prepare("SELECT turn, payload FROM events WHERE attempt_id = ? ORDER BY id").all(attemptId)) {
+    const turn = Number(row.turn);
+    if (!turns.has(turn)) turns.set(turn, []);
+    turns.get(turn)!.push(JSON.parse(String(row.payload)) as DriverEvent);
+  }
+  return [...turns.entries()].sort(([a], [b]) => a - b).map(([, events]) => events);
+}
+
+const replyText = (events: readonly DriverEvent[]): string =>
+  events
+    .filter((e): e is Extract<DriverEvent, { type: "text" }> => e.type === "text")
+    .map((e) => e.text)
+    .join("\n\n");
+
+/** What the owner said for a round, as the conversation passed on says it. */
+const roundWords = (round: ChatRound): string => (round.kind === "compare" ? "The owner asked for a comparison of the answers above." : round.message);
+
+/**
+ * A chat's conversation so far, oldest first: the owner's messages and the agents' replies, text only (no tool output,
+ * no prompt Botbench framed). Refuses an attempt no chat started.
+ */
+export function chatHistory(db: DatabaseSync, conversation: readonly number[]): ChatEntry[] {
+  const entries: ChatEntry[] = [];
+  const said = new Set<number>();
+  for (const attemptId of conversation) {
+    const info = chatAttemptInfo(db, attemptId);
+    if (info === null || !info.chat) throw new TurnError(409, "This chat began before Botbench could pass a chat on to another agent. Start a new chat to ask another agent.");
+    for (const [at, events] of turnsOf(db, attemptId).entries()) {
+      const framed = info.round !== null && at === 0;
+      if (framed && !said.has(info.round!.id)) {
+        said.add(info.round!.id);
+        entries.push({ from: "owner", text: roundWords(info.round!) });
+      } else if (!framed) {
+        const prompt = events.find((e): e is Extract<DriverEvent, { type: "user_prompt" }> => e.type === "user_prompt");
+        if (prompt !== undefined) entries.push({ from: "owner", text: prompt.text });
+      }
+      const text = replyText(events);
+      if (text.trim() !== "") entries.push({ from: replyFrom(info.agent, answeredModel(events, info.model)), text });
+    }
+  }
+  return entries;
+}
+
+/**
+ * The Claude Code attempt a message to Claude Code alone continues, keeping its own session: the chat's newest attempt,
+ * when it is Claude Code's and no other agent answered beside it. Null when Claude Code must be given the conversation.
+ * Undefined for a chat with nothing in it yet.
+ */
+export function claudeContinues(db: DatabaseSync, conversation: readonly number[]): number | null | undefined {
+  const last = conversation.at(-1);
+  if (last === undefined) return undefined;
+  const info = chatAttemptInfo(db, last);
+  if (info === null || info.agent !== CLAUDE_CODE) return null;
+  if (info.round === null) return last;
+  const members = Number(db.prepare("SELECT count(*) AS n FROM chat_attempts WHERE round_id = ?").get(info.round.id)!.n);
+  return members === 1 && info.round.kind === "ask" ? last : null;
+}
+
+export interface ChatOptions {
+  db: DatabaseSync;
+  /** Botbench's data folder: each chat turn of an agent with no conversation of its own works in a new empty folder in it. */
+  home: string;
+  turns: Turns;
+  claude: Driver;
+  /** The agents with no conversation of their own here, by name. */
+  agents: Partial<Record<string, Driver>>;
+  onEvent: () => void;
+  /** The time a chat turn of such an agent gets: a review's. */
+  limitMs?: number;
+}
+
+export function createChat(o: ChatOptions): Chat {
+  const { db } = o;
+  const limitMs = o.limitMs ?? REVIEW_LIMIT_MS;
+  const running = new Map<number, { session: DriverSession; done: Promise<void> }>();
+  let closed = false;
+
+  const driverOf = (agent: string): Driver | undefined => (agent === CLAUDE_CODE ? o.claude : Object.hasOwn(o.agents, agent) ? o.agents[agent] : undefined);
+  const join = (attemptId: number, roundId: number | null): void => {
+    db.prepare("INSERT OR IGNORE INTO chat_attempts (attempt_id, round_id, created_at) VALUES (?, ?, ?)").run(attemptId, roundId, now());
+  };
+
+  /** Record that an agent could not start on a round: an attempt that ended at once, with the reason. */
+  const failed = (agent: string, model: string | null, roundId: number, problem: string): ChatReply => {
+    const id = transaction(db, () => {
+      const at = now();
+      const attemptId = Number(db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (?, ?, NULL, 'failed', NULL, ?, ?)").run(agent, model, at, at).lastInsertRowid);
+      join(attemptId, roundId);
+      const event: DriverEvent = { type: "turn_ended", reason: "error", detail: problem };
+      db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, ?, ?)").run(attemptId, at, event.type, JSON.stringify(event));
+      return attemptId;
+    });
+    o.onEvent();
+    return { attemptId: id, turn: 1, agent, model, roundId };
+  };
+
+  /** One turn of an agent with no conversation of its own, in a new empty folder, with a time limit. */
+  const askOne = async (driver: Driver, model: string | null, roundId: number, prompt: string): Promise<ChatReply> => {
+    const name = agentName(driver.name);
+    const folder = makeReviewFolder(o.home);
+    let session: DriverSession;
+    try {
+      // Exactly what the review station asks for, in a folder with nothing in it: read-only, no host, no way to ask.
+      session = await driver.startAttempt({ db, cwd: folder.path, readOnly: true, confinement: { dataDir: o.home, allowedHosts: [] }, ...(model === null ? {} : { model }) });
+    } catch (err) {
+      folder.remove();
+      return failed(driver.name, model, roundId, `${name} could not answer: ${err instanceof DriverUnavailableError ? (err.probe.problem ?? err.message) : words(err)}`);
+    }
+    join(session.attemptId, roundId);
+    session.onEvent(o.onEvent);
+    const timer = setTimeout(() => {
+      const event: DriverEvent = { type: "error", message: `${name} did not finish within ${minutes(limitMs)} and was stopped.`, raw: null };
+      db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, ?, ?)").run(session.attemptId, now(), event.type, JSON.stringify(event));
+      o.onEvent();
+      void session.interruptTurn().catch(() => {});
+    }, limitMs);
+    const turn = session.sendTurn(prompt);
+    const done = turn
+      .catch(() => "error" as const)
+      .finally(() => clearTimeout(timer))
+      .then(() => session.close().catch(() => {}))
+      .finally(() => {
+        running.delete(session.attemptId);
+        folder.remove();
+      });
+    running.set(session.attemptId, { session, done });
+    return { attemptId: session.attemptId, turn: 1, agent: driver.name, model, roundId };
+  };
+
+  /** Claude Code given the conversation by Botbench, in a new session of its own. */
+  const askClaude = async (model: string | null | undefined, roundId: number, prompt: string): Promise<ChatReply> => {
+    try {
+      const started = await o.turns.start(prompt, undefined, model, (attemptId) => join(attemptId, roundId));
+      return { ...started, agent: CLAUDE_CODE, model: model ?? null, roundId };
+    } catch (err) {
+      return failed(CLAUDE_CODE, model ?? null, roundId, `Claude Code could not answer: ${err instanceof DriverUnavailableError ? (err.probe.problem ?? err.message) : words(err)}`);
+    }
+  };
+
+  const send: Chat["send"] = async ({ message, conversation, agents, compare }) => {
+    if (closed) throw new TurnError(503, "Botbench is shutting down.");
+    if (agents.length < 1 || agents.length > MAX_ASKED) throw new TurnError(400, `Ask between 1 and ${MAX_ASKED} agents.`);
+    if (new Set(agents.map((a) => a.agent)).size !== agents.length) throw new TurnError(400, "Each agent can be asked once per message.");
+    for (const { agent } of agents) if (driverOf(agent) === undefined) throw new TurnError(400, `Botbench has no agent called ${JSON.stringify(agent)} to ask.`);
+    if (compare !== undefined && agents.length !== 1) throw new TurnError(400, "Ask one agent to compare the answers.");
+
+    // A message to Claude Code alone, while it is the only agent that has answered since its last reply, continues its own session.
+    if (compare === undefined && agents.length === 1 && agents[0]!.agent === CLAUDE_CODE) {
+      const continues = claudeContinues(db, conversation);
+      if (continues !== null) {
+        const started = await o.turns.start(message, continues, agents[0]!.model, (attemptId) => join(attemptId, null));
+        join(started.attemptId, null);
+        return [{ ...started, agent: CLAUDE_CODE, model: agents[0]!.model ?? null, roundId: null }];
+      }
+    }
+
+    let prompt: string;
+    let round: { kind: "ask" | "compare"; message: string; compares: number | null };
+    if (compare !== undefined) {
+      const compared = roundOf(db, compare);
+      if (compared === null || compared.kind !== "ask") throw new TurnError(404, "Botbench has no record of those answers.");
+      const answers = db
+        .prepare("SELECT attempt_id FROM chat_attempts WHERE round_id = ? ORDER BY attempt_id")
+        .all(compare)
+        .flatMap((row) => {
+          const info = chatAttemptInfo(db, Number(row.attempt_id))!;
+          const events = turnsOf(db, Number(row.attempt_id))[0] ?? [];
+          const text = replyText(events);
+          return text.trim() === "" ? [] : [{ from: replyFrom(info.agent, answeredModel(events, info.model)), text }];
+        });
+      if (answers.length < 2) throw new TurnError(409, "There are fewer than two answers to compare.");
+      prompt = comparePrompt({ question: compared.message, answers });
+      round = { kind: "compare", message: compared.message, compares: compare };
+    } else {
+      prompt = chatPrompt({ history: chatHistory(db, conversation), message }).prompt;
+      round = { kind: "ask", message, compares: null };
+    }
+
+    // Each agent asked must be usable now; otherwise nothing is sent to any of them.
+    const probes = await Promise.all(agents.map(({ agent }) => driverOf(agent)!.probe().catch((err: unknown) => ({ problem: words(err) }))));
+    const down = probes.findIndex((p) => p.problem !== null);
+    if (down !== -1) throw new TurnError(409, `${agentName(agents[down]!.agent)} cannot answer now: ${probes[down]!.problem} Nothing was sent.`);
+    if (closed) throw new TurnError(503, "Botbench is shutting down.");
+
+    const roundId = Number(db.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES (?, ?, ?, ?)").run(round.kind, round.message, round.compares, now()).lastInsertRowid);
+    return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt) : askOne(driverOf(agent)!, model ?? null, roundId, prompt))));
+  };
+
+  const interrupt = async (attemptId: number): Promise<boolean> => {
+    const entry = running.get(attemptId);
+    if (entry === undefined) return false;
+    await entry.session.interruptTurn();
+    return true;
+  };
+
+  const close = async (): Promise<void> => {
+    closed = true;
+    await Promise.allSettled([...running.values()].map(async ({ session, done }) => {
+      await session.interruptTurn().catch(() => {});
+      await done;
+    }));
+  };
+
+  return { send, interrupt, turnRunning: (id) => running.has(id), info: (id) => chatAttemptInfo(db, id), close };
+}

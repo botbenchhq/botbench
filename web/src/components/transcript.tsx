@@ -354,8 +354,9 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
 }
 
 /** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
-function Row({ event, story, modelName, modelDiffers, promptBy, folded }: { event: StoredEvent; story: Story; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy: string; folded: boolean }) {
+function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: { event: StoredEvent; story: Story; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy: string; folded: boolean; who: (attemptId: number) => string | null }) {
   const e = event.payload;
+  const by = who(event.attemptId);
   switch (e.type) {
     case "user_prompt":
       return (
@@ -369,7 +370,7 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded }: { even
       // Claude Code sends each piece of its reply whole, never word by word, so a text row is a finished message the
       // moment it is stored: the message's streaming state, its caret and its stopped state have no event to come from.
       return (
-        <Line kind={e.type} look="agent" label="Claude Code" state="done">
+        <Line kind={e.type} look="agent" label={by ?? "Claude Code"} state="done">
           <Body>
             <Theirs>{e.text}</Theirs>
           </Body>
@@ -490,13 +491,13 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded }: { even
               <summary className="ds-message__summary">
                 <span className="ds-message__label">{took === null ? "Usage" : `Worked for ${took}`}</span>
               </summary>
-              {tokens === false ? <Body>Claude Code reported no token counts for this reply.</Body> : tokens}
+              {tokens === false ? <Body>{`${by === null ? "Claude Code" : by.split(" · ")[0]} reported no token counts for this reply.`}</Body> : tokens}
             </details>
           </li>
         );
       }
       return (
-        <Line kind={e.type} look="end" label={e.reason === "interrupted" ? "Stopped" : "Error"}>
+        <Line kind={e.type} look="end" label={by === null ? (e.reason === "interrupted" ? "Stopped" : "Error") : `${by}: ${e.reason === "interrupted" ? "Stopped" : "Failed"}`}>
           <Body>
             {e.reason === "interrupted" ? "Stopped before it finished." : e.detail === null ? "Ended with an error." : "Ended with an error: "}
             {e.reason === "error" && e.detail !== null && <Theirs>{e.detail}</Theirs>}
@@ -514,6 +515,9 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded }: { even
       return null;
   }
 }
+
+/** No attempt's replies are named apart: every reply is Claude Code's. */
+const NOBODY = (): null => null;
 
 /** The steps a step group holds: three or more tool calls in a row, with nothing else shown between them. */
 const GROUP_FROM = 3;
@@ -559,13 +563,13 @@ function StepGroup({ steps, live, children }: { steps: { call: Of<"tool_call">; 
  * transcript that sits behind a disclosure of its own, so its rows fold one level and not two, and its tool calls are
  * not grouped (a step group inside a disclosure would be a third level).
  */
-export function Transcript({ events, working, modelName, modelDiffers, promptBy = "You", folded = false }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean }) {
+export function Transcript({ events, working, modelName, modelDiffers, promptBy = "You", folded = false, who = NOBODY, after }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean; who?: (attemptId: number) => string | null; after?: ReactNode }) {
   const story = useMemo(() => readStory(events, working !== null), [events, working]);
   const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
   const set = useCallback((id: string, open: boolean) => setOpened((have) => new Map(have).set(id, open)), []);
   const openedValue = useMemo(() => ({ opened, set }), [opened, set]);
   // The rows the transcript shows, in order: an event that is told by another row (a result with its call, a usage count) has none.
-  const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, modelDiffers, promptBy, folded }) })).filter(({ row }) => row !== null);
+  const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, modelDiffers, promptBy, folded, who }) })).filter(({ row }) => row !== null);
   const rows: ReactNode[] = [];
   for (let at = 0; at < shown.length; ) {
     let end = at;
@@ -596,6 +600,7 @@ export function Transcript({ events, working, modelName, modelDiffers, promptBy 
     <Opened.Provider value={openedValue}>
       <ol role="log" aria-live="polite" aria-label="Transcript" className="ds-stack ds-gap-sm">
         {rows}
+        {after}
         {working !== null && (
           <li className="ds-streaming ds-streaming--row">
             <span role="status">{working}</span>
