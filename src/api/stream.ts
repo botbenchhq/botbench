@@ -9,20 +9,22 @@ export interface StoredEvent {
   /** The row id in `events`. Ids only grow, so "everything after id N" is a complete answer. */
   id: number;
   turn: number;
+  /** When the event was stored, as the database has it. */
+  ts: string;
   type: DriverEvent["type"];
   payload: DriverEvent;
 }
 
 function toStored(row: Record<string, unknown>): StoredEvent {
-  return { attemptId: Number(row.attempt_id), id: Number(row.id), turn: Number(row.turn), type: String(row.type) as DriverEvent["type"], payload: JSON.parse(String(row.payload)) as DriverEvent };
+  return { attemptId: Number(row.attempt_id), id: Number(row.id), turn: Number(row.turn), ts: String(row.ts), type: String(row.type) as DriverEvent["type"], payload: JSON.parse(String(row.payload)) as DriverEvent };
 }
 
 /** Stored events with an id above `after`, oldest first; one attempt's, or everyone's. */
 export function eventsAfter(db: DatabaseSync, after: number, attemptId?: number): StoredEvent[] {
   const rows =
     attemptId === undefined
-      ? db.prepare("SELECT id, attempt_id, turn, type, payload FROM events WHERE id > ? ORDER BY id").all(after)
-      : db.prepare("SELECT id, attempt_id, turn, type, payload FROM events WHERE attempt_id = ? AND id > ? ORDER BY id").all(attemptId, after);
+      ? db.prepare("SELECT id, attempt_id, turn, ts, type, payload FROM events WHERE id > ? ORDER BY id").all(after)
+      : db.prepare("SELECT id, attempt_id, turn, ts, type, payload FROM events WHERE attempt_id = ? AND id > ? ORDER BY id").all(attemptId, after);
   return rows.map(toStored);
 }
 

@@ -8,10 +8,10 @@ import { Icon, type IconName } from "./icon.tsx";
  * also keeps the phone's tab bar within the five it holds.
  */
 const SCREENS: readonly { name: string; label: string; href: string; icon: IconName }[] = [
-  { name: "turn", label: "Turn", href: "#/turn", icon: "terminal" },
+  { name: "turn", label: "Chat", href: "#/turn", icon: "terminal" },
   { name: "runs", label: "Runs", href: "#/runs", icon: "git-branch" },
   { name: "tasks", label: "Tasks", href: "#/tasks", icon: "file" },
-  { name: "trust", label: "Trust", href: "#/trust", icon: "circle-check" },
+  { name: "trust", label: "Permissions", href: "#/trust", icon: "circle-check" },
 ];
 export type ScreenName = "turn" | "runs" | "tasks" | "trust";
 

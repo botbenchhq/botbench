@@ -73,7 +73,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
           <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
             {busy ? "Starting" : "Start run"}
           </button>
-          <p>The model above plans the run: Claude Code reads the repository in a separate, read-only copy and proposes tasks. Nothing is built until you approve the plan. Your checkout and your branch are not touched.</p>
+          <p>The model above plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks. Nothing is built until you approve the plan. Your own files and your branch are not touched.</p>
         </form>
       </Page>
     </Frame>

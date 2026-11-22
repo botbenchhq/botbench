@@ -9,11 +9,13 @@ const ID = /^[1-9]\d{0,14}$/;
 
 async function answer(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, id: number): Promise<void> {
   const body = await readJsonBody(req);
+  // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
   if (!isObject(body) || (body.decision !== "allow" && body.decision !== "decline")) throw new ApprovalError(400, 'expected { "decision": "allow" | "decline", "note"?: "...", "standing"?: true }');
   const { note, standing } = body;
   if (note !== undefined && note !== null && (typeof note !== "string" || note.length > MAX_NOTE)) throw new ApprovalError(400, `"note" must be text of at most ${MAX_NOTE} characters.`);
   if (standing !== undefined && typeof standing !== "boolean") throw new ApprovalError(400, '"standing" must be true or false.');
   if (standing === true && body.decision !== "allow") throw new ApprovalError(400, '"standing" goes with the decision "allow" only.');
+  // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
   if (standing === true && typeof note === "string" && note.trim() !== "") throw new ApprovalError(400, 'A note goes with a decline; "standing" takes none.');
   // The flag asks; the broker decides, from its own records, whether this request may be given standing permission.
   if (standing === true) json(res, 200, ctx.broker.grantStanding(id));

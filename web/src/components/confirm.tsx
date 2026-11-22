@@ -7,7 +7,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
  * `losing` is for a step that takes something away: the dialog is then an alert dialog with the cancel button first.
  * `children` is the statement.
  */
-export function ConfirmAction({ label, opener, title, confirmLabel, cancelLabel, disabled, losing = false, testId, onConfirm, children }: { label: string; opener?: { small: boolean; name: string }; title: string; confirmLabel: string; cancelLabel: string; disabled: boolean; losing?: boolean; testId: string; onConfirm: () => void; children: ReactNode }) {
+export function ConfirmAction({ label, opener, title, confirmLabel, cancelLabel, disabled, losing = false, testId, onConfirm, children }: { label: string; opener?: { small: boolean; name: string }; title: ReactNode; confirmLabel: string; cancelLabel: string; disabled: boolean; losing?: boolean; testId: string; onConfirm: () => void; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
@@ -40,7 +40,7 @@ export function ConfirmAction({ label, opener, title, confirmLabel, cancelLabel,
 
   return (
     <>
-      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-label={opener?.name} className={opener?.small === true ? "gw-button gw-button--quiet gw-button--small" : "gw-button"}>
+      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-label={opener?.name} data-gw-content-label={opener === undefined ? undefined : ""} className={opener?.small === true ? "gw-button gw-button--quiet gw-button--small" : "gw-button"}>
         {label}
       </button>
       {open && (

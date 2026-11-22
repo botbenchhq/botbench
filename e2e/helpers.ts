@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, test as base, type Page } from "@playwright/test";
 import { startSmelt, type Smelt } from "./smelt.ts";
+import { bannedIn } from "./voice.ts";
 
 // What every end-to-end test shares. Everything is real: a Smelt process, the built client, Chrome,
 // and for the tests marked LIVE the owner's Claude Code on its cheapest model.
@@ -147,6 +148,65 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   expect(found.sansLoaded, `${screen}: IBM Plex Sans is loaded from Smelt, not substituted`).toBe(true);
   expect(found.monoLoaded, `${screen}: IBM Plex Mono is loaded from Smelt, not substituted`).toBe(true);
   expect(found.overflow, `${screen}: no sideways scrolling at phone width`).toBe(0);
+  await checkWords(page, screen);
+}
+
+/**
+ * The words on the screen, checked against docs/product/voice.md: every piece of text Smelt itself wrote, drawn or not
+ * (a closed disclosure and a visually hidden label are one tap or one screen reader away), every accessible name and
+ * the tab title hold none of the internal words that list bans. Text somebody else wrote (a prompt, the agent's reply,
+ * a command, a path, a program's output) is marked `data-gw-content` where it is rendered and is not read here; nor is
+ * an accessible name marked `data-gw-content-label`, which holds such text, nor what a sentence quotes, nor a path in it.
+ * `checkDesign` calls it, so it runs on every screen and state the design check runs on.
+ */
+export async function checkWords(page: Page, screen: string): Promise<void> {
+  const pieces = await page.evaluate(() => {
+    const found: string[] = [document.title];
+    const ours = (el: Element | null): boolean => el !== null && el.closest("[data-gw-content], script, style") === null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    // Text is read element by element, so words that sit side by side in two elements are not run together.
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const text = (node.textContent ?? "").trim();
+      if (text !== "" && ours(node.parentElement)) found.push(text);
+    }
+    for (const el of document.querySelectorAll("[aria-label], [title], [alt], [placeholder]")) {
+      // A name that holds somebody else's words (the command a button removes, the title of the task it edits) is marked where it is written.
+      if (!ours(el) || el.hasAttribute("data-gw-content-label")) continue;
+      for (const name of ["aria-label", "title", "alt", "placeholder"]) {
+        const value = el.getAttribute(name);
+        if (value !== null && value.trim() !== "") found.push(value);
+      }
+    }
+    return found;
+  });
+  const findings = pieces.flatMap((text) => bannedIn(text).map((term) => `"${term}" in: ${text.slice(0, 160)}`));
+  expect(findings, `${screen}: internal words on the screen (docs/product/voice.md)`).toEqual([]);
+}
+
+/**
+ * Keep a screenshot of the whole screen named `copy-<name>.png` when SMELT_COPY_SHOTS is set to a directory: the
+ * screens as the plain-language pass left them, for a reader to judge. The window is made as tall as the page for the
+ * capture and put back after it, so the header and the tab bar, which stay in place while a page scrolls, are drawn
+ * once, where they belong. Resizing leaves an inline size on a textarea that sizes itself; what the capture added is
+ * taken off again, so the design check still sees the client's own page.
+ */
+export async function copyShot(page: Page, name: string): Promise<void> {
+  const directory = process.env.SMELT_COPY_SHOTS;
+  if (!directory) return;
+  const size = page.viewportSize()!;
+  await page.evaluate(() => document.querySelectorAll("[style]").forEach((el) => el.setAttribute("data-styled-before-shot", "")));
+  // A screen that scrolls inside itself (the chat) is as tall as the window: its own scrolling part says how much more there is.
+  const height = await page.evaluate(() => Math.max(document.documentElement.scrollHeight, ...[...document.querySelectorAll("*")].map((el) => (el.scrollHeight > el.clientHeight ? document.documentElement.clientHeight + el.scrollHeight - el.clientHeight : 0))));
+  await page.setViewportSize({ width: size.width, height: Math.min(Math.max(height, size.height), 6000) });
+  // Two frames, so the page is laid out and drawn at the new size before it is captured.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.screenshot({ path: path.join(directory, `copy-${name}.png`) });
+  await page.setViewportSize(size);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => {
+    document.querySelectorAll("[style]:not([data-styled-before-shot])").forEach((el) => el.removeAttribute("style"));
+    document.querySelectorAll("[data-styled-before-shot]").forEach((el) => el.removeAttribute("data-styled-before-shot"));
+  });
 }
 
 export { expect };

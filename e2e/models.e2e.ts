@@ -9,6 +9,9 @@ import { startSmelt } from "./smelt.ts";
 
 const CONFIGURED = "haiku";
 const CHEAP = "claude-haiku-4-5-20251001";
+// The name Claude Code itself reports for that id. Smelt shows the name and keeps the id one tap away.
+const NAME = "Haiku [\\d.]+";
+const NAMED_ROW = new RegExp(`^Model${NAME}$`);
 // As long as a model name may be, and unbroken: the screen must wrap it wherever it shows it.
 const UNKNOWN = `smelt-no-such-model-${"1".repeat(80)}`;
 
@@ -26,7 +29,7 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   await expect(page.getByTestId("model-source")).toHaveText("The list is what Claude Code reports on this Mac.");
   const options = await picker.locator("option").evaluateAll((all) => all.map((o) => ({ value: (o as HTMLOptionElement).value, text: o.textContent ?? "" })));
   expect(options[0]!.value).toBe("");
-  expect(options[0]!.text).toMatch(/^CLI default/);
+  expect(options[0]!.text).toMatch(/^Claude Code's default/);
   expect(options.at(-1)!.text).toBe("Other…");
   expect(options.map((o) => o.value)).toEqual(expect.arrayContaining([CONFIGURED, CHEAP, "sonnet"]));
   await expect(page.getByLabel("Model name")).toHaveCount(0);
@@ -50,13 +53,13 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   // A name the CLI does not know goes to the CLI, and what the CLI says about it is shown in words.
   await other.fill(UNKNOWN);
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator('[data-event="turn_ended"]')).toContainText(`Turn ended with an error: api_error: There's an issue with the selected model (${UNKNOWN}).`, { timeout: 60_000 });
+  await expect(page.locator('[data-event="turn_ended"]')).toContainText(`Ended with an error: api_error: There's an issue with the selected model (${UNKNOWN}).`, { timeout: 60_000 });
   await expect(page.locator('[data-event="error"]')).toContainText("It may not exist or you may not have access to it.");
   await expect(page.locator('[data-event="text"]')).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   expect(JSON.parse(turnsSent[0]!)).toMatchObject({ model: UNKNOWN });
   // The session names the model it was started on; the screen does not claim that it answered.
-  await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${UNKNOWN} (session started, no completed turn)`);
+  await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${UNKNOWN} (no reply yet)`);
   await checkDesign(page, "turn, a model name of 100 characters");
 
   // Pick a cheap model from the list and send the prompt again: the conversation goes on, on that model.
@@ -65,18 +68,21 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   await page.getByLabel("Prompt").fill("Reply with exactly the word: lynx");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="text"]').last()).toContainText(/lynx/i, { timeout: 120_000 });
-  await expect(page.locator('[data-event="turn_ended"]').last()).toContainText("Turn completed.");
-  await expect(page.locator('[data-event="session_started"]').last()).toHaveText(`Sessionstarted on ${CHEAP}`);
-  await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${CHEAP}`);
+  await expect(page.locator('[data-event="turn_ended"]').last().locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
+  // The model is named as Claude Code names it; the exact id is under the row.
+  await expect(page.locator('[data-event="session_started"]').last().locator("summary")).toHaveText(NAMED_ROW);
+  await expect(page.locator('[data-event="session_started"]').last()).toContainText(`Model id: ${CHEAP}`);
+  await expect(page.getByTestId("turn-model")).toHaveText(new RegExp(`^Model: ${NAME}$`));
   expect(JSON.parse(turnsSent[1]!)).toMatchObject({ model: CHEAP });
-  await expect(page.getByRole("button")).toHaveCount(1);
+  // Send is the one primary action; New chat, which begins again, sits beside the title.
+  await expect(page.getByRole("button")).toHaveText(["New chat", "Send"]);
   await checkDesign(page, "turn, with the model that answered");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u25-turn-model.png") });
 
   // The choice is remembered by this browser: after a reload, and on the New task screen as well.
   await page.reload();
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue(CHEAP);
-  await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${CHEAP}`);
+  await expect(page.getByTestId("turn-model")).toHaveText(new RegExp(`^Model: ${NAME}$`));
   await openNewTask(page);
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue(CHEAP);
 
@@ -110,7 +116,7 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
 
   // Before anything has answered, the screen says what was asked for and no more.
   await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
-  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^(no session yet|${CHEAP} \\(session started, no completed turn\\))\\. Requested: ${CHEAP}\\.$`));
+  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^(not started yet|${NAME} \\(no reply yet\\))\\. You asked for: ${NAME}\\.$`));
 
   // This test is about the model, so any command the agent wants to run is declined, as an owner could.
   await expect(async () => {
@@ -118,13 +124,14 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
     for (const approval of pending.approvals) {
       await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Not needed for this task; just create the file." } });
     }
-    await expect(page.getByTestId("task-status")).toHaveText(/^Built\./, { timeout: 2_000 });
+    await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
 
   // The fact is labelled Model, so its value does not repeat the word.
   await expect(page.locator("dt", { hasText: "Model" })).toHaveCount(1);
-  await expect(page.getByTestId("task-model")).toHaveText(`${CHEAP}. Requested: ${CHEAP}.`);
-  await expect(page.locator('[data-event="session_started"]')).toHaveText(`Sessionstarted on ${CHEAP}`);
+  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^${NAME}\\. You asked for: ${NAME}\\.$`));
+  await expect(page.locator('[data-event="session_started"] summary')).toHaveText(NAMED_ROW);
+  await expect(page.locator('[data-event="session_started"]')).toContainText(`Model id: ${CHEAP}`);
   const taskId = Number(/#\/tasks\/(\d+)$/.exec(page.url())![1]);
   expect(((await (await page.request.get(`${smelt.base}/api/tasks/${taskId}`)).json()) as { requestedModel: string | null }).requestedModel).toBe(CHEAP);
   await checkDesign(page, "task, with its model");
@@ -144,7 +151,7 @@ test("where Claude Code reports no list, the picker offers the configured models
     const picker = page.getByLabel("Model", { exact: true });
     await expect(picker).toHaveValue("sonnet");
     await expect(page.getByTestId("model-source")).toHaveText("The list comes from Smelt's configuration: Claude Code reported none.");
-    expect(await picker.locator("option").allTextContents()).toEqual(["CLI default", "opus", "sonnet", "Other…"]);
+    expect(await picker.locator("option").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
     await checkDesign(page, "new task, models from configuration");
   } finally {
     expect((await smelt.stop()).leftover).toEqual([]);

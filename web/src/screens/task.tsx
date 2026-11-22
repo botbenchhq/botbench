@@ -2,53 +2,15 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type FileChange, type StoredEvent, type TaskDetail } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
+import { DiffLine } from "../components/diff.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
-import { modelState, sessionModel } from "../components/model-picker.tsx";
+import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { statusSentence } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
-
-/** Lines are told apart by their first character, which stays in the text; weight and background only repeat it. */
-function lineKind(line: string): "added" | "removed" | "hunk" | "header" | "context" {
-  if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ") || /^(new|deleted) file mode /.test(line)) return "header";
-  if (line.startsWith("@@")) return "hunk";
-  if (line.startsWith("+")) return "added";
-  if (line.startsWith("-")) return "removed";
-  return "context";
-}
-
-/** One line of a diff: its sign in one cell and its text in the next, as an insertion, a deletion or neither. */
-function DiffLine({ line }: { line: string }) {
-  const kind = lineKind(line);
-  if (kind === "added" || kind === "removed") {
-    const cells = (
-      <>
-        <span className="gw-diff__sign">{line[0]}</span>
-        <span className="gw-diff__text">{line.slice(1)}</span>
-      </>
-    );
-    return kind === "added" ? (
-      <ins data-line={kind} className="gw-diff__line gw-diff__line--added">
-        {cells}
-      </ins>
-    ) : (
-      <del data-line={kind} className="gw-diff__line gw-diff__line--removed">
-        {cells}
-      </del>
-    );
-  }
-  // A context line starts with the space that is its sign. Git's own header lines, hunk headers and notes have none of their own.
-  const context = kind === "context";
-  return (
-    <span data-line={kind} className={context ? "gw-diff__line" : "gw-diff__line gw-diff__line--hunk"}>
-      <span className="gw-diff__sign"> </span>
-      <span className="gw-diff__text">{context && line.startsWith(" ") ? line.slice(1) : line}</span>
-    </span>
-  );
-}
 
 /** A unified diff as text, in a block that scrolls sideways on its own so the page never does. */
 function Diff({ path, state }: { path: string; state: DiffState }) {
@@ -56,7 +18,7 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
     return (
       <figure className="gw-diff" aria-busy="true">
         <p role="status" className="gw-diff__note">
-          Reading the diff.
+          Loading the changes.
         </p>
       </figure>
     );
@@ -64,21 +26,21 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
   if (state.kind === "failed") {
     return (
       <figure className="gw-diff">
-        <p role="alert" className="gw-diff__note">{`The diff could not be read. ${state.why}`}</p>
+        <p role="alert" className="gw-diff__note">{`The changes could not be loaded. ${state.why}`}</p>
       </figure>
     );
   }
   const lines = state.diff.replace(/\n$/, "").split("\n");
   return (
     <figure className="gw-diff">
-      <pre data-testid="diff-scroll" tabIndex={0} role="group" aria-label={`Diff of ${path}`} className="gw-diff__body">
-        <code data-testid="diff" className="gw-diff__lines">
+      <pre data-testid="diff-scroll" tabIndex={0} role="group" data-gw-content-label="" aria-label={`Changes in ${path}`} className="gw-diff__body">
+        <code data-testid="diff" data-gw-content="" className="gw-diff__lines">
           {lines.map((line, i) => (
             <DiffLine key={i} line={line} />
           ))}
         </code>
       </pre>
-      {state.truncated && <p className="gw-diff__note">This diff is longer than Smelt shows here. The whole of it is on the branch.</p>}
+      {state.truncated && <p className="gw-diff__note">These changes are longer than Smelt shows here. All of them are on the branch.</p>}
     </figure>
   );
 }
@@ -109,6 +71,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   const [open, setOpen] = useState<string[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
   const missing = useRef(false);
+  const nameOf = useModelNames(onSignedOut);
   /** Counts reads of the task, so an answer that arrives after a newer one was asked for is dropped. */
   const reads = useRef(0);
 
@@ -222,11 +185,11 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             <dl className="gw-key-value">
               <div className="gw-key-value__item">
                 <dt className="gw-key-value__label">Model</dt>
-                <dd data-testid="task-model" className="gw-key-value__value">{`${modelState(session)}. Requested: ${task.requestedModel ?? "the CLI default"}.`}</dd>
+                <dd data-testid="task-model" className="gw-key-value__value">{`${modelState(session, nameOf)}. You asked for: ${task.requestedModel === null ? "Claude Code's default" : nameOf(task.requestedModel)}.`}</dd>
               </div>
               <div className="gw-key-value__item">
                 <dt className="gw-key-value__label">Repository</dt>
-                <dd data-testid="task-repo" className="gw-key-value__value gw-key-value__value--mono">
+                <dd data-testid="task-repo" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
                   {task.repo}
                 </dd>
               </div>
@@ -234,19 +197,21 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
 
             {task.preapproved.length > 0 && (
               <section className="gw-stack gw-gap-sm">
-                <h2>Pre-approved for this task</h2>
+                <h2>Allowed for this task</h2>
                 <ul data-testid="task-preapproved" className="gw-list gw-list--dense">
                   {task.preapproved.map((command) => (
                     <li key={command} className="gw-list__row">
                       <div className="gw-list__content">
                         <span className="gw-list__body">
-                          <code className="gw-list__primary">{command}</code>
+                          <code data-gw-content="" className="gw-list__primary">
+                            {command}
+                          </code>
                         </span>
                       </div>
                     </li>
                   ))}
                 </ul>
-                <p>You listed these when you started the task. They run without asking, with further arguments too, unless they are on Smelt's never-list (git push, sudo, deleting outside the worktree and the like) or are chained, piped or redirected: those still ask.</p>
+                <p>You listed these when you started the task. They run without asking, with further arguments too, unless Smelt's safety rules catch them (git push, sudo, deleting outside the task's copy and the like) or they are chained, piped or redirected: those still ask.</p>
               </section>
             )}
 
@@ -254,14 +219,14 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
 
             {shown.length > 0 || working !== null ? (
               <section aria-label="Transcript">
-                <Transcript events={shown} working={working} />
+                <Transcript events={shown} working={working} modelName={nameOf} />
               </section>
             ) : (
               attemptId === null && (
                 <ol className="gw-stack gw-gap-sm">
                   <li className="gw-message gw-message--user">
                     <span className="gw-message__label">You</span>
-                    <p data-testid="task-prompt" className="gw-message__body">
+                    <p data-testid="task-prompt" data-gw-content="" className="gw-message__body">
                       {task.prompt}
                     </p>
                   </li>
@@ -287,7 +252,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                         <li key={file.path} className="gw-list__row">
                           <details open={expanded} onToggle={(e) => toggled(file.path, e.currentTarget.open)} className="gw-disclosure gw-disclosure--row">
                             <summary className="gw-disclosure__summary">
-                              <code>{file.path}</code>
+                              <code data-gw-content="">{file.path}</code>
                               <span className="gw-disclosure__meta">
                                 {file.status} <Counts file={file} />
                               </span>
@@ -320,7 +285,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   </div>
                 </div>
                 <p data-testid="not-merged">
-                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you gave standing permission (see Trust), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you gave it standing permission (see Trust)"}, and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or pre-approve" : ""} runs with your account's rights.`}
+                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Smelt sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs with your account's rights.`}
                 </p>
               </section>
             )}

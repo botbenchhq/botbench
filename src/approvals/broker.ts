@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
 import { gate, READ_ONLY_TOOLS, real, summarize, type FloorSettings } from "./gate.ts";
@@ -478,14 +479,14 @@ export function createBroker(options: {
       if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Smelt refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
       return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: detail });
     };
-    if (closed) return deny("The broker is closed.");
+    if (closed) return deny("Smelt is shutting down, so nothing more is allowed.");
     if ((r.taskId === null) === (r.runId === undefined || r.runId === null)) return deny("The request names neither a task nor a run, or both.");
     if (typeof r.tool !== "string" || r.tool === "" || typeof r.toolCallId !== "string" || r.toolCallId === "" || typeof r.command !== "string" || r.command === "" || typeof r.role !== "string" || r.role === "") {
       return deny("The request does not say what it is for.");
     }
     if (r.command.length > MAX_COMMAND) return deny(`The request is ${r.command.length} characters long, too long to show the owner in full.`);
     // Also when the CLI asks without its hook having been heard: a read-only attempt's request for any other tool is never the owner's to allow.
-    if (ticket?.readOnly && !READ_ONLY_TOOLS.has(r.tool)) return deny(`The ${ticket.role} is read-only and may not use ${shorten(r.tool, 100)}.`);
+    if (ticket?.readOnly && !READ_ONLY_TOOLS.has(r.tool)) return deny(`The ${stepWords(ticket.role)} only reads and may not use ${shorten(r.tool, 100)}.`);
     const cwd = r.cwd ?? ticket?.seen.get(r.toolCallId) ?? "";
     ticket?.seen.delete(r.toolCallId);
     // An attempt that resumes one from before a restart: the owner's stored answers to that attempt's requests are its to use.
@@ -522,10 +523,10 @@ export function createBroker(options: {
       const standing = verdict.rule === "standing";
       try {
         // What cannot be logged does not run.
-        const detail = standing ? `Standing permission ${grant.id}, given from a card of task ${grant.taskId ?? "?"}: ${showWords(grant.words)}` : `Pre-approved for this task's run when it was started: ${showWords(grant.words)}`;
+        const detail = standing ? `Always allowed (permission ${grant.id}), which you chose on a request of task ${grant.taskId ?? "?"}: ${showWords(grant.words)}` : `Allowed for this task when it was started: ${showWords(grant.words)}`;
         appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, grantId: grant.id, rule: verdict.rule, tool: r.tool, command: r.command, cwd, detail });
       } catch (err) {
-        return deny(`This ${standing ? "command with standing permission" : "pre-approved command"} could not be recorded, so it was not let through: ${words(err)}`);
+        return deny(`This ${standing ? "always-allowed command" : "command allowed for this task"} could not be recorded, so it was not let through: ${words(err)}`);
       }
       return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, ...(standing ? { standing: { grantId: grant.id } } : { preapproved: { grantId: grant.id } }) });
     }
@@ -549,6 +550,7 @@ export function createBroker(options: {
   };
 
   const answer = (id: number, decision: Decision, note?: string | null): Approval => {
+    // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
     if (decision !== "allow" && decision !== "decline") throw new ApprovalError(400, 'The decision must be "allow" or "decline".');
     const kept = typeof note === "string" && note.trim() !== "" ? note.trim().slice(0, MAX_NOTE) : null;
     const status: ApprovalStatus = decision === "allow" ? "allowed" : "declined";
@@ -590,7 +592,7 @@ export function createBroker(options: {
     return approval;
   };
 
-  const whereWords = (cwd: string): string => (cwd === "." ? "the top of the worktree" : cwd);
+  const whereWords = (cwd: string): string => (cwd === "." ? "the top folder of the task's copy" : cwd);
 
   /**
    * Whether a pending approval may be offered standing permission, decided from Smelt's own records and never from
@@ -606,11 +608,11 @@ export function createBroker(options: {
     // A planner's request belongs to no task, and a planner is read-only: what it asks is asked every time.
     if (approval.taskId === null) return "only a task's request can have one";
     const ticket = [...tickets.values()].find((t) => t.attemptId === approval.attemptId);
-    if (!ticket || ticket.taskId !== approval.taskId || ticket.role !== approval.role) return "its attempt is no longer running";
+    if (!ticket || ticket.taskId !== approval.taskId || ticket.role !== approval.role) return "the agent that asked is no longer running";
     // The directory must be written the one way a directory inside the worktree is written, and be inside it with links followed.
     const outside = (relative: string): boolean => relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
     if (approval.cwd === "" || path.normalize(approval.cwd) !== approval.cwd || outside(approval.cwd) || outside(path.relative(ticket.worktree, real(path.resolve(ticket.worktree, approval.cwd))))) {
-      return "the directory it was asked from is not known to be inside the task's worktree";
+      return "the folder it was asked from is not known to be inside the task's copy of the project";
     }
     try {
       const split = splitPlain(approval.command);
@@ -648,13 +650,13 @@ export function createBroker(options: {
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
       const found = eligibility(current);
-      if (typeof found === "string") throw new ApprovalError(409, `This request cannot be given standing permission: ${found}. Nothing was allowed; answer it with Allow or Decline.`);
+      if (typeof found === "string") throw new ApprovalError(409, `Always allow is not available for this request: ${found}. Nothing was allowed; answer it with Allow once or Deny.`);
       const answered = db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ? AND status = 'pending'").run(now(), id);
       if (Number(answered.changes) !== 1) throw new ApprovalError(409, "This approval is no longer waiting for an answer.");
       const about = { taskId: current.taskId, attemptId: current.attemptId, approvalId: id, tool: current.tool, command: current.command, cwd: current.cwd };
       appendLog(db, { ...about, rule: "owner_allowed" });
       const granted = insertStanding(db, { role: found.offer.role, repo: found.offer.repo, cwd: found.offer.cwd, words: found.granted, taskId: current.taskId! });
-      appendLog(db, { ...about, grantId: granted, rule: "standing_granted", detail: `For the ${found.offer.role} in ${found.offer.repo}, from ${whereWords(found.offer.cwd)}, after ${found.offer.approvals} approval${found.offer.approvals === 1 ? "" : "s"}: ${found.offer.command}` });
+      appendLog(db, { ...about, grantId: granted, rule: "standing_granted", detail: `For the ${stepWords(found.offer.role)} in ${found.offer.repo}, from ${whereWords(found.offer.cwd)}, after ${found.offer.approvals} approval${found.offer.approvals === 1 ? "" : "s"}: ${found.offer.command}` });
       return granted;
     });
     waiters.get(id)!({ decision: "allow", note: null, approvalId: id, refused: null });
@@ -666,14 +668,14 @@ export function createBroker(options: {
   const revokeStanding = (id: number): StandingGrant =>
     transaction(db, () => {
       const found = findStanding(db, id);
-      if (!found) throw new ApprovalError(404, "No such standing permission.");
-      if (found.revoked) throw new ApprovalError(409, "This standing permission was already taken back.");
+      if (!found) throw new ApprovalError(404, "There is no such always-allowed command.");
+      if (found.revoked) throw new ApprovalError(409, "This always-allowed command was already removed.");
       const { grant } = found;
       const listed = listStanding(db).find((g) => g.id === id);
       const command = showWords(grant.words);
       insertRevocation(db, id);
       // Taken back and on record together. No request is being decided in between: this process does one thing at a time.
-      appendLog(db, { taskId: null, attemptId: null, grantId: id, rule: "standing_revoked", tool: "Bash", command, cwd: grant.cwd, detail: `Was for the ${grant.role} in ${grant.repo}, from ${whereWords(grant.cwd)}.` });
+      appendLog(db, { taskId: null, attemptId: null, grantId: id, rule: "standing_revoked", tool: "Bash", command, cwd: grant.cwd, detail: `Was for the ${stepWords(grant.role)} in ${grant.repo}, from ${whereWords(grant.cwd)}.` });
       return listed ?? { id, role: grant.role, repo: grant.repo, cwd: grant.cwd, command, taskId: grant.taskId, grantedAt: grant.createdAt, timesUsed: 0, lastUsedAt: null };
     });
 
@@ -687,17 +689,17 @@ export function createBroker(options: {
     try {
       message = JSON.parse(line);
     } catch {
-      return denied("Smelt's permission gate was sent a message that is not JSON.");
+      return denied("Smelt's permission check was sent a message that is not JSON.");
     }
-    if (!isObject(message) || typeof message.secret !== "string") return denied("Smelt's permission gate was sent a message it cannot read.");
+    if (!isObject(message) || typeof message.secret !== "string") return denied("Smelt's permission check was sent a message it cannot read.");
     // Looked up by hash, so the secret itself is never compared a byte at a time.
     const ticket = tickets.get(hashOf(message.secret));
-    if (!ticket) return denied("Smelt's permission gate does not know this attempt.");
-    if (ticket.attemptId === null) return denied("Smelt's permission gate has no attempt for this secret yet.", { taskId: ticket.taskId, runId: ticket.runId });
+    if (!ticket) return denied("Smelt's permission check does not know where this request came from.");
+    if (ticket.attemptId === null) return denied("Smelt's permission check has no running agent for this request yet.", { taskId: ticket.taskId, runId: ticket.runId });
     const about = { taskId: ticket.taskId, runId: ticket.runId, attemptId: ticket.attemptId };
     const { tool, input, toolCallId, cwd } = message;
     if (typeof tool !== "string" || tool === "" || typeof toolCallId !== "string" || toolCallId === "" || typeof cwd !== "string" || !path.isAbsolute(cwd) || !isObject(input)) {
-      return denied("Smelt's permission gate was sent a tool call it cannot read.", { ...about, tool: typeof tool === "string" ? tool : "" });
+      return denied("Smelt's permission check was sent a tool call it cannot read.", { ...about, tool: typeof tool === "string" ? tool : "" });
     }
     // Asked without grants: nothing a grant allows is ever said over the socket. A shell command hears "ask" here, and
     // the CLI's own request for it is then decided in request(), with the grants, inside this process.
@@ -705,9 +707,9 @@ export function createBroker(options: {
     // With links followed: a directory that is a link out of the worktree is recorded as where it leads.
     const relative = path.relative(ticket.worktree, real(cwd));
     const from = relative === "" ? "." : relative;
-    if (verdict.verdict === "deny") return denied(`Smelt's permission gate refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
+    if (verdict.verdict === "deny") return denied(`Smelt's permission check refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
     // A read-only attempt has reading and the shell and nothing else: any other tool is refused, not asked about.
-    if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Smelt's permission gate refused this call: the ${ticket.role} is read-only and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
+    if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Smelt's permission check refused this call: the ${stepWords(ticket.role)} only reads and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
     if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing") {
       if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
       ticket.seen.set(toolCallId, from);
@@ -743,32 +745,32 @@ export function createBroker(options: {
     socket.on("close", () => sockets.delete(socket));
     // A caller that says nothing, or never hangs up after its answer, is not kept.
     socket.setTimeout(SOCKET_READ_MS, () => {
-      refuseUnread("Smelt's permission gate was sent no complete message in time.");
+      refuseUnread("Smelt's permission check was sent no complete message in time.");
       setTimeout(() => socket.destroy(), 1000).unref();
     });
     socket.on("error", () => socket.destroy());
     socket.on("data", (chunk: string) => {
       if (done) return;
       buffer += chunk;
-      if (buffer.length > MAX_MESSAGE) return refuseUnread("Smelt's permission gate was sent a message that is too long.");
+      if (buffer.length > MAX_MESSAGE) return refuseUnread("Smelt's permission check was sent a message that is too long.");
       const end = buffer.indexOf("\n");
       if (end === -1) return;
       let answer: Reply;
       try {
         answer = decide(buffer.slice(0, end));
       } catch (err) {
-        answer = { verdict: "deny", reason: `Smelt's permission gate failed: ${words(err)}` };
+        answer = { verdict: "deny", reason: `Smelt's permission check failed: ${words(err)}` };
       }
       reply(answer);
     });
-    socket.on("end", () => refuseUnread("Smelt's permission gate was sent a message with no end."));
+    socket.on("end", () => refuseUnread("Smelt's permission check was sent a message with no end."));
   };
 
   const listen = (): Promise<void> =>
     inUse().then(
       (taken) =>
         new Promise<void>((resolve, reject) => {
-          if (taken) return reject(new Error(`Another Smelt is already running on this data directory (its permission broker answers at ${socketPath}). Stop it first, or give this one its own SMELT_HOME.`));
+          if (taken) return reject(new Error(`Another Smelt is already running on this data directory (it answers permission requests at ${socketPath}). Stop it first, or give this one its own SMELT_HOME.`));
           // What a Smelt that stopped left pending stays pending, marked as asked before this start. Nothing waits for it
           // in this process; the engine decides whether its task can be resumed. A store that cannot be written is no start.
           try {
@@ -798,14 +800,14 @@ export function createBroker(options: {
 
   const listenNow = (resolve: () => void, reject: (err: Error) => void): void => {
     const opening = net.createServer({ allowHalfOpen: true }, onConnection);
-    opening.once("error", (err) => reject(new Error(`The permission broker's socket could not be opened at ${socketPath}: ${words(err)}. Until it can, every command a task asks for is denied.`)));
+    opening.once("error", (err) => reject(new Error(`Smelt's permission socket could not be opened at ${socketPath}: ${words(err)}. Until it can, every command a task asks for is denied.`)));
     opening.listen(socketPath, () => {
       try {
         // The directory already keeps other accounts out; the socket says so itself as well.
         fs.chmodSync(socketPath, 0o600);
       } catch (err) {
         opening.close();
-        return reject(new Error(`The permission broker's socket could not be made owner-only: ${words(err)}`));
+        return reject(new Error(`Smelt's permission socket could not be made owner-only: ${words(err)}`));
       }
       opening.on("error", (err) => console.error(`The permission broker's socket failed: ${words(err)}`));
       server = opening;
@@ -814,7 +816,7 @@ export function createBroker(options: {
   };
 
   const admit = (o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean }): Admission => {
-    if ((o.taskId === undefined) === (o.runId === undefined)) throw new Error("An attempt is admitted for a task or for a run's planner, one of the two.");
+    if ((o.taskId === undefined) === (o.runId === undefined)) throw new Error("A permission ticket is for a task or for a run's planner, one of the two.");
     const secret = randomBytes(32).toString("hex");
     const key = hashOf(secret);
     // The CLI reports directories with links followed, so the worktree is kept the same way.
@@ -864,7 +866,7 @@ export function createBroker(options: {
         tickets.delete(key);
         supersede();
         // Stored answers this attempt was to use and never asked for are not kept for anyone else.
-        if (ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("The resumed turn ended without asking for this again, so the owner's stored answer was not used.", "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL", ticket.taskId, ticket.resumes);
+        if (ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent finished without asking for this again, so the owner's stored answer was not used.", "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL", ticket.taskId, ticket.resumes);
       },
     };
   };

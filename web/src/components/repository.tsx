@@ -126,8 +126,8 @@ export function RepositoryField({ choice }: { choice: RepositoryChoice }) {
 }
 
 const ABOUT = {
-  task: "Claude Code may run these commands in this task without a card, with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones on Smelt's never-list, such as git push, sudo and deleting outside the worktree, and anything chained, piped or redirected.",
-  run: "The agents that build this run's tasks may run these commands without a card, with further arguments too. A script or a test command runs whatever its files hold at that moment. The planner never does: it is read-only, and every command it wants asks. Dangerous commands always ask: the ones on Smelt's never-list, such as git push, sudo and deleting outside the worktree, and anything chained, piped or redirected.",
+  task: "Claude Code may run these commands in this task without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones Smelt's safety rules catch, such as git push, sudo and deleting outside the task's copy of the project, and anything chained, piped or redirected.",
+  run: "When this run's tasks are built, Claude Code may run these commands without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. While planning it never does: planning only reads, and every command it wants asks. Dangerous commands always ask: the ones Smelt's safety rules catch, such as git push, sudo and deleting outside a task's copy of the project, and anything chained, piped or redirected.",
 };
 
 /** The commands the owner confirms may run without asking, once the repository is known: listed, removable, and added to. */
@@ -136,7 +136,7 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
   if (listed === null) return null;
   return (
     <section aria-labelledby="preapproved-heading" className="gw-stack gw-gap-sm">
-      <h2 id="preapproved-heading">{`Runs without asking in this ${scope}`}</h2>
+      <h2 id="preapproved-heading">{`Allowed for this ${scope}`}</h2>
       <p data-testid="preapproved-about">{ABOUT[scope]}</p>
       {listed.note !== null && (
         <Alert tone="warning" role="status">
@@ -151,11 +151,13 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
             <li key={command} className="gw-list__row">
               <div className="gw-list__content">
                 <span className="gw-list__body">
-                  <code className="gw-list__primary">{command}</code>
+                  <code data-gw-content="" className="gw-list__primary">
+                    {command}
+                  </code>
                 </span>
               </div>
               <div className="gw-list__action">
-                <button type="button" aria-label={`Remove ${command}`} onClick={() => choice.removeCommand(command)} className="gw-button gw-button--quiet gw-button--small">
+                <button type="button" data-gw-content-label="" aria-label={`Remove ${command}`} onClick={() => choice.removeCommand(command)} className="gw-button gw-button--quiet gw-button--small">
                   Remove
                 </button>
               </div>

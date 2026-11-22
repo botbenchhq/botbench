@@ -268,7 +268,7 @@ test("a pre-approved command is allowed without an approval and logged with its 
   assert.deepEqual(listApprovals(r.db), [], "no approval was created");
   assert.deepEqual(
     actionLog(r.db).map((e) => [e.rule, e.taskId, e.attemptId, e.approvalId, e.grantId, e.tool, e.command, e.cwd, e.detail]),
-    [["preapproved", task.id, attemptId, null, 1, "Bash", "sh make-marker.sh", ".", "Pre-approved for this task's run when it was started: sh make-marker.sh"]],
+    [["preapproved", task.id, attemptId, null, 1, "Bash", "sh make-marker.sh", ".", "Allowed for this task when it was started: sh make-marker.sh"]],
   );
 
   // With further arguments: the same grant.

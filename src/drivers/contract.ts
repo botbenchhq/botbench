@@ -37,6 +37,8 @@ export interface DriverProbe {
 export interface ModelChoice {
   id: string;
   label?: string;
+  /** The full model name `id` stands for, when the CLI says and it differs: the name a session then reports. */
+  resolved?: string;
 }
 
 /** The models a driver offers, and where the list came from. Smelt never makes a list up. */
@@ -128,7 +130,7 @@ export interface Driver {
 export class DriverUnavailableError extends Error {
   readonly probe: DriverProbe;
   constructor(probe: DriverProbe) {
-    super(probe.problem ?? "The CLI cannot be driven.");
+    super(probe.problem ?? "The agent cannot be used right now.");
     this.name = "DriverUnavailableError";
     this.probe = probe;
   }

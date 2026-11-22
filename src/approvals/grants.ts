@@ -44,20 +44,20 @@ const NOT_PLAIN = "It must be one plain command: no `;`, `&&`, `||`, `|`, `&`, `
 
 /** Why a command the owner listed cannot be a grant, in words; null when it can. */
 export function entryProblem(command: unknown): string | null {
-  if (typeof command !== "string") return "Each pre-approved command must be text.";
-  if (command.trim() === "") return "A pre-approved command is empty.";
-  if (command.length > MAX_ENTRY) return `A pre-approved command is too long: ${MAX_ENTRY} characters at most.`;
+  if (typeof command !== "string") return "Each allowed command must be text.";
+  if (command.trim() === "") return "An allowed command is empty.";
+  if (command.length > MAX_ENTRY) return `An allowed command is too long: ${MAX_ENTRY} characters at most.`;
   const shown = JSON.stringify(command);
   const words = splitPlain(command);
-  if (words === null) return `${shown} cannot be pre-approved. ${NOT_PLAIN}`;
+  if (words === null) return `${shown} cannot be allowed in advance. ${NOT_PLAIN}`;
   const first = words[0]!;
-  if (first === "") return `${shown} cannot be pre-approved: it names no program.`;
-  if (first.includes("=")) return `${shown} cannot be pre-approved: it starts by setting a variable. List the command itself.`;
-  if (first.startsWith("-")) return `${shown} cannot be pre-approved: it starts with an option, not a program.`;
+  if (first === "") return `${shown} cannot be allowed in advance: it names no program.`;
+  if (first.includes("=")) return `${shown} cannot be allowed in advance: it starts by setting a variable. List the command itself.`;
+  if (first.startsWith("-")) return `${shown} cannot be allowed in advance: it starts with an option, not a program.`;
   if (words.length === 1 && RUNS_ANYTHING.has(first.slice(first.lastIndexOf("/") + 1).toLowerCase())) return `${shown} alone is too broad to pre-approve: it runs whatever it is handed. List the whole command, such as "sh build.sh".`;
   // What is stored must read back as the same words, so that what the owner sees listed is what was granted.
   const back = splitPlain(showWords(words));
-  if (back === null || back.length !== words.length || back.some((word, i) => word !== words[i])) return `${shown} cannot be pre-approved: it mixes both kinds of quotes in one word.`;
+  if (back === null || back.length !== words.length || back.some((word, i) => word !== words[i])) return `${shown} cannot be allowed in advance: it mixes both kinds of quotes in one word.`;
   return null;
 }
 

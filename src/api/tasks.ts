@@ -52,6 +52,7 @@ async function changedFiles(task: Task): Promise<{ files: FileChange[] | null; f
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
+  // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
   if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "...", "model"?: string | null, "preapproved"?: ["command", ...] }');
   // Checked before the repository is looked at, and long before a task row or a worktree exists.
   const model = modelChoice(body);

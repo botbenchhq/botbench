@@ -73,13 +73,13 @@ export async function stopSurvivor(db: DatabaseSync, attemptId: number): Promise
  * can. Checked on start, so that no card is shown whose answer could lead nowhere, and again before re-driving.
  */
 export function resumeProblem(db: DatabaseSync, task: { attemptId: number | null; worktreePath: string | null }, parked: readonly Approval[], capabilities: DriverCapabilities): string | null {
-  if (task.attemptId === null || task.worktreePath === null) return "The task has no attempt to resume.";
+  if (task.attemptId === null || task.worktreePath === null) return "The task has nothing to resume.";
   // A stored answer belongs to the attempt that asked, and that must be the attempt the task still stands at.
   const strangers = parked.filter((approval) => approval.attemptId !== task.attemptId);
-  if (strangers.length > 0) return `The request was made by attempt ${strangers[0]!.attemptId}, which is not the attempt the task stands at (${task.attemptId}).`;
-  if (!capabilities.resume) return "This task's driver cannot resume a session.";
+  if (strangers.length > 0) return `The request belongs to an earlier session of this task (number ${strangers[0]!.attemptId}), not the one it is on now (number ${task.attemptId}).`;
+  if (!capabilities.resume) return "This task's agent cannot resume a session.";
   const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId);
-  if (!attempt || typeof attempt.resume_cursor !== "string" || attempt.resume_cursor === "") return "Its attempt recorded no session to resume.";
-  if (!fs.statSync(task.worktreePath, { throwIfNoEntry: false })?.isDirectory()) return "The task's worktree is no longer there.";
+  if (!attempt || typeof attempt.resume_cursor !== "string" || attempt.resume_cursor === "") return "It recorded no session to resume.";
+  if (!fs.statSync(task.worktreePath, { throwIfNoEntry: false })?.isDirectory()) return "The task's copy of the project is no longer there.";
   return null;
 }

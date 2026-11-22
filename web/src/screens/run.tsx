@@ -5,7 +5,7 @@ import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
-import { modelState, sessionModel } from "../components/model-picker.tsx";
+import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { runSentence } from "../components/run-status.ts";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -25,7 +25,7 @@ type Deleted = { task: PlanTask; at: number; left: number; undoing: boolean };
 function PlanRow({ task, number, locked, onEdit, onDelete }: { task: PlanTask; number: number; locked: boolean; onEdit: () => void; onDelete: () => void }) {
   return (
     <>
-      <div className="gw-editable-list__text gw-stack gw-gap-xs">
+      <div data-gw-content="" className="gw-editable-list__text gw-stack gw-gap-xs">
         <strong>{task.title}</strong>
         <ul aria-label={`Acceptance criteria of task ${number}`} className="gw-stack gw-gap-xs">
           {task.criteria.map((criterion, i) => (
@@ -34,10 +34,10 @@ function PlanRow({ task, number, locked, onEdit, onDelete }: { task: PlanTask; n
         </ul>
       </div>
       <span className="gw-editable-list__actions">
-        <button type="button" data-edit={number - 1} disabled={locked} aria-label={`Edit task ${number}: ${task.title}`} onClick={onEdit} className="gw-button gw-button--quiet gw-button--small">
+        <button type="button" data-edit={number - 1} disabled={locked} data-gw-content-label="" aria-label={`Edit task ${number}: ${task.title}`} onClick={onEdit} className="gw-button gw-button--quiet gw-button--small">
           Edit
         </button>
-        <button type="button" disabled={locked} aria-label={`Delete task ${number}: ${task.title}`} onClick={onDelete} className="gw-button gw-button--quiet gw-button--small">
+        <button type="button" disabled={locked} data-gw-content-label="" aria-label={`Delete task ${number}: ${task.title}`} onClick={onDelete} className="gw-button gw-button--quiet gw-button--small">
           Delete
         </button>
       </span>
@@ -102,6 +102,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const [feedback, setFeedback] = useState("");
   const [deleted, setDeleted] = useState<Deleted | null>(null);
   const missing = useRef(false);
+  const nameOf = useModelNames(onSignedOut);
   /** Counts reads of the run, so an answer that arrives after a newer one was asked for is dropped. */
   const reads = useRef(0);
 
@@ -119,7 +120,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
       setRun(next);
       setProblem(null);
       // Stored events only ever add up, so a transcript is folded in whichever read fetched it.
-      if (next.attemptId !== null) getTranscript(next.attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), failed("The planner's transcript"));
+      if (next.attemptId !== null) getTranscript(next.attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), failed("The planning transcript"));
     }, (err: unknown) => {
       if (err instanceof ApiError && err.status === 404) {
         missing.current = true;
@@ -271,9 +272,8 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const gate = run?.status === "awaiting_plan_approval";
   const working = planning && attemptId !== null && !shown.some((e) => e.type === "turn_ended" && e.id === shown.at(-1)?.id) ? (asking === undefined ? "Claude Code is planning." : "Claude Code is paused until you answer.") : null;
   const transcript = (
-    <section aria-label="Planner transcript">
-      <Transcript events={shown} working={working} />
-    </section>
+    // The planning prompt is Smelt's own, with the owner's words inside it, so the row says Smelt wrote it.
+    <Transcript events={shown} working={working} modelName={nameOf} promptBy="Smelt, to Claude Code" folded={!planning} />
   );
   const cancel = run !== null && (planning || gate) && (
     <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null} losing testId="cancel-run" onConfirm={() => decide("cancel")}>
@@ -308,21 +308,21 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
             <dl className="gw-key-value">
               <div className="gw-key-value__item">
                 <dt className="gw-key-value__label">Repository</dt>
-                <dd data-testid="run-repo" className="gw-key-value__value gw-key-value__value--mono">
+                <dd data-testid="run-repo" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
                   {run.repo}
                 </dd>
               </div>
               {run.specPath !== null && (
                 <div className="gw-key-value__item">
                   <dt className="gw-key-value__label">Spec file</dt>
-                  <dd data-testid="run-spec" className="gw-key-value__value gw-key-value__value--mono">
+                  <dd data-testid="run-spec" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
                     {run.specPath}
                   </dd>
                 </div>
               )}
               <div className="gw-key-value__item">
-                <dt className="gw-key-value__label">Planner model</dt>
-                <dd data-testid="run-model" className="gw-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session)}. Requested: ${run.requestedModel ?? "the CLI default"}.`}</dd>
+                <dt className="gw-key-value__label">Planning model</dt>
+                <dd data-testid="run-model" className="gw-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session, nameOf)}. You asked for: ${run.requestedModel === null ? "Claude Code's default" : nameOf(run.requestedModel)}.`}</dd>
               </div>
             </dl>
 
@@ -414,7 +414,9 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     <li key={task.id} className="gw-list__row">
                       <a href={`#/tasks/${task.id}`} className="gw-list__link">
                         <span className="gw-run-status">
-                          <span className="gw-run-status__title">{task.title}</span>
+                          <span data-gw-content="" className="gw-run-status__title">
+                            {task.title}
+                          </span>
                           <span className="gw-run-status__station">
                             <span className={statusLook({ status: task.status, waitingOnApproval: false, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: false, resuming: false })}</span>
                           </span>
@@ -429,28 +431,33 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
 
             {run.preapproved.length > 0 && (
               <section className="gw-stack gw-gap-sm">
-                <h2>Pre-approved for this run</h2>
+                <h2>Allowed for this run</h2>
                 <ul data-testid="run-preapproved" className="gw-list gw-list--dense">
                   {run.preapproved.map((command) => (
                     <li key={command} className="gw-list__row">
                       <div className="gw-list__content">
                         <span className="gw-list__body">
-                          <code className="gw-list__primary">{command}</code>
+                          <code data-gw-content="" className="gw-list__primary">
+                            {command}
+                          </code>
                         </span>
                       </div>
                     </li>
                   ))}
                 </ul>
-                <p>You listed these when you started the run, for the agents that will build its tasks. The planner uses none of them: every command it wants asks.</p>
+                <p>You listed these when you started the run, for when its tasks are built. Planning uses none of them: every command it wants asks.</p>
               </section>
             )}
 
             {planning ? (
-              transcript
+              <section aria-labelledby="planning-heading" className="gw-stack gw-gap-sm">
+                <h2 id="planning-heading">Planning</h2>
+                {transcript}
+              </section>
             ) : (
               shown.length > 0 && (
                 <details className="gw-disclosure">
-                  <summary className="gw-disclosure__summary">Planner transcript</summary>
+                  <summary className="gw-disclosure__summary">How the plan was made</summary>
                   <div className="gw-disclosure__content">{transcript}</div>
                 </details>
               )

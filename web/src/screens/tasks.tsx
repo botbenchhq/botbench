@@ -56,7 +56,9 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
               <li key={task.id} className="gw-list__row">
                 <a href={`#/tasks/${task.id}`} className="gw-list__link">
                   <span className="gw-run-status">
-                    <span className="gw-run-status__title">{firstLine(task.prompt)}</span>
+                    <span data-gw-content="" className="gw-run-status__title">
+                      {firstLine(task.prompt)}
+                    </span>
                     <span className="gw-run-status__station">
                       <span className={statusLook(task)}>{statusWord(task)}</span>
                     </span>

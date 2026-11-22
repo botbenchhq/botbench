@@ -109,7 +109,7 @@ test("live: a one-word turn yields text, usage and turn-end events in order, sto
   assert.equal(closed.status, "ended");
   assert.equal(closed.pgid, null);
   assert.deepEqual(processesInGroup(running.pgid), []);
-  await assert.rejects(session.sendTurn("again"), /over/);
+  await assert.rejects(session.sendTurn("again"), /has ended; start a new one/);
 });
 
 test("live: a second attempt resumed from the stored cursor recalls a word from the first", { timeout: 2 * TURN_TIMEOUT }, async (t) => {

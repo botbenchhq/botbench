@@ -22,6 +22,7 @@ Done = tests pass. Owner checks batched per milestone.
 - After any correction from the owner: update this file or `docs/lessons.md` with the pattern so it does not repeat.
 - Complex or parallel research: use subagents. Keep main context clean.
 - Read DESIGN.md before any UI work.
+- Any text a person sees (labels, states, errors, also the server's) follows `docs/product/voice.md`; its glossary is the list the tests enforce.
 - UI work follows the vendored design system: read `web/vendor/groundwork/rules/core.md` first, and never edit `web/vendor/groundwork/`.
 
 ## Hard rules

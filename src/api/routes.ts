@@ -44,7 +44,7 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       const after = url.searchParams.has("after") ? parseEventId(url.searchParams.get("after")!) : 0;
       if (after === null) return (json(res, 400, { error: '"after" must be an event id' }), true);
       const attempt = ctx.db.prepare("SELECT status FROM attempts WHERE id = ?").get(attemptId);
-      if (!attempt) return (json(res, 404, { error: "no such attempt" }), true);
+      if (!attempt) return (json(res, 404, { error: "Smelt has no record of that conversation" }), true);
       json(res, 200, { attemptId, status: attempt.status, turnRunning: ctx.turns.turnRunning(attemptId), events: eventsAfter(ctx.db, after, attemptId) });
     } else {
       return false;

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, copyShot, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Smelt process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -40,7 +40,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
 
   // The navigation lists the destinations; starting something new is a button in its list's view.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Turn", "Runs", "Tasks", "Trust"]);
+  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions"]);
   await nav.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Runs");
@@ -56,7 +56,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   const prompt = "Add three files: a.txt containing a, b.txt containing b, c.txt containing c. Plan exactly three tasks, one per file. Do not run any command and do not read more than the README.";
   await page.getByLabel("Prompt").fill(prompt);
-  await expect(page.getByRole("heading", { name: "Runs without asking in this run" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Allowed for this run" })).toBeVisible();
   await expect(page.getByTestId("preapproved-none")).toBeVisible();
   await page.getByLabel("Add a command").fill("npm test");
   await page.getByRole("button", { name: "Add", exact: true }).click();
@@ -68,10 +68,12 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
 
   // The run screen: its state in words, then the planner's transcript as it happens.
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  await expect(page.getByTestId("run-status")).toHaveText(/^(Waiting for the planner|Planning)\./);
+  await expect(page.getByTestId("run-status")).toHaveText(/^(Queued|Planning)\./);
   await expect(page.getByTestId("run-repo")).toHaveText(repo);
   await expect(page.getByTestId("run-preapproved")).toContainText("npm test");
   await expect(page.locator('[data-event="user_prompt"]')).toContainText("a.txt containing a", { timeout: 60_000 });
+  // The planning prompt is Smelt's, with the owner's words inside it: the row does not say the owner wrote it.
+  await expect(page.locator('[data-event="user_prompt"] .gw-message__label')).toHaveText("Smelt, to Claude Code");
   await checkDesign(page, "run, planning");
   // While the planner works there is no plan to approve, and nothing offers to.
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
@@ -85,7 +87,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
     await expect(approve).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 240_000, intervals: [1_000] });
   expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce), "the plan arrived without a reload").toBe(true);
-  await expect(page.getByTestId("run-status")).toHaveText(/^Waiting for your approval\./);
+  await expect(page.getByTestId("run-status")).toHaveText(/^Plan ready for review\./);
   const plan = page.getByRole("list", { name: "Plan" });
   const rows = plan.locator(":scope > li");
   await expect(rows).toHaveCount(3);
@@ -93,7 +95,12 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // Every task shows its acceptance criteria.
   for (const row of await rows.all()) await expect(row.getByRole("listitem").first()).toBeVisible();
   await expect(page.locator(".gw-button--primary")).toHaveCount(1);
+  // How the plan was made is one tap away, folded, under the plan it produced.
+  const made = page.locator("details").filter({ has: page.locator("summary", { hasText: "How the plan was made" }) }).first();
+  await expect(made).not.toHaveAttribute("open");
+  await expect(made.locator('[data-event="user_prompt"]')).toBeHidden();
   await checkDesign(page, "run, plan awaiting approval");
+  await copyShot(page, "run-plan-review");
   await shot(page, "u11-plan.png");
 
   // Edit the first task's title in its row.
@@ -157,6 +164,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(listed).toContainText("Approved");
   await expect(listed).toContainText("2 tasks queued");
   await checkDesign(page, "runs, one run");
+  await copyShot(page, "runs");
   await shot(page, "u11-runs.png");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page.getByTestId("task-list").getByRole("listitem")).toHaveCount(2);

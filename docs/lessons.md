@@ -2,6 +2,13 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: screens were labelled with Smelt's own engineering words
+The owner's correction: "I don't think anyone referred to a chat as a turn in the UI… This should be intuitive and familiar, anyone could approach this." The plan's domain terms are the names in code, and they had gone straight onto the screens: Turn, attempt, worktree, standing permission, pre-approved, Trust, driver, "Turn completed.", raw tool arguments as a transcript line, and server errors that spoke of the permission gate and the broker. The owner added a limit on the fix: "be careful when hiding certain things like tool calls… people like to see that as it builds trust, so don't just blindly change it." Rules going forward:
+- A name in code is not a word for a screen. Every string a person sees, the server's included, takes its words from `docs/product/voice.md`, which says what each means internally and which words are never shown.
+- The list is enforced, not remembered: the browser tests read every screen they reach for the banned words (`checkWords`, called by `checkDesign`), and a unit test reads every sentence the server builds. A new internal word goes into the glossary's third column, in that one place.
+- Plain does not mean hidden or vague. Each action of the agent stays in the transcript as one line made from its real name and arguments; the command, output and change are one tap away, the raw arguments a level deeper, and what failed or waits is open. Where no true plain line can be made, the real name and argument are shown.
+- Before naming a screen, a state or a button, look at what the products people already use call it (`docs/product/ui-copy-research.md`), and say which findings were verified.
+
 ## 2026-11-22: a cancelled run came back, and two screens promised a start nobody would make (unit 11)
 Found by the critique pass, before merge. Start-up recovery read a run, awaited git, then wrote its state without reading it again, so a cancel in between was undone and the run could be approved. A planning worktree outlived a cancel followed by a kill, because recovery looked only at runs still planning. A queued task of an approved plan said "It starts when the tasks before it have finished" on its own screen, and a run waiting its turn said a planner was reading. A criterion could hold line breaks that the owner's screen folded away and the builder's prompt kept. Also: a live test of "the planner cannot write" passed nothing, because the model obeyed the prompt and never tried. Rules going forward:
 - A state read before an `await` is read again, inside the write's transaction, before it is changed; ends are also made ends in the store.

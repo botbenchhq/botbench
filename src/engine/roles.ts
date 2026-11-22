@@ -11,6 +11,11 @@ import type { Config } from "../config.ts";
 export const PLANNER = "planner";
 export const IMPLEMENTER = "implementer";
 
+/** A role as a sentence for a screen says it: the step of the work, Plan, Build or Review (docs/product/voice.md). A role with no step keeps its name. */
+export function stepWords(role: string): string {
+  return { planner: "Plan step", implementer: "Build step", reviewer: "Review step" }[role] ?? role;
+}
+
 /** The configured model for a role: the role's own, else its driver's, when that driver is `driver`. Undefined means the CLI's own default. */
 export function roleModel(config: Config, role: string, driver: string): string | undefined {
   const settings = config.roles[role];

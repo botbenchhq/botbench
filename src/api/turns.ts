@@ -129,21 +129,21 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
     const model = choice === undefined ? options.model : (choice ?? undefined);
     if (attemptId === undefined) return begin(prompt, model);
     const row = attemptRow(attemptId);
-    if (!row) throw new TurnError(404, "No such attempt.");
+    if (!row) throw new TurnError(404, "Smelt has no record of that conversation.");
     const entry = open.get(attemptId);
-    if (entry?.busy) throw new TurnError(409, "A turn is already running in this attempt.");
+    if (entry?.busy) throw new TurnError(409, "Claude Code is still working on the last message. Wait for it to finish, or stop it.");
     if (entry && row.status === "running" && (choice === undefined || entry.model === model)) return send(attemptId, entry, prompt);
     // The session is over (stopped, failed, closed while idle, or from before a restart), or another model was asked for: continue it in a new attempt.
     await drop(attemptId);
     if (closed) throw new TurnError(503, "Smelt is shutting down.");
-    if (typeof row.resume_cursor !== "string" || row.resume_cursor === "") throw new TurnError(409, "This attempt cannot be continued: it never got far enough to be resumed.");
+    if (typeof row.resume_cursor !== "string" || row.resume_cursor === "") throw new TurnError(409, "This conversation cannot be continued: it ended before Claude Code saved its place. Start a new chat.");
     return begin(prompt, model, row.resume_cursor);
   };
 
   const interrupt = async (attemptId: number): Promise<void> => {
-    if (!attemptRow(attemptId)) throw new TurnError(404, "No such attempt.");
+    if (!attemptRow(attemptId)) throw new TurnError(404, "Smelt has no record of that conversation.");
     const entry = open.get(attemptId);
-    if (!entry?.busy) throw new TurnError(409, "No turn is running in this attempt.");
+    if (!entry?.busy) throw new TurnError(409, "Nothing is running in this conversation, so there is nothing to stop.");
     await entry.session.interruptTurn();
   };
 

@@ -37,6 +37,7 @@ function detail(db: DatabaseSync, run: Run): Record<string, unknown> {
   };
 }
 
+// voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
 const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "preapproved"?: ["command", ...] }';
 
 /**

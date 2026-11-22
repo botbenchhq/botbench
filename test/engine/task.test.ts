@@ -277,7 +277,7 @@ test("a task whose worktree cannot be made fails with the reason, without a driv
   await tasks.idle();
   const task = getTask(db, started.id)!;
   assert.equal(task.status, "failed");
-  assert.match(task.reason ?? "", /worktree could not be created: .*inside the repository/);
+  assert.match(task.reason ?? "", /copy of the project could not be created: .*inside the repository/);
   assert.deepEqual([task.worktreePath, task.branch, task.attemptId], [null, null, null]);
   assert.deepEqual(announced, [`${task.id}:queued`, `${task.id}:failed`]);
   assert.deepEqual(eventRows(db, task.id).map((e) => e.status), ["queued", "failed"]);

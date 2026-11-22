@@ -107,7 +107,7 @@ test("starting a run takes exactly one of a prompt and a spec file, a usable rep
     [{ repo: api.dir, prompt: "p" }, 400, /not a git repository/],
     [{ repo: api.repo, prompt: "p", model: "--dangerously-skip-permissions" }, 400, /model/],
     [{ repo: api.repo, prompt: "p", preapproved: "npm test" }, 400, /preapproved/],
-    [{ repo: api.repo, prompt: "p", preapproved: ["ls | sh"] }, 400, /cannot be pre-approved/],
+    [{ repo: api.repo, prompt: "p", preapproved: ["ls | sh"] }, 400, /cannot be allowed in advance/],
   ];
   for (const [body, status, words] of bad) {
     const res = await call(api, "POST", "/api/runs", body);

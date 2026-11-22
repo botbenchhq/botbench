@@ -95,7 +95,8 @@ test("live: GET /api/models returns the list the real Claude Code reports, says 
   assert.ok(body.models.length > 1, "more than the one configured name");
   for (const model of body.models) {
     assert.equal(modelNameProblem(model.id), null, model.id);
-    assert.deepEqual(Object.keys(model).filter((k) => k !== "id" && k !== "label"), []);
+    assert.deepEqual(Object.keys(model).filter((k) => k !== "id" && k !== "label" && k !== "resolved"), []);
+    if ("resolved" in model) assert.equal(modelNameProblem((model as { resolved: string }).resolved), null, "the full name an alias stands for is a model name and nothing else");
   }
   const ids = body.models.map((m) => m.id);
   // The names this file's turns use are ones the CLI itself offers, and so is an alias its own help names.

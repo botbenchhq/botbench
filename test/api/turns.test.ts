@@ -293,7 +293,7 @@ test("GET /api/attempts/:id/events returns stored events in order, and only thos
     attemptId: attempt,
     status: "ended",
     turnRunning: false,
-    events: stored.map(([turn, event], i) => ({ attemptId: attempt, id: ids[i], turn, type: event.type, payload: event })),
+    events: stored.map(([turn, event], i) => ({ attemptId: attempt, id: ids[i], turn, ts: String(server.db.prepare("SELECT ts FROM events WHERE id = ?").get(ids[i]!)!.ts), type: event.type, payload: event })),
   });
 
   const later = (await (await fetch(`${base}/api/attempts/${attempt}/events?after=${ids[2]}`, { headers })).json()) as { events: Array<{ id: number; type: string }> };
@@ -325,8 +325,11 @@ test("the event stream replays stored events after Last-Event-ID, each with its 
   assert.match(resumed.contentType, /^text\/event-stream/);
   const frames = await resumed.waitFor(2);
   assert.deepEqual(frames.map((f) => f.id), [String(ids[1]), String(ids[2])]);
-  assert.deepEqual(JSON.parse(frames[0]!.data!), { attemptId: attempt, id: ids[1], turn: 1, type: "text", payload: { type: "text", text: "line one\nline two" } });
-  assert.deepEqual(JSON.parse(frames[1]!.data!), { attemptId: attempt, id: ids[2], turn: 1, type: "turn_ended", payload: { type: "turn_ended", reason: "completed", detail: null } });
+  // Each event carries the time it was stored, as the database has it: the client works out how long a reply took from these and from nothing else.
+  const storedAt = (id: number): string => String(server.db.prepare("SELECT ts FROM events WHERE id = ?").get(id)!.ts);
+  assert.deepEqual(JSON.parse(frames[0]!.data!), { attemptId: attempt, id: ids[1], turn: 1, ts: storedAt(ids[1]!), type: "text", payload: { type: "text", text: "line one\nline two" } });
+  assert.deepEqual(JSON.parse(frames[1]!.data!), { attemptId: attempt, id: ids[2], turn: 1, ts: storedAt(ids[2]!), type: "turn_ended", payload: { type: "turn_ended", reason: "completed", detail: null } });
+  assert.match(storedAt(ids[1]!), /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
   const beats = await resumed.waitFor(2, (f) => f.comment === "heartbeat");
   assert.ok(beats.length >= 2, "heartbeat comments keep the connection open");
   // Each heartbeat is also a named event the client can see, and has no id, so it never moves the resume point.

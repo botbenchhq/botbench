@@ -278,9 +278,9 @@ test("removing a worktree with uncommitted changes is refused, and so is treatin
   // The owner's checkout is never a Smelt worktree: no commit, no removal.
   write(repo, "owner.txt", "owner's untracked file\n");
   const before = ownerState(repo, ["owner.txt"]);
-  await assert.rejects(commitWork({ path: repo, message: "must not happen" }), /not a Smelt worktree/);
-  await assert.rejects(removeWorktree({ repo, path: repo, deleteBranch: true }), /not a Smelt worktree/);
-  await assert.rejects(describeWork({ path: repo, baseCommit: wt.baseCommit }), /not a Smelt worktree/);
+  await assert.rejects(commitWork({ path: repo, message: "must not happen" }), /not a copy Smelt made/);
+  await assert.rejects(removeWorktree({ repo, path: repo, deleteBranch: true }), /not a copy Smelt made/);
+  await assert.rejects(describeWork({ path: repo, baseCommit: wt.baseCommit }), /not a copy Smelt made/);
   assert.deepEqual(ownerState(repo, ["owner.txt"]), before);
 
   // A worktree that left its task branch could lose commits on removal, so that is refused too.
@@ -480,10 +480,10 @@ test("a worktree whose git folder was repointed from inside is refused, so nothi
   write(wt.path, ".gitattributes", "* filter=run\n");
   write(wt.path, "payload.txt", "anything\n");
 
-  await assert.rejects(commitWork({ path: wt.path, message: "work" }), /not a Smelt worktree/);
-  await assert.rejects(describeWork({ path: wt.path, baseCommit: wt.baseCommit }), /not a Smelt worktree/);
-  await assert.rejects(fileDiff({ path: wt.path, baseCommit: wt.baseCommit, file: "payload.txt" }), /not a Smelt worktree/);
-  await assert.rejects(removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true }), /not a Smelt worktree/);
+  await assert.rejects(commitWork({ path: wt.path, message: "work" }), /not a copy Smelt made/);
+  await assert.rejects(describeWork({ path: wt.path, baseCommit: wt.baseCommit }), /not a copy Smelt made/);
+  await assert.rejects(fileDiff({ path: wt.path, baseCommit: wt.baseCommit, file: "payload.txt" }), /not a copy Smelt made/);
+  await assert.rejects(removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true }), /not a copy Smelt made/);
   assert.equal(fs.existsSync(marker), false, "the filter command did not run");
 
   // Put back as Smelt made it, the worktree is Smelt's again and is removed like any other.

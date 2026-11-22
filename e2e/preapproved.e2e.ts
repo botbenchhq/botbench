@@ -10,7 +10,7 @@ import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done";
 const NONE_WAITING = "No approvals are waiting.";
-const HEADING = "Runs without asking in this task";
+const HEADING = "Allowed for this task";
 
 /** A Smelt whose settings name the commands its sample repository offers for pre-approval. The repository must exist before Smelt reads its settings. */
 const test = base.extend<{ repo: string }>({
@@ -80,7 +80,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   // The server refuses a chained entry in words, and nothing is started.
   await page.getByRole("button", { name: "Start task" }).click();
   await expect(page.getByRole("alert")).toContainText("The task was not started");
-  await expect(page.getByRole("alert")).toContainText('"sh make-marker.sh && echo done" cannot be pre-approved');
+  await expect(page.getByRole("alert")).toContainText('"sh make-marker.sh && echo done" cannot be allowed in advance');
   expect(await (await page.request.get(`${smelt.base}/api/tasks`)).json()).toEqual({ tasks: [] });
   await checkDesign(page, "new task, an entry refused");
   await page.getByRole("button", { name: "Remove sh make-marker.sh && echo done" }).click();
@@ -95,21 +95,25 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   expect(await granted.evaluate((el) => [el.tagName, ...[...el.children].map((child) => child.tagName)])).toEqual(["UL", "LI", "LI"]);
 
   // It finishes with nobody answering: no card, the tray never counts one.
-  await expect(page.getByTestId("task-status")).toHaveText("Built. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
+  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.", { timeout: 120_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(tray).toHaveText(NONE_WAITING);
   const resolved = page.locator('[data-event="permission_resolved"]');
   await expect(resolved).toHaveCount(1);
-  await expect(resolved).toContainText("Pre-approved");
+  await expect(resolved).toContainText("Allowed for this task");
   await expect(resolved).toContainText("sh make-marker.sh");
-  await expect(resolved).toContainText("ran without asking you");
+  await expect(resolved).toContainText("allowed without asking you");
+  // The action itself is one plain line, and what ran is one tap away, never raw arguments on the line.
+  const ran = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first();
+  await expect(ran.locator("summary").first()).toHaveText(/^Ran\s*sh make-marker\.sh$/);
+  await expect(ran.locator("summary").first()).not.toContainText("{");
   await expect(page.getByRole("log")).not.toContainText("You allowed");
   await expect(page.getByRole("log")).not.toContainText("needs your answer");
   const files = page.getByTestId("changed-files");
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added/);
   const branch = await page.getByTestId("branch").inputValue();
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
-  await expect(page.getByTestId("not-merged")).toContainText("The commands listed above, and those you gave standing permission (see Trust), run without asking; every other shell command waits for your answer first");
+  await expect(page.getByTestId("not-merged")).toContainText("The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first");
   await expect(page.getByRole("button", { name: /always|standing|every time|remember/i })).toHaveCount(0);
   await checkDesign(page, "task, finished on a pre-approved command");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-task.png"), fullPage: true });
