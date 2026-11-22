@@ -40,8 +40,11 @@ const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  */
 const SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "--literal-pathspecs"];
 
-/** The caller's environment without any GIT_* variable, so nothing inherited can point git at another repository, index or config. */
-function gitEnv(): NodeJS.ProcessEnv {
+/**
+ * The caller's environment without any GIT_* variable, so nothing inherited can point git at another repository, index
+ * or config. Smelt's own git calls run with it, and so do the setup commands Smelt runs in a worktree.
+ */
+export function gitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (!name.startsWith("GIT_")) env[name] = value;
@@ -183,14 +186,25 @@ export async function sourceHead(repo: string): Promise<string> {
 }
 
 /**
- * Create a worktree for one task at `<home>/worktrees/<run>/<task>`, on a new branch `smelt/<run>/<task>` that starts at the
- * commit the repository's HEAD points at. Nothing in the repository's own working folder, index or current branch is written.
+ * Create a worktree for one task at `<home>/worktrees/<run>/<task>`, on a new branch `smelt/<run>/<task>` that starts at
+ * `commit` (a run's base commit), or at the commit the repository's HEAD points at when none is given. Nothing in the
+ * repository's own working folder, index or current branch is written.
  */
-export async function createWorktree(o: { repo: string; home: string; run: string; task: string }): Promise<Worktree> {
+export async function createWorktree(o: { repo: string; home: string; run: string; task: string; commit?: string }): Promise<Worktree> {
   if (!SLUG.test(o.run)) throw new Error(`Invalid run id ${JSON.stringify(o.run)}: use 1 to 64 letters, digits, "-" or "_", starting with a letter or digit.`);
   if (!SLUG.test(o.task)) throw new Error(`Invalid task id ${JSON.stringify(o.task)}: use 1 to 64 letters, digits, "-" or "_", starting with a letter or digit.`);
+  if (o.commit !== undefined) checkBase(o.commit);
   const repo = path.resolve(o.repo);
-  const baseCommit = await sourceHead(repo);
+  const head = await sourceHead(repo);
+  let baseCommit = head;
+  if (o.commit !== undefined && o.commit !== head) {
+    // The commit must still be one of the repository's: a run's base commit that was since removed builds nothing.
+    const found = await git(repo, ["rev-parse", "--verify", "--quiet", `${o.commit}^{commit}`], GIT_CHECK_LIMIT_MS).catch((err: unknown) => {
+      unlessTimeout(err);
+      throw new Error(`The commit ${o.commit} the run was planned from is no longer in the repository ${repo}.`, { cause: err });
+    });
+    baseCommit = found.trim();
+  }
   const runDir = path.join(path.resolve(o.home), "worktrees", o.run);
   const dir = path.join(runDir, o.task);
   if (isInside(realPath(dir), realPath(repo))) throw new Error(`The folder for the task's copy, ${dir}, would be inside the repository ${repo}. Smelt's home must be somewhere else.`);

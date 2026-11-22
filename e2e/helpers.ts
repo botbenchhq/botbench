@@ -193,6 +193,11 @@ export async function checkWords(page: Page, screen: string): Promise<void> {
 export async function copyShot(page: Page, name: string): Promise<void> {
   const directory = process.env.SMELT_COPY_SHOTS;
   if (!directory) return;
+  await tallShot(page, path.join(directory, `copy-${name}.png`));
+}
+
+/** A screenshot of the whole screen at `file`, taken as `copyShot` takes it: the header and tab bar drawn once, where they belong. */
+export async function tallShot(page: Page, file: string): Promise<void> {
   const size = page.viewportSize()!;
   await page.evaluate(() => document.querySelectorAll("[style]").forEach((el) => el.setAttribute("data-styled-before-shot", "")));
   // A screen that scrolls inside itself (the chat) is as tall as the window: its own scrolling part says how much more there is.
@@ -200,7 +205,7 @@ export async function copyShot(page: Page, name: string): Promise<void> {
   await page.setViewportSize({ width: size.width, height: Math.min(Math.max(height, size.height), 6000) });
   // Two frames, so the page is laid out and drawn at the new size before it is captured.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.screenshot({ path: path.join(directory, `copy-${name}.png`) });
+  await page.screenshot({ path: file });
   await page.setViewportSize(size);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.evaluate(() => {

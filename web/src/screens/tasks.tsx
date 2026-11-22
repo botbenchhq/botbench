@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, listTasks, openEventStream, type TaskSummary } from "../api/client.ts";
 import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.tsx";
+import { checksWords } from "../components/evidence.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
@@ -62,7 +63,7 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
                     <span className="gw-run-status__station">
                       <span className={statusLook(task)}>{statusWord(task)}</span>
                     </span>
-                    <span className="gw-run-status__facts">{`Task ${task.id} · ${task.repo}`}</span>
+                    <span className="gw-run-status__facts">{`Task ${task.id}${task.checks === null ? "" : ` · ${checksWords(task.checks)}`} · ${task.repo}`}</span>
                   </span>
                 </a>
               </li>

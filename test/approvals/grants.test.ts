@@ -544,7 +544,7 @@ test("a database at schema version 6 gains the grants table and the pre-approved
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 9);
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
   assert.deepEqual({ ...db.prepare("SELECT id, run_id, repo_path, prompt, requested_model, status FROM tasks").get() }, { id: 1, run_id: null, repo_path: "/r", prompt: "p", requested_model: "haiku", status: "awaiting_decision" });
   assert.deepEqual(listApprovals(db).map((a) => [a.id, a.status, a.command, a.parkedAt]), [[1, "pending", "ls", "t2"]]);
   assert.deepEqual(actionLog(db).map((e) => [e.id, e.ts, e.rule, e.approvalId, e.grantId, e.detail]), [[1, "t1", "asked_owner", 1, null, null], [2, "t3", "stored_answer_discarded", 1, null, "kept"]]);

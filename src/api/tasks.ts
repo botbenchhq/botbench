@@ -5,6 +5,7 @@ import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
+import { taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
@@ -21,15 +22,17 @@ export const MAX_DIFF = 400_000;
  * `waitingOnApproval`: a request of its agent waits for the owner's answer. `parked`: such a request was asked before a
  * restart, so the agent is stopped and the answer will resume the task. `resuming`: the owner's answer to such a request
  * is stored and the task is being started again to receive it.
- * `ofPlan`: the run it belongs to when it was queued by approving that run's plan, else null. Nothing builds such a task yet.
+ * `ofPlan`: the run it belongs to when it was queued by approving that run's plan, else null.
  * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
-  const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
+  const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, checks, createdAt, updatedAt } = task;
   const pending = status === "building" ? pendingApprovals(db, id) : [];
   const waiting = pending.filter((approval) => approval.storedDecision === null);
   return {
     id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
+    // What the checks found: "passed", "failed" (one failed or ran out of time), "none" (no checks are set up), or null before.
+    checks,
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,
@@ -109,7 +112,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");
       if (one[2]) await diff(res, task, url);
-      else json(res, 200, { ...summary(ctx.db, task), ...(await changedFiles(task)) });
+      else json(res, 200, { ...summary(ctx.db, task), ...(await changedFiles(task)), evidence: taskEvidence(ctx.db, task.id) });
     } else {
       return false;
     }

@@ -6,12 +6,16 @@ import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import type { PlanTask } from "../../src/engine/roles.ts";
-import { createRun, MAX_SPEC_BYTES, storePlan } from "../../src/engine/run.ts";
+import { approvePlan, createRun, MAX_SPEC_BYTES, storePlan } from "../../src/engine/run.ts";
+import { insertEvidence } from "../../src/engine/stations.ts";
+import { moveTask } from "../../src/engine/task.ts";
 import { startServer, type SmeltServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 
 // No test in this file starts a driver: a run that is started for real reaches Claude Code, and is in
 // test/live/plan.live.test.ts. Here runs are put in the store as the engine stores them, and the routes act on them.
+// An approved plan is really built, up to the repository's setup command, which fails or is cancelled before any
+// builder could start; a build with Claude Code is in test/live/build.live.test.ts.
 
 type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
@@ -31,13 +35,16 @@ interface Api {
   headers: Record<string, string>;
 }
 
-async function start(t: T): Promise<Api> {
+/** The repository's setup command fails, so a task an approval queues is built up to its setup and no further: no CLI ever starts here. */
+const FAILING_SETUP = "echo preparing the copy; exit 1";
+
+async function start(t: T, setup: string[] = [FAILING_SETUP]): Promise<Api> {
   const dir = tempDir("smelt-runs-api-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   const commit = initRepo(repo);
-  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: { [repo]: { setup } } };
   const server = await startServer({ config, home, signInDelayMs: 1 });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
@@ -54,6 +61,17 @@ async function call(api: Api, method: string, route: string, body?: unknown): Pr
   return { status: res.status, body: (await res.json()) as Body };
 }
 const count = (api: Api, table: string): number => Number(api.server.db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n);
+
+/** Read the run until `done` says so. */
+async function untilRun(api: Api, id: number, done: (body: Body) => boolean): Promise<Body> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const body = (await call(api, "GET", `/api/runs/${id}`)).body;
+    if (done(body)) return body;
+    assert.ok(Date.now() < deadline, `the run never got there: ${JSON.stringify(body).slice(0, 400)}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 /** A run waiting for the owner, stored as the engine stores one once its planner has answered. */
 function planned(api: Api, tasks: PlanTask[] = THREE): { id: number; planVersion: number } {
@@ -224,24 +242,38 @@ test("a plan edit is validated and stored; approving creates one queued task per
   assert.equal(approved.status, "running");
   assert.deepEqual((approved.tasks as Body[]).map((task) => [task.status, task.title]), [["queued", "Add a greeting file <b>now</b>"], ["queued", "Describe both files"]]);
   assert.equal(count(api, "tasks"), 2);
-  assert.equal(worktreeCount(api.repo), 1, "no worktree is made by approving");
-  assert.equal(fs.existsSync(path.join(api.home, "worktrees")), false);
   // The tasks are real task rows: the task routes know them, with the run's pre-approved commands.
   const tasks = (await call(api, "GET", "/api/tasks")).body.tasks as Body[];
-  assert.deepEqual(tasks.map((task) => [task.status, task.preapproved, task.ofPlan]), [["queued", ["npm test"], run.id], ["queued", ["npm test"], run.id]]);
+  assert.deepEqual(tasks.map((task) => [task.preapproved, task.ofPlan]), [[["npm test"], run.id], [["npm test"], run.id]]);
 
-  // Approved: the plan is fixed, and nothing in this version stops or changes the run.
-  const after = (await call(api, "GET", `/api/runs/${run.id}`)).body;
+  // The run is built, one task after the other: each in its own worktree, where the setup command failed, so each failed with its output and no builder started.
+  const built = await untilRun(api, run.id, (body) => body.status !== "running");
+  assert.equal(built.status, "awaiting_decision");
+  const rows = built.tasks as Body[];
+  assert.deepEqual(rows.map((task) => [task.status, task.attemptId]), [["failed", null], ["failed", null]]);
+  for (const task of rows) {
+    assert.match(String(task.reason), /setup command/i);
+    const [evidence] = task.evidence as Body[];
+    assert.deepEqual([evidence!.kind, evidence!.command, evidence!.outcome, evidence!.exitCode], ["setup", FAILING_SETUP, "failed", 1]);
+    assert.match(String(evidence!.output), /preparing the copy/);
+    assert.equal(typeof evidence!.durationMs, "number");
+  }
+  assert.equal(worktreeCount(api.repo), 3, "one worktree for each approved task");
+  assert.equal(count(api, "attempts"), 0, "no builder was started");
+
+  // Approved: the plan is fixed; a run that has finished building has nothing left to cancel.
   for (const [method, route, body] of [
-    ["PATCH", plan, { planVersion: after.planVersion, tasks: THREE }],
-    ["POST", `${plan}/approve`, { planVersion: after.planVersion }],
-    ["POST", `${plan}/request-changes`, { planVersion: after.planVersion, feedback: "fewer tasks" }],
-    ["POST", `/api/runs/${run.id}/cancel`, {}],
+    ["PATCH", plan, { planVersion: built.planVersion, tasks: THREE }],
+    ["POST", `${plan}/approve`, { planVersion: built.planVersion }],
+    ["POST", `${plan}/request-changes`, { planVersion: built.planVersion, feedback: "fewer tasks" }],
   ] as [string, string, unknown][]) {
     const res = await call(api, method, route, body);
     assert.equal(res.status, 409, `${method} ${route} after approval`);
     assert.match(String(res.body.error), /approved/);
   }
+  const late = await call(api, "POST", `/api/runs/${run.id}/cancel`, {});
+  assert.equal(late.status, 409);
+  assert.match(String(late.body.error), /built/);
   assert.equal(count(api, "tasks"), 2);
   assert.deepEqual((await call(api, "GET", `/api/runs/${run.id}`)).body.plan, edited);
 });
@@ -294,4 +326,48 @@ test("cancel ends a run that waits for approval, once; request-changes needs fee
   await call(api, "POST", `/api/runs/${other.id}/plan/approve`, { planVersion: other.planVersion });
   const said = await until(new RegExp(`"runId":${other.id},"status":"running"`));
   assert.match(said, /event: task\ndata: [^\n]*"status":"queued"/);
+});
+
+test("a run that is building is cancelled over HTTP: the setup command at work is stopped, its tasks are cancelled, and the run and each task say so with their evidence", { timeout: 30_000 }, async (t) => {
+  const api = await start(t, ["sleep 30"]);
+  const run = planned(api, THREE.slice(0, 2));
+  const approved = await call(api, "POST", `/api/runs/${run.id}/plan/approve`, { planVersion: run.planVersion });
+  assert.equal(approved.status, 200);
+  await untilRun(api, run.id, (body) => (body.tasks as Body[])[0]!.status === "building");
+  const cancelled = await call(api, "POST", `/api/runs/${run.id}/cancel`, {});
+  assert.deepEqual([cancelled.status, cancelled.body.status], [200, "cancelled"]);
+  const ended = await untilRun(api, run.id, (body) => (body.tasks as Body[]).every((task) => task.status === "cancelled"));
+  assert.equal(ended.status, "cancelled");
+  const [first, second] = ended.tasks as Body[];
+  assert.deepEqual(((first!.evidence as Body[]) ?? []).map((row) => [row.command, row.outcome]), [["sleep 30", "stopped"]]);
+  assert.deepEqual(second!.evidence, []);
+  const task = (await call(api, "GET", `/api/tasks/${first!.id}`)).body;
+  assert.equal(task.status, "cancelled");
+  assert.match(String(task.reason), /cancelled/);
+  assert.deepEqual((task.evidence as Body[]).map((row) => [row.kind, row.position, row.command, row.outcome]), [["setup", 1, "sleep 30", "stopped"]]);
+  assert.equal(count(api, "attempts"), 0);
+  assert.equal((await call(api, "POST", `/api/runs/${run.id}/cancel`, {})).status, 409);
+});
+
+test("a task's checks are read with it: the mark that says how they went and each check's evidence, on the task and on its run", async (t) => {
+  const api = await start(t);
+  const run = planned(api, THREE.slice(0, 1));
+  const { tasks } = approvePlan(api.server.db, run.id, run.planVersion);
+  const id = tasks[0]!.id;
+  // A task as the build line leaves it once its checks ran: built, checked, one check failed.
+  moveTask(api.server.db, id, "building");
+  moveTask(api.server.db, id, "verifying");
+  const ran = (command: string, outcome: "passed" | "failed", exitCode: number, output: string) => ({ command, outcome, exitCode, signal: null, output, truncated: false, limitMs: 600_000, startedAt: "2026-11-22T10:00:00.000Z", endedAt: "2026-11-22T10:00:02.000Z", durationMs: 2000 });
+  insertEvidence(api.server.db, id, "check", 1, ran("npm test", "failed", 1, "1 failing"));
+  insertEvidence(api.server.db, id, "check", 2, ran("npm run lint", "passed", 0, "clean"));
+  moveTask(api.server.db, id, "awaiting_decision", { checks: "failed" });
+
+  const task = (await call(api, "GET", `/api/tasks/${id}`)).body;
+  assert.equal(task.checks, "failed");
+  assert.deepEqual((task.evidence as Body[]).map((row) => [row.kind, row.position, row.command, row.outcome, row.exitCode, row.output]), [["check", 1, "npm test", "failed", 1, "1 failing"], ["check", 2, "npm run lint", "passed", 0, "clean"]]);
+  const listed = ((await call(api, "GET", "/api/tasks")).body.tasks as Body[]).find((row) => row.id === id)!;
+  assert.equal(listed.checks, "failed");
+  const row = ((await call(api, "GET", `/api/runs/${run.id}`)).body.tasks as Body[])[0]!;
+  assert.equal(row.checks, "failed");
+  assert.equal((row.evidence as Body[]).length, 2);
 });

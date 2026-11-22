@@ -9,8 +9,9 @@ import { listStanding, runGrants, standingGrants } from "../../src/approvals/gra
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import { MAX_CRITERIA, MAX_CRITERION, MAX_PLAN_TASKS, MAX_TITLE, parsePlan, plannerPrompt, validatePlan, type PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, cancelRun, createRun, createRuns, editPlan, getRun, listRuns, MAX_SPEC_BYTES, planTasks, readSpec, RunError, runTasks, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
-import { createTask, createTasks, getTask } from "../../src/engine/task.ts";
+import { createTask, createTasks, getTask, type Tasks } from "../../src/engine/task.ts";
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
+import { MIGRATIONS } from "../../src/store/schema.ts";
 import { EMPTY_TASK, loadPlanRecording, NO_TASKS, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 import { V8_SCHEMA } from "../support/schema-v8.ts";
@@ -195,7 +196,7 @@ test("a plan edit is validated, needs the plan as it stands, and is refused once
   assert.throws(() => approvePlan(db, planning.id, planning.planVersion), refused(409, /planned/));
 });
 
-test("a run is cancelled from planning and from awaiting plan approval, and from nowhere else", (t) => {
+test("a run is cancelled from planning, from awaiting plan approval and while it builds, and from nowhere else", (t) => {
   const { db, repo, base } = store(t);
   const planning = createRun(db, { repo, prompt: "p", baseCommit: base });
   assert.equal(cancelRun(db, planning.id).status, "cancelled");
@@ -210,11 +211,17 @@ test("a run is cancelled from planning and from awaiting plan approval, and from
   assert.throws(() => editPlan(db, waiting.id, THREE, waiting.planVersion), refused(409, /cancelled/));
   assert.throws(() => storePlan(db, waiting.id, THREE), /cancelled/);
 
-  // An approved run is building's to stop, which this version does not have.
+  // An approved run can be cancelled while it builds: its tasks not started yet are cancelled in the same write.
   const approved = planned(db, repo, base);
-  approvePlan(db, approved.id, approved.planVersion);
-  assert.throws(() => cancelRun(db, approved.id), refused(409, /approved/));
-  assert.equal(getRun(db, approved.id)!.status, "running");
+  const { tasks } = approvePlan(db, approved.id, approved.planVersion);
+  assert.equal(cancelRun(db, approved.id).status, "cancelled");
+  assert.deepEqual(tasks.map((task) => getTask(db, task.id)!.status), ["cancelled", "cancelled", "cancelled"]);
+  assert.throws(() => cancelRun(db, approved.id), refused(409, /cancelled/));
+  // A run whose tasks are all built waits for the owner's decision on each: there is nothing left to cancel.
+  const built = planned(db, repo, base);
+  approvePlan(db, built.id, built.planVersion);
+  db.prepare("UPDATE runs SET status = 'awaiting_decision' WHERE id = ?").run(built.id);
+  assert.throws(() => cancelRun(db, built.id), refused(409, /built/));
   assert.throws(() => cancelRun(db, 999), refused(404, /No such run/));
 });
 
@@ -288,7 +295,7 @@ INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, grant_id, rule
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 9);
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
   for (const [table, rows] of Object.entries(kept)) {
     const now = dump(db, table);
     assert.equal(now.length, rows.length, table);
@@ -326,18 +333,28 @@ INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, grant_id, rule
 });
 
 /** A runs engine on replayed planner turns, with a real broker on a real socket. */
-async function engine(t: T, order: number[], hold?: () => Promise<void>): Promise<{ db: DatabaseSync; home: string; repo: string; base: string; driver: PlanReplay; runs: Runs; broker: Broker; changes: string[] }> {
+/**
+ * The build line for these planning tests. Its repository's setup command fails, so a task an approval queues is really
+ * built up to its setup and fails there, before any builder could start: these tests replay planner turns only.
+ */
+function noBuilder(db: DatabaseSync, home: string, driver: PlanReplay, broker: Broker): Tasks {
+  return createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: [{ command: "exit 1", limitMs: 10_000 }], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
+}
+
+async function engine(t: T, order: number[], hold?: () => Promise<void>): Promise<{ db: DatabaseSync; home: string; repo: string; base: string; driver: PlanReplay; runs: Runs; broker: Broker; line: Tasks; changes: string[] }> {
   const s = store(t);
   const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
   await broker.listen();
   const driver = planReplayDriver(loadPlanRecording(), order, hold);
   const changes: string[] = [];
-  const runs = createRuns({ db: s.db, home: s.home, driver, broker, model: "haiku", onEvent: () => {}, onRunChange: (run) => changes.push(`${run.id}:${run.status}`), onTaskChange: () => {} });
+  const line = noBuilder(s.db, s.home, driver, broker);
+  const runs = createRuns({ db: s.db, home: s.home, driver, broker, model: "haiku", line, onEvent: () => {}, onRunChange: (run) => changes.push(`${run.id}:${run.status}`), onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();
+    await line.close();
     await broker.close();
   });
-  return { ...s, driver, runs, broker, changes };
+  return { ...s, driver, runs, broker, line, changes };
 }
 
 test("replayed planner: a valid plan makes the run wait for approval; the planner worked read-only in a detached worktree of the base commit, which is gone afterwards", async (t) => {
@@ -461,6 +478,8 @@ test("replayed planner: requesting changes sends the plan and the feedback to a 
   assert.equal(worktreeCount(e.repo), 1);
   assert.deepEqual(worktreeDirs(e.home), []);
   assert.equal(e.runs.approve(run.id, kept.planVersion).tasks.length, 3);
+  // The build line takes the approved tasks up (each fails at the setup command): let it finish before the folder goes.
+  await e.line.idle();
 });
 
 test("the planner's admission to the gate is read-only: an edit in its worktree is denied, a shell command asks under the planner role, and no grant of the run lets it through", async (t) => {
@@ -499,7 +518,7 @@ test("the planner's admission to the gate is read-only: an edit in its worktree 
   assert.equal((await hook("Read", { file_path: "README.md" }, "toolu_late")).verdict, "deny");
 });
 
-test("after a restart: a run left planning is failed with the reason and its worktree removed; an approved run's queued tasks stay queued", async (t) => {
+test("after a restart: a run left planning is failed with the reason and its worktree removed; an approved run's queued tasks are taken up by its build line", async (t) => {
   const e = await engine(t, []);
   const queuedRun = planned(e.db, e.repo, e.base);
   const tasks = approvePlan(e.db, queuedRun.id, queuedRun.planVersion).tasks;
@@ -510,7 +529,7 @@ test("after a restart: a run left planning is failed with the reason and its wor
   execFileSync("git", ["-C", e.repo, "worktree", "add", "--quiet", "--detach", dir, e.base]);
   assert.equal(worktreeCount(e.repo), 2);
 
-  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(() => runs.close());
   await runs.idle();
   const failed = getRun(e.db, left.id)!;
@@ -520,14 +539,11 @@ test("after a restart: a run left planning is failed with the reason and its wor
   assert.deepEqual(worktreeDirs(e.home), []);
   assert.equal(e.driver.started.length, 0, "nothing was planned again unasked");
 
-  // The task engine's own recovery leaves the run's queued tasks alone: they are the run's to build.
-  const taskEngine = createTasks({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, onEvent: () => {}, onTaskChange: () => {} });
-  t.after(() => taskEngine.close());
-  await taskEngine.idle();
-  assert.deepEqual(tasks.map((task) => getTask(e.db, task.id)!.status), ["queued", "queued", "queued"]);
-  await taskEngine.close();
-  assert.deepEqual(tasks.map((task) => getTask(e.db, task.id)!.status), ["queued", "queued", "queued"]);
-  assert.equal(getRun(e.db, queuedRun.id)!.status, "running");
+  // The run's queued tasks are its build line's, which takes up a running run when it starts: here each is built up to
+  // the repository's setup command, which fails. Planning's recovery itself did nothing to them.
+  await e.line.idle();
+  assert.deepEqual(tasks.map((task) => getTask(e.db, task.id)!.status), ["failed", "failed", "failed"]);
+  assert.equal(getRun(e.db, queuedRun.id)!.status, "awaiting_decision");
 });
 
 test("a spec file is read only when it is a full path to a regular text file of a readable size, and never hangs", async (t) => {
@@ -648,7 +664,7 @@ INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, comman
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 9);
+  assert.equal(schemaVersion(db), MIGRATIONS.length);
   for (const table of tables) {
     const now = dump(db, table);
     assert.equal(now.length, kept[table]!.length, table);
@@ -709,7 +725,7 @@ test("critique: a run cancelled while start-up recovery is still at work stays c
   const left = planned(e.db, e.repo, e.base);
   e.db.prepare("UPDATE runs SET status = 'planning' WHERE id = ?").run(left.id);
   const first = createRun(e.db, { repo: e.repo, prompt: "never planned", baseCommit: e.base });
-  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(() => runs.close());
   assert.equal(runs.cancel(left.id).status, "cancelled");
   assert.equal(runs.cancel(first.id).status, "cancelled");
@@ -729,7 +745,7 @@ test("critique: a planning worktree left by a cancel that Smelt did not live to 
   execFileSync("git", ["-C", e.repo, "worktree", "add", "--quiet", "--detach", dir, e.base]);
   cancelRun(e.db, run.id);
   assert.equal(worktreeCount(e.repo), 2);
-  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(() => runs.close());
   await runs.idle();
   assert.equal(worktreeCount(e.repo), 1);
