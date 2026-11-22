@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { checkoutState, git, initRepo, write } from "../test/support/repo.ts";
+import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
 import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
 import { startSmelt, tempDir } from "./smelt.ts";
 
@@ -213,4 +213,72 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     expect((await smelt.stop()).leftover).toEqual([]);
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("a repository git cannot read in time: the screen leaves Checking and says why, Start task starts nothing, and a newer path replaces the older check", async ({ page, smelt }) => {
+  const repo = sourceRepo(smelt.home);
+  const stalled = path.join(path.dirname(smelt.home), "stalled-repo");
+  stalledRepo(stalled);
+  try {
+    await signIn(page, smelt);
+    const starts: string[] = [];
+    const dropped: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/tasks") starts.push(request.url());
+    });
+    page.on("requestfailed", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/repos/check") dropped.push(url.searchParams.get("path") ?? "");
+    });
+    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+    const state = page.getByTestId("repo-state");
+    const field = page.getByLabel("Repository path");
+    await page.getByLabel("Prompt").fill("Create hello.txt");
+
+    await field.fill(stalled);
+    await expect(state).toHaveText("Checking.");
+    await expect(state).toContainText("could not be read in time", { timeout: 9000 });
+    await expect(state).toContainText(stalled);
+    await expect(field).toHaveAttribute("aria-invalid", "true");
+    await checkDesign(page, "new task, path not read in time");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "the reason wraps inside the screen").toBe(0);
+
+    await page.getByRole("button", { name: "Start task" }).click();
+    await expect(page.getByRole("alert")).toContainText("The task was not started");
+    await expect(page.getByRole("alert")).toContainText("could not be read in time");
+    await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toHaveCount(0);
+
+    // A path typed while an older one is still being checked takes its place: the older request is given up.
+    await field.fill("");
+    await field.fill(stalled);
+    await expect.poll(() => gitProcesses(stalled).length, "the check of the stalled path is under way").toBeGreaterThan(0);
+    await field.fill(repo);
+    await expect(state).toHaveText("Usable git repository.");
+    expect(dropped, "the older check was given up").toEqual([stalled]);
+    await expect.poll(() => gitProcesses(stalled), { timeout: 9000, message: "no git process is left for the folder" }).toEqual([]);
+    await expect(state).toHaveText("Usable git repository.");
+
+    expect(starts, "no task was asked for").toEqual([]);
+    expect(await (await page.request.get(`${smelt.base}/api/tasks`)).json()).toEqual({ tasks: [] });
+  } finally {
+    releaseStalled(stalled);
+  }
+});
+
+test("a check Smelt does not answer ends at the client's own time limit, in words", async ({ page, smelt }) => {
+  const repo = sourceRepo(smelt.home);
+  await signIn(page, smelt);
+  await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "New task" }).click();
+  const state = page.getByTestId("repo-state");
+  smelt.freeze();
+  try {
+    await page.getByLabel("Repository path").fill(repo);
+    await expect(state).toHaveText("Checking.");
+    await expect(state).toHaveText("The path could not be checked: Smelt did not answer within 10 seconds.", { timeout: 14_000 });
+  } finally {
+    smelt.thaw();
+  }
+  // Once Smelt answers again, the next path typed is checked as usual.
+  await page.getByLabel("Repository path").fill(`${repo}/`);
+  await expect(state).toHaveText("Usable git repository.");
 });

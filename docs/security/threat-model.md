@@ -80,6 +80,7 @@ Status: **Done** (built and tested), **Partial**, **Planned** (unit named), **Ac
 | An agent or a check fills the disk or runs forever | Per-command time limits | Planned (U13). No disk quota: Accepted |
 | A malformed request line crashes the server | A request target that cannot be parsed is answered with an error | Done (U4) |
 | A client starts many tasks | Tasks build one at a time, each a single turn whose CLI process is closed when it ends; prompts are capped at 20,000 characters and a diff answer at 400,000 | Partial (U6): the queue has no length limit and a task has no time limit or stop control. Time limits Planned (U13) |
+| A git process never returns, for example on an external drive macOS will not let a background service read, so a request hangs and git processes pile up | Every git process runs in its own process group with a time limit (5 s for checks of a repository, 120 s for worktree, commit, diff and removal work) and the group is killed at the limit; the answer says the folder could not be read in time; the client ends its own check request after 10 s | Done (U6) |
 | Idle CLI sessions pile up | Sessions close after 15 minutes idle and resume from their cursor; all close with the server | Done (U4) |
 | A vendor rate limit stalls a run | Handoff to another driver, resume at reset time | Planned (U21) |
 
