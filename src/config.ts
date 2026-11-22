@@ -31,6 +31,11 @@ export interface Config {
   port: number;
   /** Addresses to listen on. The default is the loopback address only. */
   listen: string[];
+  /**
+   * HTTPS names a private-network proxy forwards from, such as the name `tailscale serve` gives this Mac.
+   * A request whose `Host` is one of these is treated as having arrived over HTTPS. None when absent.
+   */
+  publicHosts?: string[];
   drivers: Partial<Record<DriverName, DriverConfig>>;
   roles: Record<string, RoleConfig>;
 }
@@ -73,10 +78,13 @@ function validate(c: Json, where: string): Config {
   const fail = (message: string): never => {
     throw new Error(`${where}: ${message}`);
   };
-  const { port, listen, drivers, roles } = c;
+  const { port, listen, publicHosts, drivers, roles } = c;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) fail(`"port" must be a whole number from 0 to 65535.`);
   if (!Array.isArray(listen) || listen.length === 0 || !listen.every((a) => typeof a === "string" && a !== "")) {
     fail(`"listen" must be a non-empty list of addresses.`);
+  }
+  if (publicHosts !== undefined && !(Array.isArray(publicHosts) && publicHosts.every((h) => typeof h === "string" && /^[^\s/]+$/.test(h)))) {
+    fail(`"publicHosts" must be a list of host names such as "mac.tailnet.ts.net", without "https://" or a path.`);
   }
   if (!isObject(drivers)) return fail(`"drivers" must be an object keyed by driver name.`);
   for (const [name, value] of Object.entries(drivers)) {
