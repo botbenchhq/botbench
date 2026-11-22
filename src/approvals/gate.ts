@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { floor, type FloorEntry } from "./floor.ts";
+import type { RunMode } from "../engine/modes.ts";
+import { floor, NOT_PLAIN, type FloorEntry } from "./floor.ts";
 import { matchGrant, type Grant } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
 
@@ -13,7 +14,16 @@ import { splitPlain } from "./shell.ts";
  *           owner pre-approved for this run, or one the owner gave standing permission
  *   ask     the owner decides; `floor` names the floor rule when it is the floor that says so
  *   deny    the call cannot be put to anyone as it is
+ *   refuse  a fully autonomous run asks nobody: what would ask the owner is refused instead, saying why
  * The floor is asked before any grant, so no grant gets past it.
+ *
+ * The run's mode (engine/modes.ts) changes two things and no other. In a semi-autonomous or fully autonomous run a
+ * shell command that runs inside the confinement (`confined`: the attempt's driver runs every shell command in its
+ * sandbox, and the call is exactly the one the CLI asked about) runs without asking, unless the floor names it; a
+ * call that carries anything beside its command that is not known to keep it confined still asks. In a fully
+ * autonomous run every "ask" becomes "refuse". The floor's "not a plain command" is no danger of its own: it is why a
+ * chained command cannot run on a grant, which is compared word by word. Every other rule of the floor still reads
+ * each piece of such a command, so a mode lets a chained command run confined unless one of them names it.
  */
 
 /** What one tool call is, as far as the gate needs to know. */
@@ -26,6 +36,10 @@ export interface GateRequest {
   cwd: string;
   /** Whose request this is, for matching grants. Left out, no grant applies. */
   scope?: { role: string; /** The source repository's real path. */ repo: string; runId: number | null };
+  /** The run's mode. Left out, manual. */
+  mode?: RunMode;
+  /** The call would run inside Botbench's confinement. Left out, it is not known to. */
+  confined?: boolean;
 }
 
 /** The part of the floor that is not the request: the owner's home, and the entries the owner's config adds. */
@@ -43,10 +57,21 @@ export type GateVerdict =
   | { verdict: "allow"; rule: "preapproved"; grantId: number }
   /** A command the owner gave standing permission: the whole command, for this role, repository and directory. */
   | { verdict: "allow"; rule: "standing"; grantId: number }
+  /** A confined command of a semi-autonomous or fully autonomous run. */
+  | { verdict: "allow"; rule: "mode_confined" }
   /** The owner decides. `floor` is the floor rule that makes this always ask, when one does. */
   | { verdict: "ask"; floor?: string }
   /** Refused without asking anyone. */
-  | { verdict: "deny"; reason: string };
+  | { verdict: "deny"; reason: string }
+  /** What would ask the owner, refused because the run is fully autonomous; `floor` names the floor rule when it is the floor that would ask. */
+  | { verdict: "refuse"; reason: string; floor?: string };
+
+/** Why a fully autonomous run refused what would otherwise ask the owner, in words for the agent and the record. */
+export function fullAutonomyRefusal(tool: string, floorRule?: string): string {
+  if (floorRule !== undefined) return `This run is fully autonomous, so Botbench refuses what its safety rules would otherwise ask you about (${floorRule}). It was not run.`;
+  if (tool === "Bash") return "This run is fully autonomous, so a command runs without you only inside the protected copy, and this one could not be shown to run kept away from your sign-ins and the network. It was not run.";
+  return `This run is fully autonomous, so nothing is put to you for approval, and ${tool.slice(0, 100)} was refused. It was not run.`;
+}
 
 /** The tools that change a file, and the field of their input that names it. */
 const EDIT_TOOLS: Record<string, string> = { Edit: "file_path", Write: "file_path", NotebookEdit: "notebook_path" };
@@ -106,6 +131,8 @@ const reachesOut = (pattern: unknown): boolean => typeof pattern === "string" &&
 
 /** The fields of a shell call that say nothing about what runs beyond the command itself. */
 const PLAIN_SHELL_FIELDS = new Set(["command", "description"]);
+/** The fields of a shell call that leave it inside the confinement: a time limit and a background run do not take it out. Any other (`dangerouslyDisableSandbox` among them) may. */
+const CONFINED_SHELL_FIELDS = new Set([...PLAIN_SHELL_FIELDS, "timeout", "run_in_background"]);
 
 /** Decide about a shell command: the floor first, then the grants (the run's pre-approved list and the standing permissions). */
 function shellVerdict(request: GateRequest, input: Record<string, unknown>, grants: readonly Grant[], settings: FloorSettings): GateVerdict {
@@ -113,14 +140,18 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
   if (typeof command !== "string" || command === "") return { verdict: "ask" };
   if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
   const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
+  // What the mode lets run: a confined command of a semi-autonomous or fully autonomous run, with nothing beside it that could take it out.
+  const byMode = (request.mode === "semi" || request.mode === "full") && request.confined === true && Object.keys(input).every((name) => CONFINED_SHELL_FIELDS.has(name));
+  const otherwise: GateVerdict = byMode ? { verdict: "allow", rule: "mode_confined" } : { verdict: "ask" };
+  if (rule === NOT_PLAIN) return byMode ? otherwise : { verdict: "ask", floor: rule };
   if (rule !== null) return { verdict: "ask", floor: rule };
   // A call that carries more than its command (a time limit, a background run) is not the command alone.
-  if (!Object.keys(input).every((name) => PLAIN_SHELL_FIELDS.has(name))) return { verdict: "ask" };
+  if (!Object.keys(input).every((name) => PLAIN_SHELL_FIELDS.has(name))) return otherwise;
   const words = splitPlain(command);
-  if (words === null || request.scope === undefined) return { verdict: "ask" };
+  if (words === null || request.scope === undefined) return otherwise;
   const relative = path.relative(request.worktree, request.cwd);
   const grant = matchGrant({ ...request.scope, cwd: relative === "" ? "." : relative, words }, grants);
-  return grant === null ? { verdict: "ask" } : { verdict: "allow", rule: grant.kind === "standing" ? "standing" : "preapproved", grantId: grant.id };
+  return grant === null ? otherwise : { verdict: "allow", rule: grant.kind === "standing" ? "standing" : "preapproved", grantId: grant.id };
 }
 
 /**
@@ -128,6 +159,13 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
  * to the owner. Without grants nothing but edits and reads inside the worktree is allowed.
  */
 export function gate(request: GateRequest, grants: readonly Grant[] = [], settings: FloorSettings = { home: os.homedir() }): GateVerdict {
+  const verdict = decide(request, grants, settings);
+  // A fully autonomous run puts nothing to the owner: what would ask is refused, and says why.
+  if (request.mode !== "full" || verdict.verdict !== "ask") return verdict;
+  return { verdict: "refuse", reason: fullAutonomyRefusal(request.tool, verdict.floor), ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) };
+}
+
+function decide(request: GateRequest, grants: readonly Grant[], settings: FloorSettings): GateVerdict {
   const input = isObject(request.input) ? request.input : {};
   if (request.tool === "Bash") return shellVerdict(request, input, grants, settings);
   const editField = EDIT_TOOLS[request.tool];

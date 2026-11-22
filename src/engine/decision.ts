@@ -16,6 +16,10 @@ import { getTask, moveTaskIn, settleRunIn, TaskError, words, type Task, type Tas
  * The checks run after Botbench committed the work, and may leave files in the copy. Those are not on the branch, and
  * removing the copy removes them, so a decision is refused while there are any, until the owner confirms they may go.
  * Files git ignores (node_modules and the like) are not counted: they are never work.
+ *
+ * A fully autonomous run accepts a task without the owner when it qualifies (engine/modes.ts): the same accept, made
+ * by the mode, which the decision records as its maker with the reasons it qualified. It is never a reject, and never
+ * removes files the checks left: such a task is handed back to the owner instead.
  */
 
 export type DecisionKind = "accept" | "reject";
@@ -32,7 +36,10 @@ export interface TaskDecision {
   headCommit: string | null;
   /** The files the checks left in the copy, removed with it once the owner confirmed. */
   leftovers: string[];
-  decidedBy: "owner";
+  /** The owner, or the run's mode: a fully autonomous run's accept. */
+  decidedBy: "owner" | "mode";
+  /** Why the mode accepted, in words for the owner; null for the owner's own decision. */
+  reasons: string | null;
   decidedAt: string;
 }
 
@@ -63,7 +70,8 @@ function toDecision(row: Record<string, unknown>): TaskDecision {
     branchName: String(row.branch_name),
     headCommit: typeof row.head_commit === "string" ? row.head_commit : null,
     leftovers: Array.isArray(leftovers) ? leftovers.filter((f): f is string => typeof f === "string") : [],
-    decidedBy: "owner",
+    decidedBy: row.decided_by === "mode" ? "mode" : "owner",
+    reasons: typeof row.reasons === "string" ? row.reasons : null,
     decidedAt: String(row.decided_at),
   };
 }
@@ -139,7 +147,27 @@ export async function decideTask(db: DatabaseSync, input: DecideInput): Promise<
   }
 }
 
-async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, discard: boolean, confirmed: readonly string[]): Promise<{ task: Task; run: { id: number; status: string } | null }> {
+/**
+ * A fully autonomous run's accept of a task that qualified, with the reasons: the owner's Accept, made by the mode. It
+ * keeps the branch and removes the copy; nothing is merged or pushed. Throws a TaskError, with nothing changed, when the
+ * task is not ready for review, a decision on it is under way, or the checks left files in its copy, which only the
+ * owner may let go.
+ */
+export async function acceptByMode(db: DatabaseSync, taskId: number, reasons: string): Promise<{ task: Task; run: { id: number; status: string } | null }> {
+  const task = getTask(db, taskId);
+  if (!task) throw new TaskError(404, "No such task.");
+  ready(task);
+  if (deciding.has(task.id)) throw new TaskError(409, `A decision on task ${task.id} is being made already.`);
+  deciding.add(task.id);
+  try {
+    return await decide(db, task, "accept", false, [], reasons);
+  } finally {
+    deciding.delete(task.id);
+  }
+}
+
+/** `reasons` is set for the mode's accept and left out for the owner's decision. */
+async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, discard: boolean, confirmed: readonly string[], reasons?: string): Promise<{ task: Task; run: { id: number; status: string } | null }> {
   const dir = task.worktreePath!;
   const branch = task.branch!;
   // A copy that is already gone (removed by hand, or by a decision that failed after removing it) holds nothing to keep.
@@ -199,10 +227,12 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
     const now_ = getTask(db, task.id)!;
     ready(now_);
     // The commit the kept branch holds now: Botbench's, or one the owner added on top of it.
-    db.prepare("INSERT INTO decisions (task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at) VALUES (?, 'owner', ?, ?, ?, ?, ?, ?)").run(task.id, decision, kept, branch, discard ? task.headCommit : at, JSON.stringify(leftovers), now());
+    const by = reasons === undefined ? "owner" : "mode";
+    db.prepare("INSERT INTO decisions (task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at, reasons) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id, by, decision, kept, branch, discard ? task.headCommit : at, JSON.stringify(leftovers), now(), reasons ?? null);
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    const decided = moveTaskIn(db, task.id, decision === "accept" ? "accepted" : "rejected", { note: `${decision === "accept" ? "accepted" : "rejected"} by the owner; branch ${kept}${leftovers.length > 0 ? `; ${leftovers.length} leftover files removed with the worktree` : ""}` });
-    appendLog(db, { taskId: task.id, runId: task.runId, attemptId: task.attemptId, rule: decision === "accept" ? "owner_accepted" : "owner_rejected", tool: "Branch", command: branch, cwd: task.repo, detail });
+    const decided = moveTaskIn(db, task.id, decision === "accept" ? "accepted" : "rejected", { note: `${decision === "accept" ? "accepted" : "rejected"} by ${by === "owner" ? "the owner" : "the run's mode, fully autonomous"}; branch ${kept}${leftovers.length > 0 ? `; ${leftovers.length} leftover files removed with the worktree` : ""}` });
+    const rule = by === "mode" ? "mode_accepted" : decision === "accept" ? "owner_accepted" : "owner_rejected";
+    appendLog(db, { taskId: task.id, runId: task.runId, attemptId: task.attemptId, rule, tool: "Branch", command: branch, cwd: task.repo, detail: reasons === undefined ? detail : `${reasons} ${detail}` });
     return { task: decided, run: task.runId === null ? null : settleRunIn(db, task.runId) };
   });
 }

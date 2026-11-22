@@ -5,6 +5,7 @@ import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
+import { runModeOf } from "../engine/modes.ts";
 import { reviewAssignment, taskReview } from "../engine/review.ts";
 import { taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
@@ -44,6 +45,8 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     preapproved: task.runId === null ? [] : runGrants(db, task.runId).map((grant) => showWords(grant.words)),
     decision: decisionOf(db, task.id),
     resumeNote: resumeNote(db, task),
+    // The mode of its run (manual for a task started on its own), which says who decides on it.
+    mode: runModeOf(db, task.runId),
     createdAt, updatedAt,
   };
 }
@@ -63,8 +66,8 @@ export function reviewOf(db: DatabaseSync, taskId: number): { reviewer: { agent:
 export function decisionOf(db: DatabaseSync, taskId: number): Record<string, unknown> | null {
   const found = taskDecision(db, taskId);
   if (found === null) return null;
-  const { decision, branch, branchName, leftovers, decidedBy, decidedAt } = found;
-  return { decision, branch, branchName, leftovers, decidedBy, decidedAt };
+  const { decision, branch, branchName, leftovers, decidedBy, reasons, decidedAt } = found;
+  return { decision, branch, branchName, leftovers, decidedBy, reasons, decidedAt };
 }
 
 /**

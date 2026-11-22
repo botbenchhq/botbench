@@ -14,7 +14,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -62,7 +62,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
   const signals = [...(timeoutMs === undefined ? [] : [AbortSignal.timeout(timeoutMs)]), ...(giveUp ? [giveUp] : [])];
   const res = await fetch(path, {
     method,
@@ -196,9 +196,14 @@ export interface TaskDecision {
   branchName: string;
   /** The files the checks left in the task's copy, removed with it. */
   leftovers: string[];
-  decidedBy: "owner";
+  /** The owner, or the run's mode: a fully autonomous run accepted the task without the owner. */
+  decidedBy: "owner" | "mode";
+  /** Why the mode accepted it, in words; null for the owner's own decision. */
+  reasons: string | null;
   decidedAt: string;
 }
+/** How much a run does without the owner, chosen when it is started. */
+export type RunMode = "manual" | "semi" | "full";
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -253,6 +258,8 @@ export interface TaskSummary {
   decision: TaskDecision | null;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
+  /** The mode of its run; manual for a task started on its own. */
+  mode: RunMode;
   createdAt: string;
   updatedAt: string;
 }
@@ -362,6 +369,7 @@ export interface RunSummary {
   decidedCount: number;
   /** Its planner asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
+  mode: RunMode;
   createdAt: string;
   updatedAt: string;
 }
@@ -409,8 +417,11 @@ export interface RunAnnouncement {
 }
 
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[]; reviewer: ReviewerChoice | null }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved, reviewer: o.reviewer }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode }, 30_000);
+/** The mode a new run is given unless the owner chooses another on New run. */
+export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
+export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
 /** One row of the board: a planned run, or a task started on its own (a run of one). */
 export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };
@@ -505,7 +516,10 @@ export type LogRule =
   | "standing_revoked"
   | "owner_accepted"
   | "owner_rejected"
-  | "owner_discarded";
+  | "owner_discarded"
+  | "mode_allowed"
+  | "mode_refused"
+  | "mode_accepted";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

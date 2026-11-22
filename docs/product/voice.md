@@ -51,6 +51,8 @@ On screen since notifications landed: Settings → Notifications, with the state
 
 On screen since connecting landed: Connect (start an agent's own sign-in from Settings), Connect Claude Code (the sheet), Open sign-in page, Code from the sign-in page, Send code, Cancel connecting, Disconnect (the agent's own sign-out, behind "Disconnect Claude Code?" with Keep connected), and Sign in on the Mac (an agent whose sign-in can only be finished in a browser on the Mac, with the command to run there).
 
+On screen since the modes: Mode on New run, the run and the task, and Default mode in Settings, with Manual, Semi-autonomous and Fully autonomous, each with its one line ("Accepts work without you" is Fully autonomous's warning); "Accepted without you" (a fully autonomous run's accept) and its reasons; "It needs your review:" with the reason a fully autonomous run did not accept a task; in Activity "Ran without asking: the run's mode", "Refused without asking: fully autonomous" and "Accepted without you: fully autonomous".
+
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.

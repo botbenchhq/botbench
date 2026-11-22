@@ -8,6 +8,7 @@ import { HOST_RULE, hostProblem } from "./confinement.ts";
 import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
 import { CODEX, CODEX_CAPABILITIES } from "./drivers/codex.ts";
+import { isRunMode, type RunMode } from "./engine/modes.ts";
 import { roleProblem } from "./engine/roles.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 
@@ -126,9 +127,11 @@ export interface Config {
 export interface AutonomyConfig {
   /** After the owner has allowed the same command this many times, its next card offers standing permission. A whole number of at least 1; 3 when absent. */
   offerStandingAfter?: number;
+  /** The mode a new run is given when none is chosen, until the owner picks one in Settings: "manual" (when absent), "semi" or "full". */
+  mode?: RunMode;
 }
 const OFFER_STANDING_AFTER = 3;
-const AUTONOMY_SETTINGS = ["offerStandingAfter"] as const;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode"] as const;
 
 /** How many approvals of the same command earn the offer of standing permission. */
 export function offerStandingAfter(config: Config): number {
@@ -238,6 +241,7 @@ function validate(c: Json, where: string): Config {
     }
     const after = autonomy.offerStandingAfter;
     if (after !== undefined && !(typeof after === "number" && Number.isSafeInteger(after) && after >= 1)) fail(`"autonomy.offerStandingAfter" must be a whole number of at least 1: how many times you allow the same command before its card offers standing permission.`);
+    if (autonomy.mode !== undefined && !isRunMode(autonomy.mode)) fail(`"autonomy.mode" must be "manual", "semi" or "full": the mode a new run is given when none is chosen.`);
   }
   return c as unknown as Config;
 }

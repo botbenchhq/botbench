@@ -14,6 +14,7 @@ import { CODEX, CodexDriver } from "./drivers/codex.ts";
 import { createConnect } from "./drivers/connect.ts";
 import type { SignInDefinition } from "./drivers/sign-in.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
+import { defaultMode } from "./engine/modes.ts";
 import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
 import { createPush, type Push } from "./push.ts";
@@ -112,7 +113,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: stream.announceRun });
-  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, line: tasks, onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
+  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
   // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.
   const connect = createConnect({
     agents: [driver, ...Object.values(reviewers)].flatMap((d) => {

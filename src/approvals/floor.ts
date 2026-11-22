@@ -188,6 +188,9 @@ function diskDevice(word: string, reading: Reading): boolean {
 }
 const DISK_VERBS = /^(?:erase|reformat|partitiondisk|zerodisk|randomdisk|secureerase|delete|resetfusion|resize|merge|split)/;
 
+/** The last rule of the floor, which no other matched: the command is not one plain command, and so never runs on a grant. */
+export const NOT_PLAIN = "not-a-plain-command";
+
 /** The floor's own rules, in the order they are tried. The first that matches names why the command asks. */
 export const FLOOR_RULES: readonly FloorRule[] = [
   {
@@ -248,7 +251,7 @@ export const FLOOR_RULES: readonly FloorRule[] = [
   {
     // Anything that is not one plain command: chained, piped, redirected, substituted, with variables, globs or line breaks.
     // It cannot be compared word by word, so it never runs on a grant.
-    name: "not-a-plain-command",
+    name: NOT_PLAIN,
     matches: (r) => !r.plain,
   },
 ];

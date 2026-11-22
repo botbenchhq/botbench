@@ -4,10 +4,11 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { isRunMode, MODE_WORDS, type RunMode } from "../engine/modes.ts";
 import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
-import { gate, READ_ONLY_TOOLS, real, summarize, type FloorSettings } from "./gate.ts";
+import { fullAutonomyRefusal, gate, READ_ONLY_TOOLS, real, summarize, type FloorSettings } from "./gate.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
 
@@ -24,6 +25,12 @@ import { splitPlain } from "./shell.ts";
  *               reply is pass, ask or deny. It cannot allow anything and
  *               cannot answer an approval.
  * Whatever goes wrong on either way, the outcome is a refusal.
+ *
+ * The run's mode is read in request() only, from the store, for each request (engine/modes.ts). In a semi-autonomous
+ * or fully autonomous run a shell command that runs confined, and that the floor does not name, is allowed there and
+ * logged under `mode_allowed`; in a fully autonomous run whatever would ask the owner is refused there and logged
+ * under `mode_refused`, and the agent is told why. A command is taken as confined only when the attempt was admitted as
+ * one whose driver runs every shell command in its sandbox, and the request is exactly the call its hook reported.
  *
  * Grants are read in request() only. A command on its run's pre-approved list, or one the owner gave standing
  * permission, is allowed there without an approval, after the safety floor had its say, and logged with the grant
@@ -91,7 +98,13 @@ export type LogRule =
   | "owner_accepted"
   | "owner_rejected"
   /** The owner discarded what a failed, stopped or cancelled task left behind. */
-  | "owner_discarded";
+  | "owner_discarded"
+  /** A confined command ran without asking, because the run is semi-autonomous or fully autonomous. */
+  | "mode_allowed"
+  /** A fully autonomous run refused what would have asked the owner: a request the safety floor names, or one that is not a confined command. */
+  | "mode_refused"
+  /** A fully autonomous run accepted a task without the owner. The entry names the task's branch and why it qualified. */
+  | "mode_accepted";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -182,6 +195,8 @@ export interface Answer {
   preapproved?: { grantId: number };
   /** Set when the request was allowed on a standing permission and the owner was not asked: the grant it ran on. */
   standing?: { grantId: number };
+  /** Set when the run's mode let the request run without asking: a confined command of a semi-autonomous or fully autonomous run. */
+  byMode?: RunMode;
 }
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
@@ -217,7 +232,11 @@ export interface Broker {
    * Admit an attempt of a task, or of a run's planner (`runId` and no `taskId`). `readOnly` is for a role that changes
    * nothing: the gate then refuses every edit, also inside the worktree, and no grant lets a command through.
    */
-  admit(o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean }): Admission;
+  /**
+   * `confined`: the attempt's driver runs every shell command it asks for in its sandbox (`confinedCommands`). Only then
+   * can a semi-autonomous or fully autonomous run let a command run without asking.
+   */
+  admit(o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean; confined?: boolean }): Admission;
   /** Record a pending approval and wait for the owner. Never rejects: any failure is a decline. */
   request(request: ApprovalRequest): Promise<Answer>;
   /**
@@ -367,6 +386,8 @@ interface Ticket {
   runId: number | null;
   /** The attempt changes nothing: every edit is refused and no grant applies. */
   readOnly: boolean;
+  /** The attempt's driver runs every shell command in its sandbox. */
+  confined: boolean;
   role: string;
   worktree: string;
   attemptId: number | null;
@@ -456,38 +477,67 @@ export function createBroker(options: {
     }
   };
 
-  type RequestVerdict = { verdict: "ask"; floor?: string } | { verdict: "deny"; reason: string } | { verdict: "allow"; rule: "preapproved" | "standing"; grant: Grant };
+  type RequestVerdict =
+    | { verdict: "ask"; floor?: string }
+    | { verdict: "deny"; reason: string }
+    | { verdict: "refuse"; reason: string; floor?: string }
+    | { verdict: "allow"; rule: "preapproved" | "standing"; grant: Grant }
+    | { verdict: "allow"; rule: "mode"; mode: RunMode };
+
+  /** The mode of the run a request belongs to, read from the store; manual for a task of no run. Throws when it cannot be read. */
+  const modeOfRequest = (r: ApprovalRequest): RunMode => {
+    const row = r.taskId !== null ? db.prepare("SELECT r.mode FROM tasks t LEFT JOIN runs r ON r.id = t.run_id WHERE t.id = ?").get(r.taskId) : db.prepare("SELECT mode FROM runs WHERE id = ?").get(r.runId ?? null);
+    if (row === undefined) throw new Error("its task or run is not in the store");
+    if (row.mode === null) return "manual";
+    if (!isRunMode(row.mode)) throw new Error(`its run has a mode Botbench does not know (${String(row.mode)})`);
+    return row.mode;
+  };
 
   /**
    * The gate's word on a permission request of the CLI. Only a shell command can come out allowed, and only when
    * everything about it is known: the attempt's own admission, the directory its hook reported, the input an allow
-   * would let run, and the task's run and repository. Anything missing or unreadable means the owner is asked.
+   * would let run, and the task's run and repository. Anything missing or unreadable means the owner is asked; in a
+   * fully autonomous run, which asks nobody, it means a refusal.
    */
   const decideRequest = (r: ApprovalRequest, ticket: Ticket | undefined, cwd: string): RequestVerdict => {
-    if (r.tool !== "Bash" || !ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return { verdict: "ask" };
+    let mode: RunMode;
     try {
-      // Grants are looked up only when the directory was reported and the input is the one the card would show.
-      // Without them the gate still asks the floor, at the worktree's top, so that the record says why this asks.
-      // A read-only attempt, and one that belongs to no task, is never looked up: every command of a planner asks.
-      const known = !ticket.readOnly && r.taskId !== null && cwd !== "" && isObject(r.input) && summarize(r.tool, r.input) === r.command;
+      mode = modeOfRequest(r);
+    } catch (err) {
+      // Not known to be anything but manual: the owner decides.
+      console.error(`The mode of the run of a request could not be read: ${words(err)}`);
+      return { verdict: "ask" };
+    }
+    const nobody = (reason: string): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason } : { verdict: "ask" });
+    if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.");
+    if (r.tool !== "Bash") return nobody(fullAutonomyRefusal(r.tool));
+    try {
+      // The input the CLI would run is the one its card would show, and the directory is the one its hook reported:
+      // only then is the request exactly the call that was checked, and only then may a mode or a grant apply.
+      const exact = cwd !== "" && isObject(r.input) && summarize(r.tool, r.input) === r.command;
+      // Grants are looked up only for such a request. Without them the gate still asks the floor, at the worktree's top,
+      // so that the record says why this asks. A read-only attempt, and one that belongs to no task, is never looked up:
+      // every command of a planner asks, unless the run's mode lets a confined one run.
+      const known = !ticket.readOnly && r.taskId !== null && exact;
       const at = path.resolve(ticket.worktree, cwd === "" ? "." : cwd);
-      const input = known ? r.input : { command: r.command };
-      const task = db.prepare("SELECT repo_path, run_id FROM tasks WHERE id = ?").get(r.taskId);
+      const input = exact ? r.input : { command: r.command };
+      const task = r.taskId === null ? undefined : db.prepare("SELECT repo_path, run_id FROM tasks WHERE id = ?").get(r.taskId);
       const runId = known && task && typeof task.run_id === "number" ? task.run_id : null;
       // Who asks and where: only then can a grant apply. The repository is the task's, by the real path stored when
       // the task was started, so a standing permission earned in one task's worktree is the same one in the next task's.
       const scope = known && task ? { role: r.role, repo: String(task.repo_path), runId } : undefined;
       // Read from the store for this request: a standing permission taken back a moment ago is not among them.
       const grants = scope === undefined ? [] : [...(runId === null ? [] : runGrants(db, runId)), ...standingGrants(db, scope)];
-      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, ...(scope === undefined ? {} : { scope }) }, grants, floorSettings);
-      if (verdict.verdict !== "allow") return verdict;
-      if (verdict.rule !== "preapproved" && verdict.rule !== "standing") return { verdict: "ask" };
+      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, mode, confined: ticket.confined && exact, ...(scope === undefined ? {} : { scope }) }, grants, floorSettings);
+      if (verdict.verdict === "ask" || verdict.verdict === "deny" || verdict.verdict === "refuse") return verdict;
+      if (verdict.rule === "mode_confined") return { verdict: "allow", rule: "mode", mode };
+      if (verdict.rule !== "preapproved" && verdict.rule !== "standing") return nobody(fullAutonomyRefusal(r.tool));
       const grant = grants.find((g) => g.id === verdict.grantId);
-      return grant ? { verdict: "allow", rule: verdict.rule, grant } : { verdict: "ask" };
+      return grant ? { verdict: "allow", rule: verdict.rule, grant } : nobody(fullAutonomyRefusal(r.tool));
     } catch (err) {
-      // The gate could not be asked: nothing is allowed on it, and the owner decides.
+      // The gate could not be asked: nothing is allowed on it, and the owner decides, or nobody does.
       console.error(`The gate could not decide about a request of task ${r.taskId}: ${words(err)}`);
-      return { verdict: "ask" };
+      return nobody("This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run.");
     }
   };
 
@@ -539,6 +589,26 @@ export function createBroker(options: {
     // What Botbench itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
+    if (verdict.verdict === "refuse") {
+      const about = { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, tool: r.tool, command: r.command, cwd, detail: verdict.reason };
+      try {
+        appendLog(db, { ...about, rule: "mode_refused" });
+      } catch (err) {
+        // The refusal stands whether or not it could be recorded under its own rule.
+        return deny(`${verdict.reason} It could not be recorded as such: ${words(err)}`);
+      }
+      if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Botbench refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
+      return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: verdict.reason });
+    }
+    if (verdict.verdict === "allow" && verdict.rule === "mode") {
+      try {
+        // What cannot be logged does not run.
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "mode_allowed", tool: r.tool, command: r.command, cwd, detail: `Ran without asking you: this run is ${MODE_WORDS[verdict.mode]}, and the command ran kept away from your sign-ins and the network.` });
+      } catch (err) {
+        return deny(`This command could not be recorded, so it was not let through: ${words(err)}`);
+      }
+      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, byMode: verdict.mode });
+    }
     if (verdict.verdict === "allow") {
       const grant = verdict.grant;
       const standing = verdict.rule === "standing";
@@ -728,10 +798,11 @@ export function createBroker(options: {
     // With links followed: a directory that is a link out of the worktree is recorded as where it leads.
     const relative = path.relative(ticket.worktree, real(cwd));
     const from = relative === "" ? "." : relative;
-    if (verdict.verdict === "deny") return denied(`Botbench's permission check refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
+    // Asked without a mode, the gate never refuses here; were it to, the call would not run.
+    if (verdict.verdict === "deny" || verdict.verdict === "refuse") return denied(`Botbench's permission check refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
     // A read-only attempt has reading and the shell and nothing else: any other tool is refused, not asked about.
     if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Botbench's permission check refused this call: the ${stepWords(ticket.role)} only reads and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
-    if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing") {
+    if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing" || verdict.rule === "mode_confined") {
       if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
       ticket.seen.set(toolCallId, from);
       return { verdict: "ask", reason: "Botbench asks the owner before this runs." };
@@ -825,7 +896,7 @@ export function createBroker(options: {
     });
   };
 
-  const admit = (o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean }): Admission => {
+  const admit = (o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean; confined?: boolean }): Admission => {
     if ((o.taskId === undefined) === (o.runId === undefined)) throw new Error("A permission ticket is for a task or for a run's planner, one of the two.");
     const secret = randomBytes(32).toString("hex");
     const key = hashOf(secret);
@@ -836,7 +907,7 @@ export function createBroker(options: {
     } catch {
       // A worktree that is not there yet is compared as written.
     }
-    const ticket: Ticket = { taskId: o.taskId ?? null, runId: o.runId ?? null, readOnly: o.readOnly === true, role: o.role, worktree, attemptId: null, resumes: o.resumes ?? null, seen: new Map() };
+    const ticket: Ticket = { taskId: o.taskId ?? null, runId: o.runId ?? null, readOnly: o.readOnly === true, confined: o.confined === true, role: o.role, worktree, attemptId: null, resumes: o.resumes ?? null, seen: new Map() };
     tickets.set(key, ticket);
     const supersede = (toolCallId?: string): void => {
       if (ticket.attemptId === null) return;

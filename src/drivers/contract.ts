@@ -19,6 +19,12 @@ export interface DriverCapabilities {
   permissionRequests: boolean;
   /** The CLI can be let edit files in its working directory under Botbench's rules (`allowEdits`). */
   edits: boolean;
+  /**
+   * Every shell command the CLI runs for an attempt runs inside the attempt's `confinement`, and the CLI refuses to start
+   * rather than run one outside it. Only then may a semi-autonomous or fully autonomous run let a command run without
+   * asking (engine/modes.ts). Left out, they are not known to.
+   */
+  confinedCommands?: boolean;
 }
 
 /** How the CLI is billed, taken from the CLI's own account of its login. */
