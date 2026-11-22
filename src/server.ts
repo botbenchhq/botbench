@@ -20,7 +20,9 @@ import { GROK, GrokDriver } from "./drivers/grok.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { defaultMode } from "./engine/modes.ts";
 import { createDictation, type DictationOptions } from "./dictation/dictation.ts";
+import { createDeliveries } from "./engine/delivery.ts";
 import { createRuns } from "./engine/run.ts";
+import { createGitHub, type GitHub } from "./github.ts";
 import { createTasks } from "./engine/task.ts";
 import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
@@ -77,6 +79,8 @@ export interface StartOptions {
   signIns?: readonly SignInDefinition[];
   /** Where dictation finds its programs and keeps its temporary files, and the largest recording, when not the defaults. */
   dictation?: Omit<DictationOptions, "home"> & { maxBytes?: number };
+  /** What Botbench asks of GitHub. The owner's own gh unless a test replays output captured from it. */
+  github?: GitHub;
 }
 
 
@@ -133,7 +137,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   });
   const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
   const dictation = createDictation({ home, ...dictationOptions });
-  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
+  const deliveries = createDeliveries({ db, config, github: options.github ?? createGitHub(), onTaskChange: stream.announceTask });
+  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, push, connect, dictation, deliveries, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -158,7 +164,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
-    await Promise.allSettled([turns.close(), tasks.close(), runs.close(), connect.close()]);
+    await Promise.allSettled([turns.close(), tasks.close(), runs.close(), connect.close(), deliveries.close()]);
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
     // A notification in flight may still delete an expired device's row; each has a time limit.

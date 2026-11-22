@@ -7,6 +7,7 @@ import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, 
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { resumeNote } from "../engine/task.ts";
 import { decisionOf, leftoversOf } from "./tasks.ts";
+import { deliveryOf } from "../engine/delivery.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -37,11 +38,11 @@ export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
  * (titles, criteria) is text, to be shown as text.
  */
 async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknown>> {
-  const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, createdAt, updatedAt } = run;
+  const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, delivery, createdAt, updatedAt } = run;
   const plan = planTasks(db, id);
   const titles = new Map(plan.map((task) => [task.taskId, task.title]));
   return {
-    id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, ...(buildModel === undefined ? {} : { buildModel }), baseCommit, attemptId, planVersion, reviewer, mode,
+    id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, ...(buildModel === undefined ? {} : { buildModel }), baseCommit, attemptId, planVersion, reviewer, mode, delivery,
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
@@ -50,6 +51,7 @@ async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknow
       waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),
       evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id),
       decision: decisionOf(db, task.id),
+      pullRequest: deliveryOf(db, task),
       leftovers: await leftoversOf(task),
       resumeNote: resumeNote(db, task),
     }))),
@@ -60,7 +62,7 @@ async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknow
 }
 
 // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
-const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full" }';
+const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full", "delivery"?: "branch" | "pull_request" }';
 
 /**
  * The run routes: start one, list them, describe one, and the owner's decisions at the plan gate (edit, approve,
@@ -78,7 +80,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       if (!isObject(body) || typeof body.repo !== "string") throw new RunError(400, EXPECTED);
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }) });
+      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });

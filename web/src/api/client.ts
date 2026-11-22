@@ -221,6 +221,40 @@ export interface TaskDecision {
 }
 /** How much a run does without the owner, chosen when it is started. */
 export type RunMode = "manual" | "semi" | "full";
+/** What becomes of each task a run accepts: its branch is kept, or pushed and opened as a pull request. */
+export type Delivery = "branch" | "pull_request";
+/**
+ * A task's pull request: what its run chose, and where it stands. `sending`: Botbench is pushing the branch or opening
+ * the pull request. `failed`: what went wrong is in `problem`; nothing about the acceptance changed.
+ */
+export interface PullRequestView {
+  choice: Delivery;
+  state: "none" | "sending" | "opened" | "failed";
+  number: number | null;
+  url: string | null;
+  /** The pull request was already there and was taken as this task's. */
+  adopted: boolean;
+  /** OPEN, CLOSED or MERGED, as GitHub said when it was opened or found. */
+  prState: string | null;
+  /** The branch was pushed to the remote, whatever came after. */
+  pushed: boolean;
+  repository: string | null;
+  base: string | null;
+  remote: string | null;
+  branch: string | null;
+  problem: string | null;
+  at: string | null;
+}
+/** Where Open a pull request would send an accepted task's branch, for the owner to confirm. */
+export interface PullRequestTarget {
+  remote: string;
+  /** The remote's address, any credentials in it taken out. */
+  address: string;
+  repository: string | null;
+  branch: string;
+  /** The base branch the settings name; null for the repository's default. */
+  base: string | null;
+}
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -273,6 +307,7 @@ export interface TaskSummary {
   preapproved: string[];
   /** The owner's decision, once there is one. */
   decision: TaskDecision | null;
+  pullRequest: PullRequestView;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
   /** The mode of its run; manual for a task started on its own. */
@@ -306,6 +341,8 @@ export interface TaskDetail extends TaskSummary {
   /** For a task that failed, was stopped or was cancelled: what it left, which Discard removes. Null otherwise, or when it cannot be read. */
   remains: TaskRemains | null;
   remainsProblem: string | null;
+  /** For an accepted task that kept its branch and has no pull request yet: where Open a pull request would send it. */
+  pullRequestTarget: PullRequestTarget | null;
 }
 
 /** What a task that ended without being ready for review left: its copy, Botbench's branch, and the files in the copy that are not on the branch. */
@@ -352,6 +389,8 @@ export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ ta
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 /** Accept a task that is ready for review. `removeLeftovers` is the list of files its checks left, as the owner saw and confirmed them. */
 export const acceptTask = (id: number, removeLeftovers: readonly string[], note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { removeLeftovers, note }, 60_000);
+/** Push an accepted task's branch and open its pull request (or try again), naming the remote and branch the owner confirmed. */
+export const openPullRequest = (id: number, to: { remote: string; branch: string; address: string }): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/pull-request`, { remote: to.remote, branch: to.branch, address: to.address }, 30_000);
 /** Reject a task that is ready for review, keeping or deleting its branch. */
 export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftovers: readonly string[], note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/reject`, { branch, removeLeftovers, note }, 60_000);
 /** Remove the copy and branch of a task that failed, was stopped or was cancelled. `removeFiles` is the list of files not on the branch, as the owner saw and confirmed it. */
@@ -404,6 +443,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   buildModel?: string | null;
   /** Who reviews each built task; null when nobody does. */
   reviewer: ReviewerChoice | null;
+  /** What becomes of each task the run accepts. */
+  delivery: Delivery;
   baseCommit: string;
   /** The plan's version. A decision names the version it was made on, and is refused when the plan has changed since. */
   planVersion: number;
@@ -428,6 +469,7 @@ export interface RunTask {
   /** How many commands each round of setup and checks holds, recorded as it starts. */
   commandLists: CommandList[];
   decision: TaskDecision | null;
+  pullRequest: PullRequestView;
   leftovers: string[] | null;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
@@ -440,8 +482,8 @@ export interface RunAnnouncement {
 }
 
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery }, 30_000);
 /** The mode a new run is given unless the owner chooses another on New run. */
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
@@ -542,7 +584,8 @@ export type LogRule =
   | "owner_discarded"
   | "mode_allowed"
   | "mode_refused"
-  | "mode_accepted";
+  | "mode_accepted"
+  | "delivery";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

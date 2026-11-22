@@ -10,6 +10,7 @@ import { reviewAssignment, taskReview } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
+import { deliveryOf } from "../engine/delivery.ts";
 import { commitsFileDiff, describeCommits, describeWork, fileDiff, type FileChange } from "../worktrees.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -44,6 +45,7 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     ofPlan: task.runId !== null && getRun(db, task.runId) !== null ? task.runId : null,
     preapproved: task.runId === null ? [] : runGrants(db, task.runId).map((grant) => showWords(grant.words)),
     decision: decisionOf(db, task.id),
+    pullRequest: deliveryOf(db, task),
     resumeNote: resumeNote(db, task),
     // The mode of its run (manual for a task started on its own), which says who decides on it.
     mode: runModeOf(db, task.runId),
@@ -111,10 +113,23 @@ async function remainsOf(db: DatabaseSync, task: Task): Promise<{ remains: TaskR
   }
 }
 
+/**
+ * Where an accepted task whose branch was kept would be pushed, for the owner to confirm before "Open a pull request":
+ * the remote, its address with any credentials taken out, the GitHub repository and the base branch the settings name.
+ * Null for any other task, one whose pull request is open or being opened, and a repository with no such remote.
+ */
+async function pullRequestTarget(ctx: RouteContext, task: Task): Promise<Record<string, unknown> | null> {
+  if (task.status !== "accepted" || taskDecision(ctx.db, task.id)?.branch !== "kept" || ctx.deliveries.busy(task.id)) return null;
+  // A delivery that reads as under way while none is (in this process) is offered again, as Try again.
+  if (deliveryOf(ctx.db, task).state === "opened") return null;
+  return ctx.deliveries.target(task).catch(() => null) as Promise<Record<string, unknown> | null>;
+}
+
 /** A task as its own screen shows it: the summary, its changed files, its evidence, what a decision would remove, and what a discard would. */
-async function detail(db: DatabaseSync, task: Task): Promise<Record<string, unknown>> {
+async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unknown>> {
+  const { db } = ctx;
   const left = await remainsOf(db, task);
-  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left };
+  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
@@ -170,6 +185,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const decision = /^\/api\/tasks\/([1-9]\d{0,14})\/(accept|reject)$/.exec(pathname);
   const discard = /^\/api\/tasks\/([1-9]\d{0,14})\/discard$/.exec(pathname);
   const resume = /^\/api\/tasks\/([1-9]\d{0,14})\/resume$/.exec(pathname);
+  const pullRequest = /^\/api\/tasks\/([1-9]\d{0,14})\/pull-request$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -198,26 +214,33 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");
       if (one[2]) await diff(ctx.db, res, task, url);
-      else json(res, 200, await detail(ctx.db, task));
+      else json(res, 200, await detail(ctx, task));
     } else if (method === "POST" && decision) {
       const body = await readJsonBody(req);
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
       const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note });
       ctx.stream.announceTask(decided.task);
       if (decided.run !== null) ctx.stream.announceRun(decided.run);
-      json(res, 200, await detail(ctx.db, decided.task));
+      json(res, 200, await detail(ctx, decided.task));
     } else if (method === "POST" && discard) {
       const body = await readJsonBody(req);
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
       const discarded = await discardTask(ctx.db, { taskId: Number(discard[1]), removeFiles: body.removeFiles });
       // Its state is the same; the screens that show it read it again.
       ctx.stream.announceTask(discarded);
-      json(res, 200, await detail(ctx.db, discarded));
+      json(res, 200, await detail(ctx, discarded));
     } else if (method === "POST" && resume) {
       const id = Number(resume[1]);
       // A discard at work on the task may be removing its copy: nothing is started in it meanwhile.
       if (beingDecided(id)) throw new TaskError(409, "This task is being discarded, so it cannot be resumed.");
-      json(res, 200, await detail(ctx.db, ctx.tasks.resume(id)));
+      json(res, 200, await detail(ctx, ctx.tasks.resume(id)));
+    } else if (method === "POST" && pullRequest) {
+      // The owner's own "Open a pull request" (or "Try again"), naming the remote and branch the confirmation showed.
+      const body = await readJsonBody(req);
+      if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
+      const id = Number(pullRequest[1]);
+      ctx.deliveries.deliver(id, { by: "owner", expect: { remote: body.remote, branch: body.branch, address: body.address } });
+      json(res, 200, await detail(ctx, getTask(ctx.db, id)!));
     } else {
       return false;
     }

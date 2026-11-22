@@ -25,7 +25,7 @@ export interface Work {
   files: FileChange[];
 }
 
-const BRANCH_PREFIX = "botbench/";
+export const BRANCH_PREFIX = "botbench/";
 /** Task branches made before the product was renamed from Smelt; their tasks still work, and no new branch gets this prefix. */
 const OLD_BRANCH_PREFIX = "smelt/";
 const AUTHOR_NAME = "Botbench";
@@ -42,6 +42,8 @@ const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  */
 const SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "--literal-pathspecs"];
 
+const GITHUB_TOKEN_ENV = new Set(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]);
+
 /**
  * The caller's environment without any GIT_* variable, so nothing inherited can point git at another repository, index
  * or config. Botbench's own git calls run with it, and so do the setup commands Botbench runs in a worktree.
@@ -49,7 +51,8 @@ const SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-
 export function gitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (!name.startsWith("GIT_")) env[name] = value;
+    // A GitHub token in the environment is never handed on: git's credential helper and `gh` use the sign-in they keep.
+    if (!name.startsWith("GIT_") && !GITHUB_TOKEN_ENV.has(name.toUpperCase())) env[name] = value;
   }
   env.GIT_TERMINAL_PROMPT = "0";
   return env;
@@ -57,6 +60,8 @@ export function gitEnv(): NodeJS.ProcessEnv {
 
 class GitError extends Error {
   stderr: string;
+  /** What git printed on its standard output before it failed. */
+  stdout = "";
   constructor(message: string, stderr: string, cause: unknown) {
     super(message, { cause });
     this.stderr = stderr;
@@ -132,7 +137,11 @@ function git(dir: string, args: string[], limitMs = GIT_WORK_LIMIT_MS): Promise<
       clearTimeout(timer);
       if (stopped) reject(stopped);
       else if (code === 0) resolve(stdout);
-      else reject(new GitError(`git ${args[0]} failed in ${dir}: ${stderr.trim() || (signal ? `stopped by ${signal}` : `exit code ${code}`)}`, stderr.trim(), null));
+      else {
+        const failed = new GitError(`git ${args[0]} failed in ${dir}: ${stderr.trim() || (signal ? `stopped by ${signal}` : `exit code ${code}`)}`, stderr.trim(), null);
+        failed.stdout = stdout;
+        reject(failed);
+      }
     });
   });
 }
@@ -457,6 +466,86 @@ export async function deleteTaskBranch(o: { repo: string; branch: string; commit
   const out = await branchCheckedOutAt(o.repo, o.branch);
   if (out.length > 0) throw new Error(`The branch ${o.branch} is checked out at ${out.join(", ")}, so it was not deleted.`);
   await git(path.resolve(o.repo), ["update-ref", "-d", `refs/heads/${o.branch}`, o.commit]);
+}
+
+/*
+ * Pushing an accepted task's branch (delivery). Only a branch with Botbench's own prefix, only the commit recorded for
+ * it, only to a ref of the same name, never by force, and never anything else: no tags, no submodules, no other ref.
+ */
+
+/** The time git gets to talk to a remote: asking what a branch points at there, or pushing one. */
+const GIT_NETWORK_LIMIT_MS = 120_000;
+const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+/** A remote's name as the settings may give it: plain, never one that could read as an option or a path. */
+export const remoteNameProblem = (name: unknown): string | null => (typeof name === "string" && REMOTE_NAME.test(name) && !name.includes("..") ? null : "A remote's name is letters, digits, \".\", \"_\" and \"-\", such as \"origin\".");
+function checkRemote(name: string): void {
+  const problem = remoteNameProblem(name);
+  if (problem !== null) throw new Error(`${JSON.stringify(name)} is not a remote name Botbench uses. ${problem}`);
+}
+/** Only branches Botbench made itself under its current name are ever pushed. */
+function checkPushable(branch: string): void {
+  if (!isTaskBranch(branch) || !branch.startsWith(BRANCH_PREFIX)) throw new Error(`${branch} is not a branch Botbench made (its name starts with ${BRANCH_PREFIX}), so it is never pushed.`);
+}
+
+/**
+ * The address of `remote` in `repo`: as the repository's settings write it (`configured`), and as git uses it to fetch
+ * and to push once its rewrite rules are applied (`fetch`, `push`). Null when the repository has no remote of that name. Either may
+ * hold credentials the owner wrote into it: never show or store one without taking them out.
+ */
+export async function remoteAddress(repo: string, remote: string): Promise<{ configured: string; fetch: string; push: string } | null> {
+  checkRemote(remote);
+  const dir = path.resolve(repo);
+  let configured: string;
+  try {
+    configured = (await git(dir, ["config", "--get", `remote.${remote}.url`], GIT_CHECK_LIMIT_MS)).trim();
+  } catch (err) {
+    unlessTimeout(err);
+    return null;
+  }
+  if (configured === "") return null;
+  const fetch = (await git(dir, ["remote", "get-url", remote], GIT_CHECK_LIMIT_MS)).trim();
+  const pushes = (await git(dir, ["remote", "get-url", "--push", "--all", remote], GIT_CHECK_LIMIT_MS)).split("\n").map((line) => line.trim()).filter(Boolean);
+  // More than one push address would push to each: shown as one string that cannot equal the fetch address.
+  return { configured, fetch, push: pushes.join(" and ") };
+}
+
+/** The commit a Botbench task branch points at on `remote`, asked of the remote itself; null when the remote has no such branch. */
+export async function remoteBranchCommit(repo: string, remote: string, branch: string): Promise<string | null> {
+  checkRemote(remote);
+  checkPushable(branch);
+  const out = await git(path.resolve(repo), ["ls-remote", "--refs", remote, `refs/heads/${branch}`], GIT_NETWORK_LIMIT_MS);
+  const line = out.split("\n").find((l) => l.endsWith(`\trefs/heads/${branch}`));
+  return line === undefined ? null : line.split("\t")[0]!;
+}
+
+/** Why a push was refused, in git's own words from its `--porcelain` lines; null when it says nothing of the kind. */
+function pushRefusal(stdout: string): string | null {
+  const refused = stdout.split("\n").find((line) => line.startsWith("!"));
+  return refused === undefined ? null : refused.split("\t").slice(2).join(" ").trim() || "refused";
+}
+
+/**
+ * Push `commit`, the commit recorded for the Botbench task branch `branch`, to the branch of the same name on `remote`:
+ * `git push --porcelain --no-verify --no-follow-tags --recurse-submodules=no --no-signed <remote> <commit>:refs/heads/<branch>`.
+ * Never by force: a remote branch with other commits refuses it. The local branch must still point at `commit`.
+ */
+export async function pushTaskBranch(o: { repo: string; remote: string; branch: string; commit: string }): Promise<void> {
+  checkRemote(o.remote);
+  checkPushable(o.branch);
+  checkBase(o.commit);
+  const at = await branchCommit(o.repo, o.branch);
+  if (at !== o.commit) throw new Error(at === null ? `The branch ${o.branch} is not in the repository any more, so it was not pushed.` : `The branch ${o.branch} has moved since it was recorded, so it was not pushed.`);
+  try {
+    await git(path.resolve(o.repo), ["push", "--porcelain", "--no-verify", "--no-follow-tags", "--recurse-submodules=no", "--no-signed", o.remote, `${o.commit}:refs/heads/${o.branch}`], GIT_NETWORK_LIMIT_MS);
+  } catch (err) {
+    const refusal = err instanceof GitError ? pushRefusal(err.stdout) : null;
+    if (refusal !== null) {
+      // What the remote itself said (branch protection, a hook's reason), from its "remote:" lines.
+      const said = (err as GitError).stderr.split("\n").filter((line) => line.startsWith("remote:")).map((line) => line.slice("remote:".length).trim()).filter(Boolean).join(" ").slice(0, 600);
+      throw new Error(`The remote refused the branch ${o.branch}: ${refusal}.${said === "" ? "" : ` It said: ${said}`}`, { cause: err });
+    }
+    throw err;
+  }
 }
 
 /**

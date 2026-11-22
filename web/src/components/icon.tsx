@@ -15,6 +15,7 @@ export type IconName =
   | "circle-x"
   | "copy"
   | "eye"
+  | "external-link"
   | "git-branch"
   | "loader"
   | "search"
