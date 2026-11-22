@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { commitWork, createWorktree, describeWork, fileDiff, removeWorktree } from "../src/worktrees.ts";
+import { commitWork, createWorktree, describeWork, fileDiff, removeWorktree, sourceHead } from "../src/worktrees.ts";
+import { gitProcesses, releaseStalled, stalledRepo } from "./support/repo.ts";
 
 // The tests' own git calls must not be steered by variables a test sets on purpose, or by the caller's shell.
 const CLEAN_ENV: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
@@ -491,4 +492,32 @@ test("a worktree whose git folder was repointed from inside is refused, so nothi
   fs.rmSync(path.join(wt.path, ".gitattributes"));
   fs.rmSync(path.join(wt.path, "payload.txt"));
   await removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true });
+});
+
+test("a git process that does not answer is stopped at its time limit, and the error says the folder could not be read in time", { timeout: 20_000 }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "smelt-wt-stall-"));
+  const repo = path.join(dir, "source");
+  t.after(() => {
+    releaseStalled(repo);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  stalledRepo(repo);
+
+  const started = Date.now();
+  const outcome = await Promise.race([
+    sourceHead(repo).then(() => "answered", (err: unknown) => err),
+    new Promise((resolve) => setTimeout(() => resolve("still waiting after 8 seconds"), 8000).unref()),
+  ]);
+  assert.ok(outcome instanceof Error, `the check of a stalled repository: ${String(outcome)}`);
+  assert.match(outcome.message, /could not be read in time/);
+  assert.ok(outcome.message.includes(repo), "the error names the folder");
+  assert.doesNotMatch(outcome.message, /Volumes|macOS/, "a folder on the internal disk gets no advice about external drives");
+  assert.ok(Date.now() - started >= 4500, "the limit for a check is 5 seconds, not less");
+  assert.deepEqual(gitProcesses(repo), [], "no git process is left for the folder");
+
+  // The same limit holds when a task's worktree is asked for: nothing is created and nothing is left running.
+  const home = path.join(dir, "home");
+  await assert.rejects(createWorktree({ repo, home, run: "run-1", task: "task-1" }), /could not be read in time/);
+  assert.equal(fs.existsSync(path.join(home, "worktrees")), false);
+  assert.deepEqual(gitProcesses(repo), []);
 });

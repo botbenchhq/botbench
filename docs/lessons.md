@@ -2,6 +2,12 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: a git process with no time limit left the New task screen on "Checking." (unit 6)
+The owner entered a repository on an external drive. Smelt runs as a macOS login service, macOS did not let that service read the drive, and the `git rev-parse` behind `/api/repos/check` never returned: the screen stayed on "Checking.", "Start task" ended with "Smelt could not be reached", and five git processes were left under the server. Rules going forward:
+- Any child process started on behalf of a request has a time limit and is killed, with its process group, when it passes it. The test for it uses a real process that really stalls (for git: a repository whose `.git/config` is a named pipe nobody writes to) and checks with `ps` that nothing is left.
+- A client request that fills a status line has its own time limit, so no screen waits on the server without end.
+- The service's environment is not a terminal's. Under launchd, external volumes, protected folders and the environment differ; a path that works in a shell can stall or be refused for the service. Check new file and process access as the service, not only from a terminal.
+
 ## 2026-11-22: browser and live tests were written after the code (unit 4)
 The API tests came first, but the live tests and most end-to-end tests were written after the code they exercise. Rule going forward: for every scenario, including live and browser ones, the test is written and seen failing before the code. A brief to a builder must say so for each test layer by name, and the report must give the failing output for each.
 
