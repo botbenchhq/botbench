@@ -1,0 +1,12 @@
+{
+  "port": 4780,
+  "listen": ["127.0.0.1"],
+  "drivers": {
+    "claude-code": {}
+  },
+  "roles": {
+    "planner": { "driver": "claude-code" },
+    "implementer": { "driver": "claude-code" },
+    "reviewer": { "driver": "claude-code" }
+  }
+}
