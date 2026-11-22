@@ -6,6 +6,7 @@ import type { Config } from "../config.ts";
 import type { Connect } from "../drivers/connect.ts";
 import type { Dictation } from "../dictation/dictation.ts";
 import { modelNameProblem, type Driver } from "../drivers/contract.ts";
+import type { Deliveries } from "../engine/delivery.ts";
 import type { Runs } from "../engine/run.ts";
 import type { Tasks } from "../engine/task.ts";
 import type { Push } from "../push.ts";
@@ -42,6 +43,8 @@ export interface RouteContext {
   dictation: Dictation;
   /** The largest recording taken, when not the default (tests set a small one). */
   maxRecordingBytes?: number;
+  /** Pushing accepted tasks' branches and opening their pull requests. */
+  deliveries: Deliveries;
   /** Where the built client is. */
   clientDir: string;
 }

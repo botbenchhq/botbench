@@ -882,4 +882,83 @@ CREATE TRIGGER command_lists_no_delete BEFORE DELETE ON command_lists
 BEGIN SELECT RAISE(ABORT, 'command lists are append-only'); END;
 `,
   },
+  {
+    // Delivery: a run is started with a choice of what becomes of each task it accepts, "branch" (the branch stays in
+    // the repository, as before) or "pull_request" (Botbench pushes the branch and opens a pull request), fixed when the
+    // run starts. A run of one task keeps its branch. `deliveries` is the ledger of each delivery, only ever added to:
+    // the request, made after every check passed and before anything is sent; the push; the pull request opened or
+    // found already there; or a failure in plain words. Rows exist only for accepted tasks, and at most one pull
+    // request is ever recorded for a task. The action log gains a rule for each step, which names its task; a check
+    // cannot be altered in place, so the log is made again with every row kept, as before.
+    name: "deliveries",
+    sql: `
+ALTER TABLE runs ADD COLUMN delivery TEXT NOT NULL DEFAULT 'branch' CHECK (delivery IN ('branch', 'pull_request'));
+CREATE TRIGGER runs_delivery_fixed BEFORE UPDATE OF delivery ON runs
+BEGIN SELECT RAISE(ABORT, 'a run''s delivery is chosen when it starts and never changed'); END;
+CREATE TABLE deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  step TEXT NOT NULL CHECK (step IN ('requested', 'pushed', 'opened', 'failed')),
+  requested_by TEXT CHECK (requested_by IN ('owner', 'run')),
+  remote TEXT,
+  repository TEXT,
+  base TEXT,
+  branch TEXT,
+  head_commit TEXT,
+  url TEXT,
+  number INTEGER,
+  adopted INTEGER CHECK (adopted IN (0, 1)),
+  pr_state TEXT,
+  failed_step TEXT CHECK (failed_step IN ('check', 'push', 'pull_request')),
+  detail TEXT,
+  created_at TEXT NOT NULL,
+  CHECK ((step = 'requested') = (requested_by IS NOT NULL)),
+  CHECK ((step = 'opened') = (url IS NOT NULL AND number IS NOT NULL AND adopted IS NOT NULL)),
+  CHECK ((step = 'failed') = (failed_step IS NOT NULL AND detail IS NOT NULL))
+);
+CREATE INDEX deliveries_task ON deliveries (task_id, id);
+CREATE TRIGGER deliveries_no_update BEFORE UPDATE ON deliveries
+BEGIN SELECT RAISE(ABORT, 'deliveries are append-only'); END;
+CREATE TRIGGER deliveries_no_delete BEFORE DELETE ON deliveries
+BEGIN SELECT RAISE(ABORT, 'deliveries are append-only'); END;
+CREATE TRIGGER deliveries_accepted_only BEFORE INSERT ON deliveries
+WHEN (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'accepted'
+BEGIN SELECT RAISE(ABORT, 'only an accepted task is delivered'); END;
+CREATE TRIGGER deliveries_one_pull_request BEFORE INSERT ON deliveries
+WHEN NEW.step = 'opened' AND EXISTS (SELECT 1 FROM deliveries WHERE task_id = NEW.task_id AND step = 'opened')
+BEGIN SELECT RAISE(ABORT, 'a task has at most one pull request'); END;
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_deliveries;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id FROM action_log_before_deliveries ORDER BY id;
+DROP TABLE action_log_before_deliveries;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

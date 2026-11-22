@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, getDefaultMode, startRun, type RunMode } from "../api/client.ts";
+import { ApiError, getDefaultMode, startRun, type Delivery, type RunMode } from "../api/client.ts";
 import { ModePicker } from "../components/mode-choice.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { ModelPicker, useModelChoice } from "../components/model-picker.tsx";
 import { PreapprovedEditor, REPO_HINT, RepositoryField, useRepository } from "../components/repository.tsx";
+import { DeliveryChoice } from "../components/pull-request.tsx";
 import { ReviewChoice, useReviewChoice } from "../components/review-choice.tsx";
 
 export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
@@ -17,6 +18,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [sameBuild, setSameBuild] = useState(true);
   const buildModels = useModelChoice(onSignedOut, "botbench.buildModel");
   const review = useReviewChoice(onSignedOut);
+  const [delivery, setDelivery] = useState<Delivery>("branch");
   const { listed } = repository;
   // Preselected with the default from Settings; until it is read, nothing is chosen.
   const [mode, setMode] = useState<RunMode | null>(null);
@@ -54,7 +56,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
     setBusy(true);
     // The server checks the repository and the spec file itself; what this screen knows is only for the owner's benefit.
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, ...(build.model === undefined ? {} : { buildModel: build.model }), preapproved: listed?.commands ?? [], reviewer: review.choice(), mode }).then(
+    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, ...(build.model === undefined ? {} : { buildModel: build.model }), preapproved: listed?.commands ?? [], reviewer: review.choice(), mode, delivery }).then(
       ({ runId }) => {
         window.location.hash = `#/runs/${runId}`;
       },
@@ -99,6 +101,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
           {!sameBuild && <ModelPicker state={buildModels} id="build-model" label="Build model" />}
           <ReviewChoice state={review} />
           <ModePicker name="run-mode" legend="Mode" hint="How much the run does without you. It cannot be changed once the run starts." value={mode} onChange={setMode} />
+          <DeliveryChoice value={delivery} onChange={setDelivery} />
           <PreapprovedEditor choice={repository} scope="run" />
           {error !== null && (
             <Alert tone="error" role="alert">
@@ -110,7 +113,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </button>
           <p>
             The planning model plans the run: Claude Code reads the repository in a separate copy that it cannot change, and proposes tasks.{" "}
-            {mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."} Your own files and your branch are not touched.
+            {mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."} Your own files and your branch are not touched.{delivery === "pull_request" ? (mode === "full" ? " Each task the run accepts without you is then pushed and opened as a pull request, with no person looking at it first." : " Each task you accept is then pushed and opened as a pull request.") : ""}
           </p>
         </form>
       </Page>

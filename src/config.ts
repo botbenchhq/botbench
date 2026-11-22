@@ -12,6 +12,7 @@ import { CODEX, CODEX_CAPABILITIES } from "./drivers/codex.ts";
 import { isRunMode, type RunMode } from "./engine/modes.ts";
 import { GROK, GROK_CAPABILITIES } from "./drivers/grok.ts";
 import { roleProblem } from "./engine/roles.ts";
+import { BRANCH_PREFIX, remoteNameProblem } from "./worktrees.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -102,6 +103,10 @@ export interface RepositoryConfig {
    * The planner's commands reach no network whatever is set here.
    */
   allowedHosts?: string[];
+  /** The remote an accepted task's branch is pushed to for a pull request; "origin" when absent. */
+  remote?: string;
+  /** The branch a pull request asks to be merged into; the repository's default branch on GitHub, as `gh` reports it, when absent. */
+  baseBranch?: string;
 }
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
@@ -216,6 +221,15 @@ function validate(c: Json, where: string): Config {
           if (bad !== undefined) fail(`repository "${repo}": "${setting}" holds ${JSON.stringify(bad)}, which cannot be used. ${HOST_RULE}`);
           continue;
         }
+        if (setting === "remote") {
+          const problem = remoteNameProblem(list);
+          if (problem !== null) fail(`repository "${repo}": "remote" must be the name of one of the repository's remotes. ${problem}`);
+          continue;
+        }
+        if (setting === "baseBranch") {
+          if (typeof list !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(list) || list.includes("..") || list.endsWith("/") || list.startsWith(BRANCH_PREFIX)) fail(`repository "${repo}": "baseBranch" must be a branch name such as "main", and not one of Botbench's own (${BRANCH_PREFIX}…).`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -251,7 +265,7 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch"] as const;
 
 /** Why a setup or check entry cannot be used, or null. */
 function commandProblem(entry: unknown): string | null {
@@ -278,6 +292,12 @@ export function repositoryCommands(config: Config, repo: string): { setup: Stati
 /** The host names a repository's commands may reach; none when its settings name none. */
 export function repositoryHosts(config: Config, repo: string): string[] {
   return [...(repositorySettings(config, repo).allowedHosts ?? [])];
+}
+
+/** Where an accepted task of a repository is pushed for a pull request: the remote, and the base branch when the settings name one. */
+export function repositoryDelivery(config: Config, repo: string): { remote: string; baseBranch: string | null } {
+  const settings = repositorySettings(config, repo);
+  return { remote: settings.remote ?? "origin", baseBranch: settings.baseBranch ?? null };
 }
 
 /** A repository's settings, found by its real path. The config's keys are compared as written and with their links followed. */

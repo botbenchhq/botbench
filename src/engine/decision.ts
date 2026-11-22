@@ -9,7 +9,8 @@ import { getTask, moveTaskIn, settleRunIn, TaskError, words, type Task, type Tas
 /*
  * Decisions (unit 14). The owner closes a task that is ready for review by accepting or rejecting it, and Botbench
  * records it. Accept keeps the task's branch and removes its copy (the git worktree); Reject removes the copy and keeps
- * or deletes the branch, as the owner chose. Nothing is ever merged or pushed. A decision is a row of `decisions`,
+ * or deletes the branch, as the owner chose. Nothing is ever merged; an accepted task of a run that chose pull requests is
+ * then pushed and opened as one (src/engine/delivery.ts), after the decision and apart from it. A decision is a row of `decisions`,
  * written once and never changed, beside an entry in the action log, and the task moves to accepted or rejected with
  * it. A planned run whose tasks are all at an end is done once none of them is left to decide.
  *
@@ -122,6 +123,25 @@ function ready(task: Task): void {
   throw new TaskError(409, `Task ${task.id} is not ready for review: it ${NOT_READY[task.status]}. Only a task that is ready for review can be accepted or rejected.`);
 }
 
+/**
+ * Listeners told of each task just accepted, after its decision is recorded, whoever made it: delivery listens here
+ * (src/engine/delivery.ts). A listener that fails never touches the decision.
+ */
+const acceptedListeners = new Set<(db: DatabaseSync, task: Task) => void>();
+export function onTaskAccepted(listener: (db: DatabaseSync, task: Task) => void): () => void {
+  acceptedListeners.add(listener);
+  return () => void acceptedListeners.delete(listener);
+}
+function announceAccepted(db: DatabaseSync, task: Task): void {
+  for (const listener of acceptedListeners) {
+    try {
+      listener(db, task);
+    } catch (err) {
+      console.error(`Telling of task ${task.id}'s acceptance failed: ${words(err)}`);
+    }
+  }
+}
+
 /** Tasks a decision is being made for now, so two at once for one task cannot both remove its copy. */
 const deciding = new Set<number>();
 /** Whether a decision or a discard of the task is being made now: nothing else may start on it meanwhile. */
@@ -169,7 +189,7 @@ export async function decideTask(db: DatabaseSync, input: DecideInput): Promise<
 
 /**
  * A fully autonomous run's accept of a task that qualified, with the reasons: the owner's Accept, made by the mode. It
- * keeps the branch and removes the copy; nothing is merged or pushed. Throws a TaskError, with nothing changed, when the
+ * keeps the branch and removes the copy; nothing is merged (a run that chose pull requests then delivers it). Throws a TaskError, with nothing changed, when the
  * task is not ready for review, a decision on it is under way, or the checks left files in its copy, which only the
  * owner may let go.
  */
@@ -242,8 +262,10 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
   const kept = discard ? "deleted" : "kept";
   const copy = present ? "removed the task's copy" : "found the task's copy already gone";
   const files = leftovers.length === 0 ? "" : ` The copy held ${leftovers.length === 1 ? "1 file" : `${leftovers.length} files`} the checks left, removed with it as you confirmed: ${listed(leftovers)}.`;
-  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. Nothing was merged or pushed.${files}${note === null ? "" : ` Your note: ${note}`}`;
-  return transaction(db, () => {
+  // A run that chose pull requests pushes an accepted task's branch next (engine/delivery.ts): the entry says so.
+  const delivers = decision === "accept" && task.runId !== null && db.prepare("SELECT delivery FROM runs WHERE id = ?").get(task.runId)?.delivery === "pull_request";
+  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. ${delivers ? "Nothing was merged; the run then pushes the branch and opens a pull request." : "Nothing was merged or pushed."}${files}${note === null ? "" : ` Your note: ${note}`}`;
+  const made = transaction(db, () => {
     const now_ = getTask(db, task.id)!;
     ready(now_);
     // The commit the kept branch holds now: Botbench's, or one the owner added on top of it.
@@ -255,6 +277,8 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
     appendLog(db, { taskId: task.id, runId: task.runId, attemptId: task.attemptId, rule, tool: "Branch", command: branch, cwd: task.repo, detail: reasons === undefined ? detail : `${reasons} ${detail}` });
     return { task: decided, run: task.runId === null ? null : settleRunIn(db, task.runId) };
   });
+  if (decision === "accept") announceAccepted(db, made.task);
+  return made;
 }
 
 /*

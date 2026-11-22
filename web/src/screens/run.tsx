@@ -4,6 +4,7 @@ import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
+import { PullRequestLink, pullRequestWords } from "../components/pull-request.tsx";
 import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { MODE_SENTENCE } from "../components/mode-choice.tsx";
@@ -365,6 +366,10 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   <dd data-testid="run-build-model" className="ds-key-value__value">{`The tasks are built on what you asked for: ${run.buildModel === null ? "Claude Code's default" : nameOf(run.buildModel)}.`}</dd>
                 </div>
               )}
+              <div className="ds-key-value__item">
+                <dt className="ds-key-value__label">When you accept a task</dt>
+                <dd data-testid="run-delivery" className="ds-key-value__value">{run.delivery === "pull_request" ? "Botbench pushes its branch and opens a pull request" : "Its branch is kept on this Mac"}</dd>
+              </div>
             </dl>
 
             {gate && run.reason !== null && (
@@ -475,6 +480,12 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                         {task.status === "interrupted" && task.resumeNote !== null && <ResumeControl taskId={task.id} note={task.resumeNote} name={`task ${task.id}`} primary={false} onResumed={load} onSignedOut={onSignedOut} />}
                         {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
                         {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} compact />}
+                        {task.pullRequest.state !== "none" && (
+                          <p data-testid="run-task-pull-request" data-ds-content="">
+                            {pullRequestWords(task.pullRequest)}
+                          </p>
+                        )}
+                        <PullRequestLink view={task.pullRequest} />
                       </div>
                     </li>
                   ))}

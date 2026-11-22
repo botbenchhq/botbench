@@ -164,9 +164,9 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
 /**
  * What the owner has once a task is decided. Accepted: the branch and the command that merges it. Rejected with the
  * branch kept: the branch, to look at or delete. Rejected with the branch deleted: that it is gone. `compact` is for a
- * row of a run, whose screen already names the repository and says nothing was merged or pushed.
+ * row of a run, whose screen already names the repository and says what was merged or pushed.
  */
-export function DecisionOutcome({ decision, repo, compact = false }: { decision: TaskDecision; repo: string; compact?: boolean }) {
+export function DecisionOutcome({ decision, repo, compact = false, pushed = null }: { decision: TaskDecision; repo: string; compact?: boolean; pushed?: string | null }) {
   const noted = decision.note === null ? null : (
     <p data-testid="decision-note-shown">
       {"Your note: "}
@@ -206,7 +206,7 @@ export function DecisionOutcome({ decision, repo, compact = false }: { decision:
             {", on the branch you want it in:"}
           </p>
           <CopyField label="Merge command" value={`git merge ${decision.branchName}`} testId="merge-command" buttonName="Copy merge command" />
-          <p data-testid="not-merged">Nothing has been merged or pushed. The branch stays in the repository until you merge or delete it.</p>
+          <p data-testid="not-merged">{pushed === null ? "Nothing has been merged or pushed. The branch stays in the repository until you merge or delete it." : `Nothing has been merged. The branch was pushed to ${pushed} for its pull request, and stays in the repository until you merge or delete it.`}</p>
         </>
       ) : (
         <p data-testid="not-merged">Nothing has been merged or pushed. The branch stays in the repository for you to look at, and to delete when you no longer want it.</p>

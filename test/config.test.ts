@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, repositoryHosts, botbenchHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, botbenchHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -255,6 +255,22 @@ test("a repository's allowed hosts are plain host names its commands may reach; 
     [{ allowedHosts: ["localhost"] }, /"allowedHosts" holds "localhost"/],
     [{ allowedHosts: ["127.0.0.1"] }, /"allowedHosts" holds "127\.0\.0\.1"/],
     [{ allowedHosts: [7] }, /"allowedHosts" holds 7/],
+  ];
+  for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
+});
+
+test("a repository may name the remote and base branch of its pull requests; origin and the default branch otherwise; anything that could read as an option or is Botbench's own branch is refused", (t) => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  assert.deepEqual(repositoryDelivery(loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { remote: "upstream", baseBranch: "release/1.2" } } })), repo), { remote: "upstream", baseBranch: "release/1.2" });
+  assert.deepEqual(repositoryDelivery(loadConfig(configFiles(t, BASE)), repo), { remote: "origin", baseBranch: null });
+  const refused: [unknown, RegExp][] = [
+    [{ remote: "--mirror" }, /"remote" must be the name of one of the repository's remotes/],
+    [{ remote: "../x" }, /"remote" must be/],
+    [{ remote: 7 }, /"remote" must be/],
+    [{ baseBranch: "-main" }, /"baseBranch" must be a branch name/],
+    [{ baseBranch: "botbench/run-1/task-1" }, /not one of Botbench's own/],
+    [{ baseBranch: "a..b" }, /"baseBranch" must be/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
 });

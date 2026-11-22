@@ -104,7 +104,9 @@ export type LogRule =
   /** A fully autonomous run refused what would have asked the owner: a request the safety floor names, or one that is not a confined command. */
   | "mode_refused"
   /** A fully autonomous run accepted a task without the owner. The entry names the task's branch and why it qualified. */
-  | "mode_accepted";
+  | "mode_accepted"
+  /** A step of delivering an accepted task: pushing its branch and opening its pull request, or why that failed. */
+  | "delivery";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 

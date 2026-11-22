@@ -1,0 +1,103 @@
+{
+  "gh": "gh version 2.103.3 (2026-10-26)",
+  "captured": "2026-11-22",
+  "repository": "github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98",
+  "branch": "botbench/run-1/task-1",
+  "outputs": {
+    "authStatus": {
+      "args": [
+        "auth",
+        "status",
+        "--hostname=github.com",
+        "--active",
+        "--json=hosts"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"host\":\"github.com\",\"login\":\"jon-lange\",\"tokenSource\":\"keyring\",\"scopes\":\"gist, read:org, repo\",\"gitProtocol\":\"https\"}]}}\n",
+        "stderr": ""
+      }
+    },
+    "authStatusSignedOut": {
+      "args": [
+        "auth",
+        "status",
+        "--hostname=github.com",
+        "--active",
+        "--json=hosts"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "{\"hosts\":{}}\n",
+        "stderr": ""
+      }
+    },
+    "repoView": {
+      "args": [
+        "repo",
+        "view",
+        "github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98",
+        "--json=nameWithOwner,defaultBranchRef"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "{\"defaultBranchRef\":{\"name\":\"main\"},\"nameWithOwner\":\"jon-lange/botbench-delivery-test-75a1f2ab1d98\"}\n",
+        "stderr": ""
+      }
+    },
+    "prListNone": {
+      "args": [
+        "pr",
+        "list",
+        "--repo=github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98",
+        "--head=botbench/run-1/task-1",
+        "--state=all",
+        "--json=number,url,state,headRefName,isCrossRepository",
+        "--limit=100"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "[]\n",
+        "stderr": ""
+      }
+    },
+    "prCreate": {
+      "args": [
+        "pr",
+        "create",
+        "--repo=github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98",
+        "--base=main",
+        "--head=botbench/run-1/task-1",
+        "--title=Add a greeting file",
+        "--body-file=-"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "https://github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98/pull/1\n",
+        "stderr": ""
+      }
+    },
+    "prListOne": {
+      "args": [
+        "pr",
+        "list",
+        "--repo=github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98",
+        "--head=botbench/run-1/task-1",
+        "--state=all",
+        "--json=number,url,state,headRefName,isCrossRepository",
+        "--limit=100"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "[{\"headRefName\":\"botbench/run-1/task-1\",\"isCrossRepository\":false,\"number\":1,\"state\":\"OPEN\",\"url\":\"https://github.com/jon-lange/botbench-delivery-test-75a1f2ab1d98/pull/1\"}]\n",
+        "stderr": ""
+      }
+    }
+  }
+}

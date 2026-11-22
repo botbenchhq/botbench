@@ -194,6 +194,9 @@ test("a committed task is described with its changed files, and each file's diff
     // It is ready for review, so it has nothing a Discard would remove (unit 16).
     remains: null,
     remainsProblem: null,
+    // A task on its own keeps its branch; nothing is sent, and before it is accepted there is nothing to open.
+    pullRequest: { choice: "branch", state: "none", number: null, url: null, adopted: false, prState: null, pushed: false, repository: null, base: null, remote: null, branch: worktree.branch, problem: null, at: null },
+    pullRequestTarget: null,
   });
   assert.equal(described.body.worktreePath, undefined, "the worktree's location is not part of the answer");
 
