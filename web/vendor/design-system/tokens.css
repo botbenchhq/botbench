@@ -1,0 +1,167 @@
+/*
+ * The token vocabulary and the default theme. This file is the single source:
+ * everything in dist/ is generated from it by `npm run build`.
+ *
+ * Colour tokens are six-digit hex only, because consumers parse computed
+ * values as #rrggbb. A theme may change a value and may not add a name.
+ * A theme lives in themes/<name>.css, in the ds.theme layer, which comes after
+ * this one.
+ */
+
+@layer ds.reset, ds.tokens, ds.theme, ds.base, ds.components;
+
+@layer ds.tokens {
+  :root {
+    --ds-color-accent: #1A1A1A;
+    /* The accent while hovered or pressed. */
+    --ds-color-accent-hover: #3D3D3A;
+    --ds-color-on-accent: #FAFAF9;
+    --ds-color-surface: #FAFAF9;
+    --ds-color-surface-raised: #FFFFFF;
+    --ds-color-surface-sunken: #F3F2EF;
+    --ds-color-on-surface: #171717;
+    --ds-color-muted: #737373;
+    --ds-color-border: #E5E5E5;
+    --ds-color-border-strong: #8A8A86;
+    --ds-color-focus: #1F5C99;
+    --ds-color-success: #1E6B3A;
+    --ds-color-success-subtle: #E8F2EA;
+    --ds-color-warning: #7A5200;
+    --ds-color-warning-subtle: #F7EEDC;
+    --ds-color-danger: #A8281F;
+    --ds-color-danger-subtle: #F9E9E7;
+    --ds-color-info: #1F5C99;
+    --ds-color-info-subtle: #E6EEF6;
+    /* Waiting on a person's answer: needs input, needs approval. */
+    --ds-color-approval: #984369;
+    --ds-color-approval-subtle: #FCE9EF;
+    /* Stopped and unable to go on by itself: interrupted, rate limited. */
+    --ds-color-blocked: #6C529E;
+    --ds-color-blocked-subtle: #F0ECFC;
+    /* Another person's agent: a peer's message or proposal. */
+    --ds-color-peer: #076B70;
+    --ds-color-peer-subtle: #DEF3F4;
+    /* Work that carries input from outside the trust boundary, such as a peer's message. */
+    --ds-color-tainted: #994A1A;
+    --ds-color-tainted-subtle: #FCEBE2;
+
+    --ds-font-ui: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --ds-font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+    --ds-text-xs: 12px;
+    --ds-text-mono: 13px;
+    --ds-text-ui: 14px;
+    --ds-text-lg: 16px;
+    --ds-text-xl: 20px;
+    --ds-text-2xl: 24px;
+
+    --ds-leading-xs: 1.4;
+    --ds-leading-mono: 1.5;
+    --ds-leading-ui: 1.4;
+    --ds-leading-lg: 1.4;
+    --ds-leading-xl: 1.25;
+    --ds-leading-2xl: 1.2;
+
+    --ds-weight-normal: 400;
+    --ds-weight-medium: 500;
+    --ds-weight-semibold: 600;
+
+    --ds-space-xs: 4px;
+    --ds-space-sm: 8px;
+    --ds-space-md: 12px;
+    --ds-space-lg: 16px;
+    --ds-space-xl: 24px;
+    --ds-space-2xl: 32px;
+
+    --ds-radius-sm: 4px;
+    --ds-radius-md: 8px;
+    /* A circle or a pill. */
+    --ds-radius-full: 9999px;
+
+    --ds-border-width: 1px;
+
+    /* For overlays only: menus, popovers, dialogs, toasts. */
+    --ds-shadow-overlay: 0 8px 24px 0 rgb(0 0 0 / 0.16);
+
+    --ds-duration-fast: 100ms;
+    --ds-duration-base: 160ms;
+    --ds-duration-slow: 240ms;
+    --ds-ease: cubic-bezier(0.2, 0, 0, 1);
+
+    --ds-z-sticky: 100;
+    --ds-z-overlay: 200;
+    --ds-z-dialog: 300;
+    --ds-z-toast: 400;
+
+    --ds-size-touch: 44px;
+    --ds-size-column: 480px;
+    --ds-size-transcript: 720px;
+
+    /* A custom property cannot be used in a media query. Write 768px there. */
+    --ds-breakpoint: 768px;
+  }
+
+  [data-theme="dark"] {
+    --ds-color-accent: #EDEDEB;
+    --ds-color-accent-hover: #CFCFCB;
+    --ds-color-on-accent: #171717;
+    --ds-color-surface: #141413;
+    --ds-color-surface-raised: #1C1C1A;
+    --ds-color-surface-sunken: #0E0E0D;
+    --ds-color-on-surface: #EDEDEB;
+    --ds-color-muted: #A3A3A0;
+    --ds-color-border: #2E2E2B;
+    --ds-color-border-strong: #6B6B67;
+    --ds-color-focus: #86B7EA;
+    --ds-color-success: #7CC796;
+    --ds-color-success-subtle: #15281B;
+    --ds-color-warning: #E0B45C;
+    --ds-color-warning-subtle: #2B2210;
+    --ds-color-danger: #F0928A;
+    --ds-color-danger-subtle: #331917;
+    --ds-color-info: #86B7EA;
+    --ds-color-info-subtle: #14243A;
+    --ds-color-approval: #E396B3;
+    --ds-color-approval-subtle: #301C24;
+    --ds-color-blocked: #B6A1E6;
+    --ds-color-blocked-subtle: #251F32;
+    --ds-color-peer: #4DBCC2;
+    --ds-color-peer-subtle: #0A2829;
+    --ds-color-tainted: #E39C77;
+    --ds-color-tainted-subtle: #311E14;
+    --ds-shadow-overlay: 0 8px 24px 0 rgb(0 0 0 / 0.5);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    [data-theme="auto"] {
+      --ds-color-accent: #EDEDEB;
+      --ds-color-accent-hover: #CFCFCB;
+      --ds-color-on-accent: #171717;
+      --ds-color-surface: #141413;
+      --ds-color-surface-raised: #1C1C1A;
+      --ds-color-surface-sunken: #0E0E0D;
+      --ds-color-on-surface: #EDEDEB;
+      --ds-color-muted: #A3A3A0;
+      --ds-color-border: #2E2E2B;
+      --ds-color-border-strong: #6B6B67;
+      --ds-color-focus: #86B7EA;
+      --ds-color-success: #7CC796;
+      --ds-color-success-subtle: #15281B;
+      --ds-color-warning: #E0B45C;
+      --ds-color-warning-subtle: #2B2210;
+      --ds-color-danger: #F0928A;
+      --ds-color-danger-subtle: #331917;
+      --ds-color-info: #86B7EA;
+      --ds-color-info-subtle: #14243A;
+      --ds-color-approval: #E396B3;
+      --ds-color-approval-subtle: #301C24;
+      --ds-color-blocked: #B6A1E6;
+      --ds-color-blocked-subtle: #251F32;
+      --ds-color-peer: #4DBCC2;
+      --ds-color-peer-subtle: #0A2829;
+      --ds-color-tainted: #E39C77;
+      --ds-color-tainted-subtle: #311E14;
+      --ds-shadow-overlay: 0 8px 24px 0 rgb(0 0 0 / 0.5);
+    }
+  }
+}

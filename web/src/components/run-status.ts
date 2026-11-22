@@ -1,4 +1,5 @@
 import type { RunDetail, RunStatus, RunSummary } from "../api/client.ts";
+import { LOOKS, type Look } from "./looks.ts";
 
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
@@ -10,11 +11,11 @@ export function runWord(run: Pick<RunSummary, "status" | "waitingOnApproval" | "
   return words[run.status];
 }
 
-/** The badge a state is drawn as. The word says the state; the tone only repeats it. */
-export function runLook(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId">): string {
-  if (run.status === "planning") return run.waitingOnApproval ? "gw-badge gw-badge--warning" : run.attemptId === null ? "gw-badge" : "gw-badge gw-badge--info";
-  if (run.status === "running" && run.waitingOnApproval) return "gw-badge gw-badge--warning";
-  const looks: Record<Exclude<RunStatus, "planning">, string> = { awaiting_plan_approval: "gw-badge gw-badge--warning", running: "gw-badge gw-badge--info", awaiting_decision: "gw-badge gw-badge--success", done: "gw-badge gw-badge--success", cancelled: "gw-badge", failed: "gw-badge gw-badge--danger" };
+/** The look of a run's state, from the status set. The word says the state; the icon and tone only repeat it. */
+export function runLook(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId">): Look {
+  if (run.status === "planning") return run.waitingOnApproval ? LOOKS.needsInput : run.attemptId === null ? LOOKS.queued : LOOKS.working;
+  if (run.status === "running" && run.waitingOnApproval) return LOOKS.needsInput;
+  const looks: Record<Exclude<RunStatus, "planning">, Look> = { awaiting_plan_approval: LOOKS.needsInput, running: LOOKS.working, awaiting_decision: LOOKS.readyForReview, done: LOOKS.done, cancelled: LOOKS.cancelled, failed: LOOKS.failed };
   return looks[run.status];
 }
 
@@ -50,5 +51,60 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
       return run.tasks.length === 0 ? "Cancelled. Nothing was built, and no task was made from this run." : "Cancelled. Tasks that had finished keep their branches; the task being built was stopped and what it did is committed; the rest were not built.";
     case "failed":
       return `Failed. ${run.reason ?? "No reason was recorded."}`;
+  }
+}
+
+export type StationState = "done" | "running" | "waiting" | "failed" | "not-started";
+export interface Station {
+  name: string;
+  state: StationState;
+  words: string;
+}
+
+/**
+ * A run's three stations, Plan, Build and Decide, each with its state in words, from the run's state and its tasks'
+ * and nothing else. No station has a time: the run stores none for its stations. Null for a cancelled run, since the
+ * timeline has no state for a station that was cancelled; the run's state in words says what happened.
+ */
+export function stations(run: Pick<RunDetail, "status" | "attemptId" | "waitingOnApproval" | "tasks">): { stations: Station[]; current: number | null } | null {
+  const notStarted = (name: string): Station => ({ name, state: "not-started", words: "Not started" });
+  const finished = run.tasks.filter((task) => task.status !== "queued" && task.status !== "building" && task.status !== "verifying").length;
+  const ready = run.tasks.filter((task) => task.status === "awaiting_decision").length;
+  const decided = run.tasks.filter((task) => task.status === "accepted" || task.status === "rejected").length;
+  switch (run.status) {
+    case "planning":
+      if (run.attemptId === null) return { stations: [{ name: "Plan", state: "not-started", words: "Queued" }, notStarted("Build"), notStarted("Decide")], current: null };
+      return { stations: [run.waitingOnApproval ? { name: "Plan", state: "waiting", words: "Needs input" } : { name: "Plan", state: "running", words: "Working" }, notStarted("Build"), notStarted("Decide")], current: 0 };
+    case "awaiting_plan_approval":
+      return { stations: [{ name: "Plan", state: "waiting", words: "Waiting for your approval" }, notStarted("Build"), notStarted("Decide")], current: 0 };
+    case "failed":
+      // A run fails only while it plans: once it has a plan, a task fails, not the run.
+      return { stations: [{ name: "Plan", state: "failed", words: "Failed" }, notStarted("Build"), notStarted("Decide")], current: 0 };
+    case "running":
+      return {
+        stations: [
+          { name: "Plan", state: "done", words: "Done" },
+          run.waitingOnApproval ? { name: "Build", state: "waiting", words: `Needs input · ${finished} of ${tasksWord(run.tasks.length)} finished` } : { name: "Build", state: "running", words: `Working · ${finished} of ${tasksWord(run.tasks.length)} finished` },
+          ready > 0 ? { name: "Decide", state: "waiting", words: `${tasksWord(ready)} ready for review` } : notStarted("Decide"),
+        ],
+        current: 1,
+      };
+    case "awaiting_decision": {
+      // Every task has ended. Build is done when at least one was built; when none was, it failed, and there is nothing to decide.
+      const built = run.tasks.filter((task) => task.status === "awaiting_decision" || task.status === "accepted" || task.status === "rejected").length;
+      if (built === 0) return { stations: [{ name: "Plan", state: "done", words: "Done" }, { name: "Build", state: "failed", words: "No task was built" }, notStarted("Decide")], current: 1 };
+      return {
+        stations: [
+          { name: "Plan", state: "done", words: "Done" },
+          { name: "Build", state: "done", words: built === run.tasks.length ? "Done" : `Done · ${built} of ${tasksWord(run.tasks.length)} built` },
+          ready > 0 ? { name: "Decide", state: "waiting", words: `${tasksWord(ready)} ready for review` } : { name: "Decide", state: "done", words: `Done · ${decided} of ${tasksWord(built)} decided` },
+        ],
+        current: ready > 0 ? 2 : null,
+      };
+    }
+    case "done":
+      return { stations: [{ name: "Plan", state: "done", words: "Done" }, { name: "Build", state: "done", words: "Done" }, { name: "Decide", state: "done", words: `Done · ${decided} of ${tasksWord(run.tasks.length)} decided` }], current: null };
+    case "cancelled":
+      return null;
   }
 }

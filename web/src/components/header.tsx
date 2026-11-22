@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
-import markUrl from "../brand/mark.svg";
+import markUrl from "../brand/mark-dark.svg";
 import { Icon, type IconName } from "./icon.tsx";
 
 /**
@@ -23,26 +23,26 @@ export type ScreenName = "turn" | "runs" | "tasks" | "trust";
  */
 export function Frame({ current, banner, fill = false, children }: { current: ScreenName | null; banner?: ReactNode; fill?: boolean; children: ReactNode }) {
   return (
-    <div className={fill ? "gw-app-shell h-screen" : "gw-app-shell"}>
-      <header className="gw-app-header gw-app-header--sticky">
-        <a className="gw-app-header__name" href="#/turn">
+    <div className={fill ? "ds-app-shell h-screen" : "ds-app-shell"}>
+      <header className="ds-app-header ds-app-header--sticky">
+        <a className="ds-app-header__name" href="#/turn">
           {/* Decorative: the word beside it is the name. */}
           <img src={markUrl} alt="" width={20} height={20} />
           Botbench
         </a>
-        <div className="gw-app-header__tray">
+        <div className="ds-app-header__tray">
           <ApprovalTray />
         </div>
       </header>
       {banner}
-      <div className="gw-sidebar-layout gw-app-shell__body min-h-0 grid-rows-1">
-        <nav className="gw-sidebar-nav" aria-label="Screens">
-          <ul className="gw-sidebar-nav__items">
+      <div className="ds-sidebar-layout ds-app-shell__body min-h-0 grid-rows-1">
+        <nav className="ds-sidebar-nav" aria-label="Screens">
+          <ul className="ds-sidebar-nav__items">
             {SCREENS.map((screen) => (
               <li key={screen.name}>
-                <a className="gw-sidebar-nav__item" href={screen.href} aria-current={screen.name === current ? "page" : undefined}>
-                  <Icon name={screen.icon} className="gw-sidebar-nav__icon" />
-                  <span className="gw-sidebar-nav__label">{screen.label}</span>
+                <a className="ds-sidebar-nav__item" href={screen.href} aria-current={screen.name === current ? "page" : undefined}>
+                  <Icon name={screen.icon} className="ds-sidebar-nav__icon" />
+                  <span className="ds-sidebar-nav__label">{screen.label}</span>
                 </a>
               </li>
             ))}
@@ -50,11 +50,11 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
         </nav>
         {children}
       </div>
-      <nav className="gw-tab-bar" aria-label="Screens">
+      <nav className="ds-tab-bar" aria-label="Screens">
         {SCREENS.map((screen) => (
-          <a key={screen.name} className="gw-tab-bar__item" href={screen.href} aria-current={screen.name === current ? "page" : undefined}>
-            <Icon name={screen.icon} className="gw-tab-bar__icon" />
-            <span className="gw-tab-bar__label">{screen.label}</span>
+          <a key={screen.name} className="ds-tab-bar__item" href={screen.href} aria-current={screen.name === current ? "page" : undefined}>
+            <Icon name={screen.icon} className="ds-tab-bar__icon" />
+            <span className="ds-tab-bar__label">{screen.label}</span>
           </a>
         ))}
       </nav>
@@ -64,29 +64,29 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
 
 /** The main column of an ordinary screen, as the design system's app shell has it: it starts with the view's page header, which holds the one h1. */
 export function Page({ children }: { children: ReactNode }) {
-  return <main className="gw-container gw-app-shell__main min-w-0">{children}</main>;
+  return <main className="ds-container ds-app-shell__main min-w-0">{children}</main>;
 }
 
 /** The connection-lost banner, under the app header. */
 export function StreamBanner() {
   return (
-    <div className="gw-banner gw-banner--warning" role="status" data-testid="stream-banner">
-      <p className="gw-banner__text">Live updates are disconnected. Reconnecting.</p>
+    <div className="ds-banner ds-banner--warning" role="status" data-testid="stream-banner">
+      <p className="ds-banner__text">Live updates are disconnected. Reconnecting.</p>
     </div>
   );
 }
 
 /** A message inside a view. `tone` picks the word that names it; the stylesheet draws the matching icon. */
 export function Alert({ tone, role, id, testId, title, action, children }: { tone: "note" | "warning" | "error"; role?: "status" | "alert"; id?: string; testId?: string; title?: string; action?: ReactNode; children: ReactNode }) {
-  const look = { note: "gw-alert", warning: "gw-alert gw-alert--warning", error: "gw-alert gw-alert--danger" }[tone];
+  const look = { note: "ds-alert", warning: "ds-alert ds-alert--warning", error: "ds-alert ds-alert--danger" }[tone];
   const label = { note: "Note", warning: "Warning", error: "Error" }[tone];
   return (
     <div className={look} role={role} id={id} data-testid={testId}>
-      <div className="gw-alert__content">
-        <p className="gw-alert__label">{label}</p>
-        {title !== undefined && <p className="gw-alert__title">{title}</p>}
-        <p className="gw-alert__body">{children}</p>
-        {action !== undefined && <div className="gw-alert__action">{action}</div>}
+      <div className="ds-alert__content">
+        <p className="ds-alert__label">{label}</p>
+        {title !== undefined && <p className="ds-alert__title">{title}</p>}
+        <p className="ds-alert__body">{children}</p>
+        {action !== undefined && <div className="ds-alert__action">{action}</div>}
       </div>
     </div>
   );
@@ -95,12 +95,12 @@ export function Alert({ tone, role, id, testId, title, action, children }: { ton
 /** The top of a view: its one h1 and, under it, what the view adds. `action` is the view's own action, beside the title. */
 export function PageHeader({ title, action, children }: { title: string; action?: ReactNode; children?: ReactNode }) {
   return (
-    <header className="gw-page-header">
-      <div className="gw-page-header__text">
-        <h1 className="gw-page-header__title">{title}</h1>
+    <header className="ds-page-header">
+      <div className="ds-page-header__text">
+        <h1 className="ds-page-header__title">{title}</h1>
         {children}
       </div>
-      {action !== undefined && <div className="gw-page-header__action">{action}</div>}
+      {action !== undefined && <div className="ds-page-header__action">{action}</div>}
     </header>
   );
 }
@@ -108,8 +108,8 @@ export function PageHeader({ title, action, children }: { title: string; action?
 /** A list view's one main action: the link to the screen that starts a new one. */
 export function NewLink({ href, children }: { href: string; children: string }) {
   return (
-    <a href={href} className="gw-button gw-button--primary">
-      <Icon name="plus" className="gw-button__icon" />
+    <a href={href} className="ds-button ds-button--primary">
+      <Icon name="plus" className="ds-button__icon" />
       {children}
     </a>
   );

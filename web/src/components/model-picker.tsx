@@ -111,12 +111,12 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
   const value = choice === null ? CONFIGURED : choice.other ? OTHER : (choice.model ?? "");
   const cliDefault = list?.cliDefault ?? null;
   return (
-    <div className="gw-stack gw-gap-sm">
-      <div className="gw-field">
-        <label htmlFor="model" className="gw-field__label">
+    <div className="ds-stack ds-gap-sm">
+      <div className="ds-field">
+        <label htmlFor="model" className="ds-field__label">
           Model
         </label>
-        <div className="gw-select">
+        <div className="ds-select">
           <select
             id="model"
             name="model"
@@ -127,7 +127,7 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
               state.choose(e.target.value === OTHER ? { model: "", other: true } : { model: e.target.value === "" ? null : e.target.value, other: false });
             }}
             aria-describedby="model-source"
-            className="gw-field__control gw-select__control"
+            className="ds-field__control ds-select__control"
           >
             {ready ? (
               <>
@@ -145,13 +145,13 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
             )}
           </select>
         </div>
-        <p id="model-source" data-testid="model-source" role="status" className="gw-field__description">
+        <p id="model-source" data-testid="model-source" role="status" className="ds-field__description">
           {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
         </p>
       </div>
       {ready && choice?.other === true && (
-        <div className="gw-field">
-          <label htmlFor="model-other" className="gw-field__label">
+        <div className="ds-field">
+          <label htmlFor="model-other" className="ds-field__label">
             Model name
           </label>
           <input
@@ -164,7 +164,7 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
             value={choice.model ?? ""}
             onChange={(e) => state.choose({ model: e.target.value, other: true })}
             aria-describedby="model-source"
-            className="gw-field__control"
+            className="ds-field__control"
           />
         </div>
       )}

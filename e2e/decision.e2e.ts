@@ -74,7 +74,7 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   const copy = fs.readdirSync(path.join(botbench.home, "worktrees")).map((run) => path.join(botbench.home, "worktrees", run, `task-${taskId}`)).find((dir) => fs.existsSync(dir))!;
   expect(task.leftovers).toEqual(["check-report.txt"]);
   // One primary action: Accept. Reject is beside it.
-  await expect(page.getByRole("button", { name: "Accept" })).toHaveClass(/gw-button--primary/);
+  await expect(page.getByRole("button", { name: "Accept" })).toHaveClass(/ds-button--primary/);
   await expect(page.getByRole("button", { name: "Reject" })).toBeVisible();
   await checkDesign(page, "task, ready for review, with files the checks left");
   await shot(page, "u14-ready.png");
@@ -185,14 +185,14 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
   expect(botbenchBranches(repos.run).sort()).toEqual([...branches].sort());
   // Accept and Reject are on each row, and neither is the screen's primary action: it is repeated for each task.
   for (const row of await rows.all()) {
-    await expect(row.getByRole("button", { name: /^Accept/ })).not.toHaveClass(/gw-button--primary/);
+    await expect(row.getByRole("button", { name: /^Accept/ })).not.toHaveClass(/ds-button--primary/);
     await expect(row.getByRole("button", { name: /^Reject/ })).toBeVisible();
   }
   await checkDesign(page, "run, ready for review");
   await shot(page, "u14-run-ready.png");
 
   await rows.nth(0).getByRole("button", { name: /^Accept/ }).click();
-  await expect(rows.nth(0).locator(".gw-badge")).toHaveText("Accepted");
+  await expect(rows.nth(0).locator(".ds-badge")).toHaveText("Accepted");
   await expect(rows.nth(0).getByTestId("merge-command")).toHaveValue(`git merge ${branches[0]}`);
   await expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./);
 
@@ -201,7 +201,7 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
   await expect(asking.getByLabel("Keep the branch")).toBeChecked();
   await checkDesign(page, "run, reject a task");
   await asking.getByRole("button", { name: "Reject" }).click();
-  await expect(rows.nth(1).locator(".gw-badge")).toHaveText("Rejected");
+  await expect(rows.nth(1).locator(".ds-badge")).toHaveText("Rejected");
   await expect(page.getByTestId("run-status")).toHaveText(/^Done\./);
   await checkDesign(page, "run, done");
   await shot(page, "u14-run-done.png");

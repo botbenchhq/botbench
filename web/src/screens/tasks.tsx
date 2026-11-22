@@ -3,6 +3,7 @@ import { ApiError, listTasks, openEventStream, type TaskSummary } from "../api/c
 import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.tsx";
 import { checksWords } from "../components/evidence.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
+import { StatusBadge } from "../components/status.tsx";
 
 const firstLine = (text: string): string => text.trim().split("\n")[0] ?? "";
 
@@ -40,30 +41,30 @@ export function TasksScreen({ onSignedOut }: { onSignedOut: () => void }) {
         )}
         {tasks === null ? (
           failed === null && (
-            <p role="status" data-testid="task-list-state" className="gw-spinner">
+            <p role="status" data-testid="task-list-state" className="ds-spinner">
               Reading tasks.
             </p>
           )
         ) : tasks.length === 0 ? (
-          <div className="gw-empty-state">
-            <h2 data-testid="task-list-state" className="gw-empty-state__title">
+          <div className="ds-empty-state">
+            <h2 data-testid="task-list-state" className="ds-empty-state__title">
               No tasks yet
             </h2>
-            <p className="gw-empty-state__body">A task you start with New task, and each task of a run whose plan you approved, is listed here with its state.</p>
+            <p className="ds-empty-state__body">A task you start with New task, and each task of a run whose plan you approved, is listed here with its state.</p>
           </div>
         ) : (
-          <ul data-testid="task-list" className="gw-list">
+          <ul data-testid="task-list" className="ds-list">
             {tasks.map((task) => (
-              <li key={task.id} className="gw-list__row">
-                <a href={`#/tasks/${task.id}`} className="gw-list__link">
-                  <span className="gw-run-status">
-                    <span data-gw-content="" className="gw-run-status__title">
+              <li key={task.id} className="ds-list__row">
+                <a href={`#/tasks/${task.id}`} className="ds-list__link">
+                  <span className="ds-run-status">
+                    <span data-ds-content="" className="ds-run-status__title">
                       {firstLine(task.prompt)}
                     </span>
-                    <span className="gw-run-status__station">
-                      <span className={statusLook(task)}>{statusWord(task)}</span>
+                    <span className="ds-run-status__station">
+                      <StatusBadge look={statusLook(task)}>{statusWord(task)}</StatusBadge>
                     </span>
-                    <span className="gw-run-status__facts">{`Task ${task.id}${task.checks === null ? "" : ` · ${checksWords(task.checks)}`} · ${task.repo}`}</span>
+                    <span className="ds-run-status__facts">{`Task ${task.id}${task.checks === null ? "" : ` · ${checksWords(task.checks)}`} · ${task.repo}`}</span>
                   </span>
                 </a>
               </li>

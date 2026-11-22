@@ -11,6 +11,8 @@ import { modelState, sessionModel, useModelNames } from "../components/model-pic
 import { runSentence } from "../components/run-status.ts";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
+import { StatusBadge } from "../components/status.tsx";
+import { RunTimeline } from "../components/run-timeline.tsx";
 
 const UNDO_SECONDS = 10;
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
@@ -27,19 +29,19 @@ type Deleted = { task: PlanTask; at: number; left: number; undoing: boolean };
 function PlanRow({ task, number, locked, onEdit, onDelete }: { task: PlanTask; number: number; locked: boolean; onEdit: () => void; onDelete: () => void }) {
   return (
     <>
-      <div data-gw-content="" className="gw-editable-list__text gw-stack gw-gap-xs">
+      <div data-ds-content="" className="ds-editable-list__text ds-stack ds-gap-xs">
         <strong>{task.title}</strong>
-        <ul aria-label={`Acceptance criteria of task ${number}`} className="gw-stack gw-gap-xs">
+        <ul aria-label={`Acceptance criteria of task ${number}`} className="ds-stack ds-gap-xs">
           {task.criteria.map((criterion, i) => (
             <li key={i}>{criterion}</li>
           ))}
         </ul>
       </div>
-      <span className="gw-editable-list__actions">
-        <button type="button" data-edit={number - 1} disabled={locked} data-gw-content-label="" aria-label={`Edit task ${number}: ${task.title}`} onClick={onEdit} className="gw-button gw-button--quiet gw-button--small">
+      <span className="ds-editable-list__actions">
+        <button type="button" data-edit={number - 1} disabled={locked} data-ds-content-label="" aria-label={`Edit task ${number}: ${task.title}`} onClick={onEdit} className="ds-button ds-button--quiet ds-button--small">
           Edit
         </button>
-        <button type="button" disabled={locked} data-gw-content-label="" aria-label={`Delete task ${number}: ${task.title}`} onClick={onDelete} className="gw-button gw-button--quiet gw-button--small">
+        <button type="button" disabled={locked} data-ds-content-label="" aria-label={`Delete task ${number}: ${task.title}`} onClick={onDelete} className="ds-button ds-button--quiet ds-button--small">
           Delete
         </button>
       </span>
@@ -56,36 +58,36 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
     onSave();
   };
   return (
-    <form onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && !saving && onCancel()} className="gw-editable-list__editor" noValidate>
-      <div className="gw-field">
-        <label htmlFor="plan-title" className="gw-field__label">{`${name} title`}</label>
-        <input ref={title} id="plan-title" type="text" autoComplete="off" readOnly={saving} value={editing.title} onChange={(e) => onChange({ ...editing, title: e.target.value })} aria-invalid={editing.problem.title !== undefined} aria-describedby={editing.problem.title === undefined ? undefined : "plan-title-error"} className="gw-field__control" />
+    <form onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && !saving && onCancel()} className="ds-editable-list__editor" noValidate>
+      <div className="ds-field">
+        <label htmlFor="plan-title" className="ds-field__label">{`${name} title`}</label>
+        <input ref={title} id="plan-title" type="text" autoComplete="off" readOnly={saving} value={editing.title} onChange={(e) => onChange({ ...editing, title: e.target.value })} aria-invalid={editing.problem.title !== undefined} aria-describedby={editing.problem.title === undefined ? undefined : "plan-title-error"} className="ds-field__control" />
         {editing.problem.title !== undefined && (
-          <p id="plan-title-error" className="gw-field__error">
+          <p id="plan-title-error" className="ds-field__error">
             {editing.problem.title}
           </p>
         )}
       </div>
-      <div className="gw-field">
-        <label htmlFor="plan-criteria" className="gw-field__label">{`${name} acceptance criteria`}</label>
-        <textarea id="plan-criteria" readOnly={saving} value={editing.criteria} onChange={(e) => onChange({ ...editing, criteria: e.target.value })} aria-invalid={editing.problem.criteria !== undefined} aria-describedby={editing.problem.criteria === undefined ? "plan-criteria-about" : "plan-criteria-about plan-criteria-error"} className="gw-field__control gw-textarea" />
-        <p id="plan-criteria-about" className="gw-field__description">One criterion on each line: a sentence that can be checked when the task is done.</p>
+      <div className="ds-field">
+        <label htmlFor="plan-criteria" className="ds-field__label">{`${name} acceptance criteria`}</label>
+        <textarea id="plan-criteria" readOnly={saving} value={editing.criteria} onChange={(e) => onChange({ ...editing, criteria: e.target.value })} aria-invalid={editing.problem.criteria !== undefined} aria-describedby={editing.problem.criteria === undefined ? "plan-criteria-about" : "plan-criteria-about plan-criteria-error"} className="ds-field__control ds-textarea" />
+        <p id="plan-criteria-about" className="ds-field__description">One criterion on each line: a sentence that can be checked when the task is done.</p>
         {editing.problem.criteria !== undefined && (
-          <p id="plan-criteria-error" className="gw-field__error">
+          <p id="plan-criteria-error" className="ds-field__error">
             {editing.problem.criteria}
           </p>
         )}
       </div>
       {editing.problem.save !== undefined && (
-        <p role="alert" className="gw-field__error">
+        <p role="alert" className="ds-field__error">
           {editing.problem.save}
         </p>
       )}
-      <div className="gw-editable-list__editor-actions">
-        <button type="submit" aria-busy={saving} className="gw-button gw-button--small">
+      <div className="ds-editable-list__editor-actions">
+        <button type="submit" aria-busy={saving} className="ds-button ds-button--small">
           {saving ? "Saving task" : "Save task"}
         </button>
-        <button type="button" disabled={saving} onClick={onCancel} className="gw-button gw-button--quiet gw-button--small">
+        <button type="button" disabled={saving} onClick={onCancel} className="ds-button ds-button--quiet ds-button--small">
           Cancel
         </button>
       </div>
@@ -310,7 +312,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
         {/* The page header comes first and holds the view's one h1, also while the run is being read or cannot be. */}
         <PageHeader title={`Run ${id}`}>
           {run !== null && (
-            <p data-testid="run-status" role="status" className="gw-page-header__description">
+            <p data-testid="run-status" role="status" className="ds-page-header__description">
               {runSentence(run)}
             </p>
           )}
@@ -322,30 +324,31 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
         )}
         {run === null ? (
           problem === null && (
-            <p role="status" className="gw-spinner">
+            <p role="status" className="ds-spinner">
               Reading the run.
             </p>
           )
         ) : (
           <>
-            <dl className="gw-key-value">
-              <div className="gw-key-value__item">
-                <dt className="gw-key-value__label">Repository</dt>
-                <dd data-testid="run-repo" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
+            <RunTimeline run={run} id={id} />
+            <dl className="ds-key-value">
+              <div className="ds-key-value__item">
+                <dt className="ds-key-value__label">Repository</dt>
+                <dd data-testid="run-repo" data-ds-content="" className="ds-key-value__value ds-key-value__value--mono">
                   {run.repo}
                 </dd>
               </div>
               {run.specPath !== null && (
-                <div className="gw-key-value__item">
-                  <dt className="gw-key-value__label">Spec file</dt>
-                  <dd data-testid="run-spec" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Spec file</dt>
+                  <dd data-testid="run-spec" data-ds-content="" className="ds-key-value__value ds-key-value__value--mono">
                     {run.specPath}
                   </dd>
                 </div>
               )}
-              <div className="gw-key-value__item">
-                <dt className="gw-key-value__label">Planning model</dt>
-                <dd data-testid="run-model" className="gw-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session, nameOf)}. You asked for: ${run.requestedModel === null ? "Claude Code's default" : nameOf(run.requestedModel)}.`}</dd>
+              <div className="ds-key-value__item">
+                <dt className="ds-key-value__label">Planning model</dt>
+                <dd data-testid="run-model" className="ds-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session, nameOf)}. You asked for: ${run.requestedModel === null ? "Claude Code's default" : nameOf(run.requestedModel)}.`}</dd>
               </div>
             </dl>
 
@@ -358,13 +361,13 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
             {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
 
             {gate && (
-              <section aria-labelledby="plan-heading" className="gw-stack gw-gap-lg">
+              <section aria-labelledby="plan-heading" className="ds-stack ds-gap-lg">
                 <h2 id="plan-heading">Plan</h2>
-                <div className="gw-editable-list">
-                  {run.plan.length === 1 && <p className="gw-editable-list__note">A plan holds at least one task. To drop this one too, cancel the run.</p>}
-                  <ol aria-label="Plan" className="gw-editable-list__items">
+                <div className="ds-editable-list">
+                  {run.plan.length === 1 && <p className="ds-editable-list__note">A plan holds at least one task. To drop this one too, cancel the run.</p>}
+                  <ol aria-label="Plan" className="ds-editable-list__items">
                     {run.plan.map((task, i) => (
-                      <li key={i} className="gw-editable-list__item">
+                      <li key={i} className="ds-editable-list__item">
                         {editing?.at === i ? (
                           <PlanEditor editing={editing} name={`Task ${i + 1}`} saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={() => (setEditing(null), focusEdit(i))} />
                         ) : (
@@ -373,15 +376,15 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                       </li>
                     ))}
                     {editing?.at === "new" && (
-                      <li className="gw-editable-list__item">
+                      <li className="ds-editable-list__item">
                         <PlanEditor editing={editing} name="New task" saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={() => (setEditing(null), focusEdit(run.plan.length))} />
                       </li>
                     )}
                   </ol>
                   {editing?.at !== "new" && (
-                    <div className="gw-editable-list__add">
-                      <button type="button" data-add-task disabled={busy !== null || editing !== null || run.plan.length >= 20} onClick={() => setEditing({ at: "new", title: "", criteria: "", problem: {} })} className="gw-button gw-button--quiet">
-                        <Icon name="plus" className="gw-button__icon" />
+                    <div className="ds-editable-list__add">
+                      <button type="button" data-add-task disabled={busy !== null || editing !== null || run.plan.length >= 20} onClick={() => setEditing({ at: "new", title: "", criteria: "", problem: {} })} className="ds-button ds-button--quiet">
+                        <Icon name="plus" className="ds-button__icon" />
                         Add task
                       </button>
                     </div>
@@ -393,23 +396,23 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     {decisionProblem}
                   </Alert>
                 )}
-                <div className="gw-cluster">
-                  <button type="button" aria-busy={busy === "approve"} disabled={busy !== null && busy !== "approve"} onClick={() => decide("approve")} className="gw-button gw-button--primary">
+                <div className="ds-cluster">
+                  <button type="button" aria-busy={busy === "approve"} disabled={busy !== null && busy !== "approve"} onClick={() => decide("approve")} className="ds-button ds-button--primary">
                     {busy === "approve" ? "Approving" : `Approve ${tasksWord(run.plan.length)}`}
                   </button>
                 </div>
                 <p>Approving starts building the tasks, one at a time, in this order.</p>
 
-                <div className="gw-stack gw-gap-sm">
-                  <div className="gw-field">
-                    <label htmlFor="plan-feedback" className="gw-field__label">
+                <div className="ds-stack ds-gap-sm">
+                  <div className="ds-field">
+                    <label htmlFor="plan-feedback" className="ds-field__label">
                       Feedback for the planner
                     </label>
-                    <textarea id="plan-feedback" value={feedback} onChange={(e) => setFeedback(e.target.value)} aria-describedby="plan-feedback-about" className="gw-field__control gw-textarea" />
-                    <p id="plan-feedback-about" className="gw-field__description">Request changes sends the plan as it stands here, with this feedback, back to the planner, and its new plan takes this one's place.</p>
+                    <textarea id="plan-feedback" value={feedback} onChange={(e) => setFeedback(e.target.value)} aria-describedby="plan-feedback-about" className="ds-field__control ds-textarea" />
+                    <p id="plan-feedback-about" className="ds-field__description">Request changes sends the plan as it stands here, with this feedback, back to the planner, and its new plan takes this one's place.</p>
                   </div>
-                  <div className="gw-cluster">
-                    <button type="button" aria-busy={busy === "changes"} disabled={busy !== null && busy !== "changes"} onClick={() => decide("changes")} className="gw-button">
+                  <div className="ds-cluster">
+                    <button type="button" aria-busy={busy === "changes"} disabled={busy !== null && busy !== "changes"} onClick={() => decide("changes")} className="ds-button">
                       {busy === "changes" ? "Requesting changes" : "Request changes"}
                     </button>
                     {cancel}
@@ -425,32 +428,32 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     {decisionProblem}
                   </Alert>
                 )}
-                <div className="gw-cluster">{cancel}</div>
+                <div className="ds-cluster">{cancel}</div>
               </>
             )}
 
             {run.tasks.length > 0 && (
-              <section aria-labelledby="run-tasks-heading" className="gw-stack gw-gap-sm">
+              <section aria-labelledby="run-tasks-heading" className="ds-stack ds-gap-sm">
                 <h2 id="run-tasks-heading">Tasks</h2>
-                <ul data-testid="run-tasks" className="gw-list">
+                <ul data-testid="run-tasks" className="ds-list">
                   {run.tasks.map((task) => (
-                    <li key={task.id} className="gw-list__row">
-                      <div className="gw-stack gw-gap-sm min-w-0 flex-1">
-                        <a href={`#/tasks/${task.id}`} className="gw-list__link">
-                          <span className="gw-run-status">
-                            <span data-gw-content="" className="gw-run-status__title">
+                    <li key={task.id} className="ds-list__row">
+                      <div className="ds-stack ds-gap-sm min-w-0 flex-1">
+                        <a href={`#/tasks/${task.id}`} className="ds-list__link">
+                          <span className="ds-run-status">
+                            <span data-ds-content="" className="ds-run-status__title">
                               {task.title}
                             </span>
-                            <span className="gw-run-status__station">
-                              <span className={statusLook({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}</span>
+                            <span className="ds-run-status__station">
+                              <StatusBadge look={statusLook({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}</StatusBadge>
                             </span>
-                            <span className="gw-run-status__facts">
+                            <span className="ds-run-status__facts">
                               {`Task ${task.id} · `}
                               <span data-testid="run-task-branch">{taskFacts(task)}</span>
                             </span>
                           </span>
                         </a>
-                        {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-gw-content="">{task.reason}</p>}
+                        {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-ds-content="">{task.reason}</p>}
                         <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
                         {task.checks !== null && <ChecksResult checks={task.checks} rows={task.evidence.filter((row) => row.kind === "check")} />}
                         <CommandEvidence rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
@@ -465,14 +468,14 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
             )}
 
             {run.preapproved.length > 0 && (
-              <section className="gw-stack gw-gap-sm">
+              <section className="ds-stack ds-gap-sm">
                 <h2>Allowed for this run</h2>
-                <ul data-testid="run-preapproved" className="gw-list gw-list--dense">
+                <ul data-testid="run-preapproved" className="ds-list ds-list--dense">
                   {run.preapproved.map((command) => (
-                    <li key={command} className="gw-list__row">
-                      <div className="gw-list__content">
-                        <span className="gw-list__body">
-                          <code data-gw-content="" className="gw-list__primary">
+                    <li key={command} className="ds-list__row">
+                      <div className="ds-list__content">
+                        <span className="ds-list__body">
+                          <code data-ds-content="" className="ds-list__primary">
                             {command}
                           </code>
                         </span>
@@ -485,30 +488,30 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
             )}
 
             {planning ? (
-              <section aria-labelledby="planning-heading" className="gw-stack gw-gap-sm">
+              <section aria-labelledby="planning-heading" className="ds-stack ds-gap-sm">
                 <h2 id="planning-heading">Planning</h2>
                 {transcript}
               </section>
             ) : (
               shown.length > 0 && (
-                <details className="gw-disclosure">
-                  <summary className="gw-disclosure__summary">How the plan was made</summary>
-                  <div className="gw-disclosure__content">{transcript}</div>
+                <details className="ds-disclosure">
+                  <summary className="ds-disclosure__summary">How the plan was made</summary>
+                  <div className="ds-disclosure__content">{transcript}</div>
                 </details>
               )
             )}
           </>
         )}
       </Page>
-      <div role="status" aria-live="polite" aria-atomic="false" className="gw-toast__region">
+      <div role="status" aria-live="polite" aria-atomic="false" className="ds-toast__region">
         {deleted !== null && (
-          <div className="gw-toast gw-toast--success gw-undo-toast">
-            <p className="gw-toast__message">
-              <span className="gw-toast__label">Done:</span> {`Task ${deleted.at + 1} deleted from the plan.`}
-              <span className="gw-visually-hidden">{` You have ${UNDO_SECONDS} seconds to undo.`}</span>
-              {!deleted.undoing && <span aria-hidden="true" className="gw-undo-toast__countdown">{` ${deleted.left} ${deleted.left === 1 ? "second" : "seconds"} left to undo`}</span>}
+          <div className="ds-toast ds-toast--success ds-undo-toast">
+            <p className="ds-toast__message">
+              <span className="ds-toast__label">Done:</span> {`Task ${deleted.at + 1} deleted from the plan.`}
+              <span className="ds-visually-hidden">{` You have ${UNDO_SECONDS} seconds to undo.`}</span>
+              {!deleted.undoing && <span aria-hidden="true" className="ds-undo-toast__countdown">{` ${deleted.left} ${deleted.left === 1 ? "second" : "seconds"} left to undo`}</span>}
             </p>
-            <button type="button" aria-busy={deleted.undoing} onClick={undo} className="gw-button gw-button--small gw-toast__action">
+            <button type="button" aria-busy={deleted.undoing} onClick={undo} className="ds-button ds-button--small ds-toast__action">
               {deleted.undoing ? "Putting the task back" : "Undo"}
             </button>
           </div>

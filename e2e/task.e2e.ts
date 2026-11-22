@@ -59,7 +59,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
   // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
   const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();
-  await expect(wrote.locator("summary").first()).toHaveText(/^(Writing|Wrote|Wants to write|Did not write|Editing|Edited|Running|Ran|Wants to run|Did not run)\s*\S/);
+  await expect(wrote.locator(".ds-tool-call__title")).toHaveText(/^(Working|Done|Needs input|Denied)\s*(Writing|Wrote|Wants to write|Did not write|Editing|Edited|Running|Ran|Wants to run|Did not run)\s*\S/);
   await expect(wrote.locator("summary").first()).not.toContainText("{");
 
   // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
@@ -111,7 +111,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
     "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow runs with your account's rights.",
   );
   // The screen's one primary action is Accept, beside Reject; nothing claims to merge, push, approve or stop.
-  await expect(page.locator(".gw-button--primary")).toHaveText(["Accept"]);
+  await expect(page.locator(".ds-button--primary")).toHaveText(["Accept"]);
   await expect(page.getByRole("button", { name: /accept|reject/i })).toHaveText(["Accept", "Reject"]);
   await expect(page.getByRole("button", { name: /merge|push|approve|stop/i })).toHaveCount(0);
 

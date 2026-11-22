@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callLine, callReason, callTarget, duration, editChange, lineChanges, writtenText } from "../web/src/components/tool-summary.ts";
+import { callLine, callReason, callTarget, duration, editChange, lineChanges, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
 
@@ -74,4 +74,19 @@ test("a duration comes from two stored times, or is not given", () => {
   assert.equal(duration("2026-11-22T10:00:00.000Z", "2026-11-22T11:03:10.000Z"), "1h 3m");
   assert.equal(duration("not a time", "2026-11-22T10:00:00.000Z"), null);
   assert.equal(duration("2026-11-22T10:00:05.000Z", "2026-11-22T10:00:00.000Z"), null);
+});
+
+test("a step group's line counts what its calls did, by kind, in the same past-tense verbs as the rows, from the calls themselves", () => {
+  const done = (name: string): { name: string; state: "done" } => ({ name, state: "done" });
+  assert.equal(stepsSummary([done("Read"), done("Read"), done("Read")]), "Read 3 files");
+  assert.equal(stepsSummary([done("Bash"), done("Edit"), done("Bash"), done("Write")]), "Ran 2 commands, edited 1 file, wrote 1 file");
+  assert.equal(stepsSummary([done("Grep"), done("Glob"), done("WebFetch"), done("WebSearch")]), "Searched 1 time, looked for files 1 time, fetched 1 page, searched the web 1 time");
+  // A tool with no verb is counted by its own name.
+  assert.equal(stepsSummary([done("TodoWrite"), done("TodoWrite"), done("Read")]), "Used TodoWrite 2 times, read 1 file");
+  // Only what ran and returned is counted as done; the rest is said as it is, never folded into a count.
+  assert.equal(
+    stepsSummary([done("Read"), { name: "Bash", state: "failed" }, { name: "Bash", state: "refused" }, { name: "Read", state: "unfinished" }, { name: "Bash", state: "running" }, { name: "Bash", state: "waiting" }]),
+    "Read 1 file, 1 not run, 1 did not finish",
+  );
+  assert.equal(stepsSummary([{ name: "Bash", state: "running" }, { name: "Bash", state: "running" }, { name: "Bash", state: "waiting" }]), "");
 });

@@ -73,21 +73,21 @@ test("LIVE: a task whose check fails says so in words with an icon, opens the fa
   await expect(result).toHaveText("Checks failed: 1 of 2 checks did not pass.");
   await expect(result.locator("svg")).toHaveCount(1);
   await expect(page.getByText("Checks run this repository's own commands on the agent's work")).toBeVisible();
-  const items = page.getByTestId("checks").locator(".gw-check-list__item");
+  const items = page.getByTestId("checks").locator(".ds-check-list__item");
   await expect(items).toHaveCount(2);
   // The failed check comes first; its result is words, and its output opens.
-  await expect(items.nth(0).locator(".gw-check-list__name")).toHaveText("sh check.sh goodbye");
-  await expect(items.nth(0).locator(".gw-check-list__result")).toHaveText("Failed, exit code 1");
-  await expect(items.nth(1).locator(".gw-check-list__result")).toHaveText("Passed");
-  await expect(page.getByTestId("checks").locator(".gw-check-list__summary")).toHaveText("1 of 2 checks passed. 1 failed.");
-  await items.nth(0).locator(".gw-check-list__toggle").click();
-  await expect(items.nth(0).locator(".gw-check-list__log")).toHaveText(/checking hello.txt for goodbye\s+hello.txt does not hold goodbye/);
+  await expect(items.nth(0).locator(".ds-check-list__name")).toHaveText("sh check.sh goodbye");
+  await expect(items.nth(0).locator(".ds-check-list__result")).toHaveText("Failed, exit code 1");
+  await expect(items.nth(1).locator(".ds-check-list__result")).toHaveText("Passed");
+  await expect(page.getByTestId("checks").locator(".ds-check-list__summary")).toHaveText("1 of 2 checks passed. 1 failed.");
+  await items.nth(0).locator(".ds-check-list__toggle").click();
+  await expect(items.nth(0).locator(".ds-check-list__log")).toHaveText(/checking hello.txt for goodbye\s+hello.txt does not hold goodbye/);
   await checkDesign(page, "task, checks failed, output open");
   await shot(page, "u13-checks-failed.png");
 
   await buildTask(page, botbench, repos.passing);
   await expect(page.getByTestId("checks-result")).toHaveText("Checks passed: 1 of 1 check passed.");
-  await expect(page.getByTestId("checks").locator(".gw-check-list__result")).toHaveText("Passed");
+  await expect(page.getByTestId("checks").locator(".ds-check-list__result")).toHaveText("Passed");
   await checkDesign(page, "task, checks passed");
   await shot(page, "u13-checks-passed.png");
 

@@ -113,12 +113,12 @@ export function useRepository(onSignedOut: () => void): RepositoryChoice {
 /** The repository path, with what the server says about it in words under it. */
 export function RepositoryField({ choice }: { choice: RepositoryChoice }) {
   return (
-    <div className="gw-field">
-      <label htmlFor="repo" className="gw-field__label">
-        Repository path <span className="gw-field__required">required</span>
+    <div className="ds-field">
+      <label htmlFor="repo" className="ds-field__label">
+        Repository path <span className="ds-field__required">required</span>
       </label>
-      <input id="repo" name="repo" type="text" required autoCapitalize="none" autoCorrect="off" spellCheck={false} value={choice.repo} onChange={(e) => choice.setRepo(e.target.value)} aria-describedby="repo-state" aria-invalid={choice.refused} className="gw-field__control" />
-      <p id="repo-state" data-testid="repo-state" role="status" className={choice.refused ? "gw-field__error" : "gw-field__description"}>
+      <input id="repo" name="repo" type="text" required autoCapitalize="none" autoCorrect="off" spellCheck={false} value={choice.repo} onChange={(e) => choice.setRepo(e.target.value)} aria-describedby="repo-state" aria-invalid={choice.refused} className="ds-field__control" />
+      <p id="repo-state" data-testid="repo-state" role="status" className={choice.refused ? "ds-field__error" : "ds-field__description"}>
         {choice.words}
       </p>
     </div>
@@ -135,7 +135,7 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
   const { listed } = choice;
   if (listed === null) return null;
   return (
-    <section aria-labelledby="preapproved-heading" className="gw-stack gw-gap-sm">
+    <section aria-labelledby="preapproved-heading" className="ds-stack ds-gap-sm">
       <h2 id="preapproved-heading">{`Allowed for this ${scope}`}</h2>
       <p data-testid="preapproved-about">{ABOUT[scope]}</p>
       {listed.note !== null && (
@@ -146,18 +146,18 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
       {listed.commands.length === 0 ? (
         <p data-testid="preapproved-none">No command is listed, so every shell command asks.</p>
       ) : (
-        <ul data-testid="preapproved-list" className="gw-list">
+        <ul data-testid="preapproved-list" className="ds-list">
           {listed.commands.map((command) => (
-            <li key={command} className="gw-list__row">
-              <div className="gw-list__content">
-                <span className="gw-list__body">
-                  <code data-gw-content="" className="gw-list__primary">
+            <li key={command} className="ds-list__row">
+              <div className="ds-list__content">
+                <span className="ds-list__body">
+                  <code data-ds-content="" className="ds-list__primary">
                     {command}
                   </code>
                 </span>
               </div>
-              <div className="gw-list__action">
-                <button type="button" data-gw-content-label="" aria-label={`Remove ${command}`} onClick={() => choice.removeCommand(command)} className="gw-button gw-button--quiet gw-button--small">
+              <div className="ds-list__action">
+                <button type="button" data-ds-content-label="" aria-label={`Remove ${command}`} onClick={() => choice.removeCommand(command)} className="ds-button ds-button--quiet ds-button--small">
                   Remove
                 </button>
               </div>
@@ -166,8 +166,8 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
         </ul>
       )}
       <div className="flex items-end gap-sm">
-        <div className="gw-field min-w-0 flex-1">
-          <label htmlFor="preapproved-add" className="gw-field__label">
+        <div className="ds-field min-w-0 flex-1">
+          <label htmlFor="preapproved-add" className="ds-field__label">
             Add a command
           </label>
           <input
@@ -184,10 +184,10 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
               e.preventDefault();
               choice.addCommand();
             }}
-            className="gw-field__control"
+            className="ds-field__control"
           />
         </div>
-        <button type="button" onClick={choice.addCommand} className="gw-button">
+        <button type="button" onClick={choice.addCommand} className="ds-button">
           Add
         </button>
       </div>

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { checkDesign, copyShot, expect, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
+import { checkDesign, copyShot, expect, primaries, SECONDARY_LOOK, SHOTS, signIn, test as base, watchRequests, openNewTask } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Botbench process whose settings offer standing
@@ -40,8 +40,6 @@ async function startTask(page: Page, repo: string, prompt: string, id: number): 
   await expect(page.getByRole("heading", { name: `Task ${id}` })).toBeVisible();
 }
 
-/** The buttons drawn as the primary action: filled with the accent colour. */
-const primaries = (page: Page): Promise<(string | null)[]> => page.getByRole("button").evaluateAll((buttons) => buttons.filter((b) => getComputedStyle(b).backgroundColor === "rgb(26, 26, 26)").map((b) => b.textContent));
 const shape = (list: Locator): Promise<string[]> => list.evaluate((el) => [el.tagName, ...new Set([...el.children].map((child) => child.tagName))]);
 const api = async <B>(page: Page, botbench: Botbench, route: string): Promise<B> => (await (await page.request.get(`${botbench.base}${route}`)).json()) as B;
 
@@ -99,7 +97,7 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
     return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };
   };
   const open = offer.getByRole("button", { name: "Always allow…" });
-  expect(await open.evaluate(look), "the offer is drawn as a secondary control").toEqual({ background: "rgb(255, 255, 255)", text: "rgb(23, 23, 23)", border: "rgb(229, 229, 229)" });
+  expect(await open.evaluate(look), "the offer is drawn as a secondary control").toEqual(SECONDARY_LOOK);
   const allowBox = (await card.getByRole("button", { name: "Allow once", exact: true }).boundingBox())!;
   const openBox = (await open.boundingBox())!;
   expect(openBox.y - (allowBox.y + allowBox.height), "the offer is set apart, below Allow").toBeGreaterThanOrEqual(24);

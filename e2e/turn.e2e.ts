@@ -77,18 +77,27 @@ test("LIVE: a chat reply that used a tool shows what the agent did as one plain 
   await signIn(page, botbench);
   await page.getByLabel("Prompt").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
   await page.getByRole("button", { name: "Send" }).click();
-  // The action is in the transcript as soon as it is made: nothing the agent did is hidden.
+  // The action is in the transcript as soon as it is made: nothing the agent did is hidden. It is the design system's
+  // tool call, as a transcript row, whose state the stylesheet draws from data-state: running, then succeeded.
   const action = page.locator('[data-event="tool_call"]').first();
+  const call = action.locator(".ds-tool-call.ds-tool-call--row");
   const line = action.locator("summary").first();
   await expect(line).toContainText("notes.txt", { timeout: 120_000 });
+  await expect(call).toHaveAttribute("data-state", /^(running|succeeded)$/);
   await expect(page.locator('[data-event="turn_ended"]')).toBeVisible({ timeout: 120_000 });
-  await expect(action).toHaveAttribute("data-state", "done");
-  await expect(line).toHaveText(/^Read\s*notes\.txt$/);
+  await expect(call).toHaveAttribute("data-state", "succeeded");
+  // The state in words first, then the one plain line; the time it took, from the stored times of the call and its result.
+  await expect(call.locator(".ds-tool-call__status")).toHaveText("Done");
+  await expect(call.locator(".ds-tool-call__title")).toHaveText(/^Done\s*Read\s*notes\.txt$/);
+  await expect(call.locator(".ds-tool-call__target")).toHaveText("notes.txt");
+  await expect(call.locator(".ds-tool-call__duration")).toHaveText(/^\d+ ms$|^\d+(\.\d)? s$|^\d+ min( \d+ s)?$/);
   await expect(reply(page).last()).toContainText(/heron/i);
+  // The agent's text is a finished message: Claude Code sends each reply whole, so nothing is drawn as streaming.
+  await expect(reply(page).last()).toHaveAttribute("data-state", "done");
   await expect(page.locator('[data-event="turn_ended"] summary')).toHaveText(/^Worked for (\d+m )?\d+s$/);
   // It returned without failing and waits for nothing, so it is folded; one tap shows the whole path and what it returned.
   const result = action.locator('[data-event="tool_result"]');
-  await expect(action.locator("details").first()).not.toHaveAttribute("open");
+  await expect(call.locator("details").first()).not.toHaveAttribute("open");
   await expect(result).toBeHidden();
   await line.click();
   await expect(action.locator("pre").first()).toContainText(path.join("scratch", "notes.txt"));
@@ -104,6 +113,29 @@ test("LIVE: a chat reply that used a tool shows what the agent did as one plain 
   await checkDesign(page, "chat, a tool row open to its technical details");
   await technical.locator("summary").click();
   await copyShot(page, "chat-tool");
+});
+
+test("LIVE: three tool calls in a row are one step group: a line that counts them in plain words, open, with every call a row inside it", async ({ page, botbench }) => {
+  for (const [name, word] of [["a.txt", "otter"], ["b.txt", "badger"], ["c.txt", "stoat"]]) fs.writeFileSync(path.join(botbench.home, "scratch", name!), `The word is ${word}.\n`);
+  await signIn(page, botbench);
+  await page.getByLabel("Prompt").fill("Use your Read tool three times, on a.txt, b.txt and c.txt in the current directory, before you write anything. Then reply with only the three words those files name.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator('[data-event="turn_ended"]')).toBeVisible({ timeout: 120_000 });
+  const group = page.locator("details.ds-step-group");
+  await expect(group).toHaveCount(1);
+  // The summary counts what was done, from the calls themselves; the calls stay in view, because seeing them builds trust.
+  await expect(group.locator(".ds-step-group__title")).toHaveText("Read 3 files");
+  await expect(group).toHaveAttribute("open");
+  const steps = group.locator('.ds-step-group__steps > [data-event="tool_call"]');
+  await expect(steps).toHaveCount(3);
+  for (const step of await steps.all()) await expect(step.locator(".ds-tool-call")).toHaveAttribute("data-state", "succeeded");
+  // A step's detail is the second level, with its raw arguments inside it, under their own words: there is no third.
+  await steps.first().locator("summary").first().click();
+  await expect(steps.first()).toContainText("Technical details");
+  await expect(steps.first().locator("details details")).toHaveCount(0);
+  await expect(steps.first()).toContainText('"file_path"');
+  await checkDesign(page, "chat, a step group with a step open");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "chat-step-group.png"), fullPage: true });
 });
 
 test("LIVE: words the owner or the agent wrote are never judged, and the same words in Botbench's own text are", async ({ page, botbench }) => {

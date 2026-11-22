@@ -17,8 +17,8 @@ type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated
 function Diff({ path, state }: { path: string; state: DiffState }) {
   if (state.kind === "loading") {
     return (
-      <figure className="gw-diff" aria-busy="true">
-        <p role="status" className="gw-diff__note">
+      <figure className="ds-diff" aria-busy="true">
+        <p role="status" className="ds-diff__note">
           Loading the changes.
         </p>
       </figure>
@@ -26,22 +26,22 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
   }
   if (state.kind === "failed") {
     return (
-      <figure className="gw-diff">
-        <p role="alert" className="gw-diff__note">{`The changes could not be loaded. ${state.why}`}</p>
+      <figure className="ds-diff">
+        <p role="alert" className="ds-diff__note">{`The changes could not be loaded. ${state.why}`}</p>
       </figure>
     );
   }
   const lines = state.diff.replace(/\n$/, "").split("\n");
   return (
-    <figure className="gw-diff">
-      <pre data-testid="diff-scroll" tabIndex={0} role="group" data-gw-content-label="" aria-label={`Changes in ${path}`} className="gw-diff__body">
-        <code data-testid="diff" data-gw-content="" className="gw-diff__lines">
+    <figure className="ds-diff">
+      <pre data-testid="diff-scroll" tabIndex={0} role="group" data-ds-content-label="" aria-label={`Changes in ${path}`} className="ds-diff__body">
+        <code data-testid="diff" data-ds-content="" className="ds-diff__lines">
           {lines.map((line, i) => (
             <DiffLine key={i} line={line} />
           ))}
         </code>
       </pre>
-      {state.truncated && <p className="gw-diff__note">These changes are longer than Botbench shows here. All of them are on the branch.</p>}
+      {state.truncated && <p className="ds-diff__note">These changes are longer than Botbench shows here. All of them are on the branch.</p>}
     </figure>
   );
 }
@@ -50,14 +50,14 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
 function Counts({ file }: { file: FileChange }) {
   if (file.binary) return <>binary</>;
   return (
-    <span className="gw-diff__counts">
-      <span className="gw-diff__added">
+    <span className="ds-diff__counts">
+      <span className="ds-diff__added">
         {`+${file.added}`}
-        <span className="gw-diff__label">{file.added === 1 ? " line added" : " lines added"}</span>
+        <span className="ds-diff__label">{file.added === 1 ? " line added" : " lines added"}</span>
       </span>
-      <span className="gw-diff__removed">
+      <span className="ds-diff__removed">
         {`−${file.removed}`}
-        <span className="gw-diff__label">{file.removed === 1 ? " line removed" : " lines removed"}</span>
+        <span className="ds-diff__label">{file.removed === 1 ? " line removed" : " lines removed"}</span>
       </span>
     </span>
   );
@@ -157,7 +157,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
         {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be. */}
         <PageHeader title={`Task ${id}`}>
           {task !== null && (
-            <p data-testid="task-status" role="status" className="gw-page-header__description">
+            <p data-testid="task-status" role="status" className="ds-page-header__description">
               {statusSentence(task)}
             </p>
           )}
@@ -169,34 +169,34 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
         )}
         {task === null ? (
           problem === null && (
-            <p role="status" className="gw-spinner">
+            <p role="status" className="ds-spinner">
               Reading the task.
             </p>
           )
         ) : (
           <>
-            <dl className="gw-key-value">
-              <div className="gw-key-value__item">
-                <dt className="gw-key-value__label">Model</dt>
-                <dd data-testid="task-model" className="gw-key-value__value">{`${modelState(session, nameOf)}. You asked for: ${task.requestedModel === null ? "Claude Code's default" : nameOf(task.requestedModel)}.`}</dd>
+            <dl className="ds-key-value">
+              <div className="ds-key-value__item">
+                <dt className="ds-key-value__label">Model</dt>
+                <dd data-testid="task-model" className="ds-key-value__value">{`${modelState(session, nameOf)}. You asked for: ${task.requestedModel === null ? "Claude Code's default" : nameOf(task.requestedModel)}.`}</dd>
               </div>
-              <div className="gw-key-value__item">
-                <dt className="gw-key-value__label">Repository</dt>
-                <dd data-testid="task-repo" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
+              <div className="ds-key-value__item">
+                <dt className="ds-key-value__label">Repository</dt>
+                <dd data-testid="task-repo" data-ds-content="" className="ds-key-value__value ds-key-value__value--mono">
                   {task.repo}
                 </dd>
               </div>
             </dl>
 
             {task.preapproved.length > 0 && (
-              <section className="gw-stack gw-gap-sm">
+              <section className="ds-stack ds-gap-sm">
                 <h2>Allowed for this task</h2>
-                <ul data-testid="task-preapproved" className="gw-list gw-list--dense">
+                <ul data-testid="task-preapproved" className="ds-list ds-list--dense">
                   {task.preapproved.map((command) => (
-                    <li key={command} className="gw-list__row">
-                      <div className="gw-list__content">
-                        <span className="gw-list__body">
-                          <code data-gw-content="" className="gw-list__primary">
+                    <li key={command} className="ds-list__row">
+                      <div className="ds-list__content">
+                        <span className="ds-list__body">
+                          <code data-ds-content="" className="ds-list__primary">
                             {command}
                           </code>
                         </span>
@@ -211,7 +211,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
 
             {task.evidence.some((row) => row.kind === "setup") && (
-              <section aria-labelledby="setup-heading" className="gw-stack gw-gap-sm">
+              <section aria-labelledby="setup-heading" className="ds-stack ds-gap-sm">
                 <h2 id="setup-heading">Setup</h2>
                 <p>Botbench ran this repository's setup commands in the task's copy before Claude Code started, as your settings list them.</p>
                 <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
@@ -224,10 +224,10 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               </section>
             ) : (
               attemptId === null && (
-                <ol className="gw-stack gw-gap-sm">
-                  <li className="gw-message gw-message--user">
-                    <span className="gw-message__label">You</span>
-                    <p data-testid="task-prompt" data-gw-content="" className="gw-message__body">
+                <ol className="ds-stack ds-gap-sm">
+                  <li className="ds-message ds-message--user">
+                    <span className="ds-message__label">You</span>
+                    <p data-testid="task-prompt" data-ds-content="" className="ds-message__body">
                       {task.prompt}
                     </p>
                   </li>
@@ -241,7 +241,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               </Alert>
             )}
             {(task.checks !== null || task.status === "verifying") && (
-              <section aria-labelledby="checks-heading" className="gw-stack gw-gap-sm">
+              <section aria-labelledby="checks-heading" className="ds-stack ds-gap-sm">
                 <h2 id="checks-heading">Checks</h2>
                 {task.checks !== null && <ChecksResult checks={task.checks} rows={task.evidence.filter((row) => row.kind === "check")} />}
                 {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
@@ -250,24 +250,24 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             )}
 
             {task.files !== null && (
-              <section className="gw-stack gw-gap-sm">
+              <section className="ds-stack ds-gap-sm">
                 <h2>Changed files</h2>
                 {task.files.length === 0 ? (
                   <p data-testid="no-changes">No file was changed, so the branch is still at the commit it started from.</p>
                 ) : (
-                  <ul data-testid="changed-files" className="gw-list">
+                  <ul data-testid="changed-files" className="ds-list">
                     {task.files.map((file) => {
                       const expanded = open.includes(file.path);
                       return (
-                        <li key={file.path} className="gw-list__row">
-                          <details open={expanded} onToggle={(e) => toggled(file.path, e.currentTarget.open)} className="gw-disclosure gw-disclosure--row">
-                            <summary className="gw-disclosure__summary">
-                              <code data-gw-content="">{file.path}</code>
-                              <span className="gw-disclosure__meta">
+                        <li key={file.path} className="ds-list__row">
+                          <details open={expanded} onToggle={(e) => toggled(file.path, e.currentTarget.open)} className="ds-disclosure ds-disclosure--row">
+                            <summary className="ds-disclosure__summary">
+                              <code data-ds-content="">{file.path}</code>
+                              <span className="ds-disclosure__meta">
                                 {file.status} <Counts file={file} />
                               </span>
                             </summary>
-                            <div className="gw-disclosure__content">{expanded && <Diff path={file.path} state={diffs[file.path] ?? { kind: "loading" }} />}</div>
+                            <div className="ds-disclosure__content">{expanded && <Diff path={file.path} state={diffs[file.path] ?? { kind: "loading" }} />}</div>
                           </details>
                         </li>
                       );
@@ -278,13 +278,13 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             )}
 
             {task.decision !== null ? (
-              <section aria-labelledby="decision-heading" className="gw-stack gw-gap-sm">
+              <section aria-labelledby="decision-heading" className="ds-stack ds-gap-sm">
                 <h2 id="decision-heading">{task.decision.decision === "accept" ? "Accepted" : "Rejected"}</h2>
                 <DecisionOutcome decision={task.decision} repo={task.repo} />
               </section>
             ) : (
               task.branch !== null && (
-                <section className="gw-stack gw-gap-sm">
+                <section className="ds-stack ds-gap-sm">
                   <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />
                   <p data-testid="not-merged">
                     {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs with your account's rights.`}
@@ -294,7 +294,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             )}
 
             {task.status === "awaiting_decision" && (
-              <section aria-labelledby="decide-heading" className="gw-stack gw-gap-sm">
+              <section aria-labelledby="decide-heading" className="ds-stack ds-gap-sm">
                 <h2 id="decide-heading">Your decision</h2>
                 <p>{`Accept keeps the branch for you to merge yourself and removes the task's copy of the project. Reject removes the copy too, and asks whether to keep the branch.${task.checks === "failed" ? " The checks failed; you can still accept or reject it." : ""}`}</p>
                 {task.leftovers !== null && task.leftovers.length > 0 && <p>{`The checks left ${task.leftovers.length === 1 ? "1 file" : `${task.leftovers.length} files`} in the task's copy that ${task.leftovers.length === 1 ? "is" : "are"} not on the branch. Accept and Reject list ${task.leftovers.length === 1 ? "it" : "them"} before anything is removed.`}</p>}

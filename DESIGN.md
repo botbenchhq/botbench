@@ -1,48 +1,64 @@
 ---
 version: alpha
 name: Botbench
-# Generated: everything from here to the closing line is web/vendor/groundwork/design-tokens.md
-# (Groundwork 0.4.0), unchanged. Do not edit it here. After a sync, copy that file over this block again.
+# Generated: everything from here to the closing line is web/vendor/design-system/themes/botbench.design-tokens.md
+# (the design system 0.7.0, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
 colors:
-  accent: "#1A1A1A"
-  accent-hover: "#3D3D3A"
-  on-accent: "#FAFAF9"
-  surface: "#FAFAF9"
+  accent: "#AD5D02"
+  accent-hover: "#914D01"
+  on-accent: "#FFFFFF"
+  surface: "#FAF8F4"
   surface-raised: "#FFFFFF"
-  surface-sunken: "#F3F2EF"
-  on-surface: "#171717"
-  muted: "#737373"
-  border: "#E5E5E5"
-  border-strong: "#8A8A86"
-  focus: "#1F5C99"
-  success: "#1E6B3A"
-  success-subtle: "#E8F2EA"
-  warning: "#7A5200"
-  warning-subtle: "#F7EEDC"
-  danger: "#A8281F"
-  danger-subtle: "#F9E9E7"
-  info: "#1F5C99"
-  info-subtle: "#E6EEF6"
+  surface-sunken: "#EEEBE4"
+  on-surface: "#121417"
+  muted: "#535E6E"
+  border: "#DDD8CE"
+  border-strong: "#8F8B81"
+  focus: "#CC6F01"
+  success: "#037A54"
+  success-subtle: "#DCF8E9"
+  warning: "#736C02"
+  warning-subtle: "#F3F2D7"
+  danger: "#BA1C1C"
+  danger-subtle: "#FEEBE8"
+  info: "#2360E8"
+  info-subtle: "#E9F0FF"
+  approval: "#8F6202"
+  approval-subtle: "#FEF3C7"
+  blocked: "#6A31C4"
+  blocked-subtle: "#F1EDFF"
+  peer: "#03748F"
+  peer-subtle: "#DCF5FE"
+  tainted: "#BC4100"
+  tainted-subtle: "#FFEBE5"
 colors-dark:
-  accent: "#EDEDEB"
-  accent-hover: "#CFCFCB"
-  on-accent: "#171717"
-  surface: "#141413"
-  surface-raised: "#1C1C1A"
-  surface-sunken: "#0E0E0D"
-  on-surface: "#EDEDEB"
-  muted: "#A3A3A0"
-  border: "#2E2E2B"
-  border-strong: "#6B6B67"
-  focus: "#86B7EA"
-  success: "#7CC796"
-  success-subtle: "#15281B"
-  warning: "#E0B45C"
-  warning-subtle: "#2B2210"
-  danger: "#F0928A"
-  danger-subtle: "#331917"
-  info: "#86B7EA"
-  info-subtle: "#14243A"
+  accent: "#F59E0B"
+  accent-hover: "#E18A0F"
+  on-accent: "#121417"
+  surface: "#121417"
+  surface-raised: "#181B20"
+  surface-sunken: "#0D0F12"
+  on-surface: "#F8FAFC"
+  muted: "#94A3B8"
+  border: "#2B313B"
+  border-strong: "#646B76"
+  focus: "#F59E0B"
+  success: "#34D399"
+  success-subtle: "#09291D"
+  warning: "#FDE047"
+  warning-subtle: "#292306"
+  danger: "#F25050"
+  danger-subtle: "#2F1614"
+  info: "#60A5FA"
+  info-subtle: "#132438"
+  approval: "#FBBF24"
+  approval-subtle: "#2D2106"
+  blocked: "#B285F8"
+  blocked-subtle: "#261D35"
+  peer: "#06B6D4"
+  peer-subtle: "#002830"
+  tainted: "#FB7C2E"
+  tainted-subtle: "#341C0F"
 typography:
   xs:
     fontFamily: "IBM Plex Sans"
@@ -80,7 +96,7 @@ fontWeights:
   semibold: 600
 rounded:
   sm: 4px
-  md: 8px
+  md: 6px
   full: 9999px
 spacing:
   xs: 4px
@@ -120,8 +136,8 @@ Dense technical tool. Phone-first. One primary action per screen. Information ov
 High-density developer interface. Closer to a well-made terminal or Linear than a friendly AI product. Minimal chrome. Status and evidence first.
 
 ## Design system
-The interface is built from Groundwork, the shared design system vendored at `web/vendor/groundwork/` (read-only; changed in its own repository and synced). Before any UI work read `web/vendor/groundwork/rules/core.md`, and look each component up in `web/vendor/groundwork/components.json` before writing markup.
-- Colour, border, radius, shadow and type come from `gw-` components. Screen markup uses Tailwind utilities for layout, spacing and sizing only.
+The interface is built from the owner's shared design system, vendored at `web/vendor/design-system/` (read-only; changed in its own repository and synced), under its Botbench theme (`themes/botbench.css`, loaded after `design-system.css`). The theme is dark by default, with an amber primary action; the root carries no `data-theme`, and no screen offers a light mode yet. Before any UI work read `web/vendor/design-system/rules/core.md`, and look each component up in `web/vendor/design-system/components.json` before writing markup.
+- Colour, border, radius, shadow and type come from `ds-` components. Screen markup uses Tailwind utilities for layout, spacing and sizing only.
 - What the catalogue lacks is an app-local component under the `bb-` prefix, declared in `web/design-gaps.json`. Keep that list short.
 - `npm test` runs the system's static scan and fails on a finding. `npm run e2e` runs its rendered check on every screen and open dialog.
 

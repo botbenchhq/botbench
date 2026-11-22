@@ -42,13 +42,13 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
     <Frame current={null}>
       <Page>
         <PageHeader title="New task" />
-        <form onSubmit={submit} className="gw-stack gw-gap-lg" noValidate>
+        <form onSubmit={submit} className="ds-stack ds-gap-lg" noValidate>
           <RepositoryField choice={repository} />
-          <div className="gw-field">
-            <label htmlFor="task-prompt" className="gw-field__label">
-              Prompt <span className="gw-field__required">required</span>
+          <div className="ds-field">
+            <label htmlFor="task-prompt" className="ds-field__label">
+              Prompt <span className="ds-field__required">required</span>
             </label>
-            <textarea id="task-prompt" name="prompt" required value={prompt} onChange={(e) => setPrompt(e.target.value)} className="gw-field__control gw-textarea" />
+            <textarea id="task-prompt" name="prompt" required value={prompt} onChange={(e) => setPrompt(e.target.value)} className="ds-field__control ds-textarea" />
           </div>
           <ModelPicker state={models} />
           <PreapprovedEditor choice={repository} scope="task" />
@@ -57,7 +57,7 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
               {error}
             </Alert>
           )}
-          <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
+          <button type="submit" aria-busy={busy} className="ds-button ds-button--primary">
             {busy ? "Starting" : "Start task"}
           </button>
           <p>Botbench works on the task in a separate copy of the project (a git worktree), on a new branch that starts from the repository's current commit. Your own files and your branch are not touched.</p>

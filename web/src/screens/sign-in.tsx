@@ -21,13 +21,13 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
   };
 
   return (
-    <main className="gw-sign-in p-lg">
-      <p className="gw-sign-in__product">Botbench</p>
-      <div className="gw-stack gw-gap-sm">
+    <main className="ds-sign-in p-lg">
+      <p className="ds-sign-in__product">Botbench</p>
+      <div className="ds-stack ds-gap-sm">
         <h1>Sign in</h1>
         <p id="token-help">Botbench printed the token the first time it started. It is also in the file named login-token in Botbench's data directory on your Mac.</p>
       </div>
-      <form onSubmit={submit} className="gw-stack gw-gap-lg">
+      <form onSubmit={submit} className="ds-stack ds-gap-lg">
         {notice !== null && (
           <Alert tone="note" role="status">
             {notice}
@@ -38,9 +38,9 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
             {error}
           </Alert>
         )}
-        <div className="gw-field">
-          <label htmlFor="token" className="gw-field__label">
-            Login token <span className="gw-field__required">required</span>
+        <div className="ds-field">
+          <label htmlFor="token" className="ds-field__label">
+            Login token <span className="ds-field__required">required</span>
           </label>
           <input
             id="token"
@@ -55,10 +55,10 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
             onChange={(e) => setToken(e.target.value)}
             aria-describedby={error === null ? "token-help" : "token-help token-error"}
             aria-invalid={error !== null}
-            className="gw-field__control"
+            className="ds-field__control"
           />
         </div>
-        <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
+        <button type="submit" aria-busy={busy} className="ds-button ds-button--primary">
           {busy ? "Signing in" : "Sign in"}
         </button>
       </form>
