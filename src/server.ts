@@ -4,8 +4,11 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createAuth, loadOrCreateLoginToken, LOGIN_TOKEN_FILE } from "./api/auth.ts";
-import { json, route } from "./api/router.ts";
-import { loadConfig, smeltHome, type Config } from "./config.ts";
+import { json, requestUrl, route } from "./api/router.ts";
+import { createEventStream } from "./api/stream.ts";
+import { createTurns } from "./api/turns.ts";
+import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, loadConfig, ROOT, smeltHome, type Config } from "./config.ts";
+import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { openStore } from "./store/db.ts";
 
 export interface SmeltServer {
@@ -15,7 +18,9 @@ export interface SmeltServer {
   db: DatabaseSync;
   /** The owner's login token, present only on the start that created it, so the entry point can show it once. */
   newLoginToken?: string;
-  /** Stop listening, drop open connections and close the database. Safe to call twice. */
+  /** How many clients have the event stream open. */
+  streamClients(): number;
+  /** Stop listening, drop open connections, stop every CLI process and close the database. Safe to call twice. */
   close(): Promise<void>;
 }
 
@@ -37,11 +42,33 @@ function stop(server: http.Server): Promise<void> {
   });
 }
 
+export interface StartOptions {
+  config: Config;
+  home: string;
+  signInDelayMs?: number;
+  /** The built client; `web/dist` in this checkout when left out. */
+  clientDir?: string;
+  /** How often an idle event stream is sent a comment to keep it open. */
+  heartbeatMs?: number;
+  /** How long a CLI process with no turn running is kept before it is closed. */
+  idleCloseMs?: number;
+}
+
+/** The model for turns: the one configured for the implementer's driver, when that driver is Claude Code. */
+function turnModel(config: Config): string | undefined {
+  const role = config.roles.implementer;
+  return role === undefined || role.driver === CLAUDE_CODE ? config.drivers[CLAUDE_CODE]?.model : undefined;
+}
+
 /** Open the store under `home` and serve on every configured address. */
-export async function startServer(options: { config: Config; home: string; signInDelayMs?: number }): Promise<SmeltServer> {
+export async function startServer(options: StartOptions): Promise<SmeltServer> {
   const { config, home } = options;
   const db = openStore(home);
   const login = loadOrCreateLoginToken(home);
+  const stream = createEventStream(db, options.heartbeatMs);
+  const model = turnModel(config);
+  const turns = createTurns({ db, home, driver: new ClaudeCodeDriver(), ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
+  const ctx = { db, turns, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -50,9 +77,9 @@ export async function startServer(options: { config: Config; home: string; signI
     // The gate answers sign-in and every refusal itself; only a request with a session reaches the routes.
     auth
       .gate(req, res)
-      .then((allowed) => (allowed ? route(req, res, { db }) : undefined))
+      .then((allowed) => (allowed ? route(req, res, ctx) : undefined))
       .catch((err: unknown) => {
-        console.error(`${req.method} ${new URL(req.url ?? "/", "http://smelt.invalid").pathname} failed: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`${req.method} ${requestUrl(req).pathname} failed: ${err instanceof Error ? err.message : String(err)}`);
         if (res.headersSent) res.destroy();
         else json(res, 500, { error: "internal error" });
       });
@@ -63,7 +90,10 @@ export async function startServer(options: { config: Config; home: string; signI
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    stream.close();
     await Promise.all(servers.map(stop));
+    // Sessions write to the database as they stop, so they are closed before it.
+    await turns.close();
     db.close();
   };
 
@@ -78,12 +108,13 @@ export async function startServer(options: { config: Config; home: string; signI
     await close();
     throw err;
   }
-  return { port, addresses: [...config.listen], db, ...(login.created ? { newLoginToken: login.token } : {}), close };
+  return { port, addresses: [...config.listen], db, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
 }
 
 const runDirectly = process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === import.meta.filename;
 if (runDirectly) {
-  const config = loadConfig();
+  // SMELT_CONFIG names the owner's settings file for one start, in place of smelt.local.json.
+  const config = loadConfig({ defaults: DEFAULT_CONFIG_FILE, local: process.env.SMELT_CONFIG ? path.resolve(process.env.SMELT_CONFIG) : LOCAL_CONFIG_FILE });
   // SMELT_PORT overrides the configured port for one start, e.g. to run a second instance.
   const port = process.env.SMELT_PORT === undefined ? config.port : Number(process.env.SMELT_PORT);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`SMELT_PORT must be a port number, got "${process.env.SMELT_PORT}"`);
@@ -95,7 +126,9 @@ if (runDirectly) {
     // Shown once, on the start that created it. Afterwards it is only in the owner-only file under the data directory.
     console.log(`Login token (shown this once, kept in ${path.join(smeltHome(), LOGIN_TOKEN_FILE)}): ${server.newLoginToken}`);
   }
+  // Closing stops every CLI process first, which can take a few seconds. A second signal during that
+  // time is ignored: letting it kill Smelt would leave those processes running with nobody to stop them.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.once(signal, () => void server.close());
+    process.on(signal, () => void server.close());
   }
 }

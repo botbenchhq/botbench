@@ -1,10 +1,32 @@
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { schemaVersion } from "../store/db.ts";
+import { turnRoutes } from "./routes.ts";
+import { isShellRequest, serveShell } from "./static.ts";
+import type { EventStream } from "./stream.ts";
+import type { Turns } from "./turns.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
   db: DatabaseSync;
+  turns: Turns;
+  stream: EventStream;
+  /** Where the built client is. */
+  clientDir: string;
+}
+
+/**
+ * The request's address as a URL. A path is taken as written, so one that
+ * starts with two slashes stays a path and is not read as a host name.
+ */
+export function requestUrl(req: http.IncomingMessage): URL {
+  const raw = req.url ?? "/";
+  try {
+    return raw.startsWith("/") ? new URL(`http://smelt.invalid${raw}`) : new URL(raw, "http://smelt.invalid");
+  } catch {
+    // A target that is no address at all names no route, so it is treated as one: refused without a session, 404 with.
+    return new URL("http://smelt.invalid/unreadable-request-target");
+  }
 }
 
 export function json(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -41,15 +63,19 @@ export async function readJsonBody(req: http.IncomingMessage, maxBytes = 64 * 10
 
 /**
  * Every route except sign-in. The server calls this only after the auth gate
- * has let the request through, so nothing here is reachable without a session.
+ * has let the request through, so nothing here is reachable without a session
+ * except the client shell, which holds no data.
  * A later unit adds its route as another branch.
  */
 export async function route(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
-  const { pathname } = new URL(req.url ?? "/", "http://smelt.invalid");
+  const url = requestUrl(req);
+  const { pathname } = url;
+  if (isShellRequest(req.method, pathname)) return serveShell(req, res, ctx.clientDir, pathname);
   if (req.method === "GET" && pathname === "/health") {
     // Reads the database, so a healthy answer means the store is usable.
     json(res, 200, { status: "ok", schemaVersion: schemaVersion(ctx.db) });
     return;
   }
+  if (await turnRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }

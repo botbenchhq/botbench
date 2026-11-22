@@ -3,3 +3,28 @@ Copyright 2026 Jon Lange
 
 Nothing in this repository has been copied from other projects yet.
 When a file is copied, it is listed here with its source and licence notice.
+
+Licence checks
+--------------
+
+Nexvyn UI (https://github.com/Nexvyn/Nexvyn-ui), checked 2026-11-21 for unit 4.
+Its LICENSE is the MIT License with the "Commons Clause" License Condition v1.0
+added (and components/diagrams/** under CC BY-NC 4.0). The Commons Clause
+withholds the right to sell a product or service whose value derives
+substantially from the software, and requires its notice to travel with any
+copy. That is a restriction on top of what the Apache License 2.0 allows, so
+code under it cannot be offered as part of an Apache-2.0 project without
+passing the restriction on. Outcome: Smelt does not use Nexvyn UI. No file,
+component or style was copied from it, and it is not a dependency. Smelt's
+client components are written for this repository and follow DESIGN.md.
+
+Bundled at build time (not stored in this repository)
+-----------------------------------------------------
+
+The built client (web/dist, produced by `npm run build --prefix web`) contains:
+
+- Geist and Geist Mono font files, from the npm packages
+  @fontsource-variable/geist and @fontsource-variable/geist-mono.
+  Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font).
+  SIL Open Font License 1.1.
+- React and React DOM. Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.

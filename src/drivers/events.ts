@@ -8,6 +8,8 @@
 export type TurnEndReason = "completed" | "interrupted" | "error";
 
 export type DriverEvent =
+  /** What the person sent. Always the first event of a turn, recorded by the driver before the CLI sees it. */
+  | { type: "user_prompt"; text: string }
   /** The CLI opened or resumed a session. `resumeCursor` continues it in a later attempt. */
   /** `keySource` is what the CLI says will pay for the turn: "none" means the signed-in login, anything else an API key. */
   | { type: "session_started"; resumeCursor: string; model: string | null; keySource: string | null }

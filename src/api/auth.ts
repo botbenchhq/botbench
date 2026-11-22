@@ -4,7 +4,8 @@ import type http from "node:http";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "../store/atomic.ts";
-import { BodyError, json, readJsonBody } from "./router.ts";
+import { BodyError, json, readJsonBody, requestUrl } from "./router.ts";
+import { isShellRequest } from "./static.ts";
 
 /** The owner's login token, inside Smelt's data directory. */
 export const LOGIN_TOKEN_FILE = "login-token";
@@ -42,7 +43,8 @@ export interface AuthOptions {
 export interface Auth {
   /**
    * Decide whether a request may reach the routes. Resolves true when it carries
-   * a valid session and passes the header checks; otherwise the request has
+   * a valid session and passes the header checks, or when it asks for the client
+   * shell on an allowed host (the shell holds no data); otherwise the request has
    * already been answered (sign-in included) and the caller must do nothing more.
    */
   gate(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean>;
@@ -156,7 +158,9 @@ export function createAuth(options: AuthOptions): Auth {
       json(res, 403, { error: "origin not allowed" });
       return false;
     }
-    const { pathname } = new URL(req.url ?? "/", "http://smelt.invalid");
+    const { pathname } = requestUrl(req);
+    // The sign-in screen has to load before there is a session. Only these static files are open.
+    if (isShellRequest(req.method, pathname)) return true;
     const signingIn = req.method === "POST" && pathname === SIGN_IN_PATH;
     const session = cookieValue(req, SESSION_COOKIE);
     if (!signingIn && (session === undefined || !sessions.has(session))) {
