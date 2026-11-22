@@ -185,6 +185,8 @@ test("a committed task is described with its changed files, and each file's diff
     filesProblem: null,
     checks: null,
     evidence: [],
+    reviewer: null,
+    review: null,
     decision: null,
     // Written after Botbench's commit: not on the branch, and a decision would remove it with the task's copy.
     leftovers: ["later.txt"],

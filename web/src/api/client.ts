@@ -102,6 +102,40 @@ export async function signIn(token: string): Promise<void> {
 
 export const getDriver = (): Promise<DriverState> => request("GET", "/api/driver");
 
+/** An agent as it reports itself, and the steps Botbench lets it work in ("planner", "builder", "reviewer"). */
+export interface AgentState extends Omit<DriverState, "driver"> {
+  agent: string;
+  roles: string[];
+}
+/** Each agent asks its own program, which can take a few seconds. */
+export const getAgents = async (): Promise<AgentState[]> => (await request<{ agents: AgentState[] }>("GET", "/api/agents", undefined, 30_000)).agents;
+/** The models a reviewer offers, as its program lists them or as the configuration does. */
+export const getAgentModels = (agent: string): Promise<ModelList> => request("GET", `/api/agents/${encodeURIComponent(agent)}/models`, undefined, 30_000);
+
+/** Who reviews a run's tasks: an agent and a model, null for the agent's own default. */
+export interface ReviewerChoice {
+  agent: string;
+  model: string | null;
+}
+
+/** A task's review, as stored. Its text is the reviewer's own words: a model's opinion, not a check. */
+export interface Review {
+  id: number;
+  agent: string;
+  model: string | null;
+  attemptId: number | null;
+  outcome: "reviewed" | "failed" | "timed_out" | "stopped";
+  verdict: "looks_right" | "concerns" | null;
+  text: string;
+  /** Why there is no review, in words; null when there is one. */
+  problem: string | null;
+  diffChars: number;
+  diffCut: boolean;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+}
+
 /** The models the driver offers and where the list came from. `default` null means the CLI's own default. */
 export interface ModelList {
   driver: string;
@@ -129,7 +163,7 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
 
 /** The owner's decision on a task, as it was recorded. */
 export interface TaskDecision {
@@ -214,6 +248,10 @@ export interface TaskDetail extends TaskSummary {
   filesProblem: string | null;
   /** The commands Botbench ran on the task, in the order they ran. */
   evidence: Evidence[];
+  /** Who reviews the task, when its run names a reviewer. */
+  reviewer: ReviewerChoice | null;
+  /** Its review, once there is one. */
+  review: Review | null;
   /** For a task that is ready for review: the files the checks left in its copy that are not on its branch. Null otherwise, or when they cannot be read. */
   leftovers: string[] | null;
   /** For a task that failed, was stopped or was cancelled: what it left, which Discard removes. Null otherwise, or when it cannot be read. */
@@ -312,6 +350,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   /** The model asked for the planner; null is the CLI's own default. */
   requestedModel: string | null;
   plannerModel: string | null;
+  /** Who reviews each built task; null when nobody does. */
+  reviewer: ReviewerChoice | null;
   baseCommit: string;
   /** The plan's version. A decision names the version it was made on, and is refused when the plan has changed since. */
   planVersion: number;
@@ -346,8 +386,8 @@ export interface RunAnnouncement {
 }
 
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[] }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; preapproved: string[]; reviewer: ReviewerChoice | null }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), preapproved: o.preapproved, reviewer: o.reviewer }, 30_000);
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
 /** One row of the board: a planned run, or a task started on its own (a run of one). */
 export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };

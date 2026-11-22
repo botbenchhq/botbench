@@ -705,4 +705,44 @@ WHEN NEW.status IS NOT OLD.status AND (OLD.status IN ('cancelled', 'failed') OR 
 BEGIN SELECT RAISE(ABORT, 'a run that has ended stays ended, apart from a done run the owner resumes a stopped task of, and an approved plan is not reopened'); END;
 `,
   },
+  {
+    // Reviews (U20, in part): a run may name a reviewer, an agent and model chosen when it starts and never changed after.
+    // Once a task of such a run is built and checked, the reviewer reads its diff and the reply is stored, one row per
+    // task, never changed: who reviewed, how it ended, the verdict read from the reply's first line, the reply itself,
+    // the plain reason when there is no review, how long the diff was and whether it was cut, and the times. A row is
+    // written only for a task at the review station. Rows are only ever added; with recursive triggers on, a row
+    // replaced by INSERT OR REPLACE is refused too.
+    name: "reviews",
+    sql: `
+ALTER TABLE runs ADD COLUMN reviewer_agent TEXT;
+ALTER TABLE runs ADD COLUMN reviewer_model TEXT;
+CREATE TRIGGER runs_reviewer_fixed BEFORE UPDATE OF reviewer_agent, reviewer_model ON runs
+BEGIN SELECT RAISE(ABORT, 'a run''s reviewer is chosen when it starts and never changed'); END;
+CREATE TABLE reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL UNIQUE REFERENCES tasks (id),
+  agent TEXT NOT NULL,
+  model TEXT,
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('reviewed', 'failed', 'timed_out', 'stopped')),
+  verdict TEXT CHECK (verdict IN ('looks_right', 'concerns')),
+  text TEXT NOT NULL,
+  problem TEXT,
+  diff_chars INTEGER NOT NULL,
+  diff_cut INTEGER NOT NULL CHECK (diff_cut IN (0, 1)),
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  CHECK ((outcome = 'reviewed') = (problem IS NULL)),
+  CHECK (outcome = 'reviewed' OR verdict IS NULL)
+);
+CREATE TRIGGER reviews_no_update BEFORE UPDATE ON reviews
+BEGIN SELECT RAISE(ABORT, 'reviews are append-only'); END;
+CREATE TRIGGER reviews_no_delete BEFORE DELETE ON reviews
+BEGIN SELECT RAISE(ABORT, 'reviews are append-only'); END;
+CREATE TRIGGER reviews_task_reviewing BEFORE INSERT ON reviews
+WHEN (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'reviewing'
+BEGIN SELECT RAISE(ABORT, 'a review is stored only for a task at the review station'); END;
+`,
+  },
 ];

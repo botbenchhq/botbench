@@ -3,7 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
-import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
+import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { DiscardSection } from "../components/discard.tsx";
@@ -248,6 +248,14 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
                 {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
                 <CommandRounds testId="checks" rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+              </section>
+            )}
+
+            {task.reviewer !== null && (task.review !== null || task.status === "reviewing") && (
+              <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">
+                <h2 id="review-heading">{`${agentName(task.reviewer.agent)}'s review`}</h2>
+                <p data-testid="review-by">{`By ${reviewerWords(task.review ?? task.reviewer)}. ${REVIEW_RISK}`}</p>
+                {task.review !== null ? <ReviewEvidence review={task.review} /> : <p role="status">{`${agentName(task.reviewer.agent)} is reading the changes.`}</p>}
               </section>
             )}
 

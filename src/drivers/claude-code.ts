@@ -51,7 +51,7 @@ const READ_ONLY_TOOLS = "Read,Glob,Grep,Bash";
 /** Named as denied as well, should a CLI version hand a tool out in spite of the list above. */
 const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
 
 /** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Botbench one question and never waits for a person. */
 const HOOK_TIMEOUT_S = 20;

@@ -34,7 +34,7 @@ export function loadPlanRecording(): PlanRecording {
   return JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "planner-plans.json"), "utf8")) as PlanRecording;
 }
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
 const now = (): string => new Date().toISOString();
 
 export interface PlanReplay extends Driver {

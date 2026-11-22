@@ -90,12 +90,18 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   const probe = (await (await page.request.get(`${botbench.base}/api/driver`)).json()) as { version: string; signedIn: boolean; billing: string };
   expect(probe.signedIn, "this machine's Claude Code is signed in").toBe(true);
   const agents = page.getByRole("group", { name: "Agents" });
-  await expect(agents.locator(".ds-settings-row")).toHaveCount(1);
+  await expect(agents.locator(".ds-settings-row")).toHaveCount(2);
   const agent = page.getByTestId("agent-claude-code");
   await expect(agent.getByTestId("agent-state")).toHaveText("Available");
   await expect(agent).toContainText(`Version ${probe.version}.`);
   await expect(agent).toContainText(probe.billing === "subscription" ? "Signed in with a subscription." : "Signed in.");
-  for (const other of ["Codex", "Gemini", "Grok"]) await expect(page.getByText(other)).toHaveCount(0);
+  // Codex, as its own probe reports it, and what it does here.
+  const codex = ((await (await page.request.get(`${botbench.base}/api/agents`)).json()) as { agents: { agent: string; version: string | null; problem: string | null }[] }).agents.find((found) => found.agent === "codex")!;
+  const codexRow = page.getByTestId("agent-codex");
+  await expect(codexRow.getByTestId("agent-state")).toHaveText(codex.problem === null ? "Available" : /Signed out|Not installed|Unsupported version|Unavailable/);
+  await expect(codexRow).toContainText(codex.problem ?? `Version ${codex.version}.`);
+  if (codex.problem === null) await expect(codexRow).toContainText("Reviews a run's tasks when you choose it on New run; it cannot plan or build here.");
+  for (const other of ["Gemini", "Grok"]) await expect(page.getByText(other)).toHaveCount(0);
   // Settings is no tab: the tab bar keeps its four destinations.
   await expect(page.locator(".ds-tab-bar__item")).toHaveCount(4);
   await expect(page.locator('.ds-tab-bar__item[aria-current="page"]')).toHaveCount(0);

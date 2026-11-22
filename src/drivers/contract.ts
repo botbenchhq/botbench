@@ -16,6 +16,8 @@ export interface DriverCapabilities {
   interrupt: boolean;
   /** The CLI's permission requests reach `respondToRequest`. */
   permissionRequests: boolean;
+  /** The CLI can be let edit files in its working directory under Botbench's rules (`allowEdits`). */
+  edits: boolean;
 }
 
 /** How the CLI is billed, taken from the CLI's own account of its login. */

@@ -9,7 +9,9 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
-import { correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, taskPrompt, validatePlan, type PlanTask } from "./roles.ts";
+import { agentName, correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
+import { DRIVER_NAMES } from "../config.ts";
+import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 
 /*
@@ -49,6 +51,8 @@ export interface Run {
   baseCommit: string;
   /** The newest planner attempt: its events are the planner's transcript. */
   attemptId: number | null;
+  /** The agent and model that review each built task, chosen when the run was started; null when nobody reviews. */
+  reviewer: RoleChoice | null;
   /** Counts the plan's changes. An edit or an approval names the version it saw and is refused when the plan has moved on. */
   planVersion: number;
   createdAt: string;
@@ -87,6 +91,7 @@ function toRun(row: Record<string, unknown>): Run {
     baseCommit: String(row.base_commit),
     attemptId: int(row.attempt_id),
     planVersion: Number(row.plan_version),
+    reviewer: typeof row.reviewer_agent === "string" ? { agent: row.reviewer_agent, model: text(row.reviewer_model) } : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -135,7 +140,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; baseCommit: string; preapproved?: readonly string[] }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; requestedModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null }): Run {
   if ((o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two.");
   return transaction(db, () => {
     const at = now();
@@ -143,8 +148,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, base_commit, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.baseCommit, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, base_commit, reviewer_agent, reviewer_model, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? null, o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "planning", null);
@@ -382,6 +387,8 @@ export interface StartRun {
   model?: string | null;
   /** The commands the run's builders may use without asking; each must be one plain command. */
   preapproved?: unknown;
+  /** Who reviews each built task: null or left out for nobody, else `{ agent, model }` (a model name, or null for the agent's own default). */
+  reviewer?: unknown;
 }
 
 export interface Runs {
@@ -411,6 +418,8 @@ export interface RunsOptions {
   model?: string;
   /** The implementer role's configured model, which the tasks of an approved plan are queued with. */
   implementerModel?: string;
+  /** The agents that can review, by name; a run may name one of them as its reviewer. */
+  reviewers?: Partial<Record<string, Driver>>;
   /** Called when a transcript event was stored. */
   onEvent: () => void;
   /** Called after each state a run reaches and each change of its plan. */
@@ -633,6 +642,21 @@ export function createRuns(options: RunsOptions): Runs {
     chain = chain.then(() => plan(id, change)).catch(report(`Planning run ${id}`));
   };
 
+  /**
+   * A reviewer must not be the builder's own agent and model (R5), must be an agent that can review, and must be usable
+   * now, as its own probe says: a run is not started with a reviewer that could only fail.
+   */
+  const reviewerUsable = async (reviewer: RoleChoice): Promise<void> => {
+    const same = sameModelProblem({ agent: driver.name, model: options.implementerModel ?? null }, reviewer);
+    if (same !== null) throw new RunError(400, same);
+    const found = options.reviewers?.[reviewer.agent];
+    if (found === undefined) throw new RunError(400, `${agentName(reviewer.agent)} cannot review a run yet. Choose Codex, or no review.`);
+    const cannot = roleProblem(REVIEWER, reviewer.agent, found.capabilities);
+    if (cannot !== null) throw new RunError(400, cannot);
+    const probe = await found.probe();
+    if (probe.problem !== null) throw new RunError(400, `${agentName(reviewer.agent)} cannot review this run: ${probe.problem}`);
+  };
+
   const start = async (input: StartRun): Promise<Run> => {
     const stopping = (): void => {
       if (closed) throw new RunError(503, "Botbench is shutting down.");
@@ -645,6 +669,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (hasPrompt && (typeof input.prompt !== "string" || input.prompt.trim() === "")) throw new RunError(400, "The prompt must be text that says what to build.");
     if (hasPrompt && (input.prompt as string).length > MAX_PROMPT) throw new RunError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
     const preapproved = preapprovedList(input.preapproved);
+    const reviewer = reviewerChoice(input.reviewer);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -659,8 +684,9 @@ export function createRuns(options: RunsOptions): Runs {
     } catch (err) {
       throw new RunError(400, words(err));
     }
+    if (reviewer !== null) await reviewerUsable(reviewer);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, baseCommit, preapproved });
+    const run = createRun(db, { repo, ...(spec ? { spec } : { prompt: input.prompt as string }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, baseCommit, preapproved, reviewer });
     announce(run);
     enqueue(run.id);
     return run;
@@ -737,4 +763,16 @@ export function preapprovedList(given: unknown): string[] {
   const problem = given.map(entryProblem).find((p) => p !== null);
   if (problem) throw new RunError(400, problem);
   return given as string[];
+}
+
+/** The reviewer a request names: null for none, else a known agent and a model name or null. Anything else is refused with the reason, before anything exists. */
+export function reviewerChoice(given: unknown): RoleChoice | null {
+  if (given === undefined || given === null) return null;
+  const shape = '"reviewer" must be null, or { "agent": "codex", "model": "<model name>" or null }.';
+  if (typeof given !== "object" || Array.isArray(given)) throw new RunError(400, shape);
+  const { agent, model, ...rest } = given as Record<string, unknown>;
+  if (Object.keys(rest).length > 0 || typeof agent !== "string") throw new RunError(400, shape);
+  if (!(DRIVER_NAMES as readonly string[]).includes(agent)) throw new RunError(400, `"reviewer" names an agent Botbench does not know. ${shape}`);
+  if (model !== undefined && model !== null && modelNameProblem(model) !== null) throw new RunError(400, `The reviewer's model is not a model name. ${modelNameProblem(model)}`);
+  return { agent, model: typeof model === "string" ? model : null };
 }

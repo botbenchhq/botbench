@@ -357,6 +357,13 @@ export async function commitsFileDiff(o: { repo: string; baseCommit: string; hea
   return git(path.resolve(o.repo), [...DIFF, "--full-index", "--src-prefix=a/", "--dst-prefix=b/", o.baseCommit, o.headCommit, "--", o.file]);
 }
 
+/** The whole unified diff of a task's work, from the base commit to the commit Botbench made; empty when nothing changed. */
+export async function commitsDiff(o: { path: string; baseCommit: string; headCommit: string }): Promise<string> {
+  checkBase(o.baseCommit);
+  checkBase(o.headCommit);
+  return git(path.resolve(o.path), [...DIFF, "--src-prefix=a/", "--dst-prefix=b/", o.baseCommit, o.headCommit]);
+}
+
 /** One file's unified diff from the base commit to the branch head; empty when the file did not change. */
 export async function fileDiff(o: { path: string; baseCommit: string; file: string }): Promise<string> {
   checkBase(o.baseCommit);

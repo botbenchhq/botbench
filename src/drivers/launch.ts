@@ -18,6 +18,7 @@ const ALLOWED_ENV = new Set([
   "TZ",
   // Where a CLI keeps its own login and settings when the owner moved them.
   "CLAUDE_CONFIG_DIR",
+  "CODEX_HOME",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
@@ -207,6 +208,16 @@ export const VERSION_TABLE = {
     { flag: "--append-system-prompt-file", since: "2.1.322" },
     { flag: "--resume", since: "2.1.322" },
     { flag: "--model", since: "2.1.322" },
+  ],
+  // Checked against `codex exec --help` and real runs of 0.171.0 (src/drivers/codex.ts says what each is for).
+  codex: [
+    { flag: "exec --json", since: "0.171.0" },
+    { flag: "--ephemeral", since: "0.171.0" },
+    { flag: "--ignore-user-config", since: "0.171.0" },
+    { flag: "--ignore-rules", since: "0.171.0" },
+    { flag: "--disable", since: "0.171.0" },
+    { flag: "-c default_permissions", since: "0.171.0" },
+    { flag: "--model", since: "0.171.0" },
   ],
 } as const satisfies Record<string, readonly RequiredFlag[]>;
 

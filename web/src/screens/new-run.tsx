@@ -3,6 +3,7 @@ import { ApiError, startRun } from "../api/client.ts";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { ModelPicker, useModelChoice } from "../components/model-picker.tsx";
 import { PreapprovedEditor, REPO_HINT, RepositoryField, useRepository } from "../components/repository.tsx";
+import { ReviewChoice, useReviewChoice } from "../components/review-choice.tsx";
 
 export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const repository = useRepository(onSignedOut);
@@ -11,6 +12,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const models = useModelChoice(onSignedOut);
+  const review = useReviewChoice(onSignedOut);
   const { listed } = repository;
 
   const submit = (event: FormEvent): void => {
@@ -31,7 +33,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
     setBusy(true);
     // The server checks the repository and the spec file itself; what this screen knows is only for the owner's benefit.
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, preapproved: listed?.commands ?? [] }).then(
+    startRun({ repo: repository.repo.trim(), ...(hasPrompt ? { prompt } : { specPath: specPath.trim() }), model: model.model, preapproved: listed?.commands ?? [], reviewer: review.choice() }).then(
       ({ runId }) => {
         window.location.hash = `#/runs/${runId}`;
       },
@@ -64,6 +66,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
             <p id="run-spec-about" className="ds-field__description">Or the full path of a .md, .markdown or .txt file on this Mac that describes the work. Botbench reads it once, now.</p>
           </div>
           <ModelPicker state={models} />
+          <ReviewChoice state={review} />
           <PreapprovedEditor choice={repository} scope="run" />
           {error !== null && (
             <Alert tone="error" role="alert">

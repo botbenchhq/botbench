@@ -24,7 +24,7 @@ function runGroup(run: Record<string, unknown>): Group {
 /** A stand-alone task's group, by the same rule. */
 function taskGroup(task: Record<string, unknown>): Group {
   if (task.status === "awaiting_decision" || task.waitingOnApproval === true) return "needs-you";
-  return task.status === "queued" || task.status === "building" || task.status === "verifying" ? "running" : "finished";
+  return task.status === "queued" || task.status === "building" || task.status === "verifying" || task.status === "reviewing" ? "running" : "finished";
 }
 
 /** How many finished items the board sends; the groups that need the owner or are at work are always sent whole. */
