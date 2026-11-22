@@ -26,11 +26,12 @@ Done = tests pass. Owner checks batched per milestone.
 - UI work follows the vendored design system: read `web/vendor/design-system/rules/core.md` first, and never edit `web/vendor/design-system/`.
 
 ## Hard rules
-- Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract for scenarios a live model cannot produce on demand.
+- Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract, for scenarios a live model cannot produce on demand and for routine screen and engine tests, so that live model turns are kept to the few tests that prove something about the real CLI.
 - Drive existing CLIs. Never store or read credentials/API keys. Never force metered billing on a subscription session. Connecting a subscription from the client means running the vendor CLI's own sign-in and relaying its link or code; the credentials stay with the CLI.
 - One git worktree per task. Never modify owner's checkout or current branch. Botbench commits.
-- Approvals required before anything leaves the machine. Dangerous actions always ask. Broker failure = deny.
-- Local only. No data leaves owner's machine. No push, no PRs this plan.
+- Approvals required before anything leaves the machine. Dangerous actions always ask; in a fully autonomous run they are refused, never run. Broker failure = deny.
+- Three modes per run: manual, semi-autonomous, fully autonomous. A mode only loosens what runs inside the confinement and who makes the final decision; it never loosens the safety floor.
+- Local by default. Nothing leaves the owner's machine except what each vendor CLI sends its provider, and a push or pull request the owner chose: Botbench pushes only a task's own branch, never the default branch, never by force, and never merges. Git and GitHub credentials stay with `git` and `gh`; Botbench and the agents never read them.
 - Test-first. Real temp git repo, real SQLite, real HTTP, real CLIs (live).
 
 ## Engineering standards
@@ -58,6 +59,6 @@ Apply in proportion to a one-owner, local tool. Each line says what it means her
 - After plan→build→verify→decide works, dogfood remaining units on this repo.
 
 ## Deferred
-PRs/push, native apps, public internet, local models, issue intake, task deps/parallel, multi-model council, enterprise.
+Native apps, public internet, local models, task deps/parallel, enterprise.
 
 Plan: `docs/plans/`. Design: `DESIGN.md`.

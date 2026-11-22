@@ -2,6 +2,14 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: a day of work went on things around the product before the product had proven its value (owner correction)
+The owner: "we need to be doing least effort to prove value… you should get to functional milestones that you can then do into a browser test, like, hey, is this doing what we have as our North Star, yes or no?" Rules going forward:
+- State the North Star in one sentence and the next functional milestone toward it. Each milestone has ONE end-to-end test that answers yes or no.
+- Build the thinnest slice that makes that test pass. Polish, edge cases, extra variants, audits and documentation wait until the milestone is proven; say what was deferred.
+- Independent work runs in parallel, each unit in its own worktree. Hold back only what depends on unfinished work.
+- Use the product to build the product once it can: a real run on this repository is both progress and the best test.
+- Report progress as milestones reached, not units merged.
+
 ## 2026-11-22: the expensive tests were run as if they were the cheap ones (owner correction)
 Every unit ran the full browser suite at least twice (once by its builder, once again before merge), and 23 of its 41 tests start a real model turn. A unit cost about an hour, most of it waiting. The owner's correction: test constantly, but with cheap, fast tests; keep the big browser tests for the end, as the safety net. Rules going forward:
 - **Shape.** Most tests are unit tests (pure functions, no process) and integration tests (real SQLite, real temporary git repository, real HTTP server, no model). They run in seconds and are the only tests run while building.
