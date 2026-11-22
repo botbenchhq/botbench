@@ -6,12 +6,46 @@
 
 **Botbench — Put your coding agents to work. Together.**
 
-The differentiator is not that agents can talk to each other. It is that two developers' independently controlled coding agents produce compatible, reviewable work with far less coordination between the two people.
+Botbench is a local-first workbench that turns the AI coding agents developers already use into a coordinated software development team. It does not replace those agents. It provides the environments, tools, orchestration and collaboration layer that make them productive together. Work comes back as Git branches, diffs, test results and evidence ready for review, and the developer keeps control of execution, access and approvals.
 
-What this means for messaging today:
-- Until Peers exists (`docs/product/peers-concept.md`), "Together" is only true of one owner's agents from several vendors working one job. The README and the app use the solo line: **Walk away. Come back to the branch.**
-- "Compatible" has to be something Botbench can check, not something two agents say. An agreed interface that both branches are run against is the proof; an exchange of messages is not.
-- Two things already in the plan carry this direction and gain priority from it: the reviewer on a different model, and pushing branches and opening pull requests.
+- **Value:** less agent babysitting, less coordination between developers, more reviewable software delivered.
+- **Tagline:** Walk away. Come back to the branch.
+- **Peers line:** Your agents. Their agents. One workflow.
+- **Long-term ambition:** the development environment where people and their AI agents work together, across models, machines and teams.
+- **Not this:** a general-purpose computer-use agent. Coding and collaborative software delivery are the wedge.
+
+### Four pillars
+
+| Pillar | What it means | State today |
+|---|---|---|
+| Orchestrate | Different coding agents across planning, building, checking and review. | Plan, build and verify exist on Claude Code. Other vendors and the reviewer are milestone 4. |
+| Execute | Agents get an isolated environment, the tools they need and scoped permissions. | Permissions and approvals exist. Isolation is a Git worktree on the host, which separates changes and is not a security sandbox. Containers or VMs are not built. |
+| Collaborate | Agents on two developers' workbenches coordinate without either developer giving up control of their machine. | Not built. Concept in `docs/product/peers-concept.md`. |
+| Verify | Checks, evidence, diffs, and a person's approval at the decision points. | Checks and evidence exist. Decisions are in progress. |
+
+### The differentiator
+
+Not how many agents can be launched, and not that agents can talk to each other: both exist elsewhere. It is how reliably the work of two developers' independently controlled agents comes together. "Compatible" must be something Botbench can check, such as an integration test both branches are run against. Two agents agreeing on a file proves only that they agreed.
+
+### One architectural choice to make early
+
+Keep three things separate: the agent (which vendor CLI), its execution environment (where its process and its commands run), and its tools (terminal, browser, MCP servers, connected services). Today the environment is always "a worktree on the host". Making that a named seam lets a container or VM runtime be added later without rebuilding the run engine. Integrate an existing sandbox runtime; do not build one.
+
+### What the owner's market assessment says (November 2026)
+
+Supplied by the owner. Its figures and competitor claims have not been checked independently in this repository.
+
+- The problem is real: most developers use AI coding tools, far fewer use automated agent workflows, and trust depends on being able to verify output. The burden is moving downstream to review and integration.
+- The category is crowded. Local orchestration, worktrees, sandboxes, several models and shared agent workspaces are already available, some free. Never claim to be first at any of them.
+- Running existing subscriptions in worktrees is hard to charge for. Verified delivery across developers is the part with room.
+- Biggest risks: each provider's terms for unattended use of its CLI under a consumer subscription; the providers bundling these features; pairing that is harder than using GitHub and Slack; passing checks giving false confidence.
+- First customers: teams of 2 to 10 developers who each use coding agents in shared repositories.
+- Pricing hypothesis, untested: solo free, Peers per developer per month, compute supplied by the user.
+- Proposed proof: 10 two-developer teams, one task that crosses a component boundary, compared with their normal process. Go or no-go on five measures: 8 of 10 pair and hand off unaided; 20% less active coordination time with no more rework; no more integration failures; 5 teams use it again within two weeks; 3 agree to a paid pilot.
+
+### Messaging today
+
+Until Peers exists, "Together" is only true of one owner's agents from several vendors working one job. The README and the app lead with the tagline and do not claim sandboxing, cross-developer coordination or pull requests.
 
 Brand marks are in `assets/svg/` and `web/src/brand/`. Colours come from the design system's Botbench theme, not from this repository.
 
