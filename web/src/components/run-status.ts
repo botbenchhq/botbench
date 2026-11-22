@@ -75,7 +75,7 @@ export interface Station {
  */
 export function stations(run: Pick<RunDetail, "status" | "attemptId" | "waitingOnApproval" | "tasks">): { stations: Station[]; current: number | null } | null {
   const notStarted = (name: string): Station => ({ name, state: "not-started", words: "Not started" });
-  const finished = run.tasks.filter((task) => task.status !== "queued" && task.status !== "building" && task.status !== "verifying").length;
+  const finished = run.tasks.filter((task) => task.status !== "queued" && task.status !== "building" && task.status !== "verifying" && task.status !== "reviewing").length;
   const ready = run.tasks.filter((task) => task.status === "awaiting_decision").length;
   const decided = run.tasks.filter((task) => task.status === "accepted" || task.status === "rejected").length;
   switch (run.status) {

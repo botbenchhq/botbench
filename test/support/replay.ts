@@ -36,7 +36,7 @@ export function loadRecording(name: string): Recording {
   return JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", name), "utf8")) as Recording;
 }
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
 const now = (): string => new Date().toISOString();
 
 class ReplaySession implements DriverSession {

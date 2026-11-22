@@ -5,6 +5,7 @@ const STATUS_WORD: Record<TaskStatus, string> = {
   queued: "Queued",
   building: "Working",
   verifying: "Checking",
+  reviewing: "In review",
   awaiting_decision: "Ready for review",
   accepted: "Accepted",
   rejected: "Rejected",
@@ -26,6 +27,7 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
   queued: LOOKS.queued,
   building: LOOKS.working,
   verifying: LOOKS.checking,
+  reviewing: LOOKS.checking,
   awaiting_decision: LOOKS.readyForReview,
   accepted: LOOKS.accepted,
   rejected: LOOKS.rejected,
@@ -51,6 +53,8 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       return task.attemptId === null ? "Working. Botbench is preparing a separate copy of the project for Claude Code." : "Working. Claude Code is working in a separate copy of the project.";
     case "verifying":
       return "Checking. Botbench committed the work to the task's branch and is running this repository's checks on it.";
+    case "reviewing":
+      return "In review. Botbench committed the work and ran the checks; the run's reviewer is reading the changes. You can decide once its review is in.";
     case "awaiting_decision":
       return task.headCommit === task.baseCommit
         ? "Ready for review. No file was changed, so nothing was committed."

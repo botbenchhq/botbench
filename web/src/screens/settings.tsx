@@ -1,23 +1,35 @@
 import { useEffect, useId, useState } from "react";
-import { ApiError, getDriver, type DriverState } from "../api/client.ts";
+import { ApiError, getAgents, type AgentState } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { Frame, Page, PageHeader } from "../components/header.tsx";
 
 /** An agent's state in a word or two, from the probe: what the CLI itself reported. */
-function agentState(driver: DriverState): string {
-  if (driver.problem === null) return "Available";
-  if (!driver.installed) return "Not installed";
-  if (!driver.supported) return "Unsupported version";
-  if (!driver.signedIn) return "Signed out";
+function agentState(agent: AgentState): string {
+  if (agent.problem === null) return "Available";
+  if (!agent.installed) return "Not installed";
+  if (!agent.supported) return "Unsupported version";
+  if (!agent.signedIn) return "Signed out";
   return "Unavailable";
 }
 
-/** What the probe found, in a sentence: the version and the kind of sign-in when it can be used, else what is wrong. */
-function agentAbout(driver: DriverState): string {
-  if (driver.problem !== null) return driver.problem;
-  const signIn = driver.billing === "subscription" ? "Signed in with a subscription." : driver.billing === "metered" ? "Signed in, billed by use." : "Signed in.";
-  return `${driver.version === null ? "" : `Version ${driver.version}. `}${signIn}`;
+/** What Botbench lets the agent do, in words, from the steps the server reports. */
+function agentSteps(agent: AgentState): string {
+  const can = agent.roles.includes("planner") && agent.roles.includes("builder") ? "Plans and builds tasks." : agent.roles.includes("reviewer") ? "Reviews a run's tasks when you choose it on New run; it cannot plan or build here." : "";
+  return can;
 }
+
+/** What the probe found, in a sentence: the version and the kind of sign-in when it can be used, else what is wrong. */
+function agentAbout(agent: AgentState): string {
+  if (agent.problem !== null) return agent.problem;
+  const signIn = agent.billing === "subscription" ? "Signed in with a subscription." : agent.billing === "metered" ? "Signed in, billed by use." : "Signed in.";
+  return `${agent.version === null ? "" : `Version ${agent.version}. `}${signIn}`;
+}
+
+/** The agents Botbench drives, in the order it lists them. */
+const AGENTS = [
+  { agent: "claude-code", name: "Claude Code" },
+  { agent: "codex", name: "Codex" },
+];
 
 const MODES: { value: Appearance; label: string }[] = [
   { value: "dark", label: "Dark" },
@@ -27,18 +39,18 @@ const MODES: { value: Appearance; label: string }[] = [
 
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
- * now; Claude Code is the only one so far. Appearance: the mode this device shows, saved as it is chosen.
+ * now, and what Botbench lets it do: Claude Code plans and builds, Codex reviews. Appearance: the mode this device shows, saved as it is chosen.
  */
 export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
-  const [driver, setDriver] = useState<DriverState | null>(null);
+  const [agents, setAgents] = useState<AgentState[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const { choice } = useAppearance();
   const id = useId();
 
   useEffect(() => {
-    getDriver().then(setDriver, (err: unknown) => {
+    getAgents().then(setAgents, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
-      setProblem(err instanceof ApiError ? `Claude Code could not be checked. ${err.message}` : "Claude Code could not be checked: Botbench could not be reached.");
+      setProblem(err instanceof ApiError ? `The agents could not be checked. ${err.message}` : "The agents could not be checked: Botbench could not be reached.");
     });
   }, [onSignedOut]);
 
@@ -53,17 +65,22 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
             <h2 className="ds-settings-row__heading" id={`${id}-agents`}>
               Agents
             </h2>
-            <div data-testid="agent-claude-code" className="ds-settings-row">
-              <div className="ds-settings-row__text">
-                <p className="ds-settings-row__label">Claude Code</p>
-                <p className="ds-settings-row__description">{driver !== null ? agentAbout(driver) : problem ?? "Checking Claude Code."}</p>
-              </div>
-              <div className="ds-settings-row__control">
-                <p data-testid="agent-state" role="status" className="ds-settings-row__status">
-                  {driver !== null ? agentState(driver) : problem !== null ? "Could not be checked" : "Checking"}
-                </p>
-              </div>
-            </div>
+            {AGENTS.map(({ agent: key, name }) => {
+              const agent = agents?.find((found) => found.agent === key) ?? null;
+              return (
+                <div key={key} data-testid={`agent-${key}`} className="ds-settings-row">
+                  <div className="ds-settings-row__text">
+                    <p className="ds-settings-row__label">{name}</p>
+                    <p className="ds-settings-row__description">{agent !== null ? `${agentAbout(agent)} ${agentSteps(agent)}`.trim() : problem ?? (agents === null ? `Checking ${name}.` : `${name} is not offered by this Botbench.`)}</p>
+                  </div>
+                  <div className="ds-settings-row__control">
+                    <p data-testid="agent-state" role="status" className="ds-settings-row__status">
+                      {agent !== null ? agentState(agent) : problem !== null ? "Could not be checked" : agents === null ? "Checking" : "Not offered"}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-appearance`}>

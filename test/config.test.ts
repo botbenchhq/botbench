@@ -89,6 +89,13 @@ test("all four known driver names are accepted", (t) => {
   assert.deepEqual(loadConfig(files).drivers, drivers);
 });
 
+test("Codex cannot be set as the builder or the planner, and says why; it can be set as the reviewer", (t) => {
+  const drivers = { "claude-code": {}, codex: {} };
+  assert.throws(() => loadConfig(configFiles(t, { ...BASE, drivers, roles: { implementer: { driver: "codex" } } })), /role "implementer": Codex cannot be the builder: in Botbench it cannot ask you for permission or edit files/);
+  assert.throws(() => loadConfig(configFiles(t, { ...BASE, drivers, roles: { planner: { driver: "codex" } } })), /role "planner": Codex cannot be the planner/);
+  assert.equal(loadConfig(configFiles(t, { ...BASE, drivers, roles: { reviewer: { driver: "codex" } } })).roles.reviewer?.driver, "codex");
+});
+
 test("malformed values are rejected with the setting's name", (t) => {
   assert.throws(() => loadConfig(configFiles(t, BASE, { port: "4780" })), /"port" must be a whole number from 0 to 65535/);
   assert.throws(() => loadConfig(configFiles(t, BASE, { port: 70000 })), /"port"/);

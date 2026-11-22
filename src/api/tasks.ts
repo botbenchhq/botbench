@@ -5,6 +5,7 @@ import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
+import { reviewAssignment, taskReview } from "../engine/review.ts";
 import { taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
@@ -45,6 +46,17 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     resumeNote: resumeNote(db, task),
     createdAt, updatedAt,
   };
+}
+
+/**
+ * Who reviews a task (its run's reviewer, or null), and its review once there is one. The review's text is the reviewer's
+ * own words, a model's opinion: shown as text, never acted on.
+ */
+export function reviewOf(db: DatabaseSync, taskId: number): { reviewer: { agent: string; model: string | null } | null; review: Record<string, unknown> | null } {
+  const assigned = reviewAssignment(db, taskId);
+  const found = taskReview(db, taskId);
+  const review = found === null ? null : (({ taskId: _, ...rest }) => rest)(found);
+  return { reviewer: assigned === null ? null : { agent: assigned.agent, model: assigned.model }, review };
 }
 
 /** A task's decision as a client sees it. */
@@ -99,7 +111,7 @@ async function remainsOf(db: DatabaseSync, task: Task): Promise<{ remains: TaskR
 /** A task as its own screen shows it: the summary, its changed files, its evidence, what a decision would remove, and what a discard would. */
 async function detail(db: DatabaseSync, task: Task): Promise<Record<string, unknown>> {
   const left = await remainsOf(db, task);
-  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), leftovers: await leftoversOf(task), ...left };
+  return { ...summary(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {

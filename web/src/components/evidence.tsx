@@ -1,4 +1,5 @@
-import type { ChecksMark, Evidence } from "../api/client.ts";
+import type { ChecksMark, Evidence, Review } from "../api/client.ts";
+import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
 import { StatusBadge } from "./status.tsx";
 
@@ -136,3 +137,52 @@ export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: reado
 
 /** The plain sentence about what checks are, shown wherever their results are. */
 export const CHECKS_RISK = "Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: they cannot read the sign-in, key and credential folders Botbench keeps them from or Botbench's own files, can change files only in this task's copy and a temporary folder, and reach the internet only at hosts allowed for this repository in Botbench's settings file. They can still read the rest of your home folder. The agent may have changed the code they run, so read the output, not only the result.";
+
+/** An agent by its product name, as the screens name it (docs/product/voice.md). */
+export const agentName = (agent: string): string => ({ "claude-code": "Claude Code", codex: "Codex", "gemini-cli": "Gemini CLI", grok: "Grok" })[agent] ?? agent;
+
+/** The reviewer and its model, as a screen names them: "Codex, gpt-6-luna", or "Codex, its default model". */
+export const reviewerWords = (reviewer: { agent: string; model: string | null }): string => `${agentName(reviewer.agent)}, ${reviewer.model ?? "its default model"}`;
+
+/** The plain sentence about what a review is, shown wherever one is. */
+export const REVIEW_RISK = "A model's opinion of the changes, not a check. The reviewer read the diff in the task's copy, where it could change nothing and reach no network; nothing Botbench does depends on what it says.";
+
+/** A review's verdict line: the verdict in words when the reply gave it in the asked form. */
+function verdictWords(review: Review): string {
+  if (review.verdict === "looks_right") return "Verdict: looks right";
+  if (review.verdict === "concerns") return "Verdict: concerns";
+  return "No verdict in the asked form";
+}
+
+/**
+ * A task's review, under its checks: the verdict line, with the reviewer's own words one tap away behind a disclosure.
+ * A review that did not happen says why, in view. The reply is the model's text, marked as such and shown as text.
+ */
+export function ReviewEvidence({ review }: { review: Review }) {
+  if (review.outcome !== "reviewed") {
+    return (
+      <Alert tone="warning" testId="review-problem">
+        {review.problem ?? "There is no review."}
+      </Alert>
+    );
+  }
+  const took = duration(review.durationMs);
+  return (
+    <details data-testid="review-detail" className="ds-disclosure">
+      <summary className="ds-disclosure__summary">
+        <span data-testid="review-verdict">{verdictWords(review)}</span>
+        <span className="ds-disclosure__meta">
+          <time dateTime={took.iso}>{took.words}</time>
+        </span>
+      </summary>
+      <div className="ds-disclosure__content ds-stack ds-gap-sm">
+        {review.diffCut && <p>{`The diff was ${review.diffChars} characters long, and the reviewer was sent only its first part.`}</p>}
+        <figure className="ds-code-block">
+          <pre data-ds-content="" data-testid="review-text" className="ds-code-block__body">
+            <code>{review.text}</code>
+          </pre>
+        </figure>
+      </div>
+    </details>
+  );
+}

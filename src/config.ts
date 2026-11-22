@@ -7,6 +7,8 @@ import { entryProblem, realRepo } from "./approvals/grants.ts";
 import { HOST_RULE, hostProblem } from "./confinement.ts";
 import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem } from "./drivers/contract.ts";
+import { CODEX, CODEX_CAPABILITIES } from "./drivers/codex.ts";
+import { roleProblem } from "./engine/roles.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -191,6 +193,7 @@ function validate(c: Json, where: string): Config {
     if (!isObject(value) || typeof value.driver !== "string") fail(`role "${role}" must be an object with a "driver".`);
     else if (!(value.driver in drivers)) fail(`role "${role}" uses driver "${value.driver}", which is not in "drivers".`);
     else if (value.model !== undefined && modelNameProblem(value.model) !== null) fail(`role "${role}": "model" must be a model name. ${modelNameProblem(value.model)}`);
+    else if (value.driver === CODEX && roleProblem(role, CODEX, CODEX_CAPABILITIES) !== null) fail(`role "${role}": ${roleProblem(role, CODEX, CODEX_CAPABILITIES)}`);
   }
   if (repositories !== undefined) {
     if (!isObject(repositories)) return fail(`"repositories" must be an object keyed by the full path of each repository.`);

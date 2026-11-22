@@ -1,11 +1,23 @@
 import type http from "node:http";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
-import { DriverUnavailableError } from "../drivers/contract.ts";
+import { DriverUnavailableError, type Driver } from "../drivers/contract.ts";
+import { IMPLEMENTER, PLANNER, REVIEWER, roleProblem } from "../engine/roles.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { eventsAfter, parseEventId } from "./stream.ts";
 import { TurnError } from "./turns.ts";
 import { usageReport } from "../usage.ts";
 import type { BillingKind } from "../drivers/contract.ts";
+
+/** The steps an agent can work in here, by the names a screen uses: the main agent plans and builds, a reviewer reviews. */
+function agentRoles(ctx: RouteContext, agent: Driver): string[] {
+  const roles: string[] = [];
+  if (agent === ctx.driver) {
+    if (roleProblem(PLANNER, agent.name, agent.capabilities) === null) roles.push("planner");
+    if (roleProblem(IMPLEMENTER, agent.name, agent.capabilities) === null) roles.push("builder");
+  }
+  if (ctx.reviewers[agent.name] === agent && roleProblem(REVIEWER, agent.name, agent.capabilities) === null) roles.push("reviewer");
+  return roles;
+}
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -38,6 +50,16 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       // The sign-in kind is the agent's own account of it; when it cannot say, it is unknown and only tokens are shown.
       const billing: Record<string, BillingKind> = { [CLAUDE_CODE]: await ctx.turns.probe().then((probe) => probe.billing, () => "unknown" as const) };
       json(res, 200, usageReport(ctx.db, { now: Date.now(), drivers: Object.keys(ctx.config.drivers), billing }));
+    } else if (method === "GET" && pathname === "/api/agents") {
+      // Each agent as it reports itself now, and the steps Botbench lets it work in.
+      const listed = [ctx.driver, ...Object.values(ctx.reviewers).filter((d): d is Driver => d !== undefined && d.name !== ctx.driver.name)];
+      const agents = await Promise.all(listed.map(async (agent) => ({ agent: agent.name, ...(await agent.probe()), roles: agentRoles(ctx, agent) })));
+      json(res, 200, { agents });
+    } else if (method === "GET" && /^\/api\/agents\/[a-z-]{1,40}\/models$/.test(pathname)) {
+      const name = pathname.split("/")[3]!;
+      const reviewer = Object.hasOwn(ctx.reviewers, name) ? ctx.reviewers[name] : undefined;
+      if (reviewer === undefined) return (json(res, 404, { error: "Botbench offers no such agent to choose a model for." }), true);
+      json(res, 200, { driver: reviewer.name, ...(await reviewer.models()) });
     } else if (method === "GET" && pathname === "/api/stream") {
       ctx.stream.handle(req, res);
     } else if (method === "POST" && pathname === "/api/turns") {

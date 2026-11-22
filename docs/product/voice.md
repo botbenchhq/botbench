@@ -45,7 +45,9 @@ On screen since decisions landed: Accept and Reject (the buttons), and Accepted 
 
 On screen since the runs board landed: the board's groups Needs you, Running and Finished; Nothing to review (a run whose every task failed, was stopped or was cancelled, so there is nothing to decide); Discard (the button that removes what such a task left, its separate copy and its branch; never a decision) and "You discarded" in Activity; Settings, with Agents (each agent as Available, Signed out, Unsupported version or Not installed) and Appearance (Mode: Dark, Light, Match device).
 
-Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): In review (reviewing), and the paused state for a usage limit.
+On screen since Codex reviews: In review (a task whose run's reviewer is reading its changes, after the checks); Review on New run (Off, or Codex with one of its models); "Codex's review" on the task, under the checks, with "Verdict: looks right", "Verdict: concerns" or "No verdict in the asked form" as its line, and always called a model's opinion, not a check. Settings lists Codex with what it does here: it reviews, and cannot plan or build.
+
+Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.
 

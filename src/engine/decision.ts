@@ -85,6 +85,7 @@ const NOT_READY: Record<Exclude<TaskStatus, "awaiting_decision" | "accepted" | "
   queued: "is queued",
   building: "is still being built",
   verifying: "is still being checked",
+  reviewing: "is still being reviewed",
   interrupted: "was stopped",
   failed: "failed",
   cancelled: "was cancelled",

@@ -20,6 +20,8 @@ export interface RouteContext {
   db: DatabaseSync;
   config: Config;
   driver: Driver;
+  /** The agents that can review a run's tasks, by name. */
+  reviewers: Partial<Record<string, Driver>>;
   turns: Turns;
   tasks: Tasks;
   runs: Runs;

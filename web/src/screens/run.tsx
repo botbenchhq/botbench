@@ -100,6 +100,7 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
 function taskFacts(task: RunTask): string {
   if (task.status === "queued") return "Starts when the tasks before it have finished";
   if (task.status === "verifying") return "Botbench is running this repository's checks";
+  if (task.status === "reviewing") return "The reviewer is reading the changes";
   if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
   if (task.decision?.branch === "deleted") return "Branch deleted";
   return task.branch ?? "No branch";

@@ -11,16 +11,17 @@ import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
-import { IMPLEMENTER } from "./roles.ts";
+import { reviewAssignment, runReview, storeUnfinishedReview } from "./review.ts";
+import { agentName, IMPLEMENTER } from "./roles.ts";
 import { commandProblem, nextRound, runCommand, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
  * commands there and its builder's turn. `verifying` is the repository's check commands running on the work Botbench
- * committed. `awaiting_decision` means nothing further happens until the owner decides; `accepted` and `rejected` are
+ * committed. `reviewing` is the run's reviewer reading the work, after the checks (engine/review.ts). `awaiting_decision` means nothing further happens until the owner decides; `accepted` and `rejected` are
  * the owner's decision (engine/decision.ts); `interrupted`, `failed` and `cancelled` are ends that carry a reason.
  */
-export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -30,8 +31,9 @@ export type ChecksMark = "passed" | "failed" | "none";
  */
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
-  building: ["building", "verifying", "awaiting_decision", "interrupted", "failed", "cancelled"],
-  verifying: ["verifying", "awaiting_decision", "interrupted", "failed", "cancelled"],
+  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
+  verifying: ["verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
+  reviewing: ["awaiting_decision", "failed", "cancelled"],
   awaiting_decision: ["accepted", "rejected"],
   accepted: [],
   rejected: [],
@@ -67,6 +69,14 @@ export interface Task {
   updatedAt: string;
 }
 
+
+/** A reviewer the run names and this Botbench cannot start: its review fails, saying so. */
+function unknownReviewer(agent: string): Driver {
+  const refuse = (): never => {
+    throw new Error(`Botbench cannot start ${agentName(agent)} to review.`);
+  };
+  return { name: agent, capabilities: { resume: false, interrupt: false, permissionRequests: false, edits: false }, probe: refuse, models: refuse, startAttempt: async () => refuse() };
+}
 
 /** A request about a task that cannot be met; `status` is the HTTP answer for it. */
 export class TaskError extends Error {
@@ -223,7 +233,7 @@ export function settleRunIn(db: DatabaseSync, runId: number): { id: number; stat
   const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
   if (run?.status !== "running" && run?.status !== "awaiting_decision") return null;
   const has = (statuses: string): boolean => db.prepare(`SELECT 1 FROM tasks WHERE run_id = ? AND status IN (${statuses}) LIMIT 1`).get(runId) !== undefined;
-  if (has("'queued', 'building', 'verifying'")) return null;
+  if (has("'queued', 'building', 'verifying', 'reviewing'")) return null;
   // A task that is ready for review keeps the run waiting. With none, nothing is left to decide and the run is done,
   // also when no task was ever ready for review because each failed or was stopped.
   const to = has("'awaiting_decision'") ? "awaiting_decision" : "done";
@@ -279,6 +289,7 @@ const STANDS: Record<TaskStatus, string> = {
   queued: "is queued",
   building: "is already working",
   verifying: "is already working: its checks are running",
+  reviewing: "is already working: it is being reviewed",
   awaiting_decision: "is ready for review",
   accepted: "was accepted",
   rejected: "was rejected",
@@ -350,6 +361,10 @@ export interface TasksOptions {
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
   repoHosts?: (repo: string) => readonly string[];
+  /** The agents that can review a run's tasks, by name. A run whose reviewer is not among them has its tasks' reviews fail, saying so. */
+  reviewers?: Partial<Record<string, Driver>>;
+  /** The time a reviewer gets; 10 minutes when left out. */
+  reviewLimitMs?: number;
   /** Called when a transcript event was stored. */
   onEvent: () => void;
   /** Called after each state a task reaches, and after evidence is added to it. */
@@ -457,7 +472,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (headCommit === null) return;
     const checks = options.repoCommands?.(task.repo).checks ?? [];
     // No checks: said so as such, never as a pass.
-    if (checks.length === 0) return void move(task.id, "awaiting_decision", { headCommit, checks: "none" });
+    if (checks.length === 0) return review(task, "building", { headCommit, checks: "none" }, stopped);
     move(task.id, "verifying", { headCommit });
     await check(task, checks, stopped);
   };
@@ -468,14 +483,33 @@ export function createTasks(options: TasksOptions): Tasks {
    * Botbench stopping, the task is left for the next start, which runs them again from the start.
    */
   const check = async (task: Task, checks: readonly StationCommand[], stopped?: AbortSignal): Promise<void> => {
-    if (checks.length === 0) return void moveFrom(task.id, "verifying", "awaiting_decision", { checks: "none" });
+    if (checks.length === 0) return review(task, "verifying", { checks: "none" }, stopped);
     const ran = await runList(task, "check", checks, stopped);
     if (ran.stopped) {
       if (cancelled(task)) return void moveFrom(task.id, "verifying", "cancelled", { reason: "The run was cancelled while this task's checks ran. The work is committed to its branch; the checks did not finish." });
       if (closed) return leave(task.id, "verifying", "the checks of this task ran");
       return void moveFrom(task.id, "verifying", "interrupted", { reason: "This task's checks were stopped before they finished. The work is committed to its branch." });
     }
-    moveFrom(task.id, "verifying", "awaiting_decision", { checks: ran.failed === null ? "passed" : "failed" });
+    await review(task, "verifying", { checks: ran.failed === null ? "passed" : "failed" }, stopped);
+  };
+
+  /**
+   * The task's work is committed and checked. When its run names a reviewer, the reviewer reads it first and its review
+   * is stored on the task; however the review went, the task then waits for the owner, as a review is an opinion and
+   * not a check. Only a cancel of the run ends it otherwise.
+   */
+  const review = async (task: Task, from: "building" | "verifying", change: TaskChange, stopped?: AbortSignal): Promise<void> => {
+    const assigned = reviewAssignment(db, task.id);
+    if (assigned === null) return void moveFrom(task.id, from, "awaiting_decision", change);
+    const at = moveFrom(task.id, from, "reviewing", change);
+    if (at === null) return;
+    const done = await runReview({
+      db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
+      confinement: { ...confinement(task.repo), gitDir: await sharedGitDir(task.repo) }, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
+    });
+    options.onTaskChange(getTask(db, task.id)!);
+    if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });
+    moveFrom(task.id, "reviewing", "awaiting_decision");
   };
 
   /**
@@ -498,7 +532,7 @@ export function createTasks(options: TasksOptions): Tasks {
     } catch (err) {
       // Whatever went wrong unforeseen, the task does not stay at a station nothing works at, holding up its run.
       report(`Building task ${task.id}`)(err);
-      for (const from of ["queued", "building", "verifying"] as const) moveFrom(task.id, from, "failed", { reason: `Botbench could not go on with this task: ${words(err)}` });
+      for (const from of ["queued", "building", "verifying", "reviewing"] as const) moveFrom(task.id, from, "failed", { reason: `Botbench could not go on with this task: ${words(err)}` });
     } finally {
       active = null;
     }
@@ -575,7 +609,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return;
       const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
       if (run?.status !== "running") return;
-      if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying') LIMIT 1").get(runId)) return;
+      if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying', 'reviewing') LIMIT 1").get(runId)) return;
       const next = db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id LIMIT 1").get(runId);
       if (!next) return settle(runId);
       await build(Number(next.id));
@@ -799,6 +833,17 @@ export function createTasks(options: TasksOptions): Tasks {
       await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
     }
     const unstoppable = await closeLeftCommands(db, began);
+    // A task whose review was under way: its reviewer's process is stopped above, the review is recorded as unfinished,
+    // and the task, built, committed and checked, waits for the owner.
+    for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'reviewing' ORDER BY id").all()) {
+      const id = Number(row.id);
+      const assigned = reviewAssignment(db, id);
+      transaction(db, () => {
+        storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `Botbench stopped before ${agentName(assigned?.agent ?? "the reviewer")} finished its review.`);
+        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish" });
+      });
+      options.onTaskChange(getTask(db, id)!);
+    }
     const work: number[] = [];
     // The queued tasks of an approved plan are not on their way anywhere yet: they are their run's to build, and stay queued.
     const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building', 'verifying') AND NOT (status = 'queued' AND EXISTS (SELECT 1 FROM runs r WHERE r.id = tasks.run_id AND r.kind = 'planned')) ORDER BY id").all();

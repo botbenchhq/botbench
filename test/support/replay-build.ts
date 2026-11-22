@@ -27,7 +27,7 @@ import { loadPlanRecording } from "./replay-plan.ts";
 
 export type BuildTurn = "done" | "ask";
 
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
 const now = (): string => new Date().toISOString();
 
 function recordedTurns(): Record<BuildTurn, { events: DriverEvent[]; hookCwd: Map<string, string> }> {

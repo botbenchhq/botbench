@@ -181,7 +181,7 @@ test("a run is read with its plan and listed newest first; an unknown run is 404
     { ...one.body, createdAt: null, updatedAt: null },
     {
       id: first.id, repo: fs.realpathSync(api.repo), prompt: "Add two files and describe them", specPath: null, specText: null, title: "Add two files and describe them",
-      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion,
+      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null,
       plan: THREE, tasks: [], preapproved: ["npm test"], waitingOnApproval: false, createdAt: null, updatedAt: null,
     },
   );
@@ -371,4 +371,57 @@ test("a task's checks are read with it: the mark that says how they went and eac
   const row = ((await call(api, "GET", `/api/runs/${run.id}`)).body.tasks as Body[])[0]!;
   assert.equal(row.checks, "failed");
   assert.equal((row.evidence as Body[]).length, 2);
+});
+
+test("a run's reviewer is refused in words when it is malformed, unknown, the builder's own agent and model, or an agent that cannot review yet; nothing is stored", async (t) => {
+  const api = await start(t);
+  const bad: [unknown, RegExp][] = [
+    ["codex", /"reviewer" must be null, or/],
+    [{ agent: "codex", model: "gpt-6-luna", extra: 1 }, /"reviewer" must be null, or/],
+    [{ agent: "copilot", model: null }, /an agent Botbench does not know/],
+    [{ agent: "codex", model: "--sandbox" }, /reviewer's model is not a model name/],
+    // The builder here is Claude Code with its own default model.
+    [{ agent: "claude-code", model: null }, /The reviewer must be a different model from the builder, and Claude Code with its own default model builds this run\./],
+    [{ agent: "claude-code", model: "sonnet" }, /Claude Code cannot review a run yet\. Choose Codex, or no review\./],
+  ];
+  for (const [reviewer, words] of bad) {
+    const res = await call(api, "POST", "/api/runs", { repo: api.repo, prompt: "plan this", reviewer });
+    assert.equal(res.status, 400, JSON.stringify(reviewer));
+    assert.match(String(res.body.error), words, JSON.stringify(reviewer));
+  }
+  assert.equal(count(api, "runs"), 0);
+  assert.equal(count(api, "attempts"), 0, "no planner was started");
+});
+
+test("a run's screen names its reviewer, and a task's screen gives its review once there is one", async (t) => {
+  const api = await start(t);
+  const run = createRun(api.server.db, { repo: api.repo, prompt: "Add a file", baseCommit: api.commit, reviewer: { agent: "codex", model: "gpt-6-luna" } });
+  const plain = createRun(api.server.db, { repo: api.repo, prompt: "Add another", baseCommit: api.commit });
+  assert.deepEqual((await call(api, "GET", `/api/runs/${run.id}`)).body.reviewer, { agent: "codex", model: "gpt-6-luna" });
+  assert.equal((await call(api, "GET", `/api/runs/${plain.id}`)).body.reviewer, null);
+  const waiting = storePlan(api.server.db, run.id, THREE.slice(0, 1));
+  const { tasks } = approvePlan(api.server.db, run.id, waiting.planVersion);
+  const id = tasks[0]!.id;
+  // Where a review leaves a task, as the engine writes it.
+  moveTask(api.server.db, id, "building");
+  moveTask(api.server.db, id, "reviewing", { checks: "none" });
+  const reviewing = (await call(api, "GET", `/api/tasks/${id}`)).body;
+  assert.deepEqual([reviewing.status, reviewing.reviewer, reviewing.review], ["reviewing", { agent: "codex", model: "gpt-6-luna" }, null]);
+  api.server.db.prepare("INSERT INTO reviews (task_id, agent, model, attempt_id, outcome, verdict, text, problem, diff_chars, diff_cut, started_at, ended_at, duration_ms) VALUES (?, 'codex', 'gpt-6-luna', NULL, 'reviewed', 'concerns', ?, NULL, 120, 0, 'a', 'b', 4200)").run(id, "Verdict: concerns\nFindings:\n- calc.py:2: subtracts");
+  const review = (await call(api, "GET", `/api/tasks/${id}`)).body.review as Record<string, unknown>;
+  assert.deepEqual({ agent: review.agent, model: review.model, outcome: review.outcome, verdict: review.verdict, text: review.text, problem: review.problem, diffCut: review.diffCut }, { agent: "codex", model: "gpt-6-luna", outcome: "reviewed", verdict: "concerns", text: "Verdict: concerns\nFindings:\n- calc.py:2: subtracts", problem: null, diffCut: false });
+});
+
+test("the agents are listed with what each reports about itself, and Codex's models come from Codex or the configuration, never made up", async (t) => {
+  const api = await start(t);
+  const agents = (await call(api, "GET", "/api/agents")).body.agents as Record<string, unknown>[];
+  assert.deepEqual(agents.map((agent) => agent.agent), ["claude-code", "codex"]);
+  for (const agent of agents) for (const key of ["installed", "version", "supported", "signedIn", "billing", "problem"]) assert.ok(key in agent, `${String(agent.agent)}: ${key}`);
+  assert.deepEqual(agents.map((agent) => agent.roles), [["planner", "builder"], ["reviewer"]]);
+  const models = (await call(api, "GET", "/api/agents/codex/models")).body;
+  assert.ok(models.source === "cli" || models.source === "config");
+  assert.equal(models.driver, "codex");
+  assert.equal((await call(api, "GET", "/api/agents/grok/models")).status, 404);
+  const refused = await fetch(`${api.base}/api/agents`);
+  assert.equal(refused.status, 401);
 });

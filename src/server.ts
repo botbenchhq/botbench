@@ -10,6 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
 import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
+import { CODEX, CodexDriver } from "./drivers/codex.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
@@ -72,6 +73,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
   const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
+  // Codex reviews only (src/drivers/codex.ts): it is offered as a run's reviewer and as nothing else.
+  const codexModel = config.drivers[CODEX]?.model;
+  const reviewers = { [CODEX]: new CodexDriver({ models: config.drivers[CODEX]?.models ?? [], ...(codexModel ? { defaultModel: codexModel } : {}) }) };
   let broker: Broker;
   try {
     // A number that is no count is refused here too: a config handed over in code has not been through the loader.
@@ -90,9 +94,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     throw err;
   }
   const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), onEvent: stream.notify, onTaskChange: stream.announceTask, onRunChange: stream.announceRun });
-  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), line: tasks, onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, turns, tasks, runs, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: stream.announceTask, onRunChange: stream.announceRun });
+  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, line: tasks, onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
+  const ctx = { db, config, driver, reviewers, turns, tasks, runs, broker, stream, clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
