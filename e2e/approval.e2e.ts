@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, primaries, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, signIn, test, token, watchRequests, openNewTask } from "./helpers.ts";
+import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, checkDesign, expect, primaries, signIn, startTaskIn, test, token, watchRequests } from "./helpers.ts";
 import type { Botbench } from "./botbench.ts";
 
 // Approvals in the real client, at a phone's size: a real Botbench process, a real temporary repository,
@@ -19,11 +19,7 @@ function scriptRepo(botbench: Botbench): string {
 
 async function startTask(page: Page, repo: string): Promise<void> {
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill(PROMPT);
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, PROMPT);
   await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
 }
 
@@ -82,7 +78,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(card).toBeFocused();
   await expect(card.getByRole("heading")).toHaveText("Claude Code asks to run a command");
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
-  expect(await card.getByTestId("approval-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
+  expect(await card.getByTestId("approval-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   await expect(card.getByTestId("approval-directory")).toHaveText("The top folder of the task's copy");
   await expect(card.getByTestId("approval-role")).toHaveText("Build");
   await expect(card.getByTestId("approval-task")).toHaveText("Task 1 · Run the command `sh make-marker.sh` with your Bash tool, exa…");

@@ -18,7 +18,7 @@ function agentState(agent: AgentState): string {
 
 /** What Botbench lets the agent do, in words, from the steps the server reports. */
 function agentSteps(agent: AgentState): string {
-  const can = agent.roles.includes("planner") && agent.roles.includes("builder") ? "Plans and builds tasks." : agent.roles.includes("reviewer") ? "Reviews a run's tasks when you choose it on New run; it cannot plan or build here." : "";
+  const can = agent.roles.includes("planner") && agent.roles.includes("builder") ? "Plans and builds tasks." : agent.roles.includes("reviewer") ? "Reviews a run's tasks when you choose it for a run; it cannot plan or build here." : "";
   return can;
 }
 
@@ -128,7 +128,7 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
             <h2 className="ds-settings-row__heading" id={`${id}-runs`}>
               Runs
             </h2>
-            <ModePicker name="default-mode" legend="Default mode" hint="New run starts with this mode chosen. You can pick another for each run." value={runMode} onChange={chooseMode} />
+            <ModePicker name="default-mode" legend="Default mode" hint="A new run starts with this mode chosen. You can pick another for each run." value={runMode} onChange={chooseMode} />
             {modeProblem !== null && (
               <Alert tone="error" role="alert">
                 {modeProblem}

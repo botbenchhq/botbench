@@ -22,9 +22,16 @@ export type IconName =
   | "settings"
   | "thumbs-up"
   | "check"
-  | "x";
+  | "x"
+  | "folder"
+  | "shield"
+  | "cpu"
+  | "mic"
+  | "chevron-left";
 
 /** A decorative icon from the sprite. `className` is the icon class of the component it sits in. */
+export const SPRITE = sprite;
+
 export function Icon({ name, className }: { name: IconName; className: string }) {
   return (
     <svg className={className} aria-hidden="true">

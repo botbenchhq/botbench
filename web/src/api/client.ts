@@ -524,7 +524,7 @@ export interface RunAnnouncement {
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
 export const startRun = (o: { repo: string; prompt?: string; specPath?: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery }): Promise<{ runId: number }> =>
   request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery }, 30_000);
-/** The mode a new run is given unless the owner chooses another on New run. */
+/** The mode a new run is given unless the owner chooses another in the composer. */
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;

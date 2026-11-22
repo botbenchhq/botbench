@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // LIVE. The modes, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
@@ -56,7 +56,7 @@ test("LIVE modes: semi-autonomous runs a task's command without an approval card
   const foreign = watchRequests(page, botbench);
   await signIn(page, botbench);
 
-  // Settings: the default mode is Manual until the owner picks another, which New run then starts with.
+  // Settings: the default mode is Manual until the owner picks another, which a new run then starts with.
   await page.goto(`${botbench.base}/#/settings`);
   const defaults = page.getByTestId("default-mode-picker");
   await expect(defaults.getByRole("radio", { name: "Manual" })).toBeChecked();
@@ -65,16 +65,18 @@ test("LIVE modes: semi-autonomous runs a task's command without an approval card
   await checkDesign(page, "settings, default mode");
 
   // Semi-autonomous: the owner approves a plan whose one task must run a command.
-  await page.goto(`${botbench.base}/#/runs/new`);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Plan exactly one task: run `ls` once, then create hello.txt holding the single word hi. The README is all there is to read.");
+  await openComposer(page);
+  await chooseRepository(page, repo);
+  await choose(page, "What to do", "Plan a run");
+  const sheet = await openRow(page, "Mode");
   const modes = page.getByTestId("run-mode-picker");
   await expect(modes.getByRole("radio", { name: "Semi-autonomous" })).toBeChecked();
   await expect(modes.getByText("Accepts work without you")).toBeVisible();
   await checkDesign(page, "new run, mode");
   await shot(page, "modes-new-run.png");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await sheet.getByRole("button", { name: "Close Add context" }).click();
+  await messageBox(page).fill("Plan exactly one task: run `ls` once, then create hello.txt holding the single word hi. The README is all there is to read.");
+  await page.getByRole("button", { name: "Send" }).click();
   const semi = await runIdOf(page);
   await expect(page.getByTestId("run-mode")).toHaveText(/^Semi-autonomous: /);
   await neverAsked(page, botbench, async () => {
@@ -96,13 +98,12 @@ test("LIVE modes: semi-autonomous runs a task's command without an approval card
   await shot(page, "modes-semi-task.png");
 
   // Fully autonomous: nothing waits for the owner, and the task whose check passed is accepted without them.
-  await page.goto(`${botbench.base}/#/runs/new`);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Plan exactly one task, no more: create hello.txt at the top of the repository holding the single word hi. The README is all there is to read.");
-  await page.getByTestId("run-mode-picker").getByRole("radio", { name: "Fully autonomous" }).check();
+  await openComposer(page);
+  await choose(page, "Mode", "Fully autonomous");
+  await closeContext(page);
   await expect(page.getByText("Building starts on the plan without your approval.")).toBeVisible();
-  await page.getByRole("button", { name: "Start run" }).click();
+  await messageBox(page).fill("Plan exactly one task, no more: create hello.txt at the top of the repository holding the single word hi. The README is all there is to read.");
+  await page.getByRole("button", { name: "Send" }).click();
   const full = await runIdOf(page);
   await expect(page.getByTestId("run-mode")).toHaveText(/^Fully autonomous: /);
   await neverAsked(page, botbench, () => expect(page.getByTestId("run-status")).toHaveText(/^(Done|Ready for review)\./, { timeout: 1_000 }));

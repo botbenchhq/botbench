@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, getRepoSettings, listRepos, timedOut, type RepoCheck } from "../api/client.ts";
+import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, getRepoSettings, listRepos, timedOut, type KnownRepository, type RepoCheck } from "../api/client.ts";
+import { REPO_HINT, type RepoStatus } from "../app/composer.ts";
 import { Alert } from "./header.tsx";
 
 const CHECK_DELAY_MS = 250;
-export const REPO_HINT = "Enter the full path of a git repository on this Mac.";
 
 /** What is known about the path in the field: nothing yet, being asked, the server's answer, or that it could not be asked and why. */
 type RepoState = { kind: "empty" } | { kind: "checking" } | { kind: "answer"; check: RepoCheck } | { kind: "unknown"; why: string };
@@ -25,12 +25,12 @@ interface Preapproved {
   note: string | null;
 }
 
-/** The repository a form names, as far as the server has answered about it, and the commands the owner confirms for it. */
+/** The repository the composer names, as far as the server has answered about it, and the commands the owner confirms for it. */
 export interface RepositoryChoice {
-  repo: string;
-  setRepo(path: string): void;
   /** What is known about the path, in words. */
   words: string;
+  /** The same, as the composer decides by it. */
+  status: RepoStatus;
   /** The server answered that the path cannot be used. */
   refused: boolean;
   /** The pre-approved list for the usable repository in the field; null until it is known. */
@@ -41,18 +41,13 @@ export interface RepositoryChoice {
   removeCommand(command: string): void;
 }
 
-export function useRepository(onSignedOut: () => void): RepositoryChoice {
-  const [repo, setRepo] = useState("");
-  const [repoState, setRepoState] = useState<RepoState>({ kind: "empty" });
-  const [preapproved, setPreapproved] = useState<Preapproved | null>(null);
-  const [adding, setAdding] = useState("");
-
-  // Start with the most recently used repository (else the first in the settings file), unless a path was typed first.
-  // When the list cannot be read the field simply starts empty.
+/** The repositories used before, most recent first, then the configured ones; empty until read, and when they cannot be. */
+export function useKnownRepositories(onSignedOut: () => void): KnownRepository[] {
+  const [known, setKnown] = useState<KnownRepository[]>([]);
   useEffect(() => {
     let stale = false;
     listRepos().then(
-      (known) => !stale && known.length > 0 && setRepo((typed) => (typed === "" ? known[0]!.path : typed)),
+      (found) => !stale && setKnown(found),
       (err: unknown) => {
         if (!stale && err instanceof ApiError && err.status === 401) onSignedOut();
       },
@@ -61,6 +56,14 @@ export function useRepository(onSignedOut: () => void): RepositoryChoice {
       stale = true;
     };
   }, [onSignedOut]);
+  return known;
+}
+
+/** Check the repository at `repo` ("" for none) as it changes, and read the commands the owner's settings offer for it. */
+export function useRepository(repo: string, onSignedOut: () => void): RepositoryChoice {
+  const [repoState, setRepoState] = useState<RepoState>({ kind: "empty" });
+  const [preapproved, setPreapproved] = useState<Preapproved | null>(null);
+  const [adding, setAdding] = useState("");
 
   // Ask the server about the path a moment after the owner stops typing. A newer path ends the request for an older one,
   // and a request with no answer ends at its own time limit, so the screen never stays on "Checking.".
@@ -122,22 +125,9 @@ export function useRepository(onSignedOut: () => void): RepositoryChoice {
   const removeCommand = (command: string): void => {
     if (listed !== null) setPreapproved({ ...listed, commands: listed.commands.filter((c) => c !== command) });
   };
-  return { repo, setRepo, words: repoWords(repoState), refused, listed, adding, setAdding, addCommand, removeCommand };
-}
-
-/** The repository path, with what the server says about it in words under it. */
-export function RepositoryField({ choice }: { choice: RepositoryChoice }) {
-  return (
-    <div className="ds-field">
-      <label htmlFor="repo" className="ds-field__label">
-        Repository path <span className="ds-field__required">required</span>
-      </label>
-      <input id="repo" name="repo" type="text" required autoCapitalize="none" autoCorrect="off" spellCheck={false} value={choice.repo} onChange={(e) => choice.setRepo(e.target.value)} aria-describedby="repo-state" aria-invalid={choice.refused} className="ds-field__control" />
-      <p id="repo-state" data-testid="repo-state" role="status" className={choice.refused ? "ds-field__error" : "ds-field__description"}>
-        {choice.words}
-      </p>
-    </div>
-  );
+  const status: RepoStatus =
+    repoState.kind === "empty" ? { state: "none" } : repoState.kind === "checking" ? { state: "checking" } : repoState.kind === "unknown" ? { state: "unknown", words: repoWords(repoState) } : repoState.check.usable ? { state: "usable" } : { state: "refused", words: repoWords(repoState) };
+  return { words: repoWords(repoState), status, refused, listed, adding, setAdding, addCommand, removeCommand };
 }
 
 const ABOUT = {
@@ -150,8 +140,7 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
   const { listed } = choice;
   if (listed === null) return null;
   return (
-    <section aria-labelledby="preapproved-heading" className="ds-stack ds-gap-sm">
-      <h2 id="preapproved-heading">{`Allowed for this ${scope}`}</h2>
+    <section aria-label={`Allowed for this ${scope}`} className="ds-stack ds-gap-sm">
       <p data-testid="preapproved-about">{ABOUT[scope]}</p>
       {listed.note !== null && (
         <Alert tone="warning" role="status">

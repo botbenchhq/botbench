@@ -52,7 +52,8 @@ test("with no runs and no tasks, the board is the first-run state, in words, wit
   await checkDesign(page, "board, empty");
   await shot(page, "u16-board-empty.png");
   await empty.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeVisible();
   expect(foreign).toEqual([]);
 });
 
@@ -104,7 +105,7 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   const codexRow = page.getByTestId("agent-codex");
   await expect(codexRow.getByTestId("agent-state")).toHaveText(codex.problem === null ? "Available" : /Signed out|Not installed|Unsupported version|Unavailable/);
   await expect(codexRow).toContainText(codex.problem ?? `Version ${codex.version}.`);
-  if (codex.problem === null) await expect(codexRow).toContainText("Reviews a run's tasks when you choose it on New run; it cannot plan or build here.");
+  if (codex.problem === null) await expect(codexRow).toContainText("Reviews a run's tasks when you choose it for a run; it cannot plan or build here.");
   // Grok and Antigravity, each with the state its own probe reports.
   for (const key of ["grok", "antigravity"]) await expect(page.getByTestId(`agent-${key}`).getByTestId("agent-state")).toHaveText(/^(Available|Signed out|Not installed|Unsupported version|Unavailable)$/);
   await expect(page.getByText("Gemini CLI")).toHaveCount(0);

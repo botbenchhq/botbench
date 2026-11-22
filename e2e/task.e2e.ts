@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { checkDesign, copyShot, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
+import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, openNewTask, openRow, signIn, startTaskIn, test, watchRequests } from "./helpers.ts";
+import type { Page } from "@playwright/test";
+
+/** The Folder path field of the Repository view, with Another folder chosen. */
+async function folderField(page: Page) {
+  const sheet = await openRow(page, "Repository");
+  await sheet.getByRole("radio", { name: "Another folder…" }).check();
+  return sheet.getByLabel("Folder path");
+}
 import { startBotbench, tempDir } from "./botbench.ts";
 
 // Tasks in the real client, at a phone's size, against a real Botbench process and real temporary repositories.
@@ -23,15 +31,10 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   // A mark on the page that a reload would wipe out.
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
-  // The empty Tasks view and New task are drawn without a model: see "the navigation reaches Tasks…" below.
+  // The empty Tasks view and the composer are drawn without a model: see "the navigation reaches Tasks…" below.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   const prompt = "Create a file named hello.txt containing exactly: hi";
-  await page.getByLabel("Prompt").fill(prompt);
-  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u6-new-task.png"), fullPage: true });
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, prompt);
 
   // The task screen: the state in words, then the transcript as it happens.
   await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
@@ -77,7 +80,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   const diff = page.getByTestId("diff");
   await expect(diff).toContainText("+++ b/hello.txt");
   await expect(diff).toContainText("+hi");
-  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
+  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   // The diff scrolls inside its own block; the page itself never scrolls sideways.
   const scroller = page.getByTestId("diff-scroll");
   expect(await scroller.evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto");
@@ -138,7 +141,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("the navigation reaches Tasks, which says there are none yet; New task starts empty with one control, and a path is checked as it is typed", async ({ page, botbench }) => {
+test("the navigation reaches Tasks, which says there are none yet; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
   // The navigation lists the screens that exist, and gets to each.
@@ -150,20 +153,23 @@ test("the navigation reaches Tasks, which says there are none yet; New task star
   await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
   await checkDesign(page, "tasks, none yet");
   await openNewTask(page);
-  // New task is an action of the Tasks view, not a destination: no destination is marked while it is open.
-  await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveCount(1);
-  await expect(page.getByTestId("repo-state")).toHaveText("Enter the full path of a git repository on this Mac.");
-  await checkDesign(page, "new task, empty");
+  // New task is an action of the Tasks view: it opens the composer on the home screen with One task chosen.
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Chat");
+  await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository for the task, or None to just chat.");
 
   // The path is checked as it is typed, and the answer is in words.
-  await page.getByLabel("Repository path").fill(repo);
+  const field = await folderField(page);
+  await expect(page.getByTestId("repo-state")).toHaveText("Enter the full path of a git repository on this Mac.");
+  await field.fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Create a file named hello.txt containing exactly: hi");
-  await checkDesign(page, "new task, filled in");
+  await checkDesign(page, "add context, a folder typed");
+  await closeContext(page);
+  await messageBox(page).fill("Create a file named hello.txt containing exactly: hi");
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+  await checkDesign(page, "composer, a task filled in");
 });
 
-test("a repository path that cannot be used is reported in words, and Start task starts nothing", async ({ page, botbench }) => {
+test("a repository path that cannot be used is reported in words, and Send starts nothing", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   const plain = tempDir("botbench-e2e-plain-");
   try {
@@ -173,9 +179,9 @@ test("a repository path that cannot be used is reported in words, and Start task
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/tasks") starts.push(request.url());
     });
     await openNewTask(page);
+    await messageBox(page).fill("Create hello.txt");
     const state = page.getByTestId("repo-state");
-    const field = page.getByLabel("Repository path");
-    await page.getByLabel("Prompt").fill("Create hello.txt");
+    const field = await folderField(page);
 
     await field.fill("sample-repo");
     await expect(state).toContainText("Give the full path, starting with /.");
@@ -184,21 +190,24 @@ test("a repository path that cannot be used is reported in words, and Start task
     await expect(state).toContainText("does not exist");
     await field.fill(plain);
     await expect(state).toContainText("is not a git repository");
-    await checkDesign(page, "new task, path refused");
+    await checkDesign(page, "add context, path refused");
 
-    await page.getByRole("button", { name: "Start task" }).click();
-    await expect(page.getByRole("alert")).toContainText("The task was not started");
-    await expect(page.getByRole("alert")).toContainText("is not a git repository");
-    await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toHaveCount(0);
+    // Send waits, and says why; the required chip asks for the repository.
+    await closeContext(page);
+    const send = page.getByRole("button", { name: "Send" });
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAccessibleDescription(/is not a git repository/);
+    await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeVisible();
 
-    // A usable path with no prompt starts nothing either.
+    // A usable path with no prompt starts nothing either: Send puts the cursor in the box.
+    await page.getByRole("button", { name: "Choose a Repository" }).click();
     await field.fill(repo);
     await expect(state).toHaveText("Usable git repository.");
     await expect(field).toHaveAttribute("aria-invalid", "false");
-    await page.getByLabel("Prompt").fill("   ");
-    await page.getByRole("button", { name: "Start task" }).click();
-    await expect(page.getByRole("alert")).toContainText("Say what the task is.");
+    await closeContext(page);
+    await messageBox(page).fill("   ");
+    await send.click();
+    await expect(messageBox(page)).toBeFocused();
 
     expect(starts, "no task was asked for").toEqual([]);
     expect(await (await page.request.get(`${botbench.base}/api/tasks`)).json()).toEqual({ tasks: [] });
@@ -209,7 +218,7 @@ test("a repository path that cannot be used is reported in words, and Start task
   }
 });
 
-test("New task starts with the repository Botbench knows of in the path field, checked as one typed", async ({ page }) => {
+test("the repository Botbench knows of is offered by name, with its path, and once chosen is remembered for the next task", async ({ page }) => {
   const dir = fs.realpathSync(tempDir("botbench-e2e-known-"));
   const repo = path.join(dir, "services", "shipment-tracking-api");
   initRepo(repo);
@@ -217,10 +226,15 @@ test("New task starts with the repository Botbench knows of in the path field, c
   try {
     await signIn(page, botbench);
     await openNewTask(page);
-    await expect(page.getByLabel("Repository path")).toHaveValue(repo);
-    await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-    await checkDesign(page, "new task, repository filled in");
+    await page.getByRole("button", { name: "Choose a Repository" }).click();
+    const sheet = contextSheet(page);
+    await sheet.getByRole("radio", { name: "shipment-tracking-api" }).check();
+    await closeContext(page);
+    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+    await checkDesign(page, "composer, the known repository chosen");
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-new-task.png"), fullPage: true });
+    await page.reload();
+    await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe the task");
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -255,11 +269,7 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await signIn(page, botbench);
     await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
     const nav = page.getByRole("navigation", { name: "Screens" });
-    await openNewTask(page);
-    await page.getByLabel("Repository path").fill(repo);
-    await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-    await page.getByLabel("Prompt").fill("Create hello.txt\nand a second line");
-    await page.getByRole("button", { name: "Start task" }).click();
+    await startTaskIn(page, repo, "Create hello.txt\nand a second line");
 
     await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
     await expect(page.getByTestId("task-status")).toContainText("Failed. The task's copy of the project could not be created");
@@ -283,7 +293,7 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
   }
 });
 
-test("a repository git cannot read in time: the screen leaves Checking and says why, Start task starts nothing, and a newer path replaces the older check", async ({ page, botbench }) => {
+test("a repository git cannot read in time: the screen leaves Checking and says why, Send starts nothing, and a newer path replaces the older check", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   const stalled = path.join(path.dirname(botbench.home), "stalled-repo");
   stalledRepo(stalled);
@@ -299,22 +309,23 @@ test("a repository git cannot read in time: the screen leaves Checking and says 
       if (url.pathname === "/api/repos/check") dropped.push(url.searchParams.get("path") ?? "");
     });
     await openNewTask(page);
+    await messageBox(page).fill("Create hello.txt");
     const state = page.getByTestId("repo-state");
-    const field = page.getByLabel("Repository path");
-    await page.getByLabel("Prompt").fill("Create hello.txt");
+    const field = await folderField(page);
 
     await field.fill(stalled);
     await expect(state).toHaveText("Checking.");
     await expect(state).toContainText("could not be read in time", { timeout: 9000 });
     await expect(state).toContainText(stalled);
     await expect(field).toHaveAttribute("aria-invalid", "true");
-    await checkDesign(page, "new task, path not read in time");
+    await checkDesign(page, "add context, path not read in time");
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "the reason wraps inside the screen").toBe(0);
 
-    await page.getByRole("button", { name: "Start task" }).click();
-    await expect(page.getByRole("alert")).toContainText("The task was not started");
-    await expect(page.getByRole("alert")).toContainText("could not be read in time");
+    await closeContext(page);
+    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription(/could not be read in time/);
     await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toHaveCount(0);
+    await page.getByRole("button", { name: "Choose a Repository" }).click();
 
     // A path typed while an older one is still being checked takes its place: the older request is given up.
     await field.fill("");
@@ -338,15 +349,16 @@ test("a check Botbench does not answer ends at the client's own time limit, in w
   await signIn(page, botbench);
   await openNewTask(page);
   const state = page.getByTestId("repo-state");
+  const field = await folderField(page);
   botbench.freeze();
   try {
-    await page.getByLabel("Repository path").fill(repo);
+    await field.fill(repo);
     await expect(state).toHaveText("Checking.");
     await expect(state).toHaveText("The path could not be checked: Botbench did not answer within 10 seconds.", { timeout: 14_000 });
   } finally {
     botbench.thaw();
   }
   // Once Botbench answers again, the next path typed is checked as usual.
-  await page.getByLabel("Repository path").fill(`${repo}/`);
+  await field.fill(`${repo}/`);
   await expect(state).toHaveText("Usable git repository.");
 });

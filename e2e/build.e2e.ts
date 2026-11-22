@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Building a run in the real client, at a phone's size, against a real Botbench process whose settings give the
@@ -54,11 +54,7 @@ async function shot(page: Page, name: string): Promise<void> {
 
 /** Start a run on the run screen, decline what its planner asks, and set its plan to `tasks` as the owner can over the API. */
 async function plannedRun(page: Page, botbench: Botbench, repo: string, tasks: { title: string; criteria: string[] }[]): Promise<number> {
-  await page.goto(`${botbench.base}/#/runs/new`);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await startRunIn(page, repo, "Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
   const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
   let version = -1;

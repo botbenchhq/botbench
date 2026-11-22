@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, expect, openNewTask, SHOTS, signIn, tallShot } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, signIn, startTaskIn, tallShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The verify station in the real client, at a phone's size: a real Botbench process whose settings give two real
@@ -47,11 +47,7 @@ async function shot(page: Page, name: string): Promise<void> {
 
 /** Start a task in `repo` from New task, decline whatever its agent asks, and wait on its screen until it is Ready for review. */
 async function buildTask(page: Page, botbench: Botbench, repo: string, o: { checking: boolean } = { checking: true }): Promise<void> {
-  await openNewTask(page);
-  await page.getByLabel("Repository path").fill(repo);
-  await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
-  await page.getByLabel("Prompt").fill("Create the file hello.txt containing the single word hi, with your Write tool. Run no command.");
-  await page.getByRole("button", { name: "Start task" }).click();
+  await startTaskIn(page, repo, "Create the file hello.txt containing the single word hi, with your Write tool. Run no command.");
   await expect(page.getByRole("heading", { name: /^Task \d+$/, level: 1 })).toBeVisible();
   // The checks take two seconds each, so the screen is seen saying Checking while they run.
   await expect(async () => {

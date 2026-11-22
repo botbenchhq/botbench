@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium } from "@playwright/test";
-import { checkDesign, expect, signIn, test } from "./helpers.ts";
+import { checkDesign, expect, signIn, test, THEME_COLOR } from "./helpers.ts";
 
 // Installing Botbench, in the real client at a phone's size: a real Botbench process serving the built client, and
 // Chrome's own installability checks read through its DevTools protocol. No CLI turn.
@@ -34,7 +34,7 @@ test("the manifest and service worker pass Chrome's install checks, the worker r
   expect(manifest.url).toBe(`${botbench.base}/manifest.webmanifest`);
   expect(manifest.errors, "the manifest parses without errors").toEqual([]);
   const parsed = JSON.parse(manifest.data ?? "{}") as { name?: string; display?: string; theme_color?: string; background_color?: string; icons?: { src: string; purpose: string }[] };
-  expect(parsed).toMatchObject({ name: "Botbench", display: "standalone", theme_color: "#121417", background_color: "#121417" });
+  expect(parsed).toMatchObject({ name: "Botbench", display: "standalone", theme_color: THEME_COLOR.dark, background_color: THEME_COLOR.dark });
   expect(parsed.icons?.map((icon) => `${icon.src} ${icon.purpose}`)).toEqual(["/icons/icon-192.png any", "/icons/icon-512.png any", "/icons/icon-maskable-192.png maskable", "/icons/icon-maskable-512.png maskable"]);
   for (const icon of parsed.icons ?? []) {
     const res = await page.request.get(new URL(icon.src, botbench.base).href);

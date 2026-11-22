@@ -59,7 +59,7 @@ function FirstRun({ driver }: { driver: DriverState | "failed" | null }) {
           <p className="ds-empty-state__body">A run makes a list of tasks from a prompt or a spec file, for you to edit and approve. Botbench then builds each task in a separate copy of the project and shows you what it did, for you to accept or reject.</p>
           {driver === "failed" && <p className="ds-empty-state__body">Botbench could not check Claude Code just now. New run says so if it cannot be used.</p>}
           <div className="ds-empty-state__action">
-            <NewLink href="#/runs/new">New run</NewLink>
+            <NewLink href="#/turn?start=run">New run</NewLink>
           </div>
         </>
       ) : (
@@ -134,7 +134,7 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <Frame current="runs">
       <Page>
-        <PageHeader title="Runs" action={groups !== null && !empty ? <NewLink href="#/runs/new">New run</NewLink> : undefined}>
+        <PageHeader title="Runs" action={groups !== null && !empty ? <NewLink href="#/turn?start=run">New run</NewLink> : undefined}>
           <p className="ds-page-header__description">What needs you first, then what is running, then what has finished. A task you start on its own is here too.</p>
         </PageHeader>
         {failed !== null && (

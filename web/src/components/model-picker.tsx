@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, getModels, timedOut, type ModelList, type StoredEvent } from "../api/client.ts";
+import { Option } from "./option.tsx";
+import { ApiError, getModels as askModels, timedOut, type ModelList, type StoredEvent } from "../api/client.ts";
+
+/** One request for the model list at a time, shared by every picker on the screen; a failed one is asked again next time. */
+let asking: Promise<ModelList> | null = null;
+function getModels(): Promise<ModelList> {
+  asking ??= askModels().finally(() => {
+    asking = null;
+  });
+  return asking;
+}
 
 /** The owner's choice of model, kept per browser so it is not picked again for every prompt. */
 const MODEL_KEY = "botbench.model";
@@ -38,8 +48,8 @@ function saveChoice(key: string, choice: Choice): void {
   }
 }
 
-/** What a request should carry: a name, null for the CLI's own default, or nothing when the configured model applies. */
-export type ModelRequest = { ok: true; model: string | null | undefined } | { ok: false; why: string };
+export type { ModelRequest } from "../app/composer.ts";
+import type { ModelRequest } from "../app/composer.ts";
 
 export interface ModelChoiceState {
   list: ModelList | null;
@@ -116,71 +126,52 @@ export function choiceName(state: ModelChoiceState): string {
   return choice.model === null ? "Claude Code's default" : modelName(list, choice.model);
 }
 
-/** A labelled select of the driver's models, the CLI's own default, and "Other…" with a field for any other name. */
-export function ModelPicker({ state, id = "model", label = "Model" }: { state: ModelChoiceState; id?: string; label?: string }) {
+/**
+ * The driver's models as one choice (the design system's option picker): the CLI's own default, each model it lists,
+ * and last Other…, which reveals a field for any other name. `legend` is hidden when the view's title says the same.
+ */
+export function ModelOptions({ state, id = "model", legend = "Model", hideLegend = false }: { state: ModelChoiceState; id?: string; legend?: string; hideLegend?: boolean }) {
   const { list, problem, choice } = state;
   const ready = list !== null || problem !== null;
   const value = choice === null ? CONFIGURED : choice.other ? OTHER : (choice.model ?? "");
   const cliDefault = list?.cliDefault ?? null;
+  const pick = (next: string): void => state.choose(next === OTHER ? { model: "", other: true } : { model: next === "" ? null : next, other: false });
   return (
-    <div className="ds-stack ds-gap-sm">
-      <div className="ds-field">
-        <label htmlFor={id} className="ds-field__label">
-          {label}
-        </label>
-        <div className="ds-select">
-          <select
-            id={id}
-            name={id}
-            value={ready ? value : ""}
-            disabled={!ready}
-            onChange={(e) => {
-              if (e.target.value === CONFIGURED) return;
-              state.choose(e.target.value === OTHER ? { model: "", other: true } : { model: e.target.value === "" ? null : e.target.value, other: false });
-            }}
-            aria-describedby={`${id}-source`}
-            className="ds-field__control ds-select__control"
-          >
-            {ready ? (
-              <>
-                {choice === null && <option value={CONFIGURED}>Model from Botbench's configuration</option>}
-                <option value="">{cliDefault === null ? "Claude Code's default" : `Claude Code's default (${cliDefault})`}</option>
-                {(list?.models ?? []).map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label === undefined || model.label === model.id ? model.id : `${model.label} · ${model.id}`}
-                  </option>
-                ))}
-                <option value={OTHER}>Other…</option>
-              </>
-            ) : (
-              <option value="">Reading the models.</option>
-            )}
-          </select>
-        </div>
-        <p id={`${id}-source`} data-testid={`${id}-source`} role="status" className="ds-field__description">
-          {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
-        </p>
-      </div>
-      {ready && choice?.other === true && (
-        <div className="ds-field">
-          <label htmlFor={`${id}-other`} className="ds-field__label">
-            {id === "model" ? "Model name" : `${label} name`}
-          </label>
-          <input
-            id={`${id}-other`}
-            name={`${id}-other`}
-            type="text"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            value={choice.model ?? ""}
-            onChange={(e) => state.choose({ model: e.target.value, other: true })}
-            aria-describedby={`${id}-source`}
-            className="ds-field__control"
-          />
-        </div>
+    <fieldset className="ds-option-picker" aria-describedby={`${id}-source`} data-testid={`${id}-options`}>
+      <legend className={hideLegend ? "ds-option-picker__legend ds-visually-hidden" : "ds-option-picker__legend"}>{legend}</legend>
+      <p id={`${id}-source`} data-testid={`${id}-source`} role="status" className="ds-option-picker__hint">
+        {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
+      </p>
+      {ready && (
+        <>
+          {choice === null && <Option group={id} id={`${id}-configured`} value={CONFIGURED} checked onChange={() => {}} name="Model from Botbench's configuration" />}
+          <Option group={id} id={`${id}-default`} value="" checked={value === ""} onChange={() => pick("")} name="Claude Code's default" description={cliDefault} />
+          {(list?.models ?? []).map((model, at) => (
+            <Option key={model.id} group={id} id={`${id}-${at}`} value={model.id} checked={value === model.id} onChange={() => pick(model.id)} name={model.label ?? model.id} description={model.label === undefined || model.label === model.id ? null : model.id} />
+          ))}
+          <Option group={id} id={`${id}-other`} value={OTHER} checked={value === OTHER} onChange={() => pick(OTHER)} name="Other…" />
+          <div className="ds-option-picker__reveal">
+            <div className="ds-field">
+              <label htmlFor={`${id}-name`} className="ds-field__label">
+                {id === "model" ? "Model name" : `${legend} name`}
+              </label>
+              <input
+                id={`${id}-name`}
+                name={`${id}-name`}
+                type="text"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={choice?.other === true ? (choice.model ?? "") : ""}
+                onChange={(e) => state.choose({ model: e.target.value, other: true })}
+                aria-describedby={`${id}-source`}
+                className="ds-field__control"
+              />
+            </div>
+          </div>
+        </>
       )}
-    </div>
+    </fieldset>
   );
 }
 

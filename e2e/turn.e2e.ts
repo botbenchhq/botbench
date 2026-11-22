@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { checkDesign, checkWords, copyShot, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, checkWords, copyShot, expect, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
@@ -21,7 +21,8 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.keyboard.press("Enter");
 
   await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code \d+\.\d+\.\d+ · signed in · subscription$/);
-  await expect(page.getByRole("button")).toHaveText(["Send", /^Model: /]);
+  await expect(page.getByRole("button", { name: "Add context" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Model: / })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("stream-banner")).toHaveCount(0);
   await checkDesign(page, "turn, empty");
@@ -129,6 +130,11 @@ test("LIVE: three tool calls in a row are one step group: a line that counts the
   const steps = group.locator('.ds-step-group__steps > [data-event="tool_call"]');
   await expect(steps).toHaveCount(3);
   for (const step of await steps.all()) await expect(step.locator(".ds-tool-call")).toHaveAttribute("data-state", "succeeded");
+  // In the open group a step that succeeded shows only its check: the word is cut from view and kept for a screen reader.
+  const status = steps.first().locator(".ds-tool-call__status");
+  await expect(status).toHaveText("Done");
+  expect(await status.evaluate((el) => el.getBoundingClientRect().width), "only the check is drawn").toBeLessThanOrEqual(16);
+  await tempShot(page, "chat-reply-step-group");
   // A step's detail is the second level, with its raw arguments inside it, under their own words: there is no third.
   await steps.first().locator("summary").first().click();
   await expect(steps.first()).toContainText("Technical details");
@@ -209,43 +215,38 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
   expect(await page.evaluate(() => (window as unknown as { botbenchXss?: number }).botbenchXss)).toBeUndefined();
 });
 
-test("the chat box names the agent in its placeholder and keeps its label for assistive technology; the model sits behind a small control; nothing idle shows in the header", async ({ page, botbench }) => {
+test("the chat box names the agent in its placeholder and for assistive technology, with no label drawn; the model is one chip that opens Add context; nothing idle shows in the header", async ({ page, botbench }) => {
   // The real Claude Code is asked whether it is signed in and which models it offers; no prompt is sent.
   await signIn(page, botbench);
   await expect(page.getByTestId("driver-state")).toHaveText(/ · signed in · /);
   const box = page.getByRole("textbox", { name: "Message Claude Code" });
-  await expect(box).toHaveAttribute("placeholder", "Message Claude Code…");
-  // The label is in the page for a screen reader, and takes no room on the screen.
-  const label = await page.locator('label[for="prompt"]').boundingBox();
-  expect(label!.width * label!.height, "the label is not drawn").toBeLessThanOrEqual(1);
+  await expect(box).toHaveAttribute("placeholder", "Message Claude Code");
+  await expect(page.locator("form.ds-composer label")).toHaveCount(0);
   await expect(page.getByText("Prompt", { exact: true })).toHaveCount(0);
 
-  // The model is one small control under the box, showing the current choice; the picker and its helper line are behind it.
-  const control = page.getByRole("button", { name: /^Model: / });
-  await expect(page.getByRole("button")).toHaveText(["Send", /^Model: /]);
-  await expect(control).toHaveAttribute("aria-expanded", "false");
-  await expect(page.getByLabel("Model", { exact: true })).toBeHidden();
+  // The model is one chip under the box, showing the current choice; the list and its helper line are behind it, in the sheet.
+  const chip = page.getByRole("button", { name: /^Model: / });
+  await expect(chip).toHaveAttribute("aria-haspopup", "dialog");
   await expect(page.getByText("The list is what Claude Code reports on this Mac.")).toBeHidden();
-  // Nothing has arrived, so there is nothing to jump to.
-  await expect(page.getByRole("button", { name: /Jump to latest/ })).toHaveCount(0);
+  // Nothing has arrived, so there is nothing to jump to: the block is in the page, hidden.
+  await expect(page.locator(".ds-jump-to-latest")).toBeHidden();
   // With no approval waiting the header shows no approvals line, and Settings is an icon with a name.
   await expect(page.getByTestId("approval-tray")).toBeEmpty();
   await expect(page.getByText("No approvals are waiting.")).toHaveCount(0);
   const settings = page.getByRole("banner").getByRole("link", { name: "Settings" });
   await expect(settings).toBeVisible();
   await expect(settings).toHaveText("");
-  await checkDesign(page, "chat, empty, model closed");
+  await checkDesign(page, "chat, empty");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat.png") });
 
-  await control.click();
-  await expect(control).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
+  await chip.click();
+  await expect(page.locator("dialog.ds-sheet").getByRole("heading", { name: "Model" })).toBeVisible();
   await expect(page.getByTestId("model-source")).toHaveText("The list is what Claude Code reports on this Mac.");
-  await checkDesign(page, "chat, model picker open");
+  await checkDesign(page, "chat, model open");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat-model.png") });
 });
 
-test("with Claude Code signed out, the screen says so and offers no send control", async ({ page }) => {
+test("with Claude Code signed out, the composer says why it cannot send, and Check again asks the agent again", async ({ page }) => {
   // The real CLI, pointed at an empty configuration directory, reports itself signed out.
   const empty = tempDir("botbench-e2e-claude-config-");
   const botbench = await startBotbench({ env: { CLAUDE_CONFIG_DIR: empty } });
@@ -255,17 +256,18 @@ test("with Claude Code signed out, the screen says so and offers no send control
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
     await expect(page.getByTestId("driver-problem")).toContainText("Claude Code is signed out. Run `claude auth login` in a terminal.");
-    await expect(page.getByTestId("driver-problem")).toContainText("Prompts cannot be sent until this is fixed.");
-    await expect(page.getByRole("button", { name: /send|stop/i })).toHaveCount(0);
-    await expect(page.getByRole("textbox")).toHaveCount(0);
-    await expect(page.locator("form")).toHaveCount(0);
-    await checkDesign(page, "turn, signed out");
-    // The one control left asks the CLI again, for real.
+    await expect(page.getByTestId("driver-problem")).toContainText("Nothing can be sent until this is fixed.");
+    const send = page.getByRole("button", { name: "Send" });
+    await expect(send).toBeDisabled();
+    await expect(send).toHaveAccessibleDescription(/^Claude Code is signed out\./);
+    await expect(page.getByRole("textbox")).toBeDisabled();
+    await checkDesign(page, "chat, signed out");
+    // Check again asks the CLI again, for real.
     const probed = page.waitForResponse((r) => r.url().endsWith("/api/driver") && r.status() === 200);
     await page.getByRole("button", { name: "Check again" }).click();
     await probed;
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
-    await expect(page.getByRole("textbox")).toHaveCount(0);
+    await expect(send).toBeDisabled();
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });

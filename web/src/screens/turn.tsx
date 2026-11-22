@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
+import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, startRun, startTask, startTurn, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { arrive, blocked as blockedBy, commandsWords, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
-import { Alert, Frame, PageHeader, StreamBanner } from "../components/header.tsx";
-import { follow, jumpCount, nearBottom, type Follow, type FollowEvent } from "../components/follow.ts";
-import { choiceName, ModelPicker, modelName, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
+import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
+import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
+import { jumpCount } from "../components/follow.ts";
+import { Icon, SPRITE } from "../components/icon.tsx";
+import { MODES } from "../components/mode-choice.tsx";
+import { choiceName, modelWords, modelName, sessionModel, useModelChoice } from "../components/model-picker.tsx";
+import { useKnownRepositories, useRepository } from "../components/repository.tsx";
+import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
+import { useTranscript } from "../../vendor/design-system/react/use-transcript.ts";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
 const CONVERSATION_KEY = "botbench.conversation";
@@ -36,36 +44,98 @@ function driverWords(driver: DriverState | null, failed: boolean): string {
   return `Claude Code ${driver.version ?? ""} · signed in · ${billing}`;
 }
 
-export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
+/** What the composer remembers on this device: the repository, what to do, mode, review and delivery. */
+const COMPOSER_KEY = "botbench.composer";
+
+function loadComposer(): string | null {
+  try {
+    return window.localStorage.getItem(COMPOSER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveComposer(value: string): void {
+  try {
+    window.localStorage.setItem(COMPOSER_KEY, value);
+  } catch {
+    // Private browsing may refuse storage; the choices then last until a reload.
+  }
+}
+
+const inRepository = (repo: RepoPick): repo is { kind: "known" | "other"; path: string } => repo.kind === "known" || repo.kind === "other";
+
+/**
+ * The home screen: the conversation, and under it the one composer that starts anything. With no repository it sends
+ * a chat prompt; with a repository it starts a task or plans a run, and opens its screen. `start` comes from New task
+ * and New run, which arrive with that kind chosen.
+ */
+export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSignedOut: () => void }) {
   const [driver, setDriver] = useState<DriverState | null>(null);
   const [driverFailed, setDriverFailed] = useState(false);
   const [conversation, setConversation] = useState<number[]>(loadConversation);
   const [events, setEvents] = useState<StoredEvent[]>([]);
-  /** The turn the screen is waiting on. */
+  /** The chat turn the screen is waiting on. */
   const [active, setActive] = useState<{ attemptId: number; turn: number } | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const models = useModelChoice(onSignedOut);
   const startRef = useRef<Promise<{ attemptId: number; turn: number }> | null>(null);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
-  const logRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
-  /** The model picker is out of the way until the owner opens it. */
-  const [pickerOpen, setPickerOpen] = useState(false);
-  /** Whether the transcript follows its newest row, and how many rows arrived since the owner scrolled up. */
-  const followRef = useRef<Follow>({ following: true, unseen: 0 });
-  const [unseen, setUnseen] = useState(0);
-  const rowsRef = useRef(0);
-  /** The jump button stays while it holds the focus, so a press from the keyboard does not drop the focus. */
-  const [jumpFocused, setJumpFocused] = useState(false);
-  const onFollow = useCallback((event: FollowEvent): void => {
-    followRef.current = follow(followRef.current, event);
-    setUnseen(followRef.current.following ? 0 : followRef.current.unseen);
-  }, []);
+
+  // What the composer holds, starting from what this device remembers.
+  const [remembered] = useState(() => readRemembered(loadComposer()));
+  const arrived = useMemo(() => arrive(remembered, start), [remembered, start]);
+  const [repo, setRepo] = useState<RepoPick>(arrived.repo);
+  const [otherPath, setOtherPath] = useState(remembered.repo.kind === "other" ? remembered.repo.path : "");
+  const [kind, setKind] = useState<Kind>(arrived.kind);
+  /** The mode the owner chose here; until then the default from Settings. */
+  const [chosenMode, setChosenMode] = useState<RunMode | null>(remembered.mode);
+  const [defaultMode, setDefaultMode] = useState<RunMode | null>(null);
+  const mode = chosenMode ?? defaultMode;
+  const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
+  const [specPath, setSpecPath] = useState("");
+  const [sameBuild, setSameBuild] = useState(true);
+  const models = useModelChoice(onSignedOut);
+  const buildModels = useModelChoice(onSignedOut, "botbench.buildModel");
+  // Only a run has a reviewer: the agents are asked once a run is being set up.
+  const [runWanted, setRunWanted] = useState(false);
+  const review = useReviewChoice(onSignedOut, remembered.review, runWanted);
+  const known = useKnownRepositories(onSignedOut);
+  const repository = useRepository(inRepository(repo) ? repo.path.trim() : "", onSignedOut);
+
+  useEffect(() => {
+    if (repo.kind === "needed") return;
+    saveComposer(writeRemembered({ repo, kind, mode: chosenMode, review: review.value, delivery }));
+  }, [repo, kind, chosenMode, review.value, delivery]);
+  // Coming from New task or New run, the address goes back to the composer's own, so a reload keeps what was chosen since.
+  useEffect(() => {
+    if (start !== null) window.history.replaceState(null, "", "#/turn");
+  }, [start]);
+  useEffect(() => {
+    let live = true;
+    getDefaultMode().then(
+      (found) => live && setDefaultMode(found),
+      (err: unknown) => {
+        if (live && err instanceof ApiError && err.status === 401) onSignedOut();
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [onSignedOut]);
+
+  /** The Add context sheet and the view it shows. */
+  const sheetRef = useRef<HTMLDialogElement>(null);
+  const [view, setView] = useState<SheetView>("rows");
+  const openSheet = (on: SheetView): void => {
+    setView(on);
+    if (sheetRef.current !== null && !sheetRef.current.open) sheetRef.current.showModal();
+  };
 
   /** Dictation: offered only when the Mac can transcribe and this browser can record. */
   const [canDictate, setCanDictate] = useState(false);
@@ -119,11 +189,11 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
   /** Read the conversation's stored transcripts and fold them in. Returns the newest event id seen. */
   const refresh = useCallback(async (ids: number[]): Promise<number> => {
     let newest = 0;
-    const known: number[] = [];
+    const kept: number[] = [];
     for (const id of ids) {
       try {
         const transcript = await getTranscript(id);
-        known.push(id);
+        kept.push(id);
         setEvents((have) => mergeEvents(have, transcript.events));
         newest = Math.max(newest, transcript.events.at(-1)?.id ?? 0);
         if (id === ids.at(-1)) {
@@ -136,9 +206,9 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         if (!(err instanceof ApiError && err.status === 404)) throw err;
       }
     }
-    if (known.length !== ids.length) {
-      setConversation(known);
-      saveConversation(known);
+    if (kept.length !== ids.length) {
+      setConversation(kept);
+      saveConversation(kept);
     }
     return newest;
   }, []);
@@ -177,7 +247,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
 
   const shown = useMemo(() => events.filter((e) => conversation.includes(e.attemptId)), [events, conversation]);
   const activeEnded = active !== null && events.some((e) => e.attemptId === active.attemptId && e.turn === active.turn && e.type === "turn_ended");
-  const running = starting || (active !== null && !activeEnded);
+  const running = (starting && !inRepository(repo)) || (active !== null && !activeEnded);
   useEffect(() => {
     if (activeEnded) {
       setActive(null);
@@ -185,36 +255,47 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     }
   }, [activeEnded]);
 
-  // Follow the newest row only while the owner is at the bottom; otherwise count the rows that arrive.
+  // The transcript follows its newest row while the reader is at the bottom (the design system's own hook). It counts
+  // the rows the log shows, read from the page once React has put them there.
+  const logBox = useRef<HTMLDivElement | null>(null);
+  const [rowCount, setRowCount] = useState(0);
   useLayoutEffect(() => {
-    const log = logRef.current;
-    if (!log) return;
-    const rows = log.querySelector('ol[role="log"]')?.querySelectorAll(":scope > li:not(.ds-streaming)").length ?? 0;
-    onFollow({ kind: "rows", added: rows - rowsRef.current });
-    rowsRef.current = rows;
-    if (followRef.current.following) log.scrollTop = log.scrollHeight;
-  }, [shown, running, onFollow]);
-  const jump = (): void => {
-    const log = logRef.current;
-    if (log) log.scrollTop = log.scrollHeight;
-    onFollow({ kind: "jumped" });
-  };
+    setRowCount(logBox.current?.querySelector('ol[role="log"]')?.querySelectorAll(":scope > li:not(.ds-streaming)").length ?? 0);
+  });
+  const { scrollerRef, logRef, newCount, jumpToLatest, jumpButtonProps } = useTranscript({ rowCount });
+  const setLog = useCallback(
+    (el: HTMLDivElement | null) => {
+      logBox.current = el;
+      logRef(el);
+    },
+    [logRef],
+  );
 
-  const send = (): void => {
-    const text = prompt.trim();
-    if (running) return;
-    if (text === "") return promptRef.current?.focus();
-    const model = models.request();
-    if (!model.ok) {
-      setPickerOpen(true);
-      return setError(`The prompt was not sent. ${model.why}`);
-    }
+  const builder: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
+  const facts: Facts = {
+    text: prompt,
+    repo,
+    repoStatus: repository.status,
+    kind,
+    specPath,
+    mode,
+    builder,
+    model: models.request(),
+    buildModel: sameBuild ? null : buildModels.request(),
+    commandTyped: repository.listed !== null && repository.adding.trim() !== "",
+  };
+  const stopReason = blockedBy(facts);
+  const chatting = !inRepository(repo);
+  /** While a chat reply runs and the composer would send a chat, the button is Stop. */
+  const showStop = chatting && running;
+
+  const sendChat = (text: string, model: string | null | undefined): void => {
     setError(null);
     setStarting(true);
     // Whoever sends wants to see the answer: the transcript follows again.
-    jump();
+    jumpToLatest();
     // A model other than the one the conversation is on continues it in a new attempt on that model.
-    const started = startTurn(text, conversation.at(-1), model.model);
+    const started = startTurn(text, conversation.at(-1), model);
     startRef.current = started;
     started.then(
       ({ attemptId, turn }) => {
@@ -232,9 +313,37 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         setStopping(false);
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         if (err instanceof ApiError && err.driver !== null) setDriver(err.driver);
-        setError(err instanceof ApiError ? `The prompt was not sent. ${err.message}` : "The prompt was not sent: Botbench could not be reached.");
+        setError(err instanceof ApiError ? `The message was not sent. ${err.message}` : "The message was not sent: Botbench could not be reached.");
       },
     );
+  };
+
+  /** Start a task or a run, and open its screen. The server checks everything again itself. */
+  const startWork = (what: "task" | "run", begin: () => Promise<string>): void => {
+    setError(null);
+    setStarting(true);
+    begin().then(
+      (address) => {
+        window.location.hash = address;
+      },
+      (err: unknown) => {
+        setStarting(false);
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setError(err instanceof ApiError ? `The ${what} was not started. ${err.message}` : `The ${what} was not started: Botbench could not be reached.`);
+      },
+    );
+  };
+
+  const send = (): void => {
+    if (starting || showStop) return;
+    // Only the commands shown in the list are sent, and the server grants nothing else.
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery });
+    if (action.do === "focus") return promptRef.current?.focus();
+    if (action.do === "blocked") return;
+    if (action.do === "chat") return sendChat(action.prompt, action.model);
+    if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved).then(({ taskId }) => `#/tasks/${taskId}`));
+    const { do: _, ...run } = action;
+    startWork("run", () => startRun(run).then(({ runId }) => `#/runs/${runId}`));
   };
 
   const stop = (): void => {
@@ -259,13 +368,12 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
 
   const submit = (event: FormEvent): void => {
     event.preventDefault();
-    // While a turn runs the form holds Stop, a button of its own, and sends nothing.
-    if (!running) send();
+    send();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      if (!running) send();
+      send();
     }
   };
 
@@ -276,13 +384,33 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     saveConversation([]);
     setActive(null);
     setError(null);
-    onFollow({ kind: "jumped" });
+    jumpToLatest();
     promptRef.current?.focus();
   };
 
-  const canSend = driver !== null && driver.problem === null;
   const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
   const session = useMemo(() => sessionModel(shown), [shown]);
+
+  const run = inRepository(repo) && kind === "run";
+  useEffect(() => {
+    if (run) setRunWanted(true);
+  }, [run]);
+  const builds = run && !sameBuild ? buildModels : models;
+  const values: Record<Row, string> = {
+    repository: repoName(repo, known),
+    kind: kind === "task" ? "One task" : "Plan a run",
+    spec: specPath.trim() === "" ? "None" : (specPath.trim().split("/").at(-1) ?? specPath.trim()),
+    mode: kind === "task" ? "Manual" : (MODES.find((m) => m.mode === mode)?.name ?? "Reading"),
+    review: review.offer.state === "checking" ? "Checking" : review.words,
+    delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
+    commands: commandsWords(repository.listed?.commands.length ?? 0),
+    models: run && !sameBuild ? `${choiceName(models)}, then ${choiceName(buildModels)}` : choiceName(models),
+  };
+  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null });
+  const label = chatting ? "Message Claude Code" : kind === "task" ? "Describe the task" : "Describe what to plan";
+  const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
+  const builderDown = builder.state !== "ready";
+  const name = repoName(repo, known);
 
   return (
     <Frame current="turn" fill banner={connected ? undefined : <StreamBanner />}>
@@ -309,104 +437,148 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </PageHeader>
         </div>
 
-        <div ref={logRef} role="region" aria-label="Transcript" tabIndex={0} onScroll={(e) => onFollow({ kind: "scrolled", nearBottom: nearBottom(e.currentTarget) })} className="min-h-0 flex-1 overflow-y-auto">
-          <div className="ds-container pb-lg">
-            {shown.length === 0 ? (
+        <div ref={scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={setLog} className="ds-container pb-lg">
+            {shown.length > 0 ? (
+              <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} />
+            ) : chatting ? (
               <div className="ds-empty-state ds-empty-state--compact">
                 <h2 className="ds-empty-state__title">No messages yet</h2>
-                <p className="ds-empty-state__body">Send a prompt and Claude Code answers here. It works in an empty folder of its own inside Botbench's data folder, not in any of your projects.</p>
+                <p className="ds-empty-state__body">Claude Code answers here, in a folder of its own, outside your projects.</p>
               </div>
             ) : (
-              <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} />
+              <div className="ds-empty-state ds-empty-state--compact" data-testid="composer-about">
+                <h2 className="ds-empty-state__title">{kind === "task" ? `New task in ${name}` : `New run in ${name}`}</h2>
+                <p className="ds-empty-state__body">
+                  {kind === "task"
+                    ? "Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched."
+                    : `Claude Code plans tasks first, reading a copy it cannot change. ${mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
+                </p>
+              </div>
             )}
           </div>
         </div>
 
-        {/* Left out, not hidden, while there is nothing new: the system's display rule for the block outranks the hidden attribute. */}
-        {(unseen > 0 || jumpFocused) && (
-          <div className="ds-jump-to-latest">
-            <button type="button" onClick={jump} onFocus={() => setJumpFocused(true)} onBlur={() => setJumpFocused(false)} className="ds-jump-to-latest__button">
-              <span className="ds-jump-to-latest__count">{jumpCount(unseen)}</span> Jump to latest
-            </button>
-          </div>
-        )}
+        <div className="ds-jump-to-latest" hidden={newCount === 0}>
+          <button type="button" className="ds-jump-to-latest__button" {...jumpButtonProps}>
+            <span className="ds-jump-to-latest__count">{jumpCount(newCount)}</span> Jump to latest
+          </button>
+        </div>
 
-        {canSend ? (
-          <form onSubmit={submit} aria-busy={running && error === null} className="ds-composer ds-composer--sticky">
-            {/* Named for assistive technology only: the box's placeholder says the same for the eye. */}
-            <label htmlFor="prompt" className="ds-visually-hidden">
-              Message Claude Code
-            </label>
-            <div className="ds-composer__row">
-              <textarea id="prompt" name="prompt" ref={promptRef} rows={1} placeholder="Message Claude Code…" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={error === null ? undefined : "prompt-error"} className="ds-composer__input" />
+        <form onSubmit={submit} aria-busy={showStop || undefined} className="ds-composer ds-composer--sticky" noValidate>
+          <div className="ds-composer__box">
+            <textarea id="prompt" name="prompt" ref={promptRef} rows={1} aria-label={label} placeholder={label} value={prompt} disabled={builderDown} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={describedBy} className="ds-composer__input" />
+            <div className="ds-composer__bar">
+              <BusyButton icon="plus" spriteHref={SPRITE} className="ds-icon-button" aria-label="Add context" aria-haspopup="dialog" onClick={() => openSheet("rows")}>
+                {null}
+              </BusyButton>
+              <div className="ds-composer__controls">
+                {stopReason?.required === "repository" ? (
+                  <BusyButton size="small" className="ds-composer__chip" aria-haspopup="dialog" aria-describedby="composer-reason" onClick={() => openSheet("repository")}>
+                    <span className="ds-composer__value">
+                      <span className="ds-visually-hidden">Choose a </span>Repository
+                    </span>
+                  </BusyButton>
+                ) : (
+                  <BusyButton variant="quiet" size="small" className="ds-composer__chip" aria-haspopup="dialog" onClick={() => openSheet("models")}>
+                    <span className="ds-composer__value">
+                      <span className="ds-visually-hidden">Model: </span>
+                      {/* No hidden comma after the value: an absolutely placed span after a long value is not clipped by it and widens the page. */}
+                      {choiceName(builds)} <span className="ds-composer__qualifier">Claude Code</span>
+                    </span>
+                  </BusyButton>
+                )}
+              </div>
               {canDictate && (
-                <button type="button" onClick={toggleDictation} aria-pressed={dictation.kind === "listening"} aria-busy={dictation.kind === "transcribing"} disabled={dictation.kind === "transcribing"} className="ds-button">
-                  Dictate
+                <button
+                  type="button"
+                  onClick={toggleDictation}
+                  aria-label="Dictate"
+                  aria-pressed={dictation.kind === "listening"}
+                  aria-busy={dictation.kind === "transcribing" || undefined}
+                  aria-describedby={dictation.kind === "error" ? "dictation-error" : dictation.kind === "idle" ? undefined : "dictation-status"}
+                  className="ds-button ds-button--quiet ds-icon-button"
+                >
+                  <Icon name="mic" className="ds-button__icon" />
                 </button>
               )}
-              {running ? (
-                <button type="button" onClick={stop} aria-busy={stopping} className="ds-button">
+              {showStop ? (
+                <BusyButton busy={stopping} busyLabel="Stopping" onClick={stop} aria-describedby="composer-reason">
                   Stop
-                </button>
+                </BusyButton>
               ) : (
-                <button type="submit" className="ds-button ds-button--primary">
+                <BusyButton type="submit" variant="primary" busy={starting} busyLabel={chatting ? "Sending" : "Starting"} disabled={stopReason !== null} aria-describedby={describedBy}>
                   Send
-                </button>
+                </BusyButton>
               )}
             </div>
-            {error !== null && (
-              <p id="prompt-error" role="alert" className="ds-composer__error">
-                {error}
-              </p>
-            )}
-            {dictation.kind === "listening" && <p role="status">Listening. Press Dictate again when you have finished.</p>}
-            {dictation.kind === "transcribing" && (
-              <p role="status" className="ds-spinner">
-                Transcribing
-              </p>
-            )}
-            {dictation.kind === "error" && (
-              <p role="alert" className="ds-composer__error">
-                {dictation.message}
-              </p>
-            )}
-            <div className="ds-composer__controls">
-              <button type="button" aria-expanded={pickerOpen} aria-controls="model-picker" onClick={() => setPickerOpen((open) => !open)} className="ds-button ds-button--quiet ds-button--small max-w-full">
-                {/* Cut to the width of the box: a model name may be long and unbroken, and the picker shows it whole. */}
-                <span className="truncate">{`Model: ${choiceName(models)}`}</span>
-              </button>
-            </div>
-            <div id="model-picker" hidden={!pickerOpen}>
-              <ModelPicker state={models} />
-            </div>
-          </form>
-        ) : (
-          <div className="ds-container ds-stack py-md">
-            {error !== null && (
-              <Alert tone="error" role="alert">
-                {error}
-              </Alert>
-            )}
-            {driver !== null || driverFailed ? (
-              <Alert
-                tone="warning"
-                testId="driver-problem"
-                title={driverFailed ? "Botbench could not check Claude Code." : (driver!.problem ?? undefined)}
-                action={
-                  <button type="button" onClick={checkDriver} className="ds-button ds-button--small">
-                    Check again
-                  </button>
-                }
-              >
-                Prompts cannot be sent until this is fixed.
-              </Alert>
-            ) : (
-              <p role="status" className="ds-spinner">
-                Checking that Claude Code is ready.
-              </p>
-            )}
           </div>
-        )}
+          {showStop ? (
+            <p id="composer-reason" className="ds-composer__reason">
+              Claude Code is working. You can send again when it has answered.
+            </p>
+          ) : (
+            stopReason !== null && (
+              <p id="composer-reason" data-testid={builderDown ? "driver-problem" : "composer-reason"} className="ds-composer__reason">
+                {stopReason.reason}
+              </p>
+            )
+          )}
+          {builder.state === "problem" && (
+            // Asks the agent again, for real, once the owner has fixed what the reason names.
+            <BusyButton variant="quiet" size="small" onClick={checkDriver}>
+              Check again
+            </BusyButton>
+          )}
+          {error !== null && (
+            <p id="composer-error" role="alert" className="ds-composer__error">
+              {error}
+            </p>
+          )}
+          {(dictation.kind === "listening" || dictation.kind === "transcribing") && (
+            <p id="dictation-status" role="status" className="ds-composer__reason">
+              {dictation.kind === "listening" ? "Listening. Press Dictate again when you have finished." : "Transcribing"}
+            </p>
+          )}
+          {dictation.kind === "error" && (
+            <p id="dictation-error" role="alert" className="ds-composer__error">
+              {dictation.message}
+            </p>
+          )}
+        </form>
+
+        <ContextSheet
+          sheetRef={sheetRef}
+          view={view}
+          setView={setView}
+          state={{
+            rows,
+            values,
+            warning: { mode: run && mode === "full" },
+            repo,
+            otherPath,
+            known,
+            chooseRepo: setRepo,
+            setOtherPath: (path) => {
+              setOtherPath(path);
+              setRepo({ kind: "other", path });
+            },
+            repository,
+            kind,
+            setKind,
+            specPath,
+            setSpecPath,
+            mode,
+            setMode: setChosenMode,
+            review,
+            delivery,
+            setDelivery,
+            models,
+            sameBuild,
+            setSameBuild,
+            buildModels,
+          }}
+        />
       </main>
     </Frame>
   );

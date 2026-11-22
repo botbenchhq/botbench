@@ -1,3 +1,4 @@
+import { Option } from "./option.tsx";
 import type { RunMode } from "../api/client.ts";
 
 /** Each mode in the order it is offered, with its name and what it does in one line. */
@@ -19,43 +20,36 @@ export const MODE_SENTENCE: Record<RunMode, string> = {
   full: "Fully autonomous: Botbench builds without asking you, refuses what would need you, and accepts work whose every check passed and that its reviewer, if any, said looks right. The rest waits for you.",
 };
 
-/** The three modes as one choice (the design system's option picker). */
-export function ModePicker({ name, legend, hint, value, onChange }: { name: string; legend: string; hint: string; value: RunMode | null; onChange: (mode: RunMode) => void }) {
+/**
+ * The three modes as one choice (the design system's option picker). With `only`, the other modes cannot be chosen
+ * and say so: a task started on its own is always manual.
+ */
+export function ModePicker({ name, legend, hint, value, onChange, hideLegend = false, only }: { name: string; legend: string; hint: string; value: RunMode | null; onChange: (mode: RunMode) => void; hideLegend?: boolean; only?: RunMode }) {
   return (
     <fieldset className="ds-option-picker" aria-describedby={`${name}-hint`} data-testid={`${name}-picker`}>
-      <legend className="ds-option-picker__legend">{legend}</legend>
+      <legend className={hideLegend ? "ds-option-picker__legend ds-visually-hidden" : "ds-option-picker__legend"}>{legend}</legend>
       <p className="ds-option-picker__hint" id={`${name}-hint`}>
         {hint}
       </p>
-      {MODES.map((option) => (
-        <label key={option.mode} className="ds-option-picker__option">
-          <input
-            className="ds-option-picker__input"
-            type="radio"
-            name={name}
+      {MODES.map((option) => {
+        const shut = only !== undefined && option.mode !== only;
+        const state = shut ? "Runs only" : (option.warning ?? null);
+        return (
+          <Option
+            key={option.mode}
+            group={name}
+            id={`${name}-${option.mode}`}
             value={option.mode}
-            checked={value === option.mode}
+            checked={(only ?? value) === option.mode}
+            disabled={shut}
             onChange={() => onChange(option.mode)}
-            aria-labelledby={`${name}-${option.mode}-name`}
-            aria-describedby={`${option.warning === undefined ? "" : `${name}-${option.mode}-state `}${name}-${option.mode}-description`}
+            name={option.name}
+            description={option.description}
+            state={state}
+            warning={!shut && option.warning !== undefined}
           />
-          <span className="ds-option-picker__body">
-            <span className="ds-option-picker__text">
-              <span className="ds-option-picker__name" id={`${name}-${option.mode}-name`}>
-                {option.name}
-              </span>
-              <span className="ds-option-picker__description" id={`${name}-${option.mode}-description`}>
-                {option.description}
-              </span>
-            </span>
-            {option.warning !== undefined && (
-              <span className="ds-option-picker__state ds-option-picker__state--warning" id={`${name}-${option.mode}-state`}>
-                {option.warning}
-              </span>
-            )}
-          </span>
-        </label>
-      ))}
+        );
+      })}
     </fieldset>
   );
 }
