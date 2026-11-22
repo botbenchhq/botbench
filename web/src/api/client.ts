@@ -60,10 +60,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+async function request<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
+  const signals = [...(timeoutMs === undefined ? [] : [AbortSignal.timeout(timeoutMs)]), ...(giveUp ? [giveUp] : [])];
   const res = await fetch(path, {
     method,
-    ...(timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
+    ...(signals.length === 0 ? {} : { signal: AbortSignal.any(signals) }),
     credentials: "same-origin",
     cache: "no-store",
     ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
@@ -149,7 +150,13 @@ export interface RepoCheck {
   reason: string | null;
 }
 
-export const checkRepo = (path: string): Promise<RepoCheck> => request("GET", `/api/repos/check?path=${encodeURIComponent(path)}`);
+/** The server gives git 5 seconds to answer about a path; a check silent for this long is not going to answer. */
+export const CHECK_REPO_LIMIT_MS = 10_000;
+/** Ask about one path. `giveUp` ends the request when a newer path has taken its place. */
+export const checkRepo = (path: string, giveUp: AbortSignal): Promise<RepoCheck> =>
+  request("GET", `/api/repos/check?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
+/** Whether a request ended because its time limit passed. */
+export const timedOut = (err: unknown): boolean => err instanceof DOMException && err.name === "TimeoutError";
 export const startTask = (repo: string, prompt: string): Promise<{ taskId: number }> => request("POST", "/api/tasks", { repo, prompt }, 30_000);
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);

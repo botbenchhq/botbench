@@ -8,7 +8,7 @@ import type { Config } from "../../src/config.ts";
 import { createTask, moveTask } from "../../src/engine/task.ts";
 import { startServer, type SmeltServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
-import { checkoutState, git, initRepo, smeltBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { checkoutState, git, gitProcesses, initRepo, releaseStalled, smeltBranches, stalledRepo, tempDir, worktreeCount, write } from "../support/repo.ts";
 
 // No test in this file starts a driver: tasks that reach Claude Code are in test/live/task.live.test.ts.
 
@@ -290,4 +290,29 @@ test("starting a task answers at once with its id, and each state it reaches is 
   assert.equal(server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
   assert.deepEqual(checkoutState(repo), before);
   assert.deepEqual(smeltBranches(repo), []);
+});
+
+test("a repository git cannot read in time is answered as not usable with the reason, a task is not started in it, and no git process is left", { timeout: 30_000 }, async (t) => {
+  const { base, headers, dir, home } = await start(t);
+  const repo = path.join(dir, "stalled");
+  stalledRepo(repo);
+  // Whatever happens, nothing is left waiting in the repository when the server is closed and the folder removed.
+  t.after(() => void releaseStalled(repo));
+
+  const within = AbortSignal.timeout(9000);
+  const started = Date.now();
+  const [check, begun] = await Promise.all([
+    fetch(`${base}/api/repos/check?path=${encodeURIComponent(repo)}`, { headers, signal: within }).then(async (res) => ({ status: res.status, body: (await res.json()) as Record<string, unknown> })),
+    fetch(`${base}/api/tasks`, { method: "POST", headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ repo, prompt: "create hello.txt" }), signal: within }).then(async (res) => ({ status: res.status, body: (await res.json()) as Record<string, unknown> })),
+  ]);
+  assert.ok(Date.now() - started < 9000);
+  assert.equal(check.status, 200);
+  assert.equal(check.body.usable, false);
+  assert.equal(check.body.path, repo);
+  assert.match(String(check.body.reason), /could not be read in time/);
+  assert.equal(begun.status, 400);
+  assert.match(String(begun.body.error), /could not be read in time/);
+  assert.deepEqual((await get(base, headers, "/api/tasks")).body, { tasks: [] });
+  assert.equal(fs.existsSync(path.join(home, "worktrees")), false);
+  assert.deepEqual(gitProcesses(repo), [], "no git process is left for the folder");
 });

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -58,16 +58,84 @@ class GitError extends Error {
   }
 }
 
-/** Run git in `dir` with an argument array (no shell) and return what it printed. */
-function git(dir: string, args: string[]): Promise<string> {
+/** The time git gets to answer a question about a repository: where its top is, what a name points at. These read a few small files. */
+const GIT_CHECK_LIMIT_MS = 5_000;
+/** The time git gets for work that grows with the repository: making a worktree, staging, committing, comparing, removing. */
+const GIT_WORK_LIMIT_MS = 120_000;
+const MAX_OUTPUT = 256 * 1024 * 1024;
+
+/** Git did not finish in its time and was stopped. The message is for the owner as it is. */
+class GitTimeout extends Error {}
+/** A git that was stopped for taking too long is reported as that, never as a repository that is wrong in some other way. */
+const unlessTimeout = (err: unknown): void => {
+  if (err instanceof GitTimeout) throw err;
+};
+
+/** Whether `p` is on a drive macOS mounts under /Volumes: by its real location, or through a link on the way that points there. */
+function onMountedVolume(p: string): boolean {
+  const mounted = (q: string): boolean => q.startsWith("/Volumes/");
+  if (mounted(realPath(p))) return true;
+  // The real location cannot be read when the drive itself is closed to this process; a link's own target still can.
+  for (let at = path.resolve(p); at !== path.dirname(at); at = path.dirname(at)) {
+    try {
+      if (mounted(path.resolve(path.dirname(at), fs.readlinkSync(at)))) return true;
+    } catch {
+      // Not a link.
+    }
+  }
+  return false;
+}
+
+function timeoutWords(dir: string, limitMs: number): string {
+  const base = `The folder ${dir} could not be read in time: git did not answer within ${limitMs / 1000} seconds and was stopped.`;
+  if (process.platform !== "darwin" || !onMountedVolume(dir)) return base;
+  return `${base} The folder is on a drive under /Volumes, and macOS may be blocking a background service from reading an external drive. Allow access for the program that runs Smelt in System Settings → Privacy & Security → Files and Folders, or use a repository on the internal disk.`;
+}
+
+/**
+ * Run git in `dir` with an argument array (no shell) and return what it printed. Git runs in its own process group and
+ * gets `limitMs` to finish; after that the whole group is killed, so neither it nor a program it started is left running.
+ */
+function git(dir: string, args: string[], limitMs = GIT_WORK_LIMIT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("git", ["-C", dir, ...SAFE, ...args], { env: gitEnv(), encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new GitError(`git ${args[0]} failed in ${dir}: ${stderr.trim() || err.message}`, stderr.trim(), err));
-      else resolve(stdout);
+    const child = spawn("git", ["-C", dir, ...SAFE, ...args], { env: gitEnv(), stdio: ["ignore", "pipe", "pipe"], detached: true });
+    let stdout = "";
+    let stderr = "";
+    let stopped: Error | null = null;
+    const stop = (why: Error): void => {
+      if (stopped) return;
+      stopped = why;
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
+    const timer = setTimeout(() => stop(new GitTimeout(timeoutWords(dir, limitMs))), limitMs);
+    const collect = (chunk: string, to: "out" | "err"): void => {
+      if (to === "out") stdout += chunk;
+      else stderr += chunk;
+      if (stdout.length + stderr.length > MAX_OUTPUT) stop(new GitError(`git ${args[0]} in ${dir} printed more than Smelt reads and was stopped.`, "", null));
+    };
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, "out"));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, "err"));
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new GitError(`git ${args[0]} could not be started in ${dir}: ${err.message}`, err.message, err));
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (stopped) reject(stopped);
+      else if (code === 0) resolve(stdout);
+      else reject(new GitError(`git ${args[0]} failed in ${dir}: ${stderr.trim() || (signal ? `stopped by ${signal}` : `exit code ${code}`)}`, stderr.trim(), null));
     });
   });
 }
-const succeeds = (dir: string, args: string[]): Promise<boolean> => git(dir, args).then(() => true, () => false);
+const succeeds = (dir: string, args: string[]): Promise<boolean> =>
+  git(dir, args, GIT_CHECK_LIMIT_MS).then(() => true, (err: unknown) => {
+    unlessTimeout(err);
+    return false;
+  });
 
 /** The real location of a path whose last parts may not exist yet. */
 function realPath(p: string): string {
@@ -100,14 +168,16 @@ export async function sourceHead(repo: string): Promise<string> {
   if (!isDirectory(repo)) throw new Error(`Repository path ${repo} is not a directory.`);
   let top: string;
   try {
-    top = (await git(repo, ["rev-parse", "--show-toplevel"])).trimEnd();
+    top = (await git(repo, ["rev-parse", "--show-toplevel"], GIT_CHECK_LIMIT_MS)).trimEnd();
   } catch (err) {
+    unlessTimeout(err);
     throw new Error(`${repo} is not a git repository with a working folder (${err instanceof GitError ? err.stderr : String(err)}).`, { cause: err });
   }
   if (realPath(top) !== realPath(repo)) throw new Error(`${repo} is a folder inside the git repository ${top}, not its top level. Give the repository's top level.`);
   try {
-    return (await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])).trim();
+    return (await git(repo, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], GIT_CHECK_LIMIT_MS)).trim();
   } catch (err) {
+    unlessTimeout(err);
     throw new Error(`The git repository ${repo} has no commits yet. Make a first commit, then try again.`, { cause: err });
   }
 }
@@ -159,8 +229,9 @@ async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: s
   if (!isDirectory(dir)) throw notOurs("no such folder");
   let lines: string[];
   try {
-    lines = (await git(dir, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"])).trimEnd().split("\n");
+    lines = (await git(dir, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"], GIT_CHECK_LIMIT_MS)).trimEnd().split("\n");
   } catch (err) {
+    unlessTimeout(err);
     throw notOurs("it is not in a git repository", err);
   }
   const [gitDir, commonDir, top] = lines;
@@ -173,8 +244,9 @@ async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: s
   if (path.dirname(realPath(gitDir)) !== path.join(realPath(commonDir), "worktrees")) throw notOurs("its git folder is not one of the repository's worktree entries");
   let branch: string;
   try {
-    branch = (await git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])).trim();
+    branch = (await git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"], GIT_CHECK_LIMIT_MS)).trim();
   } catch (err) {
+    unlessTimeout(err);
     throw new Error(`The worktree ${dir} is not on a branch, so it is not on its Smelt task branch.`, { cause: err });
   }
   if (!branch.startsWith(BRANCH_PREFIX)) throw new Error(`The worktree ${dir} is on branch ${branch}, not on its Smelt task branch.`);
@@ -254,8 +326,9 @@ export async function removeWorktree(o: { repo: string; path: string; deleteBran
   const { branch, commonDir } = await taskWorktree(dir);
   let repoCommon: string;
   try {
-    repoCommon = realPath((await git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trimEnd());
+    repoCommon = realPath((await git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"], GIT_CHECK_LIMIT_MS)).trimEnd());
   } catch (err) {
+    unlessTimeout(err);
     throw new Error(`${repo} is not a git repository.`, { cause: err });
   }
   if (repoCommon !== commonDir) throw new Error(`The worktree ${dir} does not belong to the repository ${repo}.`);
