@@ -2,6 +2,11 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-22: a process's start time was read in the wrong time zone, and "after a restart" was judged without a clock (unit 8)
+Found by the critique pass, before merge. To tell its own surviving CLI process from an unrelated one under a reused number, Smelt compared the start time `ps` printed with the attempt's time; `ps` printed local time and Node read it in Smelt's own zone, so with a different `TZ` a survivor was left running beside a re-driven agent, or a stranger killed. And an answer the owner gave while start-up recovery was still running was taken for one left by the previous run, and thrown away. Rules going forward:
+- A time taken from another program's output is asked for in UTC and read as UTC, and its test runs under two far-apart `TZ` values.
+- "From the last run" is decided by comparing a stored time with this process's own start, never by "it was already there when I looked": the API answers while recovery is still running.
+
 ## 2026-11-22: a git process with no time limit left the New task screen on "Checking." (unit 6)
 The owner entered a repository on an external drive. Smelt runs as a macOS login service, macOS did not let that service read the drive, and the `git rev-parse` behind `/api/repos/check` never returned: the screen stayed on "Checking.", "Start task" ended with "Smelt could not be reached", and five git processes were left under the server. Rules going forward:
 - Any child process started on behalf of a request has a time limit and is killed, with its process group, when it passes it. The test for it uses a real process that really stalls (for git: a repository whose `.git/config` is a named pipe nobody writes to) and checks with `ps` that nothing is left.

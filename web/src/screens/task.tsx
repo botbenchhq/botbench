@@ -135,7 +135,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   };
 
   // Between the end of the turn and Smelt's commit the task is still building, but Claude Code is no longer working.
-  const working = task?.status === "building" && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "Claude Code is paused until you answer.") : null;
+  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : asking.parkedAt === null ? "Claude Code is paused until you answer." : "Claude Code is stopped until you answer.") : null;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-transcript flex-col">

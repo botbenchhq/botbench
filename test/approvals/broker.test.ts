@@ -113,7 +113,7 @@ test("a request waits as a pending approval until the owner answers; the answer 
   assert.ok(pending);
   assert.deepEqual(
     { ...pending, id: 0, createdAt: "" },
-    { id: 0, taskId: r.taskId, taskTitle: "run the marker script", attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: "sub", reason: "Run the marker script", toolCallId: "toolu_01", status: "pending", note: null, createdAt: "", resolvedAt: null },
+    { id: 0, taskId: r.taskId, taskTitle: "run the marker script", attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: "sub", reason: "Run the marker script", toolCallId: "toolu_01", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null },
   );
   assert.deepEqual(listApprovals(r.db, "pending"), [pending]);
   assert.deepEqual(rules(r.db), ["asked_owner"]);
@@ -418,19 +418,22 @@ test("a request the broker cannot record is declined, never allowed", async (t) 
   assert.equal((await r.broker.request({ taskId: r.taskId, attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "ls", cwd: ".", reason: null, toolCallId: "toolu_16" })).decision, "decline");
 });
 
-test("approvals left pending by a Smelt that stopped are superseded on start: nothing is waiting for them any more", async (t) => {
+test("approvals left pending when a broker starts on the store stay pending and are marked as asked before that start; nothing ends them", async (t) => {
+  // What a killed Smelt really leaves, and what the engine then does with it, is in test/engine/recover-approval.test.ts.
   const r = await rig(t);
   void r.broker.request({ taskId: r.taskId, attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "ls", cwd: ".", reason: null, toolCallId: "toolu_17" });
   const id = r.broker.pending()[0]!.id;
-  // The process is gone without closing: a second broker opens the same store.
+  assert.equal(r.broker.pending()[0]!.parkedAt, null, "asked in this run");
+  // A second broker opens the same store, as the next start of Smelt would.
   const home2 = path.join(r.dir, "home2");
   fs.mkdirSync(home2, { mode: 0o700 });
   const again = createBroker({ db: r.db, home: home2, onChange: () => {} });
   t.after(() => again.close());
   await again.listen();
-  assert.deepEqual(again.pending(), []);
-  assert.equal(listApprovals(r.db).find((a) => a.id === id)!.status, "superseded");
-  assert.throws(() => again.answer(id, "allow"), (err: unknown) => err instanceof ApprovalError && err.status === 409);
+  const [kept] = again.pending();
+  assert.deepEqual([kept!.id, kept!.status, kept!.storedDecision], [id, "pending", null]);
+  assert.ok(kept!.parkedAt !== null);
+  assert.deepEqual(rules(r.db), ["asked_owner"]);
 });
 
 test("a second Smelt on the same data directory is refused, and takes nothing from the first: its socket and its pending approvals stay", async (t) => {
