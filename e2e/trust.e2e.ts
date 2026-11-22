@@ -88,14 +88,14 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   const offer = card.getByTestId("standing-offer");
   await expect(offer).toBeVisible();
   await expect(offer).toContainText("You have allowed this command once.");
-  await expect(card.getByRole("button")).toHaveText(["Allow", "Stop asking for this command", "Decline"]);
+  await expect(card.getByRole("button")).toHaveText(["Allow", "Decline", "Stop asking for this command"]);
   expect(await primaries(page), "Allow stays the one primary action").toEqual(["Allow"]);
   const look = (el: Element): { background: string; text: string; border: string } => {
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };
   };
   const open = offer.getByRole("button", { name: "Stop asking for this command" });
-  expect(await open.evaluate(look), "the offer is drawn as a secondary control").toEqual({ background: "rgba(0, 0, 0, 0)", text: "rgb(23, 23, 23)", border: "rgb(115, 115, 115)" });
+  expect(await open.evaluate(look), "the offer is drawn as a secondary control").toEqual({ background: "rgb(255, 255, 255)", text: "rgb(23, 23, 23)", border: "rgb(229, 229, 229)" });
   const allowBox = (await card.getByRole("button", { name: "Allow", exact: true }).boundingBox())!;
   const openBox = (await open.boundingBox())!;
   expect(openBox.y - (allowBox.y + allowBox.height), "the offer is set apart, below Allow").toBeGreaterThanOrEqual(24);
@@ -106,24 +106,34 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   await open.click();
   const confirm = card.getByTestId("standing-confirm");
   await expect(confirm).toBeVisible();
+  await expect(confirm.getByRole("heading")).toHaveText("Stop asking for this command?");
   await expect(confirm).toContainText("Smelt will run exactly this command without asking you");
   await expect(confirm).toContainText("A different argument still asks, and dangerous commands always ask.");
   await expect(confirm).toContainText("You can take it back on the Trust screen.");
   await expect(confirm.getByTestId("standing-command")).toHaveText(COMMAND);
-  expect(await confirm.getByTestId("standing-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Geist Mono"?,/);
+  expect(await confirm.getByTestId("standing-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
   await expect(confirm.getByTestId("standing-repo")).toHaveText(repo);
   await expect(confirm.getByTestId("standing-directory")).toHaveText("The top of the task's worktree");
   await expect(confirm.getByTestId("standing-role")).toHaveText("implementer");
   await expect(confirm.getByRole("button")).toHaveText(["Give standing permission", "Cancel"]);
+  // Focus starts on the button that changes nothing, so Enter cannot grant by accident.
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
   expect(await primaries(page), "the confirmation is not a second primary action").toEqual(["Allow"]);
   expect(await api(page, smelt, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
   await checkDesign(page, "task, the standing permission confirmation");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u10-offer.png"), fullPage: true });
 
+  // Escape closes it and grants nothing.
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  expect(await api(page, smelt, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
+  await open.click();
+  await expect(confirm).toBeVisible();
+
   // Cancel closes it and still grants nothing; the card waits as before.
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(confirm).toHaveCount(0);
-  await expect(card.getByRole("button")).toHaveText(["Allow", "Stop asking for this command", "Decline"]);
+  await expect(card.getByRole("button")).toHaveText(["Allow", "Decline", "Stop asking for this command"]);
   expect(await api(page, smelt, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
 
@@ -144,7 +154,7 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   await expect(page.locator('[data-event="permission_request"]')).toHaveCount(2);
   await expect(page.getByTestId("not-merged")).toContainText("Every shell command waits for your answer first, unless you gave it standing permission (see Trust)");
   expect((await api<{ approvals: { status: string }[] }>(page, smelt, "/api/approvals")).approvals.map((a) => a.status)).toEqual(["allowed", "allowed"]);
-  const branch = (await page.getByTestId("branch").textContent())!;
+  const branch = await page.getByTestId("branch").inputValue();
   expect(fs.readFileSync(path.join(smelt.home, "worktrees", branch.split("/")[1]!, "task-1", "marker.txt"), "utf8")).toBe("ran\nran\nran\n");
   await checkDesign(page, "task, finished on a standing permission");
 
@@ -172,7 +182,7 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   expect(await shape(grants)).toEqual(["UL", "LI"]);
   const grant = grants.getByRole("listitem");
   await expect(grant.getByTestId("grant-command")).toHaveText(COMMAND);
-  expect(await grant.getByTestId("grant-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Geist Mono"?,/);
+  expect(await grant.getByTestId("grant-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
   await expect(grant).toContainText("implementer");
   await expect(grant).toContainText("The top of a task's worktree");
   await expect(grant).toContainText(repo);
@@ -206,8 +216,12 @@ test("LIVE: Trust starts empty in words; a card for a command allowed before off
   // Take back asks first, in words; keeping it changes nothing.
   await grant.getByRole("button", { name: "Take back" }).click();
   const sure = grant.getByTestId("take-back-confirm");
-  await expect(sure).toContainText("Take this standing permission back? The next time this command is asked for, Smelt asks you again.");
-  await expect(grant.getByRole("button")).toHaveText(["Take it back", "Keep it"]);
+  await expect(sure.getByRole("heading")).toHaveText("Take this standing permission back?");
+  await expect(sure).toContainText("The next time this command is asked for, Smelt asks you again.");
+  await expect(sure).toContainText(COMMAND);
+  // The button that changes nothing comes first and has the focus; neither is a primary action.
+  await expect(sure.getByRole("button")).toHaveText(["Keep it", "Take it back"]);
+  await expect(sure.getByRole("button", { name: "Keep it" })).toBeFocused();
   expect((await api<{ grants: unknown[] }>(page, smelt, "/api/grants")).grants.length).toBe(1);
   await checkDesign(page, "trust, the take back confirmation");
   await grant.getByRole("button", { name: "Keep it" }).click();

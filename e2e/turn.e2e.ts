@@ -6,7 +6,7 @@ import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
 
-test("LIVE: sign in, send a prompt, and the real reply appears without a reload; both screens follow DESIGN.md", async ({ page, smelt }) => {
+test("LIVE: sign in, send a prompt, and the real reply appears without a reload; both screens follow the design system", async ({ page, smelt }) => {
   const foreign = watchRequests(page, smelt);
   await page.goto(smelt.base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
@@ -130,7 +130,8 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, smelt }
   await page.goto(smelt.base);
   await page.getByLabel("Login token").fill("not-the-token");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toHaveText("Wrong token. Check it and try again.");
+  // The alert names its tone in a word, then says what happened and what to do.
+  await expect(page.getByRole("alert")).toHaveText("ErrorWrong token. Check it and try again.");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toBeVisible();
   await expect(page.getByLabel("Prompt")).toHaveCount(0);

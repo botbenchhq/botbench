@@ -51,7 +51,7 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await expect(list.getByRole("listitem")).toHaveText([/^npm test/, /^git status/]);
   expect(await list.evaluate((el) => [el.tagName, ...[...el.children].map((child) => child.tagName)])).toEqual(["UL", "LI", "LI"]);
   await expect(page.getByTestId("preapproved-about")).toContainText("Dangerous commands always ask");
-  expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Geist Mono"?,/);
+  expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
   // Start task is still the one primary action.
   const primaries = (): Promise<(string | null)[]> => page.getByRole("button").evaluateAll((buttons) => buttons.filter((b) => getComputedStyle(b).backgroundColor === "rgb(26, 26, 26)").map((b) => b.textContent));
   expect(await primaries()).toEqual(["Start task"]);
@@ -106,8 +106,8 @@ test("LIVE: New task lists the repository's configured commands; the owner remov
   await expect(page.getByRole("log")).not.toContainText("You allowed");
   await expect(page.getByRole("log")).not.toContainText("needs your answer");
   const files = page.getByTestId("changed-files");
-  await expect(files.getByRole("button", { name: /marker\.txt/ })).toHaveText(/marker\.txt.*added/);
-  const branch = (await page.getByTestId("branch").textContent())!;
+  await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added/);
+  const branch = await page.getByTestId("branch").inputValue();
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   await expect(page.getByTestId("not-merged")).toContainText("The commands listed above, and those you gave standing permission (see Trust), run without asking; every other shell command waits for your answer first");
   await expect(page.getByRole("button", { name: /always|standing|every time|remember/i })).toHaveCount(0);

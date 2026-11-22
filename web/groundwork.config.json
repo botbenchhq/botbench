@@ -1,0 +1,6 @@
+{
+  "paths": ["src", "index.html"],
+  "appPrefix": "sm",
+  "gaps": "design-gaps.json",
+  "vendorDir": "vendor/groundwork"
+}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getActionLog, listGrants, revokeGrant, type LogEntry, type LogRule, type StandingGrant } from "../api/client.ts";
 import { times, visible } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
-import { Header } from "../components/header.tsx";
+import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 
 /** How many log entries are read at a time. */
 const PAGE = 10;
@@ -39,6 +39,8 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [log, setLog] = useState<{ entries: LogEntry[]; older: boolean } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Whether it is the older log entries that are being read. */
+  const [readingOlder, setReadingOlder] = useState(false);
   /** Counts reads of the log's newest page, so an answer that arrives after a newer one was asked for is dropped. */
   const reads = useRef(0);
 
@@ -68,12 +70,17 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
     if (oldest === undefined) return;
     const read = reads.current;
     setBusy(true);
+    setReadingOlder(true);
     getActionLog(PAGE, oldest.id).then((page) => {
       setBusy(false);
+      setReadingOlder(false);
       // The newest page was read again meanwhile: this older page no longer follows what is shown.
       if (read !== reads.current) return;
       setLog((have) => (have === null ? have : { entries: [...have.entries, ...page.entries], older: page.older }));
-    }, failed("The older entries could not be read."));
+    }, (err: unknown) => {
+      setReadingOlder(false);
+      failed("The older entries could not be read.")(err);
+    });
   };
 
   const takeBack = (grant: StandingGrant): void => {
@@ -89,84 +96,102 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-transcript flex-col">
-      <Header current="trust" />
-      <main className="flex flex-col gap-lg p-lg">
-        <h1 className="font-semibold">Trust</h1>
+    <Frame current="trust">
+      <Page>
+        <PageHeader title="Trust" />
         {problem !== null && (
-          <p role="alert" className="break-words font-medium">
+          <Alert tone="error" role="alert">
             {problem}
-          </p>
+          </Alert>
         )}
-        <section aria-labelledby="trust-grants" className="flex flex-col gap-sm">
-          <h2 id="trust-grants" className="font-semibold">
-            Standing permissions
-          </h2>
+        <section aria-labelledby="trust-grants" className="gw-stack gw-gap-sm">
+          <h2 id="trust-grants">Standing permissions</h2>
           {grants === null ? (
             problem === null && (
-              <p role="status" className="text-muted">
+              <p role="status" className="gw-spinner">
                 Reading standing permissions.
               </p>
             )
           ) : grants.length === 0 ? (
-            <p data-testid="grants-none" className="text-muted">
-              {`No standing permissions.${offerAfter === null ? "" : ` After you have allowed the same command ${times(offerAfter)}, its card offers one.`}`}
-            </p>
+            <p data-testid="grants-none">{`No standing permissions.${offerAfter === null ? "" : ` After you have allowed the same command ${times(offerAfter)}, its card offers one.`}`}</p>
           ) : (
-            <ul data-testid="grant-list" className="flex flex-col">
+            <ul data-testid="grant-list" className="gw-list">
               {grants.map((grant) => (
-                <li key={grant.id} className="flex flex-col gap-xs border-b py-md">
-                  <code data-testid="grant-command" className="whitespace-pre-wrap break-all font-mono text-mono font-semibold">
-                    {visible(grant.command)}
-                  </code>
-                  <span>{`Runs without asking for the ${grant.role}. ${directoryWords(grant.cwd)}, in this repository:`}</span>
-                  <span className="break-all font-mono text-mono text-muted">{visible(grant.repo)}</span>
-                  <span className="text-muted">
-                    {`Given ${when(grant.grantedAt)}${grant.taskId === null ? "" : `, in task ${grant.taskId}`}. ${grant.lastUsedAt === null ? "Not used yet." : `Used ${times(grant.timesUsed)}, last ${when(grant.lastUsedAt)}.`}`}
-                  </span>
-                  <ConfirmAction label="Take back" confirmLabel="Take it back" cancelLabel="Keep it" disabled={busy} testId="take-back-confirm" onConfirm={() => takeBack(grant)}>
-                    <p className="break-words">Take this standing permission back? The next time this command is asked for, Smelt asks you again.</p>
-                  </ConfirmAction>
+                <li key={grant.id} className="gw-list__row">
+                  <div className="gw-list__content">
+                    <span className="gw-list__body">
+                      <code data-testid="grant-command" className="gw-list__primary">
+                        {visible(grant.command)}
+                      </code>
+                      <span className="gw-list__secondary">
+                        {`Runs without asking for the ${grant.role}. ${directoryWords(grant.cwd)}, in this repository: `}
+                        <code>{visible(grant.repo)}</code>
+                      </span>
+                      <span className="gw-list__secondary">
+                        {`Given ${when(grant.grantedAt)}${grant.taskId === null ? "" : `, in task ${grant.taskId}`}. ${grant.lastUsedAt === null ? "Not used yet." : `Used ${times(grant.timesUsed)}, last ${when(grant.lastUsedAt)}.`}`}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="gw-list__action">
+                    <ConfirmAction
+                      label="Take back"
+                      opener={{ small: true, name: `Take back ${visible(grant.command)}` }}
+                      title="Take this standing permission back?"
+                      confirmLabel="Take it back"
+                      cancelLabel="Keep it"
+                      disabled={busy}
+                      losing
+                      testId="take-back-confirm"
+                      onConfirm={() => takeBack(grant)}
+                    >
+                      <p>The next time this command is asked for, Smelt asks you again.</p>
+                      <ul className="gw-confirm-dialog__losses">
+                        <li className="gw-confirm-dialog__loss">
+                          <code>{visible(grant.command)}</code>
+                        </li>
+                      </ul>
+                    </ConfirmAction>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </section>
-        <section aria-labelledby="trust-log" className="flex flex-col gap-sm">
-          <h2 id="trust-log" className="font-semibold">
-            Action log
-          </h2>
+        <section aria-labelledby="trust-log" className="gw-stack gw-gap-sm">
+          <h2 id="trust-log">Action log</h2>
           {log === null ? (
             problem === null && (
-              <p role="status" className="text-muted">
+              <p role="status" className="gw-spinner">
                 Reading the action log.
               </p>
             )
           ) : log.entries.length === 0 ? (
-            <p data-testid="log-none" className="text-muted">
-              Nothing has been asked, allowed or run yet.
-            </p>
+            <p data-testid="log-none">Nothing has been asked, allowed or run yet.</p>
           ) : (
-            <>
-              <ul data-testid="action-log" className="flex flex-col">
+            <div className="gw-show-more">
+              <ul data-testid="action-log" className="gw-list gw-list--dense">
                 {log.entries.map((entry) => (
-                  <li key={entry.id} className="flex flex-col gap-xs border-b py-sm">
-                    <span className="font-medium">{RULE_WORDS[entry.rule] ?? entry.rule}</span>
-                    <code className="whitespace-pre-wrap break-all font-mono text-mono">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
-                    {entry.detail !== null && <span className="break-words text-muted">{visible(entry.detail)}</span>}
-                    <span className="font-mono text-mono text-muted">{`${entry.taskId === null ? "" : `Task ${entry.taskId} · `}${when(entry.ts)}`}</span>
+                  <li key={entry.id} className="gw-list__row">
+                    <div className="gw-list__content">
+                      <span className="gw-list__body">
+                        <span className="gw-list__primary">{RULE_WORDS[entry.rule] ?? entry.rule}</span>
+                        <code className="gw-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
+                        {entry.detail !== null && <span className="gw-list__secondary">{visible(entry.detail)}</span>}
+                        <span className="gw-list__secondary">{`${entry.taskId === null ? "" : `Task ${entry.taskId} · `}${when(entry.ts)}`}</span>
+                      </span>
+                    </div>
                   </li>
                 ))}
               </ul>
               {log.older && (
-                <button type="button" disabled={busy} onClick={loadOlder} className="min-h-touch self-start rounded-sm border border-muted px-lg font-medium">
+                <button type="button" disabled={busy} aria-busy={readingOlder} onClick={loadOlder} className="gw-button gw-button--quiet gw-show-more__all">
                   Load older
                 </button>
               )}
-            </>
+            </div>
           )}
         </section>
-      </main>
-    </div>
+      </Page>
+    </Frame>
   );
 }

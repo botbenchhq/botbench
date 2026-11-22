@@ -9,7 +9,8 @@ import { startSmelt } from "./smelt.ts";
 
 const CONFIGURED = "haiku";
 const CHEAP = "claude-haiku-4-5-20251001";
-const UNKNOWN = "smelt-no-such-model-1";
+// As long as a model name may be, and unbroken: the screen must wrap it wherever it shows it.
+const UNKNOWN = `smelt-no-such-model-${"1".repeat(80)}`;
 
 test("LIVE: on the Turn screen the model is picked from the CLI's own list, a name the CLI does not know is reported in its words, the transcript names the model that answered, and the choice survives a reload", async ({ page, smelt }) => {
   const foreign = watchRequests(page, smelt);
@@ -56,6 +57,7 @@ test("LIVE: on the Turn screen the model is picked from the CLI's own list, a na
   expect(JSON.parse(turnsSent[0]!)).toMatchObject({ model: UNKNOWN });
   // The session names the model it was started on; the screen does not claim that it answered.
   await expect(page.getByTestId("turn-model")).toHaveText(`Model: ${UNKNOWN} (session started, no completed turn)`);
+  await checkDesign(page, "turn, a model name of 100 characters");
 
   // Pick a cheap model from the list and send the prompt again: the conversation goes on, on that model.
   await picker.selectOption(CHEAP);
@@ -108,7 +110,7 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
 
   // Before anything has answered, the screen says what was asked for and no more.
   await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
-  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^Model: (no session yet|${CHEAP} \\(session started, no completed turn\\))\\. Requested: ${CHEAP}\\.$`));
+  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^(no session yet|${CHEAP} \\(session started, no completed turn\\))\\. Requested: ${CHEAP}\\.$`));
 
   // This test is about the model, so any command the agent wants to run is declined, as an owner could.
   await expect(async () => {
@@ -119,7 +121,9 @@ test("LIVE: on New task a model is picked, and the task screen names the model t
     await expect(page.getByTestId("task-status")).toHaveText(/^Built\./, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
 
-  await expect(page.getByTestId("task-model")).toHaveText(`Model: ${CHEAP}. Requested: ${CHEAP}.`);
+  // The fact is labelled Model, so its value does not repeat the word.
+  await expect(page.locator("dt", { hasText: "Model" })).toHaveCount(1);
+  await expect(page.getByTestId("task-model")).toHaveText(`${CHEAP}. Requested: ${CHEAP}.`);
   await expect(page.locator('[data-event="session_started"]')).toHaveText(`Sessionstarted on ${CHEAP}`);
   const taskId = Number(/#\/tasks\/(\d+)$/.exec(page.url())![1]);
   expect(((await (await page.request.get(`${smelt.base}/api/tasks/${taskId}`)).json()) as { requestedModel: string | null }).requestedModel).toBe(CHEAP);

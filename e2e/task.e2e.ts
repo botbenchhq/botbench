@@ -14,7 +14,7 @@ function sourceRepo(smeltHome: string): string {
   return repo;
 }
 
-test("LIVE: start a task in a repository, watch its transcript, expand the changed file's diff and see the branch, without a reload; the new screens follow DESIGN.md", async ({ page, context, smelt }) => {
+test("LIVE: start a task in a repository, watch its transcript, expand the changed file's diff and see the branch, without a reload; the new screens follow the design system", async ({ page, context, smelt }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const foreign = watchRequests(page, smelt);
   const repo = sourceRepo(smelt.home);
@@ -28,8 +28,8 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(nav.getByRole("link")).toHaveText(["Turn", "Tasks", "New task", "Trust"]);
   await expect(nav.locator('[aria-current="page"]')).toHaveText("Turn");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Tasks" })).toBeVisible();
-  await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet.");
+  await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
+  await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
   await checkDesign(page, "tasks, none yet");
   await nav.getByRole("link", { name: "New task" }).click();
   await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
@@ -54,7 +54,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Building. Claude Code is working in the task's worktree.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
-  await expect(page.getByTestId("branch")).toHaveText(/^smelt\/run-[0-9a-f]{8}\/task-\d+$/);
+  await expect(page.getByTestId("branch")).toHaveValue(/^smelt\/run-[0-9a-f]{8}\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
 
   // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
@@ -74,16 +74,20 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   // The changed file with its line counts, expandable to its diff.
   const files = page.getByTestId("changed-files");
   await expect(files.getByRole("listitem")).toHaveCount(1);
-  const file = files.getByRole("button", { name: /hello\.txt/ });
-  await expect(file).toHaveText(/hello\.txt.*added.*\+1.*−0/);
-  await expect(file).toHaveAttribute("aria-expanded", "false");
+  // Each file is a native disclosure: its summary is the control, and the browser carries its expanded state.
+  const file = files.locator("summary").filter({ hasText: "hello.txt" });
+  const disclosure = files.locator("details");
+  await expect(file).toHaveText(/hello\.txt.*added.*\+1 line added.*−0 lines removed/);
+  await expect(disclosure).not.toHaveAttribute("open");
   await expect(page.getByTestId("diff")).toHaveCount(0);
-  await file.click();
-  await expect(file).toHaveAttribute("aria-expanded", "true");
+  // The keyboard alone opens it.
+  await file.focus();
+  await page.keyboard.press("Enter");
+  await expect(disclosure).toHaveAttribute("open");
   const diff = page.getByTestId("diff");
   await expect(diff).toContainText("+++ b/hello.txt");
   await expect(diff).toContainText("+hi");
-  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?Geist Mono"?,/);
+  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"?IBM Plex Mono"?,/);
   // The diff scrolls inside its own block; the page itself never scrolls sideways.
   const scroller = page.getByTestId("diff-scroll");
   expect(await scroller.evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto");
@@ -93,7 +97,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(await diff.locator('[data-line="added"]').first().textContent()).toMatch(/^\+/);
 
   // The branch, by name, with a copy control that copies it.
-  const branch = (await page.getByTestId("branch").textContent())!;
+  const branch = await page.getByTestId("branch").inputValue();
   expect(git(repo, "show", `${branch}:hello.txt`).trim()).toBe("hi");
   await page.getByRole("button", { name: "Copy branch name" }).click();
   await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
@@ -119,7 +123,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(rows.first()).toContainText(prompt);
   await checkDesign(page, "tasks, with one");
   await rows.first().click();
-  await expect(page.getByTestId("branch")).toHaveText(branch);
+  await expect(page.getByTestId("branch")).toHaveValue(branch);
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
 
   // The turn screen is still there and still works as the first screen.
@@ -178,10 +182,20 @@ test("a repository path that cannot be used is reported in words, and Start task
   }
 });
 
+test("an address that names no screen says so in words, and a long one stays inside the screen", async ({ page, smelt }) => {
+  await signIn(page, smelt);
+  const address = `/${"nowhere".repeat(40)}`;
+  await page.goto(`${smelt.base}/#${address}`);
+  await expect(page.getByRole("alert")).toContainText(`There is no screen at ${address}.`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(`There is no screen at ${address}.`);
+  await expect(page.getByRole("navigation", { name: "Screens" }).locator('[aria-current="page"]')).toHaveCount(0);
+  await checkDesign(page, "no such screen");
+});
+
 test("a task address that names no task says so in words", async ({ page, smelt }) => {
   await signIn(page, smelt);
   await page.goto(`${smelt.base}/#/tasks/4242`);
-  await expect(page.getByRole("alert")).toHaveText("There is no task 4242.");
+  await expect(page.getByRole("alert")).toHaveText("ErrorThere is no task 4242.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(0);
 });
@@ -214,7 +228,7 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await checkDesign(page, "task, failed");
 
     await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-    await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Task 1 · Failed.*Create hello\.txt/);
+    await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Create hello\.txt.*Failed.*Task 1 · /);
     await expect(page.getByTestId("task-list")).not.toContainText("second line");
     expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce)).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);

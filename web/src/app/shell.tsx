@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { hasSession } from "../api/client.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
-import { Header, Mark } from "../components/header.tsx";
+import { Alert, Frame, Page } from "../components/header.tsx";
 import { NewTaskScreen } from "../screens/new-task.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
 import { TaskScreen } from "../screens/task.tsx";
@@ -42,12 +42,16 @@ function screenFor(route: Route, onSignedOut: () => void) {
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   return (
-    <div className="mx-auto flex min-h-screen max-w-transcript flex-col">
-      <Header current={null} />
-      <main className="p-lg">
-        <p role="alert" className="break-words font-medium">{`There is no screen at ${route.what}.`}</p>
-      </main>
-    </div>
+    <Frame current={null}>
+      <Page>
+        <div className="gw-not-found">
+          <div role="alert" className="gw-empty-state">
+            <h1 className="gw-empty-state__title sm-wrap">{`There is no screen at ${route.what}.`}</h1>
+            <p className="gw-empty-state__body">The address may be mistyped. The navigation lists every screen there is.</p>
+          </div>
+        </div>
+      </Page>
+    </Frame>
   );
 }
 
@@ -93,11 +97,17 @@ export function Shell() {
   }
   if (session === "signed-out") return <SignInScreen notice={notice} onSignedIn={onSignedIn} />;
   return (
-    <main className="mx-auto flex min-h-screen max-w-column flex-col gap-lg p-lg">
-      <Mark />
-      <p role="status" className="text-muted">
-        {session === "checking" ? "Checking your session." : "Cannot reach Smelt. Trying again every two seconds."}
-      </p>
+    <main className="gw-sign-in p-lg">
+      <p className="gw-sign-in__product">Smelt</p>
+      {session === "checking" ? (
+        <p role="status" className="gw-spinner">
+          Checking your session.
+        </p>
+      ) : (
+        <Alert tone="warning" role="status">
+          Cannot reach Smelt. Trying again every two seconds.
+        </Alert>
+      )}
     </main>
   );
 }

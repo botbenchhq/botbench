@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node src/server.ts",
-    "test": "node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'",
+    "test": "node web/vendor/groundwork/checker/check.mjs --config web/groundwork.config.json && node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'",
     "test:live": "node --test 'test/live/**/*.live.test.ts'",
     "typecheck": "tsc --noEmit",
     "e2e": "node e2e/prepare.ts && playwright test --config e2e/playwright.config.ts"
