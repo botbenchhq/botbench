@@ -453,3 +453,42 @@ test("a source repository on a detached HEAD with a dirty index works and stays 
   assert.equal(head(repo, "main"), second);
   assert.equal(head(repo, `${done.commit}^`), base);
 });
+
+test("a worktree whose git folder was repointed from inside is refused, so nothing a task wrote there can run a command when Smelt commits", async (t) => {
+  const s = sourceRepo(t);
+  const wt = await createWorktree({ repo: s.repo, home: s.home, run: "run-1", task: "task-1" });
+  const realGitFile = read(wt.path, ".git");
+  const marker = path.join(s.dir, "filter-ran.txt");
+
+  // What an agent that may write below its worktree could build there: a git folder of its own that looks like a linked
+  // worktree on a smelt/ branch, with a config whose clean filter is a command, and the worktree's .git file pointed at it.
+  const evil = path.join(wt.path, "inner");
+  fs.mkdirSync(evil);
+  git(evil, "init", "--quiet", "-b", "smelt/inner");
+  write(evil, "seed.txt", "seed\n");
+  git(evil, "add", "-A");
+  ownerCommit(evil, "seed");
+  git(evil, "branch", "smelt/linked");
+  git(evil, "config", "filter.run.clean", `sh -c 'echo ran > "${marker}"; cat'`);
+  const linked = path.join(evil, ".git", "worktrees", "w");
+  fs.mkdirSync(linked, { recursive: true });
+  fs.writeFileSync(path.join(linked, "HEAD"), "ref: refs/heads/smelt/linked\n");
+  fs.writeFileSync(path.join(linked, "commondir"), "../..\n");
+  fs.writeFileSync(path.join(linked, "gitdir"), `${path.join(wt.path, ".git")}\n`);
+  fs.writeFileSync(path.join(wt.path, ".git"), `gitdir: ${linked}\n`);
+  write(wt.path, ".gitattributes", "* filter=run\n");
+  write(wt.path, "payload.txt", "anything\n");
+
+  await assert.rejects(commitWork({ path: wt.path, message: "work" }), /not a Smelt worktree/);
+  await assert.rejects(describeWork({ path: wt.path, baseCommit: wt.baseCommit }), /not a Smelt worktree/);
+  await assert.rejects(fileDiff({ path: wt.path, baseCommit: wt.baseCommit, file: "payload.txt" }), /not a Smelt worktree/);
+  await assert.rejects(removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true }), /not a Smelt worktree/);
+  assert.equal(fs.existsSync(marker), false, "the filter command did not run");
+
+  // Put back as Smelt made it, the worktree is Smelt's again and is removed like any other.
+  fs.writeFileSync(path.join(wt.path, ".git"), realGitFile);
+  fs.rmSync(evil, { recursive: true, force: true });
+  fs.rmSync(path.join(wt.path, ".gitattributes"));
+  fs.rmSync(path.join(wt.path, "payload.txt"));
+  await removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true });
+});

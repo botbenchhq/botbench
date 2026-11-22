@@ -42,6 +42,12 @@ export interface StartAttemptOptions {
   model?: string;
   /** Continue the session an earlier attempt recorded. */
   resumeCursor?: ResumeCursor;
+  /**
+   * The CLI may create and change files below `cwd` without asking. Nothing else is allowed by this:
+   * commands, and edits anywhere else, still need an approval. Meant for a task's worktree, whose
+   * content comes from a repository, so the repository's own CLI settings, rules and hooks are not loaded.
+   */
+  allowEdits?: boolean;
 }
 
 /** One CLI process working on one attempt. */

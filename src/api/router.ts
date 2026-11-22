@@ -1,15 +1,18 @@
 import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { schemaVersion } from "../store/db.ts";
+import type { Tasks } from "../engine/task.ts";
 import { turnRoutes } from "./routes.ts";
 import { isShellRequest, serveShell } from "./static.ts";
 import type { EventStream } from "./stream.ts";
+import { taskRoutes } from "./tasks.ts";
 import type { Turns } from "./turns.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
   db: DatabaseSync;
   turns: Turns;
+  tasks: Tasks;
   stream: EventStream;
   /** Where the built client is. */
   clientDir: string;
@@ -77,5 +80,6 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
     return;
   }
   if (await turnRoutes(req, res, ctx, url)) return;
+  if (await taskRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }

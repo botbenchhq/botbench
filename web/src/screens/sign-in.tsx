@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, signIn } from "../api/client.ts";
-import { Mark } from "../app/shell.tsx";
+import { Mark } from "../components/header.tsx";
 
 export function SignInScreen({ notice, onSignedIn }: { notice: string | null; onSignedIn: () => void }) {
   const [token, setToken] = useState("");

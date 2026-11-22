@@ -23,6 +23,9 @@ export const CLAUDE_CODE = "claude-code";
 /** Attempt states this driver writes to `attempts.status`. */
 export type AttemptStatus = "running" | "interrupted" | "failed" | "ended";
 
+/** The permission rule for the file-editing tools on every path below the working directory. */
+const EDITS_BELOW_CWD = "Edit(./**)";
+
 const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: false };
 
 /**
@@ -31,18 +34,30 @@ const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permis
  * none: the owner's personal settings, allow rules, hooks, plugins and MCP
  * servers stay out. Nothing can answer a permission prompt until the permission
  * broker exists, so anything that would ask is denied.
+ *
+ * With `allowEdits` the one rule added allows the file-editing tools on paths
+ * below the working directory. Seen on 2.1.322 with that rule: a file written
+ * there lands; `sh script.sh`, `touch x`, a write outside the directory and a
+ * write to `.claude/settings.json` are denied. The CLI still runs, unasked,
+ * shell commands it classes as read-only (`ls`, `cat`) and ones that only write
+ * below the directory with its own builtins (`printf hi > x`): closing that is
+ * the permission broker's pre-tool hook. The accept-edits permission mode is
+ * not used because it lets more through (`touch`, `mkdir`, `rm`).
+ * Such an attempt works on a repository's content, and 2.1.322 runs a
+ * repository's own hooks without asking, so no settings file is loaded at all.
  */
-export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor } = {}): string[] {
+export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean } = {}): string[] {
   const args = [
     "-p",
     "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--verbose",
-    "--setting-sources", "project",
+    "--setting-sources", options.allowEdits ? "" : "project",
     "--strict-mcp-config",
     "--mcp-config", JSON.stringify({ mcpServers: {} }),
     "--permission-prompts", "none",
   ];
+  if (options.allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
   if (options.model) args.push("--model", options.model);
   if (options.resumeCursor) args.push("--resume", options.resumeCursor);
   return args;
@@ -81,6 +96,9 @@ export function parseClaudeLine(line: string): DriverEvent[] {
 
   switch (parsed.type) {
     case "system": {
+      if (parsed.subtype === "permission_denied") {
+        return [{ type: "permission_denied", id: str(parsed.tool_use_id) ?? "", name: str(parsed.tool_name) ?? "", reason: str(parsed.decision_reason) }];
+      }
       const session = str(parsed.session_id);
       return parsed.subtype === "init" && session ? [{ type: "session_started", resumeCursor: session, model: str(parsed.model), keySource: str(parsed.apiKeySource) }] : [];
     }

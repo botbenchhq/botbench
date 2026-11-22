@@ -199,6 +199,7 @@ export const VERSION_TABLE = {
     { flag: "--strict-mcp-config", since: "2.1.322" },
     { flag: "--mcp-config", since: "2.1.322" },
     { flag: "--permission-prompts", since: "2.1.322" },
+    { flag: "--allowedTools", since: "2.1.322" },
     { flag: "--resume", since: "2.1.322" },
     { flag: "--model", since: "2.1.322" },
   ],
