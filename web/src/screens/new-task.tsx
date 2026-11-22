@@ -60,7 +60,7 @@ export function NewTaskScreen({ onSignedOut }: { onSignedOut: () => void }) {
           <button type="submit" aria-busy={busy} className="gw-button gw-button--primary">
             {busy ? "Starting" : "Start task"}
           </button>
-          <p>Smelt builds the task in its own worktree on a new branch, from the repository's current commit. Your checkout and your branch are not touched.</p>
+          <p>Smelt works on the task in a separate copy of the project (a git worktree), on a new branch that starts from the repository's current commit. Your own files and your branch are not touched.</p>
         </form>
       </Page>
     </Frame>

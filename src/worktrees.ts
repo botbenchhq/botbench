@@ -193,8 +193,8 @@ export async function createWorktree(o: { repo: string; home: string; run: strin
   const baseCommit = await sourceHead(repo);
   const runDir = path.join(path.resolve(o.home), "worktrees", o.run);
   const dir = path.join(runDir, o.task);
-  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The worktree folder ${dir} would be inside the repository ${repo}. Smelt's home must be somewhere else.`);
-  if (fs.existsSync(dir)) throw new Error(`The worktree folder ${dir} already exists.`);
+  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The folder for the task's copy, ${dir}, would be inside the repository ${repo}. Smelt's home must be somewhere else.`);
+  if (fs.existsSync(dir)) throw new Error(`The folder for the task's copy, ${dir}, already exists.`);
 
   // A name already in use, by an earlier run or anything else, is left alone: the new branch gets the next free name.
   const wanted = `${BRANCH_PREFIX}${o.run}/${o.task}`;
@@ -225,7 +225,7 @@ function removeIfEmpty(dir: string): void {
  * The owner's own checkout is never one, so nothing here can commit in it or remove it.
  */
 async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: string }> {
-  const notOurs = (why: string, cause?: unknown): Error => new Error(`${dir} is not a Smelt worktree: ${why}.`, { cause });
+  const notOurs = (why: string, cause?: unknown): Error => new Error(`${dir} is not a copy Smelt made (a git worktree): ${why}.`, { cause });
   if (!isDirectory(dir)) throw notOurs("no such folder");
   let lines: string[];
   try {
@@ -237,19 +237,19 @@ async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: s
   const [gitDir, commonDir, top] = lines;
   if (!gitDir || !commonDir || !top) throw notOurs("git did not describe it");
   if (realPath(gitDir) === realPath(commonDir)) throw notOurs("it is a repository's main checkout");
-  if (realPath(top) !== realPath(dir)) throw notOurs("it is a folder inside a worktree, not the worktree itself");
+  if (realPath(top) !== realPath(dir)) throw notOurs("it is a folder inside a copy, not the copy itself");
   // What a task wrote in its worktree is not trusted. A git folder that lives inside the worktree, or one that is not
   // the repository's own entry for a linked worktree, could carry a config whose filters are commands; git would run them.
-  if (isInside(realPath(commonDir), realPath(dir)) || isInside(realPath(gitDir), realPath(dir))) throw notOurs("its git folder is inside the worktree itself");
-  if (path.dirname(realPath(gitDir)) !== path.join(realPath(commonDir), "worktrees")) throw notOurs("its git folder is not one of the repository's worktree entries");
+  if (isInside(realPath(commonDir), realPath(dir)) || isInside(realPath(gitDir), realPath(dir))) throw notOurs("its git folder is inside the copy itself");
+  if (path.dirname(realPath(gitDir)) !== path.join(realPath(commonDir), "worktrees")) throw notOurs("its git folder is not one of the repository's git worktree entries");
   let branch: string;
   try {
     branch = (await git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"], GIT_CHECK_LIMIT_MS)).trim();
   } catch (err) {
     unlessTimeout(err);
-    throw new Error(`The worktree ${dir} is not on a branch, so it is not on its Smelt task branch.`, { cause: err });
+    throw new Error(`The copy at ${dir} is not on a branch, so it is not on its Smelt task branch.`, { cause: err });
   }
-  if (!branch.startsWith(BRANCH_PREFIX)) throw new Error(`The worktree ${dir} is on branch ${branch}, not on its Smelt task branch.`);
+  if (!branch.startsWith(BRANCH_PREFIX)) throw new Error(`The copy at ${dir} is on branch ${branch}, not on its Smelt task branch.`);
   return { branch, commonDir: realPath(commonDir) };
 }
 
@@ -331,9 +331,9 @@ export async function removeWorktree(o: { repo: string; path: string; deleteBran
     unlessTimeout(err);
     throw new Error(`${repo} is not a git repository.`, { cause: err });
   }
-  if (repoCommon !== commonDir) throw new Error(`The worktree ${dir} does not belong to the repository ${repo}.`);
+  if (repoCommon !== commonDir) throw new Error(`The copy at ${dir} does not belong to the repository ${repo}.`);
   const changes = await git(dir, ["status", "--porcelain", "--untracked-files=all"]);
-  if (changes !== "") throw new Error(`The worktree ${dir} has uncommitted changes, so it was not removed. Commit the work first.`);
+  if (changes !== "") throw new Error(`The copy at ${dir} has uncommitted changes, so it was not removed. Commit the work first.`);
 
   // Without --force, git itself also refuses if anything changed since the check above.
   await git(repo, ["worktree", "remove", dir]);

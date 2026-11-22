@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
+import { checkDesign, copyShot, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
 import { startSmelt, tempDir } from "./smelt.ts";
 
 // Tasks in the real client, at a phone's size, against a real Smelt process and real temporary repositories.
@@ -25,8 +25,8 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The navigation lists the screens that exist, and gets to each.
   const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Turn", "Runs", "Tasks", "Trust"]);
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Turn");
+  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions"]);
+  await expect(nav.locator('[aria-current="page"]')).toHaveText("Chat");
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
   await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
@@ -50,17 +50,21 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The task screen: the state in words, then the transcript as it happens.
   await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
-  await expect(page.getByTestId("task-status")).toHaveText(/^(Queued|Building)\./);
+  await expect(page.getByTestId("task-status")).toHaveText(/^(Queued|Working)\./);
   await expect(page.getByTestId("task-repo")).toHaveText(repo);
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
-  await expect(page.getByTestId("task-status")).toHaveText("Building. Claude Code is working in the task's worktree.");
+  await expect(page.getByTestId("task-status")).toHaveText("Working. Claude Code is working in a separate copy of the project.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
   await expect(page.getByTestId("branch")).toHaveValue(/^smelt\/run-[0-9a-f]{8}\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
+  // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
+  const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();
+  await expect(wrote.locator("summary").first()).toHaveText(/^(Writing|Wrote|Wants to write|Did not write|Editing|Edited|Running|Ran|Wants to run|Did not run)\s*\S/);
+  await expect(wrote.locator("summary").first()).not.toContainText("{");
 
   // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
   // pauses for the owner. This test is about the edit, so any such request is declined, as an owner could.
-  const built = "Built. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+  const built = "Ready for review. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
   await expect(async () => {
     const pending = (await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
     for (const approval of pending.approvals) {
@@ -68,7 +72,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
     }
     await expect(page.getByTestId("task-status")).toHaveText(built, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
-  await expect(page.locator('[data-event="turn_ended"]')).toContainText("Turn completed.");
+  await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
   // No working note is left once the turn is over.
   await expect(page.getByRole("log").getByRole("status")).toHaveCount(0);
 
@@ -104,12 +108,21 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
   await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's worktree without asking. Every shell command waits for your answer first, unless you gave it standing permission (see Trust), and Smelt sends you anything else it wants to do as well. A worktree keeps changes apart; it is not a sandbox: a command you allow runs with your account's rights.",
+    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Smelt sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow runs with your account's rights.",
   );
   // No primary action on this screen, and nothing that claims to accept, reject, merge or push.
   await expect(page.getByRole("button", { name: /accept|reject|merge|push|approve|stop/i })).toHaveCount(0);
 
   await checkDesign(page, "task, finished with a diff open");
+  // One tap on an action shows what is behind its line.
+  await file.click();
+  await wrote.locator("summary").first().click();
+  await expect(wrote.locator("details").first()).toHaveAttribute("open");
+  await expect(wrote.locator("pre").first()).toContainText("hello.txt");
+  await checkDesign(page, "task, finished with a tool row open");
+  await copyShot(page, "task-finished-tool-open");
+  await wrote.locator("summary").first().click();
+  await file.click();
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u6-task.png"), fullPage: true });
 
   // Collapsing works too.
@@ -120,15 +133,16 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   const rows = page.getByTestId("task-list").getByRole("link");
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText("Built");
+  await expect(rows.first()).toContainText("Ready for review");
   await expect(rows.first()).toContainText(prompt);
   await checkDesign(page, "tasks, with one");
+  await copyShot(page, "tasks");
   await rows.first().click();
   await expect(page.getByTestId("branch")).toHaveValue(branch);
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
 
   // The turn screen is still there and still works as the first screen.
-  await nav.getByRole("link", { name: "Turn" }).click();
+  await nav.getByRole("link", { name: "Chat" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("driver-state")).toContainText("signed in");
 
@@ -218,7 +232,7 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await page.getByRole("button", { name: "Start task" }).click();
 
     await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
-    await expect(page.getByTestId("task-status")).toContainText("Failed. The task's worktree could not be created");
+    await expect(page.getByTestId("task-status")).toContainText("Failed. The task's copy of the project could not be created");
     await expect(page.getByTestId("task-status")).toContainText("inside the repository");
     // What the task was asked is still shown; there is no transcript, no file list and no branch to show.
     await expect(page.getByTestId("task-prompt")).toHaveText("Create hello.txt\nand a second line");

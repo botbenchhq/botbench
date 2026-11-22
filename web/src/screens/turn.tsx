@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDriver, getTranscript, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
 import { Alert, Frame, PageHeader, StreamBanner } from "../components/header.tsx";
-import { ModelPicker, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
+import { ModelPicker, modelName, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
@@ -25,7 +25,7 @@ function saveConversation(ids: number[]): void {
 }
 
 function driverWords(driver: DriverState | null, failed: boolean): string {
-  if (failed) return "Claude Code: state unknown";
+  if (failed) return "Claude Code: could not be checked";
   if (driver === null) return "Checking Claude Code";
   if (driver.problem !== null) return !driver.installed ? "Claude Code: not installed" : !driver.supported ? "Claude Code: unsupported version" : !driver.signedIn ? "Claude Code: signed out" : "Claude Code: unavailable";
   const billing = driver.billing === "subscription" ? "subscription" : driver.billing === "metered" ? "metered billing" : "billing unknown";
@@ -180,7 +180,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
           // 409: the turn ended on its own first, which the transcript already shows.
           if (err instanceof ApiError && err.status === 409) return;
           if (err instanceof ApiError && err.status === 401) return onSignedOut();
-          setError(err instanceof ApiError ? `The turn was not stopped. ${err.message}` : "The turn was not stopped: Smelt could not be reached.");
+          setError(err instanceof ApiError ? `Claude Code was not stopped. ${err.message}` : "Claude Code was not stopped: Smelt could not be reached.");
         }),
       // The turn never started, and `send` has already said why.
       () => setStopping(false),
@@ -199,20 +199,40 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     }
   };
 
+  /** Begin again: the transcript is put away on this device (Smelt keeps what was stored), and the next prompt starts afresh. */
+  const newChat = (): void => {
+    if (running) return;
+    setConversation([]);
+    saveConversation([]);
+    setActive(null);
+    setError(null);
+    promptRef.current?.focus();
+  };
+
   const canSend = driver !== null && driver.problem === null;
+  const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
   const session = useMemo(() => sessionModel(shown), [shown]);
 
   return (
     <Frame current="turn" fill banner={connected ? undefined : <StreamBanner />}>
       <main className="flex min-h-0 min-w-0 flex-col">
         <div className="gw-container py-md">
-          <PageHeader title="Turn">
+          <PageHeader
+            title="Chat"
+            action={
+              conversation.length > 0 ? (
+                <button type="button" disabled={running} onClick={newChat} className="gw-button">
+                  New chat
+                </button>
+              ) : undefined
+            }
+          >
             <p data-testid="driver-state" className="gw-page-header__description">
               {driverWords(driver, driverFailed)}
             </p>
             {session !== null && (
-              <p data-testid="turn-model" className="gw-page-header__description sm-wrap">
-                {modelWords(session)}
+              <p data-testid="turn-model" className="gw-page-header__description">
+                {modelWords(session, nameOf)}
               </p>
             )}
           </PageHeader>
@@ -222,11 +242,11 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
           <div className="gw-container pb-lg">
             {shown.length === 0 ? (
               <div className="gw-empty-state gw-empty-state--compact">
-                <h2 className="gw-empty-state__title">No turns yet</h2>
-                <p className="gw-empty-state__body">A prompt goes to Claude Code, which works in an empty scratch directory inside Smelt's data directory.</p>
+                <h2 className="gw-empty-state__title">No messages yet</h2>
+                <p className="gw-empty-state__body">Send a prompt and Claude Code answers here. It works in an empty folder of its own inside Smelt's data folder, not in any of your projects.</p>
               </div>
             ) : (
-              <Transcript events={shown} working={running ? (stopping ? "Stopping the turn." : "Claude Code is working.") : null} />
+              <Transcript events={shown} working={running ? (stopping ? "Stopping Claude Code." : "Claude Code is working.") : null} modelName={nameOf} />
             )}
           </div>
         </div>
@@ -277,7 +297,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
               </Alert>
             ) : (
               <p role="status" className="gw-spinner">
-                Checking that Claude Code can be driven.
+                Checking that Claude Code is ready.
               </p>
             )}
           </div>

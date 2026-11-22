@@ -157,7 +157,7 @@ export function parseModelList(output: string): { models: ModelChoice[]; cliDefa
       if (!isObject(entry) || typeof entry.value !== "string") continue;
       // The CLI lists its own default as an entry named "default"; its description says which model that is.
       if (entry.value === "default") cliDefault = str(entry.description) ?? str(entry.resolvedModel);
-      else if (modelNameProblem(entry.value) === null && !models.some((m) => m.id === entry.value)) models.push({ id: entry.value, ...(typeof entry.displayName === "string" && entry.displayName !== "" ? { label: shorten(entry.displayName, 80) } : {}) });
+      else if (modelNameProblem(entry.value) === null && !models.some((m) => m.id === entry.value)) models.push({ id: entry.value, ...(typeof entry.displayName === "string" && entry.displayName !== "" ? { label: shorten(entry.displayName, 80) } : {}), ...(typeof entry.resolvedModel === "string" && entry.resolvedModel !== entry.value && modelNameProblem(entry.resolvedModel) === null ? { resolved: entry.resolvedModel } : {}) });
     }
     if (models.length > 0) return { models, cliDefault: cliDefault === null ? null : shorten(cliDefault, 80) };
   }
@@ -246,7 +246,7 @@ export function blank<E extends DriverEvent>(event: E, secret: string): E {
 
 /** What the agent is told when the owner declines. */
 function declineMessage(note: string | null): string {
-  const base = "The owner declined this request, so it was not run. Do not try to get the same thing done another way.";
+  const base = "The owner denied this request, so it was not run. Do not try to get the same thing done another way.";
   return note === null ? base : `${base} The owner's note: ${note}`;
 }
 
@@ -261,10 +261,10 @@ export function parseClaudeLine(line: string): DriverEvent[] {
   try {
     parsed = JSON.parse(line);
   } catch {
-    return [{ type: "error", message: "The CLI printed a line that is not JSON.", raw: shorten(line) }];
+    return [{ type: "error", message: "Claude Code printed a line Smelt could not read.", raw: shorten(line) }];
   }
   if (!isObject(parsed) || typeof parsed.type !== "string") {
-    return [{ type: "error", message: "The CLI printed a line that is not a message.", raw: shorten(line) }];
+    return [{ type: "error", message: "Claude Code printed a line that is not a message.", raw: shorten(line) }];
   }
 
   switch (parsed.type) {
@@ -318,7 +318,7 @@ export function parseClaudeLine(line: string): DriverEvent[] {
       } else {
         // A failed turn can still carry the subtype "success" (seen for a model the CLI does not know); that word is left out.
         const subtype = parsed.subtype === "success" ? null : str(parsed.subtype);
-        const detail = shorten([subtype, terminal, str(parsed.result)].filter(Boolean).join(": ") || "The turn failed.");
+        const detail = shorten([subtype, terminal, str(parsed.result)].filter(Boolean).join(": ") || "Claude Code reported a failure without saying why.");
         events.push({ type: "error", message: detail, raw: null }, { type: "turn_ended", reason: "error", detail });
       }
       return events;
@@ -395,8 +395,8 @@ class ClaudeCodeSession implements DriverSession {
   }
 
   sendTurn(prompt: string): Promise<TurnEndReason> {
-    if (this.hasExited || this.closing || this.status !== "running") return Promise.reject(new Error(`This attempt is ${this.hasExited || this.closing ? "over" : this.status}; start a new attempt to continue.`));
-    if (this.running) return Promise.reject(new Error("A turn is already running in this attempt."));
+    if (this.hasExited || this.closing || this.status !== "running") return Promise.reject(new Error("This session with Claude Code has ended; start a new one to continue."));
+    if (this.running) return Promise.reject(new Error("Claude Code is still working on the last message. Wait for it to finish, or stop it."));
     this.turn += 1;
     let resolve!: (reason: TurnEndReason) => void;
     const done = new Promise<TurnEndReason>((r) => (resolve = r));
@@ -416,13 +416,13 @@ class ClaudeCodeSession implements DriverSession {
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([running.done, new Promise((r) => (timer = setTimeout(r, 5000)))]);
     clearTimeout(timer);
-    if (this.running) this.endTurn("interrupted", "The CLI did not confirm the interrupt in time.");
+    if (this.running) this.endTurn("interrupted", "Claude Code did not confirm in time that it had stopped.");
     await this.stopProcess();
   }
 
   respondToRequest(requestId: string, response: unknown): Promise<void> {
     const request = this.asking.get(requestId);
-    if (!request) return Promise.reject(new Error(`No permission request ${requestId} is waiting in this attempt: it was answered already, or the CLI stopped waiting for it.`));
+    if (!request) return Promise.reject(new Error(`No permission request ${requestId} is waiting in this session: it was answered already, or Claude Code stopped waiting for it.`));
     // An answer that cannot reach the CLI is not recorded as given.
     if (this.hasExited || !this.child.stdin.writable) return Promise.reject(new Error(`The answer to permission request ${requestId} could not be delivered: Claude Code is no longer running. Nothing was run.`));
     this.asking.delete(requestId);
@@ -435,7 +435,7 @@ class ClaudeCodeSession implements DriverSession {
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
-      this.answerControl(requestId, { behavior: "deny", message: `Smelt's permission gate denied this request without asking the owner: ${why} Nothing was run.` });
+      this.answerControl(requestId, { behavior: "deny", message: `Smelt's permission check denied this request without asking the owner: ${why} Nothing was run.` });
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "denied", note: why });
     } else {
       const note = words(given.note);
@@ -460,7 +460,7 @@ class ClaudeCodeSession implements DriverSession {
       return this.record(request);
     }
     const subtype = isObject(parsed.request) ? str(parsed.request.subtype) : null;
-    this.record({ type: "error", message: `The CLI asked for something Smelt does not answer (${subtype ?? "unreadable"}); it was refused.`, raw: shorten(JSON.stringify(parsed)) });
+    this.record({ type: "error", message: `Claude Code asked for something Smelt does not answer (${subtype ?? "unreadable"}); it was refused.`, raw: shorten(JSON.stringify(parsed)) });
     if (typeof parsed.request_id !== "string") return;
     if (subtype === "can_use_tool") this.answerControl(parsed.request_id, { behavior: "deny", message: "Smelt could not read this permission request, so it was denied. Nothing was run." });
     else this.write({ type: "control_response", response: { subtype: "error", request_id: parsed.request_id, error: "Smelt does not answer this request." } });
@@ -515,7 +515,7 @@ class ClaudeCodeSession implements DriverSession {
         // A repository's own settings can hand the CLI an API key, which would bill a subscription
         // session as metered use. Stop the turn the moment the CLI says a key is in play.
         if (event.keySource !== null && event.keySource !== "none") {
-          const detail = `Stopped: the CLI would pay for this turn with an API key (source: ${event.keySource}), not the signed-in login.`;
+          const detail = `Stopped: Claude Code would pay for this with an API key (source: ${event.keySource}), not the signed-in login.`;
           this.record({ type: "error", message: detail, raw: null });
           if (this.running) this.endTurn("error", detail, "failed");
           void killProcessGroup(this.pgid).catch(() => {});
@@ -552,10 +552,10 @@ class ClaudeCodeSession implements DriverSession {
     this.hasExited = true;
     if (this.running) {
       if (this.interrupting) {
-        this.endTurn("interrupted", "The CLI exited.");
+        this.endTurn("interrupted", "Claude Code exited.");
       } else {
         const how = spawnError ? spawnError.message : signal ? `was killed by ${signal}` : `exited with code ${code}`;
-        const message = `Claude Code ${how} during a turn.`;
+        const message = `Claude Code ${how} while it was working.`;
         this.record({ type: "error", message, raw: this.stderrTail.trim() === "" ? null : shorten(this.stderrTail.trim()) });
         this.endTurn("error", message, "failed");
       }
@@ -591,7 +591,7 @@ class ClaudeCodeSession implements DriverSession {
 
   /** The CLI ran a shell command the owner never allowed, so it is not keeping to the gate: nothing more runs in this attempt. */
   private stopUngated(): void {
-    const detail = "Stopped: Claude Code ran a shell command without asking, so it is not keeping to Smelt's permission settings. Nothing more is run in this attempt.";
+    const detail = "Stopped: Claude Code ran a shell command without asking, so it is not keeping to Smelt's permission settings. Nothing more is run in this session.";
     this.record({ type: "error", message: detail, raw: null });
     if (this.running) this.endTurn("error", detail, "failed");
     void killProcessGroup(this.pgid).catch(() => {});

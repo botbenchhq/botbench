@@ -254,7 +254,7 @@ test("run ids continue from the highest in use and are never reused; tasks and g
   assert.equal(later.id, 5);
   assert.deepEqual(listRuns(db).map((r) => r.id), [5, 3]);
   // A run that could not be stored used no id that a later one then repeats.
-  assert.throws(() => createRun(db, { repo, prompt: "bad", baseCommit: base, preapproved: ["a | b"] }), /cannot be pre-approved/);
+  assert.throws(() => createRun(db, { repo, prompt: "bad", baseCommit: base, preapproved: ["a | b"] }), /cannot be allowed in advance/);
   assert.equal(db.prepare("SELECT count(*) AS n FROM runs WHERE prompt = 'bad'").get()!.n, 0);
   assert.ok(createRun(db, { repo, prompt: "six", baseCommit: base }).id > 5);
 });
@@ -479,7 +479,7 @@ test("the planner's admission to the gate is read-only: an edit in its worktree 
   for (const [tool, input] of [["Write", { file_path: path.join(worktree, "planted.txt"), content: "x" }], ["Edit", { file_path: "README.md", old_string: "a", new_string: "b" }], ["NotebookEdit", { notebook_path: "n.ipynb" }]] as [string, Record<string, unknown>][]) {
     const reply = await hook(tool, input, `toolu_${tool}`);
     assert.equal(reply.verdict, "deny", tool);
-    assert.match(reply.reason, /read-only/, tool);
+    assert.match(reply.reason, /the Plan step only reads and may not use /, tool);
   }
   assert.equal((await hook("Read", { file_path: path.join(worktree, "README.md") }, "toolu_read")).verdict, "pass");
   assert.equal((await hook("Bash", { command: "ls" }, "toolu_ls")).verdict, "ask");
@@ -589,7 +589,7 @@ test("starting a run checks the repository and the spec file before any run exis
     [{ repo: path.join(e.repo, "nope"), prompt: "p" }, 400, /does not exist/],
     [{ repo: "relative", prompt: "p" }, 400, /full path/],
     [{ repo: e.repo, specPath: path.join(path.dirname(e.repo), "missing.md") }, 400, /does not exist/],
-    [{ repo: e.repo, prompt: "p", preapproved: ["a && b"] }, 400, /cannot be pre-approved/],
+    [{ repo: e.repo, prompt: "p", preapproved: ["a && b"] }, 400, /cannot be allowed in advance/],
   ];
   for (const [input, status, words] of bad) await assert.rejects(e.runs.start(input as never), refused(status, words), JSON.stringify(input).slice(0, 90));
   assert.equal(db_count(e.db, "runs"), 0);
@@ -762,7 +762,7 @@ test("critique: a read-only attempt's own request for a tool that is not reading
   for (const tool of ["Write", "write", "MultiEdit", "mcp__fs__write_file", "Task", "WebFetch"]) {
     const answer = await broker.request({ taskId: null, runId: run.id, attemptId, role: "planner", tool, command: "{}", input: {}, reason: null, toolCallId: `toolu_${tool}` });
     assert.equal(answer.decision, "decline", tool);
-    assert.match(String(answer.refused), /read-only/, tool);
+    assert.match(String(answer.refused), /The Plan step only reads and may not use /, tool);
     const hook = await askBroker(admission.socketPath, admission.secret, { tool_name: tool, tool_input: {}, tool_use_id: `toolu_h_${tool}`, cwd: fs.realpathSync(worktree) });
     assert.equal(hook.verdict, "deny", tool);
   }

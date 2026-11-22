@@ -17,11 +17,16 @@ export function visible(text: string): string {
 /** A count as it is said: "once", "3 times". */
 export const times = (n: number): string => (n === 1 ? "once" : `${n} times`);
 
-/** Where the agent stood, in words. The path is relative to the task's worktree. */
+/** Where the agent stood, in words. The path is relative to the task's own copy of the project. */
 function directoryWords(cwd: string): string {
-  if (cwd === ".") return "The top of the task's worktree";
+  if (cwd === ".") return "The top folder of the task's copy";
   if (cwd === "") return "Not reported";
-  return cwd === ".." || cwd.startsWith("../") ? `${cwd} (outside the task's worktree)` : `${cwd} (inside the task's worktree)`;
+  return cwd === ".." || cwd.startsWith("../") ? `${cwd} (outside the task's copy)` : `${cwd} (inside the task's copy)`;
+}
+
+/** Which step of the work asks, in the words of the steps: Plan, Build, Review. Any other name is shown as it is. */
+export function stepWord(role: string): string {
+  return { planner: "Plan", implementer: "Build", reviewer: "Review" }[role] ?? role;
 }
 
 /**
@@ -46,10 +51,13 @@ export function ApprovalTray() {
 }
 
 /** One fact of a request: what it is, then its value. */
-function Fact({ term, testId, children }: { term: string; testId: string; children: string }) {
+function Fact({ term, testId, theirs = false, children }: { term: string; testId: string; theirs?: boolean; children: string }) {
   return (
     <li className="gw-approval__fact">
-      <span className="gw-approval__term">{term}</span> <span data-testid={testId} className="gw-approval__value">{children}</span>
+      <span className="gw-approval__term">{term}</span>{" "}
+      <span data-testid={testId} data-gw-content={theirs ? "" : undefined} className="gw-approval__value">
+        {children}
+      </span>
     </li>
   );
 }
@@ -97,7 +105,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setSending(null);
-        setProblem(err instanceof ApiError ? `Your answer was not taken. ${err.message}` : "Your answer was not sent: Smelt could not be reached. Nothing was allowed.");
+        setProblem(err instanceof ApiError ? `Your answer was not saved. ${err.message}` : "Your answer was not sent: Smelt could not be reached. Nothing was allowed.");
         refresh();
       },
     );
@@ -112,7 +120,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setSending(null);
-        setProblem(err instanceof ApiError ? `Standing permission was not given, and nothing was allowed. ${err.message}` : "Standing permission was not given: Smelt could not be reached. Nothing was allowed.");
+        setProblem(err instanceof ApiError ? `Always allow was not set, and nothing was allowed. ${err.message}` : "Always allow was not set: Smelt could not be reached. Nothing was allowed.");
         refresh();
       },
     );
@@ -125,24 +133,24 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       <h2 id={heading} className="gw-approval__title">
         {approval.tool === "Bash" ? "Claude Code asks to run a command" : `Claude Code asks to use ${approval.tool}`}
       </h2>
-      <pre data-testid="approval-command" className="gw-approval__command">
+      <pre data-testid="approval-command" data-gw-content="" className="gw-approval__command">
         {visible(approval.command)}
       </pre>
       <ul className="gw-approval__facts">
-        <Fact term="Directory" testId="approval-directory">
+        <Fact term="Folder" testId="approval-directory">
           {directoryWords(approval.cwd)}
         </Fact>
-        <Fact term="Role" testId="approval-role">
-          {approval.role}
+        <Fact term="Step" testId="approval-role">
+          {stepWord(approval.role)}
         </Fact>
-        <Fact term={approval.taskId === null ? "Run" : "Task"} testId="approval-task">{`${approval.taskId === null ? `Run ${approval.runId}` : `Task ${approval.taskId}`} · ${approval.taskTitle}`}</Fact>
+        <Fact term={approval.taskId === null ? "Run" : "Task"} testId="approval-task" theirs>{`${approval.taskId === null ? `Run ${approval.runId}` : `Task ${approval.taskId}`} · ${approval.taskTitle}`}</Fact>
         {approval.reason !== null && (
-          <Fact term="Its reason" testId="approval-reason">
+          <Fact term="Claude Code's reason" testId="approval-reason" theirs>
             {visible(approval.reason)}
           </Fact>
         )}
       </ul>
-      {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Smelt restarted. Claude Code is stopped; your answer starts it again where it stood, and counts only if it asks for exactly this again.</p>}
+      {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Smelt restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
       {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
       {problem !== null && (
         <p role="alert" className="gw-approval__error">
@@ -151,59 +159,73 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       )}
       <div className="gw-approval__actions">
         <button type="button" data-gw-critical="" disabled={waiting} aria-busy={sending === "allow"} onClick={() => send("allow", false)} className="gw-button gw-button--primary">
-          {sending === "allow" ? "Allowing" : "Allow"}
+          {sending === "allow" ? "Allowing" : "Allow once"}
         </button>
         <button type="button" data-gw-critical="" disabled={waiting} aria-busy={sending === "decline"} onClick={() => send("decline", note.trim() !== "")} className="gw-button">
-          {sending === "decline" ? "Declining" : "Decline"}
+          {sending === "decline" ? "Denying" : "Deny"}
         </button>
       </div>
       <details className="gw-approval__details">
-        <summary className="gw-approval__summary">Decline with a note</summary>
+        <summary className="gw-approval__summary">Deny and say what to do instead</summary>
         <div className="gw-approval__note">
           <div className="gw-field">
             <label htmlFor={noteField} className="gw-field__label">
-              Note to the agent
+              What Claude Code should do instead
             </label>
             <input id={noteField} type="text" name="note" autoComplete="off" value={note} maxLength={2000} onChange={(e) => setNote(e.target.value)} className="gw-field__control" />
           </div>
           <div className="gw-cluster">
             <button type="button" disabled={waiting} onClick={() => send("decline", true)} className="gw-button">
-              Decline and send note
+              Deny and send
             </button>
           </div>
         </div>
       </details>
       {offer !== undefined && (
         <div data-testid="standing-offer" className="gw-stack gw-gap-sm">
-          <p>{`You have allowed this command ${times(offer.approvals)}.`}</p>
+          <p>{`You have allowed this command ${times(offer.approvals)}. Always allow would cover this exact command, in the ${stepWord(offer.role)} step, from this folder, in this repository. You confirm it first.`}</p>
           <div className="gw-cluster">
-            <ConfirmAction label="Stop asking for this command" title="Stop asking for this command?" confirmLabel="Give standing permission" cancelLabel="Cancel" disabled={waiting} testId="standing-confirm" onConfirm={grant}>
+            <ConfirmAction
+              label="Always allow…"
+              title={
+                <>
+                  {"Always allow "}
+                  <code data-gw-content="">{visible(offer.command)}</code>
+                  {" in this project?"}
+                </>
+              }
+              confirmLabel="Always allow"
+              cancelLabel="Cancel"
+              disabled={waiting}
+              testId="standing-confirm"
+              onConfirm={grant}
+            >
               <p>
-                Standing permission: from now on Smelt will run exactly this command without asking you, each time this role asks for it from this directory in a task of this repository. A different argument still asks, and dangerous commands always ask. If the command runs a script or a test, it runs whatever those files hold at the time, with your account's rights. It allows this request too. You can take it back on the Trust screen.
+                From now on Smelt runs exactly this command without asking you, each time the same step asks for it from this folder in a task of this repository. A different argument still asks, and dangerous commands always ask. If the command runs a script or a test, it runs whatever those files hold at the time, with your account's rights. This request is allowed too. You can take it back on the Permissions screen.
               </p>
               <dl className="gw-key-value">
                 <div className="gw-key-value__item">
                   <dt className="gw-key-value__label">Command</dt>
-                  <dd data-testid="standing-command" className="gw-key-value__value gw-key-value__value--mono">
+                  <dd data-testid="standing-command" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
                     {visible(offer.command)}
                   </dd>
                 </div>
                 <div className="gw-key-value__item">
                   <dt className="gw-key-value__label">Repository</dt>
-                  <dd data-testid="standing-repo" className="gw-key-value__value gw-key-value__value--mono">
+                  <dd data-testid="standing-repo" data-gw-content="" className="gw-key-value__value gw-key-value__value--mono">
                     {visible(offer.repo)}
                   </dd>
                 </div>
                 <div className="gw-key-value__item">
-                  <dt className="gw-key-value__label">Directory</dt>
+                  <dt className="gw-key-value__label">Folder</dt>
                   <dd data-testid="standing-directory" className="gw-key-value__value">
                     {directoryWords(offer.cwd)}
                   </dd>
                 </div>
                 <div className="gw-key-value__item">
-                  <dt className="gw-key-value__label">Role</dt>
+                  <dt className="gw-key-value__label">Step</dt>
                   <dd data-testid="standing-role" className="gw-key-value__value">
-                    {offer.role}
+                    {stepWord(offer.role)}
                   </dd>
                 </div>
               </dl>

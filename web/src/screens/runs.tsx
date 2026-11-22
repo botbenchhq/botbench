@@ -46,7 +46,7 @@ export function RunsScreen({ onSignedOut }: { onSignedOut: () => void }) {
             <h2 data-testid="run-list-state" className="gw-empty-state__title">
               No runs yet
             </h2>
-            <p className="gw-empty-state__body">A run turns a prompt or a spec file into a list of tasks that you edit and approve. Start one with New run.</p>
+            <p className="gw-empty-state__body">A run makes a list of tasks from a prompt or a spec file, for you to edit and approve. Start one with New run.</p>
           </div>
         ) : (
           <ul data-testid="run-list" className="gw-list">
@@ -54,7 +54,9 @@ export function RunsScreen({ onSignedOut }: { onSignedOut: () => void }) {
               <li key={run.id} className="gw-list__row">
                 <a href={`#/runs/${run.id}`} className="gw-list__link">
                   <span className="gw-run-status">
-                    <span className="gw-run-status__title">{run.title}</span>
+                    <span data-gw-content="" className="gw-run-status__title">
+                      {run.title}
+                    </span>
                     <span className="gw-run-status__station">
                       <span className={runLook(run)}>{runWord(run)}</span>
                     </span>

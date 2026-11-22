@@ -496,11 +496,12 @@ export function createRuns(options: RunsOptions): Runs {
       }
       return { end, text: reply.join("\n") };
     };
-    const problemOf = (end: TurnEndReason): string => (closed ? STOPPED : end === "interrupted" ? "The planner was stopped before it finished." : `The planner's turn ended with an error${detail === null ? "." : `: ${detail}`}`);
+    const problemOf = (end: TurnEndReason): string => (closed ? STOPPED : end === "interrupted" ? "The planner was stopped before it finished." : `The planner ended with an error${detail === null ? "." : `: ${detail}`}`);
 
     let outcome: Outcome;
     try {
       // The run names its planner's attempt before the first event, so a screen can follow the transcript from the start.
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
       if (!gone()) move(run.id, "planning", { attemptId: session.attemptId, detail: `planner attempt ${session.attemptId}` });
       const first = gone() ? null : await turn(plannerPrompt({ work: run.prompt ?? run.specText ?? "", ...(change ? { current: change.current, feedback: change.feedback } : {}) }));
       if (first === null || gone()) outcome = { cancelled: true };
@@ -543,13 +544,13 @@ export function createRuns(options: RunsOptions): Runs {
       const dir = closed ? null : await createPlanningWorktree({ repo: run.repo, home, run: name, commit: run.baseCommit });
       outcome = dir === null ? { problem: STOPPED } : await ask(run, dir, change);
     } catch (err) {
-      outcome = { problem: `The planner's worktree could not be made: ${words(err)}` };
+      outcome = { problem: `The planner's copy of the project could not be made: ${words(err)}` };
     }
     let leftover: string | null = null;
     try {
       await removePlanningWorktree({ repo: run.repo, home, run: name });
     } catch (err) {
-      leftover = `The planner's worktree under ${path.join(home, "worktrees", name)} could not be removed: ${words(err)}`;
+      leftover = `The planner's copy of the project under ${path.join(home, "worktrees", name)} could not be removed: ${words(err)}`;
       report(`Removing run ${id}'s planning worktree`)(err);
     }
     const now_ = getRun(db, id);

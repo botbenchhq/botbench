@@ -8,10 +8,10 @@ import { Icon, type IconName } from "./icon.tsx";
  * also keeps the phone's tab bar within the five it holds.
  */
 const SCREENS: readonly { name: string; label: string; href: string; icon: IconName }[] = [
-  { name: "turn", label: "Turn", href: "#/turn", icon: "terminal" },
+  { name: "turn", label: "Chat", href: "#/turn", icon: "terminal" },
   { name: "runs", label: "Runs", href: "#/runs", icon: "git-branch" },
   { name: "tasks", label: "Tasks", href: "#/tasks", icon: "file" },
-  { name: "trust", label: "Trust", href: "#/trust", icon: "circle-check" },
+  { name: "trust", label: "Permissions", href: "#/trust", icon: "circle-check" },
 ];
 export type ScreenName = "turn" | "runs" | "tasks" | "trust";
 
@@ -22,7 +22,7 @@ export type ScreenName = "turn" | "runs" | "tasks" | "trust";
  */
 export function Frame({ current, banner, fill = false, children }: { current: ScreenName | null; banner?: ReactNode; fill?: boolean; children: ReactNode }) {
   return (
-    <div className={fill ? "flex h-screen flex-col" : "flex min-h-screen flex-col"}>
+    <div className={fill ? "gw-app-shell h-screen" : "gw-app-shell"}>
       <header className="gw-app-header gw-app-header--sticky">
         <a className="gw-app-header__name" href="#/turn">
           Smelt
@@ -32,7 +32,7 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
         </div>
       </header>
       {banner}
-      <div className="gw-sidebar-layout min-h-0 flex-1 grid-rows-1">
+      <div className="gw-sidebar-layout gw-app-shell__body min-h-0 grid-rows-1">
         <nav className="gw-sidebar-nav" aria-label="Screens">
           <ul className="gw-sidebar-nav__items">
             {SCREENS.map((screen) => (
@@ -59,9 +59,9 @@ export function Frame({ current, banner, fill = false, children }: { current: Sc
   );
 }
 
-/** The main column of an ordinary screen: one reading-width column, its parts one above the other. */
+/** The main column of an ordinary screen, as the design system's app shell has it: it starts with the view's page header, which holds the one h1. */
 export function Page({ children }: { children: ReactNode }) {
-  return <main className="gw-container gw-stack gw-gap-lg min-w-0 py-lg">{children}</main>;
+  return <main className="gw-container gw-app-shell__main min-w-0">{children}</main>;
 }
 
 /** The connection-lost banner, under the app header. */
@@ -81,8 +81,8 @@ export function Alert({ tone, role, id, testId, title, action, children }: { ton
     <div className={look} role={role} id={id} data-testid={testId}>
       <div className="gw-alert__content">
         <p className="gw-alert__label">{label}</p>
-        {title !== undefined && <p className="gw-alert__title sm-wrap">{title}</p>}
-        <p className="gw-alert__body sm-wrap">{children}</p>
+        {title !== undefined && <p className="gw-alert__title">{title}</p>}
+        <p className="gw-alert__body">{children}</p>
         {action !== undefined && <div className="gw-alert__action">{action}</div>}
       </div>
     </div>

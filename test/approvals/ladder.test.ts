@@ -194,7 +194,8 @@ test("AE5: with the offer after 3, the first three approvals of a command do not
     actionLog(r.db).slice(-3).map((e) => [e.rule, e.taskId, e.approvalId, e.grantId, e.command, e.cwd]),
     [["asked_owner", a.taskId, fourth.id, null, "npm test", "."], ["owner_allowed", a.taskId, fourth.id, null, "npm test", "."], ["standing_granted", a.taskId, fourth.id, 1, "npm test", "."]],
   );
-  assert.match(String(actionLog(r.db).at(-1)!.detail), /implementer/);
+  // The entry says which step of the work the permission is for, in the words a screen shows.
+  assert.match(String(actionLog(r.db).at(-1)!.detail), /^For the Build step in /);
 
   // The fifth identical request runs at once: no card, rule `standing`, the grant's id on the log entry.
   const before = { approvals: count(r.db, "approvals"), log: count(r.db, "action_log") };
@@ -204,7 +205,7 @@ test("AE5: with the offer after 3, the first three approvals of a command do not
   assert.equal(count(r.db, "action_log"), before.log + 1);
   const entry = actionLog(r.db).at(-1)!;
   assert.deepEqual([entry.rule, entry.taskId, entry.attemptId, entry.approvalId, entry.grantId, entry.tool, entry.command, entry.cwd], ["standing", a.taskId, a.attemptId, null, 1, "Bash", "npm test", "."]);
-  assert.match(String(entry.detail), /standing permission/i);
+  assert.match(String(entry.detail), /Always allowed \(permission 1\)/);
   assert.deepEqual(listStanding(r.db).map((g) => [g.id, g.timesUsed, g.lastUsedAt]), [[1, 1, entry.ts]]);
 
   // The same words written with other spacing are the same command; a further argument is not, and asks.
@@ -342,7 +343,7 @@ test("AE6: a request the floor catches, or one the splitter cannot read, never o
     const pending = card(r, `toolu_${i}_last`);
     assert.equal(r.broker.standingOffer(pending.id), null, command);
     // The flag alone grants nothing: the broker decides eligibility itself, from its own records.
-    assert.throws(() => r.broker.grantStanding(pending.id), (err: unknown) => err instanceof ApprovalError && err.status === 409 && /standing permission/i.test(err.message), command);
+    assert.throws(() => r.broker.grantStanding(pending.id), (err: unknown) => err instanceof ApprovalError && err.status === 409 && /Always allow is not available for this request/.test(err.message), command);
     assert.equal(await settled(answer), false, "a refused grant answers nothing");
     assert.equal(listApprovals(r.db, "pending").some((p) => p.id === pending.id), true);
     r.broker.answer(pending.id, "decline");
@@ -396,6 +397,7 @@ test("taking a grant back makes the very next request ask again, is append-only,
   assert.deepEqual(listStanding(r.db), []);
   const entry = actionLog(r.db).at(-1)!;
   assert.deepEqual([entry.rule, entry.grantId, entry.tool, entry.command, entry.cwd, entry.approvalId], ["standing_revoked", grant.id, "Bash", "npm test", ".", null]);
+  assert.match(String(entry.detail), /^Was for the Build step in /);
   // A second time: already taken back.
   assert.throws(() => r.broker.revokeStanding(grant.id), (err: unknown) => err instanceof ApprovalError && err.status === 409 && /already/.test(err.message));
   assert.equal(count(r.db, "grant_revocations"), 1);

@@ -1,10 +1,3 @@
 {
-  "gaps": [
-    {
-      "name": "Wrapping text",
-      "reason": "The catalogue's field description and error, alert title and body, page-header description, empty-state title and diff note do not break a long unbroken word, so a file path in a message from the server pushes the page sideways at phone width.",
-      "classes": ["sm-wrap"],
-      "files": ["src/components/wrap.css"]
-    }
-  ]
+  "gaps": []
 }

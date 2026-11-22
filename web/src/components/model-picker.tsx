@@ -94,12 +94,12 @@ export function useModelChoice(onSignedOut: () => void): ModelChoiceState {
 }
 
 function sourceWords(state: ModelChoiceState): string {
-  if (state.problem !== null) return `The model list could not be read: ${state.problem} The CLI default or a name you type can still be chosen.${state.choice === null ? " Until you choose, the model set in Smelt's configuration is used." : ""}`;
+  if (state.problem !== null) return `The model list could not be read: ${state.problem} Claude Code's default or a name you type can still be chosen.${state.choice === null ? " Until you choose, the model set in Smelt's configuration is used." : ""}`;
   if (state.list === null) return "Reading the models from Claude Code.";
   if (state.list.source === "cli") return "The list is what Claude Code reports on this Mac.";
   return state.list.models.length > 0
     ? "The list comes from Smelt's configuration: Claude Code reported none."
-    : "Claude Code reported no list and none is configured. Use the CLI default, or name a model.";
+    : "Claude Code reported no list and none is configured. Use Claude Code's default, or name a model.";
 }
 
 /** A labelled select of the driver's models, the CLI's own default, and "Other…" with a field for any other name. */
@@ -129,8 +129,8 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
           >
             {ready ? (
               <>
-                {choice === null && <option value={CONFIGURED}>Configured model</option>}
-                <option value="">{cliDefault === null ? "CLI default" : `CLI default (${cliDefault})`}</option>
+                {choice === null && <option value={CONFIGURED}>Model from Smelt's configuration</option>}
+                <option value="">{cliDefault === null ? "Claude Code's default" : `Claude Code's default (${cliDefault})`}</option>
                 {(list?.models ?? []).map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.label === undefined || model.label === model.id ? model.id : `${model.label} · ${model.id}`}
@@ -143,7 +143,7 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
             )}
           </select>
         </div>
-        <p id="model-source" data-testid="model-source" role="status" className="gw-field__description sm-wrap">
+        <p id="model-source" data-testid="model-source" role="status" className="gw-field__description">
           {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
         </p>
       </div>
@@ -184,8 +184,31 @@ export function sessionModel(events: readonly StoredEvent[]): { model: string; a
   return null;
 }
 
-/** The session's model in words that claim an answer only when a turn completed. */
-export const modelState = (session: { model: string; answered: boolean } | null): string =>
-  session === null ? "no session yet" : session.answered ? session.model : `${session.model} (session started, no completed turn)`;
+/** The name Claude Code itself gives a model: its label for that id, or for the alias the id is the full name of. The id itself when it gives none. */
+export function modelName(list: ModelList | null, id: string): string {
+  return list?.models.find((model) => model.id === id || model.resolved === id)?.label ?? id;
+}
+
+/** The names Claude Code gives its models, for a screen that shows a model and does not choose one. Until the list is read, and when it cannot be, a model is shown by its id. */
+export function useModelNames(onSignedOut: () => void): (id: string) => string {
+  const [list, setList] = useState<ModelList | null>(null);
+  useEffect(() => {
+    let stale = false;
+    getModels().then(
+      (models) => !stale && setList(models),
+      (err: unknown) => {
+        if (!stale && err instanceof ApiError && err.status === 401) onSignedOut();
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [onSignedOut]);
+  return useCallback((id: string) => modelName(list, id), [list]);
+}
+
+/** The session's model in words that claim an answer only when a reply completed. */
+export const modelState = (session: { model: string; answered: boolean } | null, name: (id: string) => string): string =>
+  session === null ? "not started yet" : session.answered ? name(session.model) : `${name(session.model)} (no reply yet)`;
 /** The same, as a line that stands alone. */
-export const modelWords = (session: { model: string; answered: boolean } | null): string => `Model: ${modelState(session)}`;
+export const modelWords = (session: { model: string; answered: boolean } | null, name: (id: string) => string): string => `Model: ${modelState(session, name)}`;

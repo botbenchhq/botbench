@@ -138,7 +138,7 @@ export function createAuth(options: AuthOptions): Auth {
     const candidate = typeof body === "object" && body !== null ? (body as { token?: unknown }).token : undefined;
     if (typeof candidate !== "string") return json(res, 400, { error: 'expected { "token": "..." }' });
     const outcome = await attempt(candidate);
-    if (outcome === "busy") return json(res, 429, { error: "too many sign-in attempts, try again shortly" });
+    if (outcome === "busy") return json(res, 429, { error: "too many tries at signing in; wait a moment, then try again" });
     if (!outcome) return json(res, 401, { error: "wrong token" });
     const id = randomBytes(32).toString("base64url");
     sessions.add(id);

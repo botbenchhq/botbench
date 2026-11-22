@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getActionLog, listGrants, revokeGrant, type LogEntry, type LogRule, type StandingGrant } from "../api/client.ts";
-import { times, visible } from "../components/approval-card.tsx";
+import { stepWord, times, visible } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 
@@ -11,23 +11,23 @@ const PAGE = 10;
 const RULE_WORDS: Record<LogRule, string> = {
   asked_owner: "Asked you",
   owner_allowed: "You allowed",
-  owner_declined: "You declined",
+  owner_declined: "You denied",
   ended_unanswered: "Ended without your answer",
-  auto_worktree_edit: "Edited a file in the worktree, without asking",
+  auto_worktree_edit: "Edited a file in the task's copy, without asking",
   broker_failure_denied: "Smelt denied",
   stored_answer_applied: "Your answer from before a restart was used",
   stored_answer_discarded: "Your answer from before a restart was not used",
-  preapproved: "Ran pre-approved, without asking",
-  standing: "Ran on standing permission, without asking",
-  standing_granted: "You gave standing permission",
-  standing_revoked: "You took standing permission back",
+  preapproved: "Ran without asking: allowed for this task",
+  standing: "Ran without asking: always allowed",
+  standing_granted: "You chose Always allow",
+  standing_revoked: "You took Always allow back",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();
 /** An edit's entry holds the whole file it wrote; the list shows where each entry begins. */
 const shorten = (text: string, max = 300): string => (text.length > max ? `${text.slice(0, max)}…` : text);
 /** Where a standing permission applies, in words. The path is relative to the worktree of whichever task asks. */
-const directoryWords = (cwd: string): string => (cwd === "." ? "The top of a task's worktree" : `${cwd}, inside a task's worktree`);
+const directoryWords = (cwd: string): string => (cwd === "." ? "The top folder of a task's copy" : `${cwd}, inside a task's copy`);
 
 /**
  * What Smelt may do without asking, and what it did: the standing permissions in force, each with the control
@@ -59,8 +59,8 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
     listGrants().then((answer) => {
       setGrants(answer.grants);
       setOfferAfter(answer.offerStandingAfter);
-    }, failed("The standing permissions could not be read."));
-    getActionLog(PAGE).then((page) => read === reads.current && setLog(page), failed("The action log could not be read."));
+    }, failed("The always-allowed commands could not be read."));
+    getActionLog(PAGE).then((page) => read === reads.current && setLog(page), failed("The activity could not be read."));
   }, [failed]);
 
   useEffect(load, [load]);
@@ -90,7 +90,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
       setBusy(false);
       load();
     }, (err: unknown) => {
-      failed("The standing permission was not taken back.")(err);
+      failed("Always allow was not taken back.")(err);
       load();
     });
   };
@@ -98,37 +98,37 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
   return (
     <Frame current="trust">
       <Page>
-        <PageHeader title="Trust" />
+        <PageHeader title="Permissions" />
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}
           </Alert>
         )}
         <section aria-labelledby="trust-grants" className="gw-stack gw-gap-sm">
-          <h2 id="trust-grants">Standing permissions</h2>
+          <h2 id="trust-grants">Always allowed</h2>
           {grants === null ? (
             problem === null && (
               <p role="status" className="gw-spinner">
-                Reading standing permissions.
+                Reading what is always allowed.
               </p>
             )
           ) : grants.length === 0 ? (
-            <p data-testid="grants-none">{`No standing permissions.${offerAfter === null ? "" : ` After you have allowed the same command ${times(offerAfter)}, its card offers one.`}`}</p>
+            <p data-testid="grants-none">{`Nothing is always allowed.${offerAfter === null ? "" : ` After you have allowed the same command ${times(offerAfter)}, its request offers Always allow.`}`}</p>
           ) : (
             <ul data-testid="grant-list" className="gw-list">
               {grants.map((grant) => (
                 <li key={grant.id} className="gw-list__row">
                   <div className="gw-list__content">
                     <span className="gw-list__body">
-                      <code data-testid="grant-command" className="gw-list__primary">
+                      <code data-testid="grant-command" data-gw-content="" className="gw-list__primary">
                         {visible(grant.command)}
                       </code>
                       <span className="gw-list__secondary">
-                        {`Runs without asking for the ${grant.role}. ${directoryWords(grant.cwd)}, in this repository: `}
-                        <code>{visible(grant.repo)}</code>
+                        {`Claude Code runs this without asking you during the ${stepWord(grant.role)} step. ${directoryWords(grant.cwd)}, in this repository: `}
+                        <code data-gw-content="">{visible(grant.repo)}</code>
                       </span>
                       <span className="gw-list__secondary">
-                        {`Given ${when(grant.grantedAt)}${grant.taskId === null ? "" : `, in task ${grant.taskId}`}. ${grant.lastUsedAt === null ? "Not used yet." : `Used ${times(grant.timesUsed)}, last ${when(grant.lastUsedAt)}.`}`}
+                        {`Chosen ${when(grant.grantedAt)}${grant.taskId === null ? "" : `, in task ${grant.taskId}`}. ${grant.lastUsedAt === null ? "Not used yet." : `Used ${times(grant.timesUsed)}, last ${when(grant.lastUsedAt)}.`}`}
                       </span>
                     </span>
                   </div>
@@ -136,7 +136,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
                     <ConfirmAction
                       label="Take back"
                       opener={{ small: true, name: `Take back ${visible(grant.command)}` }}
-                      title="Take this standing permission back?"
+                      title="Stop always allowing this command?"
                       confirmLabel="Take it back"
                       cancelLabel="Keep it"
                       disabled={busy}
@@ -147,7 +147,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
                       <p>The next time this command is asked for, Smelt asks you again.</p>
                       <ul className="gw-confirm-dialog__losses">
                         <li className="gw-confirm-dialog__loss">
-                          <code>{visible(grant.command)}</code>
+                          <code data-gw-content="">{visible(grant.command)}</code>
                         </li>
                       </ul>
                     </ConfirmAction>
@@ -158,25 +158,31 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
           )}
         </section>
         <section aria-labelledby="trust-log" className="gw-stack gw-gap-sm">
-          <h2 id="trust-log">Action log</h2>
+          <h2 id="trust-log">Activity</h2>
           {log === null ? (
             problem === null && (
               <p role="status" className="gw-spinner">
-                Reading the action log.
+                Reading the activity.
               </p>
             )
           ) : log.entries.length === 0 ? (
             <p data-testid="log-none">Nothing has been asked, allowed or run yet.</p>
           ) : (
             <div className="gw-show-more">
+              <p>Newest first.</p>
               <ul data-testid="action-log" className="gw-list gw-list--dense">
                 {log.entries.map((entry) => (
                   <li key={entry.id} className="gw-list__row">
                     <div className="gw-list__content">
                       <span className="gw-list__body">
                         <span className="gw-list__primary">{RULE_WORDS[entry.rule] ?? entry.rule}</span>
-                        <code className="gw-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
-                        {entry.detail !== null && <span className="gw-list__secondary">{visible(entry.detail)}</span>}
+                        <code data-gw-content="" className="gw-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
+                        {/* The server's own sentence, which may hold the command it is about; its wording is checked where it is built. */}
+                        {entry.detail !== null && (
+                          <span data-gw-content="" className="gw-list__secondary">
+                            {visible(entry.detail)}
+                          </span>
+                        )}
                         <span className="gw-list__secondary">{`${entry.taskId === null ? "" : `Task ${entry.taskId} · `}${when(entry.ts)}`}</span>
                       </span>
                     </div>
@@ -185,7 +191,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
               </ul>
               {log.older && (
                 <button type="button" disabled={busy} aria-busy={readingOlder} onClick={loadOlder} className="gw-button gw-button--quiet gw-show-more__all">
-                  Load older
+                  Show older activity
                 </button>
               )}
             </div>

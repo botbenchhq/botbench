@@ -122,7 +122,7 @@ test("live: a task whose marker script is pre-approved runs it with no approval 
   assert.deepEqual(task.files!.map((f) => [f.path, f.status]), [["marker.txt", "added"]]);
 
   assert.deepEqual((await actionLog(live, taskId)).map((e) => [e.rule, e.approvalId, e.grantId, e.tool, e.command, e.cwd, e.detail]), [
-    ["preapproved", null, 1, "Bash", "sh make-marker.sh", ".", "Pre-approved for this task's run when it was started: sh make-marker.sh"],
+    ["preapproved", null, 1, "Bash", "sh make-marker.sh", ".", "Allowed for this task when it was started: sh make-marker.sh"],
   ]);
   // The transcript says the command ran pre-approved, not that the owner allowed it, and it ran after that.
   const events = await transcript(live, task.attemptId!);

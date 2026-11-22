@@ -4,8 +4,8 @@ const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
 /** A run's state in a word or two, for lists. A run whose plan is approved is not being built by anything yet, and the word says so. */
 export function runWord(run: Pick<RunSummary, "status" | "waitingOnApproval" | "attemptId">): string {
-  if (run.status === "planning") return run.waitingOnApproval ? "Waiting on you" : run.attemptId === null ? "Waiting to plan" : "Planning";
-  const words: Record<Exclude<RunStatus, "planning">, string> = { awaiting_plan_approval: "Plan ready", running: "Approved", awaiting_decision: "Built", done: "Done", cancelled: "Cancelled", failed: "Failed" };
+  if (run.status === "planning") return run.waitingOnApproval ? "Needs input" : run.attemptId === null ? "Queued" : "Planning";
+  const words: Record<Exclude<RunStatus, "planning">, string> = { awaiting_plan_approval: "Plan ready for review", running: "Approved", awaiting_decision: "Ready for review", done: "Done", cancelled: "Cancelled", failed: "Failed" };
   return words[run.status];
 }
 
@@ -27,16 +27,16 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
   switch (run.status) {
     case "planning":
       // No planner has been started for it yet: one planner works at a time.
-      if (run.attemptId === null) return "Waiting for the planner. Smelt plans one run at a time, and this one starts when the planner is free. Nothing is changed meanwhile.";
+      if (run.attemptId === null) return "Queued. Smelt plans one run at a time, and this one starts when the one before it has its plan. Nothing is changed meanwhile.";
       return run.waitingOnApproval
-        ? "Planning. The planner asked for permission to run a command and is paused until you allow or decline."
-        : "Planning. Claude Code is reading the repository and writing the task list. It is read-only: nothing is changed while it plans.";
+        ? "Needs input. While planning, Claude Code asked for permission to run a command and is paused until you allow or deny."
+        : "Planning. Claude Code is reading the repository and writing the task list. It only reads: nothing is changed while it plans.";
     case "awaiting_plan_approval":
-      return "Waiting for your approval. Edit the tasks if you need to, then approve the plan. Nothing is built before you approve.";
+      return "Plan ready for review. Edit the tasks if you need to, then approve the plan. Nothing is built before you approve.";
     case "running":
       return `Approved. The ${tasksWord(run.tasks.length)} ${run.tasks.length === 1 ? "is" : "are"} queued. Building them arrives in the next version of Smelt: nothing is built yet, and nothing on this screen starts a build.`;
     case "awaiting_decision":
-      return "Built. The tasks wait for your decision.";
+      return "Ready for review. The tasks wait for your decision.";
     case "done":
       return "Done.";
     case "cancelled":

@@ -25,6 +25,8 @@ export interface StoredEvent {
   attemptId: number;
   id: number;
   turn: number;
+  /** When the event was stored. */
+  ts: string;
   type: DriverEvent["type"];
   payload: DriverEvent;
 }
@@ -104,7 +106,8 @@ export const getDriver = (): Promise<DriverState> => request("GET", "/api/driver
 export interface ModelList {
   driver: string;
   source: "cli" | "config";
-  models: { id: string; label?: string }[];
+  /** `label` is the agent's own name for the model; `resolved` is the full model name `id` stands for, which a session then reports. */
+  models: { id: string; label?: string; resolved?: string }[];
   default: string | null;
   /** What the CLI says its own default is. */
   cliDefault: string | null;

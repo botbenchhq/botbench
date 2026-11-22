@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { checkDesign, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, checkWords, copyShot, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
 import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
@@ -13,6 +13,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await expect(page.getByRole("button")).toHaveCount(1);
   await checkDesign(page, "sign-in");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u4-sign-in.png") });
+  await copyShot(page, "sign-in");
 
   // The keyboard alone is enough: the field has focus and Enter submits.
   await expect(page.getByLabel("Login token")).toBeFocused();
@@ -36,8 +37,19 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
 
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
   await expect(reply(page)).toContainText(/marmot/i, { timeout: 120_000 });
-  await expect(page.locator('[data-event="turn_ended"]')).toContainText("Turn completed.");
-  await expect(page.locator('[data-event="usage"]')).toContainText(/\d+ in, \d+ out/);
+  await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
+  // No line says the reply completed, and no token count is on a main line: the count is under the quiet "Worked for" row.
+  expect(await page.getByRole("log").innerText(), "what is drawn in the transcript").not.toMatch(/completed|tokens/i);
+  await expect(page.locator('[data-event="usage"]')).toBeHidden();
+  await page.locator('[data-event="turn_ended"] summary').click();
+  await expect(page.locator('[data-event="usage"]')).toHaveText(/^Tokens: \d+ in, \d+ out$/);
+  // The model is named as Claude Code itself names it, with the exact id one tap away.
+  await expect(page.getByTestId("turn-model")).toHaveText(/^Model: Haiku [\d.]+$/);
+  const session = page.locator('[data-event="session_started"]');
+  await expect(session.locator("summary")).toHaveText(/^ModelHaiku [\d.]+$/);
+  await session.locator("summary").click();
+  await expect(session).toContainText(/Model id: claude-haiku-/);
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByLabel("Prompt")).toHaveValue("");
   // The transcript is in order: prompt, reply, end.
@@ -46,7 +58,74 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
 
   await checkDesign(page, "turn, with a transcript");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u4-turn.png") });
+
+  // New chat begins again: the transcript is put away on this device, also after a reload, and the next prompt starts afresh.
+  await page.getByRole("button", { name: "New chat" }).click();
+  await expect(page.locator("[data-event]")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "No messages yet" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
+  await checkDesign(page, "chat, after New chat");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.locator("[data-event]")).toHaveCount(0);
   expect(foreign, "requests to anything but Smelt").toEqual([]);
+});
+
+test("LIVE: a chat reply that used a tool shows what the agent did as one plain line, with the detail one tap away and the raw arguments a level deeper", async ({ page, smelt }) => {
+  // A real file in the folder a chat works in, for the agent to read.
+  fs.writeFileSync(path.join(smelt.home, "scratch", "notes.txt"), "The word is heron.\n");
+  await signIn(page, smelt);
+  await page.getByLabel("Prompt").fill("Use your Read tool exactly once to read the file notes.txt in the current directory. Then reply with only the word that file names.");
+  await page.getByRole("button", { name: "Send" }).click();
+  // The action is in the transcript as soon as it is made: nothing the agent did is hidden.
+  const action = page.locator('[data-event="tool_call"]').first();
+  const line = action.locator("summary").first();
+  await expect(line).toContainText("notes.txt", { timeout: 120_000 });
+  await expect(page.locator('[data-event="turn_ended"]')).toBeVisible({ timeout: 120_000 });
+  await expect(action).toHaveAttribute("data-state", "done");
+  await expect(line).toHaveText(/^Read\s*notes\.txt$/);
+  await expect(reply(page).last()).toContainText(/heron/i);
+  await expect(page.locator('[data-event="turn_ended"] summary')).toHaveText(/^Worked for (\d+m )?\d+s$/);
+  // It returned without failing and waits for nothing, so it is folded; one tap shows the whole path and what it returned.
+  const result = action.locator('[data-event="tool_result"]');
+  await expect(action.locator("details").first()).not.toHaveAttribute("open");
+  await expect(result).toBeHidden();
+  await line.click();
+  await expect(action.locator("pre").first()).toContainText(path.join("scratch", "notes.txt"));
+  await expect(result).toContainText("Output");
+  await expect(result).toContainText("The word is heron.");
+  // The raw arguments are a level deeper, under their own summary.
+  const technical = action.locator("details details");
+  await expect(technical.locator("summary")).toHaveText("Technical details");
+  await expect(technical.locator("pre")).toBeHidden();
+  await technical.locator("summary").click();
+  await expect(technical).toContainText("Tool: Read");
+  await expect(technical.locator("pre")).toContainText('"file_path"');
+  await checkDesign(page, "chat, a tool row open to its technical details");
+  await technical.locator("summary").click();
+  await copyShot(page, "chat-tool");
+});
+
+test("LIVE: words the owner or the agent wrote are never judged, and the same words in Smelt's own text are", async ({ page, smelt }) => {
+  await signIn(page, smelt);
+  // A prompt and a reply full of the words Smelt itself never shows.
+  const words = "turn attempt worktree driver broker gate floor hook stream role grant blocked declined rate limit";
+  await page.getByLabel("Prompt").fill(`Reply with exactly this line and nothing else: ${words}`);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(reply(page).last()).toContainText("broker gate floor hook", { timeout: 120_000 });
+  await expect(page.locator('[data-event="turn_ended"]')).toBeVisible();
+  await expect(page.locator('[data-event="user_prompt"]')).toContainText(words);
+  await checkWords(page, "chat, a transcript that holds the banned words");
+  // The same words in an interface label are caught: the check is not blind.
+  await page.evaluate(() => {
+    const label = document.createElement("p");
+    label.id = "planted-for-the-check";
+    label.textContent = "Turn completed.";
+    document.querySelector("main")!.append(label);
+  });
+  await expect(checkWords(page, "chat, with an internal word planted in the interface")).rejects.toThrow(/internal words on the screen/);
+  await page.evaluate(() => document.getElementById("planted-for-the-check")!.remove());
+  await checkWords(page, "chat, after the planted word is gone");
 });
 
 test("LIVE: a dropped event stream shows a banner, recovers, and the next reply still arrives; a reload shows the transcript again", async ({ page, smelt }) => {
@@ -89,7 +168,7 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="session_started"]')).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "Stop" }).click();
-  await expect(page.locator('[data-event="turn_ended"]')).toHaveText(/Turn stopped before it finished\./, { timeout: 30_000 });
+  await expect(page.locator('[data-event="turn_ended"]')).toHaveText(/^StoppedStopped before it finished\./, { timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
 

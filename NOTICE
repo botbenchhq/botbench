@@ -8,17 +8,18 @@ Copied files (stored in this repository)
 ----------------------------------------
 
 web/vendor/groundwork/ is a copy of Groundwork, the owner's shared design
-system: version 0.3.0, source commit af0a11f7896afd015a5fd332888c9fd11881ce7d
-(branch feat/2026-11-22-0412-feat-shared-design-system-plan-pr6), the `dist/`
-directory of that repository, unmodified, written by its own
-`scripts/sync.mjs`. `hashes.json` in the copy holds the SHA-256 of every file.
+system: version 0.4.0, source commit 6ddf2106fe13ead71e00681ca609eabea821c0e2
+(6ddf210, the merge of its pull request 7 into main), the `dist/` directory of
+that repository, unmodified, written by its own `scripts/sync.mjs`.
+`hashes.json` in the copy holds the SHA-256 of every file.
 
   Groundwork
   Copyright 2026 Jon Lange
-  Licensed under the Apache License, Version 2.0, the same licence as Smelt;
-  its text is the LICENSE file at the top of this repository. The copy itself
-  carries no LICENSE or NOTICE file of Groundwork's own, so what Groundwork's
-  NOTICE says about the files in the copy is repeated here.
+  Licensed under the Apache License, Version 2.0, the same licence as Smelt.
+  The copy carries Groundwork's own licence text and notice:
+  web/vendor/groundwork/LICENSE and web/vendor/groundwork/NOTICE. That NOTICE
+  names files by their paths in Groundwork's repository; the list below gives
+  the same files by their paths in the copy.
 
 The copy contains these files from other projects, as Groundwork's NOTICE
 lists them:

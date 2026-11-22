@@ -153,6 +153,7 @@ export function moveTask(db: DatabaseSync, id: number, to: TaskStatus, change: T
     if (change.worktree) {
       sets.push("worktree_path = ?", "branch = ?", "base_commit = ?");
       values.push(change.worktree.path, change.worktree.branch, change.worktree.baseCommit);
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
       details.push(`worktree on branch ${change.worktree.branch}`);
     }
     if (change.attemptId !== undefined) {
@@ -277,7 +278,7 @@ export function createTasks(options: TasksOptions): Tasks {
       // The run id stands for this task's own single-task run until runs exist.
       worktree = await createWorktree({ repo: queued.repo, home, run: `run-${randomBytes(4).toString("hex")}`, task: `task-${id}` });
     } catch (err) {
-      return void move(id, "failed", { reason: `The task's worktree could not be created: ${words(err)}` });
+      return void move(id, "failed", { reason: `The task's copy of the project could not be created: ${words(err)}` });
     }
     const task = move(id, "building", { worktree });
 
@@ -292,7 +293,7 @@ export function createTasks(options: TasksOptions): Tasks {
       // Nothing happened in the worktree, so it and its branch go again.
       const reason = await removeWorktree({ repo: task.repo, path: worktree.path, deleteBranch: true }).then(
         () => words(err),
-        (removal: unknown) => `${words(err)} The unused worktree at ${worktree.path} could not be removed: ${words(removal)}`,
+        (removal: unknown) => `${words(err)} The unused copy at ${worktree.path} could not be removed: ${words(removal)}`,
       );
       return void move(id, closed ? "interrupted" : "failed", { reason });
     }
@@ -335,6 +336,7 @@ export function createTasks(options: TasksOptions): Tasks {
       }
       options.onEvent();
     });
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     move(id, "building", { attemptId: session.attemptId, ...(resumed ? { note: `resumed after a restart, from attempt ${task.attemptId}` } : {}) });
     let end: TurnEndReason | "not sent";
     try {
@@ -367,10 +369,10 @@ export function createTasks(options: TasksOptions): Tasks {
     if (leftover !== null) await finish(task, "failed", leftover);
     else if (end === "completed") await finish(task, "awaiting_decision");
     else if (end === "not sent") await finish(task, "interrupted", "Smelt stopped before the prompt was sent.");
-    else if (end === "interrupted") await finish(task, "interrupted", "The turn was stopped before it finished. The work done up to then is committed.");
+    else if (end === "interrupted") await finish(task, "interrupted", "It was stopped before it finished. The work done up to then is committed.");
     // Nothing came of the session at all: the CLI did not take it up again.
     else if (resumed && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
-    else await finish(task, "failed", `The turn ended with an error${detail === null ? "." : `: ${detail}`}`);
+    else await finish(task, "failed", `Claude Code ended with an error${detail === null ? "." : `: ${detail}`}`);
   };
 
   /** End a task that waited on the owner across a restart and cannot go on: its approvals are closed, never allowed, and it says why. */
@@ -449,6 +451,7 @@ export function createTasks(options: TasksOptions): Tasks {
           (await stopSurvivors(task, parked)) ??
           (unapplied ? "Smelt stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
         if (problem === null) {
+          // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
           move(task.id, "building", { note: "parked across a restart: waiting for the owner's answer to a request made before it" });
           continue;
         }

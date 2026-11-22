@@ -247,7 +247,7 @@ test("a committed task is described with its changed files, and each file's diff
   moveTask(server.db, lost.id, "awaiting_decision", { headCommit: baseCommit });
   const gone = (await get(base, headers, `/api/tasks/${lost.id}`)).body;
   assert.equal(gone.files, null);
-  assert.match(String(gone.filesProblem), /not a Smelt worktree/);
+  assert.match(String(gone.filesProblem), /not a copy Smelt made/);
   assert.equal((await get(base, headers, `/api/tasks/${lost.id}/diff?file=hello.txt`)).status, 409);
 
   assert.deepEqual(checkoutState(repo), before, "the owner's checkout is as it was");
@@ -285,7 +285,7 @@ test("starting a task answers at once with its id, and each state it reaches is 
 
   const task = (await get(base, headers, "/api/tasks/1")).body;
   assert.equal(task.status, "failed");
-  assert.match(String(task.reason), /worktree could not be created/);
+  assert.match(String(task.reason), /copy of the project could not be created/);
   assert.deepEqual([task.branch, task.headCommit, task.attemptId, task.files], [null, null, null, null]);
   assert.equal(server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
   assert.deepEqual(checkoutState(repo), before);

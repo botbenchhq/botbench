@@ -130,7 +130,7 @@ test("AE5 over HTTP: the fourth card carries the offer with its scope; granting 
   assert.equal("standingOffer" in one, false);
   const refused = await post(api, `/api/approvals/${one.id}`, { decision: "allow", standing: true });
   assert.equal(refused.status, 409);
-  assert.match(String(refused.body.error), /standing permission/i);
+  assert.match(String(refused.body.error), /Always allow is not available for this request/);
   assert.equal(count(api, "grants"), 0);
   assert.equal(await settled(first.answer), false, "a refused grant is not an allow either");
   assert.deepEqual((await pendingCards(api)).map((a) => a.id), [one.id]);
@@ -193,7 +193,7 @@ test("taking back: an unknown grant is 404, a run's pre-approved grant is 404, a
   for (const id of [4242, preapproved]) {
     const res = await post(api, `/api/grants/${id}/revoke`, {});
     assert.equal(res.status, 404, String(id));
-    assert.match(String(res.body.error), /No such standing permission/);
+    assert.match(String(res.body.error), /no such always-allowed command/);
   }
   for (const address of ["/api/grants/0/revoke", "/api/grants/abc/revoke", "/api/grants/-1/revoke", `/api/grants/${grantId}`, `/api/grants/${grantId}/revoke/again`]) assert.equal((await post(api, address, {})).status, 404, address);
   assert.equal((await get(api, `/api/grants/${grantId}/revoke`)).status, 404, "taking back is a write");

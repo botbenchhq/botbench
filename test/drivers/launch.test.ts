@@ -145,7 +145,7 @@ test("killing a group that is already gone is not an error", async () => {
 });
 
 test("an output line that is not JSON becomes an error event", () => {
-  assert.deepEqual(parseClaudeLine("this is not json"), [{ type: "error", message: "The CLI printed a line that is not JSON.", raw: "this is not json" }]);
+  assert.deepEqual(parseClaudeLine("this is not json"), [{ type: "error", message: "Claude Code printed a line Smelt could not read.", raw: "this is not json" }]);
   const [event] = parseClaudeLine('{"type":"assistant","message":');
   assert.equal(event?.type, "error");
   assert.deepEqual(parseClaudeLine("   "), []);
@@ -350,7 +350,7 @@ test("a shell command that ran without the owner having allowed it is noticed fr
   }
   // A result that says the command did not run is what a decline looks like, and is fine.
   const refused = shellWatch();
-  assert.deepEqual([...call, { type: "tool_result", id, output: "The owner declined this request", isError: true } as const].map(refused), [false, false]);
+  assert.deepEqual([...call, { type: "tool_result", id, output: "The owner denied this request", isError: true } as const].map(refused), [false, false]);
   // Tools other than the shell are the edit rule's and the CLI's own business.
   const other = shellWatch();
   assert.deepEqual([{ type: "tool_call", id: "toolu_w", name: "Write", input: { file_path: "y.txt" } } as const, { type: "tool_result", id: "toolu_w", output: "File created", isError: false } as const].map(other), [false, false]);
@@ -406,14 +406,15 @@ test("the model list Claude Code 2.1.322 reports is read as its choices and its 
     '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"default","resolvedModel":"claude-fable-5-2","displayName":"Default (recommended)","description":"Fable 5.2"},{"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus 5.5","description":"For complex work and everyday tasks"},{"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku 5.5","description":"Fastest for quick answers"},{"value":"claude-haiku-4-5-20251001","resolvedModel":"claude-haiku-4-5-20251001","displayName":"Haiku 4.5","description":"Fastest for quick answers"}],"claude_code_version":"2.1.322"}}}';
   assert.deepEqual(parseModelList(line), {
     models: [
-      { id: "opus", label: "Opus 5.5" },
-      { id: "haiku", label: "Haiku 5.5" },
+      { id: "opus", label: "Opus 5.5", resolved: "claude-opus-5-5" },
+      { id: "haiku", label: "Haiku 5.5", resolved: "claude-haiku-5-5" },
       { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
     ],
     cliDefault: "Fable 5.2",
   });
   // What the CLI prints is data: an entry whose name could not be passed back as an argument is left out.
-  const odd = '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"--bare","displayName":"x"},{"value":"sonnet"},{"value":7},"haiku"]}}}';
+  const odd = '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"--bare","displayName":"x"},{"value":"sonnet","resolvedModel":"--not a name"},{"value":7},"haiku"]}}}';
+  // The full name an alias stands for is kept only when it is itself a model name; it is what a session reports, so the client can show the label for it.
   assert.deepEqual(parseModelList(odd), { models: [{ id: "sonnet" }], cliDefault: null });
   for (const nothing of ["", "not json", '{"type":"control_response","response":{"subtype":"error","request_id":"smelt-models","error":"no"}}', '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[]}}}', '{"type":"system","subtype":"init","model":"claude-haiku-5-5"}']) {
     assert.equal(parseModelList(nothing), null, nothing);

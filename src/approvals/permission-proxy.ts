@@ -35,8 +35,8 @@ const SENT_FIELDS = ["command", "description", "file_path", "notebook_path", "pa
  * Never throws and never waits longer than `timeoutMs`.
  */
 export function askBroker(socketPath: string | undefined, secret: string | undefined, hookInput: unknown, timeoutMs = 10_000): Promise<ProxyReply> {
-  if (!socketPath || !secret) return Promise.resolve(deny("Smelt's permission gate is not set up for this session."));
-  if (!isObject(hookInput) || !isObject(hookInput.tool_input)) return Promise.resolve(deny("Smelt's permission gate could not read the tool call."));
+  if (!socketPath || !secret) return Promise.resolve(deny("Smelt's permission check is not set up for this session."));
+  if (!isObject(hookInput) || !isObject(hookInput.tool_input)) return Promise.resolve(deny("Smelt's permission check could not read the tool call."));
   const input: Record<string, unknown> = {};
   for (const field of SENT_FIELDS) if (field in hookInput.tool_input) input[field] = hookInput.tool_input[field];
   const message = `${JSON.stringify({ secret, tool: hookInput.tool_name, input, toolCallId: hookInput.tool_use_id, cwd: hookInput.cwd })}\n`;
@@ -52,25 +52,25 @@ export function askBroker(socketPath: string | undefined, secret: string | undef
       resolve(reply);
     };
     const socket = net.connect(socketPath);
-    const timer = setTimeout(() => finish(deny("Smelt's permission gate did not answer in time.")), timeoutMs);
+    const timer = setTimeout(() => finish(deny("Smelt's permission check did not answer in time.")), timeoutMs);
     socket.setEncoding("utf8");
-    socket.on("error", () => finish(deny("Smelt's permission gate could not be reached.")));
+    socket.on("error", () => finish(deny("Smelt's permission check could not be reached.")));
     socket.on("connect", () => socket.write(message));
     socket.on("data", (chunk: string) => {
       answer += chunk;
-      if (answer.length > 64 * 1024) finish(deny("Smelt's permission gate gave an answer that is too long."));
+      if (answer.length > 64 * 1024) finish(deny("Smelt's permission check gave an answer that is too long."));
     });
     socket.on("end", () => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(answer);
       } catch {
-        return finish(deny("Smelt's permission gate gave no readable answer."));
+        return finish(deny("Smelt's permission check gave no readable answer."));
       }
-      if (!isObject(parsed) || typeof parsed.verdict !== "string" || !VERDICTS.has(parsed.verdict)) return finish(deny("Smelt's permission gate gave an answer that is no verdict."));
+      if (!isObject(parsed) || typeof parsed.verdict !== "string" || !VERDICTS.has(parsed.verdict)) return finish(deny("Smelt's permission check gave an answer that is no verdict."));
       finish({ verdict: parsed.verdict as ProxyReply["verdict"], reason: typeof parsed.reason === "string" ? parsed.reason : "" });
     });
-    socket.on("close", () => finish(deny("Smelt's permission gate hung up without an answer.")));
+    socket.on("close", () => finish(deny("Smelt's permission check hung up without an answer.")));
   });
 }
 
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
   try {
     reply = await askBroker(process.env[SOCKET_ENV], process.env[SECRET_ENV], JSON.parse(fs.readFileSync(0, "utf8")));
   } catch {
-    reply = deny("Smelt's permission gate could not read the tool call.");
+    reply = deny("Smelt's permission check could not read the tool call.");
   }
   process.stdout.write(hookOutput(reply));
 }
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
 if (process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === import.meta.filename) {
   main().catch((err: unknown) => {
     // Exit code 2 is the CLI's own "blocked" for a hook that could not even print its answer.
-    process.stderr.write(`Denied: Smelt's permission hook failed (${err instanceof Error ? err.message : String(err)}). Nothing was run.`);
+    process.stderr.write(`Denied: Smelt's permission check failed (${err instanceof Error ? err.message : String(err)}). Nothing was run.`);
     process.exitCode = 2;
   });
 }
