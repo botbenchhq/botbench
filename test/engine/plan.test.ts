@@ -22,7 +22,7 @@ import { V8_SCHEMA } from "../support/schema-v8.ts";
 type T = { after(fn: () => unknown): void };
 
 function store(t: T): { db: DatabaseSync; dir: string; home: string; repo: string; base: string } {
-  const dir = tempDir("smelt-plan-test-");
+  const dir = tempDir("botbench-plan-test-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -44,7 +44,7 @@ const refused = (status: number, words: RegExp) => (err: unknown): boolean => {
   assert.match(err.message, words);
   return true;
 };
-/** Everything under the Smelt home where a worktree could be. */
+/** Everything under the Botbench home where a worktree could be. */
 const worktreeDirs = (home: string): string[] => (fs.existsSync(path.join(home, "worktrees")) ? fs.readdirSync(path.join(home, "worktrees"), { recursive: true }).map(String) : []);
 
 /** A run waiting for the owner with `tasks` as its plan, made without any planner. */
@@ -267,7 +267,7 @@ test("run ids continue from the highest in use and are never reused; tasks and g
 });
 
 test("a database at the version 8 schema is migrated with every row kept: tasks, their run ids, grants, approvals and the action log", (t) => {
-  const dir = tempDir("smelt-plan-v8-");
+  const dir = tempDir("botbench-plan-v8-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
@@ -522,7 +522,7 @@ test("after a restart: a run left planning is failed with the reason and its wor
   const e = await engine(t, []);
   const queuedRun = planned(e.db, e.repo, e.base);
   const tasks = approvePlan(e.db, queuedRun.id, queuedRun.planVersion).tasks;
-  // What a Smelt that was killed while planning leaves: the run still planning, and its worktree.
+  // What a Botbench that was killed while planning leaves: the run still planning, and its worktree.
   const left = createRun(e.db, { repo: e.repo, prompt: "left behind", baseCommit: e.base });
   const dir = path.join(e.home, "worktrees", `run-${left.id}`, "planner");
   fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -534,7 +534,7 @@ test("after a restart: a run left planning is failed with the reason and its wor
   await runs.idle();
   const failed = getRun(e.db, left.id)!;
   assert.equal(failed.status, "failed");
-  assert.match(failed.reason!, /Smelt stopped/);
+  assert.match(failed.reason!, /Botbench stopped/);
   assert.equal(worktreeCount(e.repo), 1);
   assert.deepEqual(worktreeDirs(e.home), []);
   assert.equal(e.driver.started.length, 0, "nothing was planned again unasked");
@@ -547,7 +547,7 @@ test("after a restart: a run left planning is failed with the reason and its wor
 });
 
 test("a spec file is read only when it is a full path to a regular text file of a readable size, and never hangs", async (t) => {
-  const dir = tempDir("smelt-spec-test-");
+  const dir = tempDir("botbench-spec-test-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home);
@@ -584,7 +584,7 @@ test("a spec file is read only when it is a full path to a regular text file of 
     [file("latin.md", Buffer.from([0x63, 0x61, 0x66, 0xe9])), /not text/],
     [file("key.pem", "-----BEGIN-----"), /\.md/],
     [file("noextension", "text"), /\.md/],
-    [path.join(home, "inside.md"), /Smelt's own/],
+    [path.join(home, "inside.md"), /Botbench's own/],
   ];
   for (const [input, words] of bad) {
     const started = Date.now();
@@ -623,7 +623,7 @@ test("starting a run checks the repository and the spec file before any run exis
 });
 
 test("a version 8 database with data in every table keeps it all: standing permissions and one taken back, a parked approval with its stored answer, and every append-only rule", (t) => {
-  const dir = tempDir("smelt-plan-v8-full-");
+  const dir = tempDir("botbench-plan-v8-full-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
@@ -633,7 +633,7 @@ test("a version 8 database with data in every table keeps it all: standing permi
   old.exec(`
 INSERT INTO attempts (id, driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (1, 'claude-code', 'haiku', 'cursor-1', 'interrupted', NULL, 't0', 't1');
 INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (1, 1, 't0', 'text', '{"type":"text","text":"hi"}');
-INSERT INTO tasks (id, run_id, repo_path, prompt, status, worktree_path, branch, base_commit, attempt_id, created_at, updated_at) VALUES (1, 3, '/repos/a', 'build it', 'building', '/h/worktrees/r/task-1', 'smelt/r/task-1', 'bbbb', 1, 't0', 't1');
+INSERT INTO tasks (id, run_id, repo_path, prompt, status, worktree_path, branch, base_commit, attempt_id, created_at, updated_at) VALUES (1, 3, '/repos/a', 'build it', 'building', '/h/worktrees/r/task-1', 'botbench/r/task-1', 'bbbb', 1, 't0', 't1');
 INSERT INTO task_events (task_id, ts, status, detail) VALUES (1, 't0', 'queued', NULL), (1, 't1', 'building', 'attempt 1');
 INSERT INTO grants (id, kind, role, repo_path, cwd, words, run_id, task_id, created_at) VALUES (1, 'preapproved', 'implementer', '/repos/a', '.', '["npm","test"]', 3, 1, 't0');
 INSERT INTO grants (id, kind, role, repo_path, cwd, words, run_id, task_id, created_at) VALUES (2, 'standing', 'implementer', '/repos/a', '.', '["ls","-la"]', NULL, 1, 't2');
@@ -678,7 +678,7 @@ INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, comman
   // New rows go on after the old ids in the rebuilt tables.
   assert.deepEqual(db.prepare("SELECT name, seq FROM sqlite_sequence WHERE name IN ('approvals', 'action_log') ORDER BY name").all().map((r) => ({ ...r })), [{ name: "action_log", seq: 8 }, { name: "approvals", seq: 3 }]);
 
-  // Read through Smelt's own functions: the standing permission in force with its use, the one taken back gone, the run's grant, the parked approvals.
+  // Read through Botbench's own functions: the standing permission in force with its use, the one taken back gone, the run's grant, the parked approvals.
   assert.deepEqual(listStanding(db).map((g) => [g.id, g.command, g.timesUsed, g.lastUsedAt]), [[2, "ls -la", 1, "t3"]]);
   assert.deepEqual(standingGrants(db, { role: "implementer", repo: "/repos/a" }).map((g) => g.id), [2]);
   assert.deepEqual(runGrants(db, 3).map((g) => g.words), [["npm", "test"]]);
@@ -721,7 +721,7 @@ INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, comman
 test("critique: a run cancelled while start-up recovery is still at work stays cancelled", { timeout: 15000 }, async (t) => {
   const e = await engine(t, []);
   await e.runs.close();
-  // A re-plan was in flight when Smelt died: the run is planning and still holds its plan.
+  // A re-plan was in flight when Botbench died: the run is planning and still holds its plan.
   const left = planned(e.db, e.repo, e.base);
   e.db.prepare("UPDATE runs SET status = 'planning' WHERE id = ?").run(left.id);
   const first = createRun(e.db, { repo: e.repo, prompt: "never planned", baseCommit: e.base });
@@ -736,10 +736,10 @@ test("critique: a run cancelled while start-up recovery is still at work stays c
   for (const id of [left.id, first.id]) assert.throws(() => e.db.prepare("UPDATE runs SET status = 'awaiting_plan_approval' WHERE id = ?").run(id), /ended/);
 });
 
-test("critique: a planning worktree left by a cancel that Smelt did not live to clean up is removed at the next start", { timeout: 15000 }, async (t) => {
+test("critique: a planning worktree left by a cancel that Botbench did not live to clean up is removed at the next start", { timeout: 15000 }, async (t) => {
   const e = await engine(t, []);
   await e.runs.close();
-  const run = createRun(e.db, { repo: e.repo, prompt: "cancelled, then Smelt was killed", baseCommit: e.base });
+  const run = createRun(e.db, { repo: e.repo, prompt: "cancelled, then Botbench was killed", baseCommit: e.base });
   const dir = path.join(e.home, "worktrees", `run-${run.id}`, "planner");
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   execFileSync("git", ["-C", e.repo, "worktree", "add", "--quiet", "--detach", dir, e.base]);
@@ -803,7 +803,7 @@ test("critique: a spec file that is another name for a file elsewhere (a hard li
   for (const id of [a.id, b.id]) {
     const run = getRun(h.db, id)!;
     assert.equal(run.status, "failed");
-    assert.match(run.reason!, /Smelt stopped.*Start the run again/);
+    assert.match(run.reason!, /Botbench stopped.*Start the run again/);
   }
   assert.deepEqual(worktreeDirs(h.home), []);
 });

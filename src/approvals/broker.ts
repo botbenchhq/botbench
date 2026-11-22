@@ -16,10 +16,10 @@ import { splitPlain } from "./shell.ts";
  * inside its worktree ends here as an approval the owner answers.
  *
  * Two ways in, and they are not equal:
- *   request()   called inside Smelt when a CLI asks for permission. It writes
+ *   request()   called inside Botbench when a CLI asks for permission. It writes
  *               the approval and waits for the owner. Only answer() resolves it,
  *               and answer() is reachable only through the signed-in API.
- *   the socket  used by the pre-tool hook Smelt gives the CLI. It carries one
+ *   the socket  used by the pre-tool hook Botbench gives the CLI. It carries one
  *               question, "what does the gate say about this call?", and the
  *               reply is pass, ask or deny. It cannot allow anything and
  *               cannot answer an approval.
@@ -35,7 +35,7 @@ import { splitPlain } from "./shell.ts";
  * from the approvals and the log each time it is asked; nothing else holds the number. Only the owner's answer,
  * through the signed-in API, turns an offer into a grant, and only the owner takes one back.
  *
- * Across a restart: an approval that was pending when Smelt stopped stays pending and is marked parked. Nothing
+ * Across a restart: an approval that was pending when Botbench stopped stays pending and is marked parked. Nothing
  * waits for it in this process, so the owner's answer cannot be handed to anyone: it is stored on the approval.
  * The engine then re-drives the task, and the stored answer goes, once, to the first request of the resuming
  * attempt that asks for the same thing: same task, same role, same tool, same command, same directory. If that
@@ -43,6 +43,21 @@ import { splitPlain } from "./shell.ts";
  */
 
 export const SOCKET_FILE = "broker.sock";
+
+/** Whether a live broker answers on the socket at `socketPath`: then its data directory belongs to a running process. */
+export function socketAnswers(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(socketPath)) return resolve(false);
+    const probe = net.connect(socketPath);
+    const done = (taken: boolean): void => {
+      probe.destroy();
+      resolve(taken);
+    };
+    probe.setTimeout(2000, () => done(true));
+    probe.on("connect", () => done(true));
+    probe.on("error", () => done(false));
+  });
+}
 /** A command longer than this cannot be read in full on a card, so it is not put on one. */
 export const MAX_COMMAND = 20_000;
 export const MAX_NOTE = 2000;
@@ -111,7 +126,7 @@ export interface Approval {
   note: string | null;
   createdAt: string;
   resolvedAt: string | null;
-  /** When a start of Smelt found this approval pending from before: its agent is stopped, and answering re-drives the task. Null for one asked in this run. */
+  /** When a start of Botbench found this approval pending from before: its agent is stopped, and answering re-drives the task. Null for one asked in this run. */
   parkedAt: string | null;
   /** The owner's answer to a parked approval, kept until the re-driven task asks again. The status stays `pending` until then. */
   storedDecision: Decision | null;
@@ -182,7 +197,7 @@ export interface Admission {
   bind(attemptId: number): void;
   /** The CLI stopped waiting for these tool calls (all of the attempt's when none is named): their approvals end unanswered. */
   supersede(toolCallId?: string): void;
-  /** Smelt is stopping while the attempt waits for the owner: the secret stops working and the attempt's pending approvals stay pending, parked, for the next start. */
+  /** Botbench is stopping while the attempt waits for the owner: the secret stops working and the attempt's pending approvals stay pending, parked, for the next start. */
   park(): void;
   /** The attempt is over: the secret stops working and nothing of it is left pending. */
   release(): void;
@@ -475,11 +490,11 @@ export function createBroker(options: {
     const stillCarried = "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL";
     const deny = (detail: string): Promise<Answer> => {
       refuse({ taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, tool: String(r.tool), command: String(r.command), cwd: typeof r.cwd === "string" ? r.cwd : "", detail });
-      // A request Smelt refuses is still the resuming attempt's request: stored answers do not wait for a later one.
-      if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Smelt refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
+      // A request Botbench refuses is still the resuming attempt's request: stored answers do not wait for a later one.
+      if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Botbench refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
       return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: detail });
     };
-    if (closed) return deny("Smelt is shutting down, so nothing more is allowed.");
+    if (closed) return deny("Botbench is shutting down, so nothing more is allowed.");
     if ((r.taskId === null) === (r.runId === undefined || r.runId === null)) return deny("The request names neither a task nor a run, or both.");
     if (typeof r.tool !== "string" || r.tool === "" || typeof r.toolCallId !== "string" || r.toolCallId === "" || typeof r.command !== "string" || r.command === "" || typeof r.role !== "string" || r.role === "") {
       return deny("The request does not say what it is for.");
@@ -515,7 +530,7 @@ export function createBroker(options: {
         supersedeWhere(`After the restart the agent asked for something else first (${shorten(r.tool, 100)}: ${shorten(r.command, 300)}), so the owner's stored answer was not used.`, stillCarried, ticket.taskId, ticket.resumes);
       }
     }
-    // What Smelt itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
+    // What Botbench itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
     if (verdict.verdict === "allow") {
@@ -559,7 +574,7 @@ export function createBroker(options: {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
-      if (current.storedDecision !== null) throw new ApprovalError(409, `This approval already has your answer (${current.storedDecision}); Smelt is resuming its task.`);
+      if (current.storedDecision !== null) throw new ApprovalError(409, `This approval already has your answer (${current.storedDecision}); Botbench is resuming its task.`);
       const entry = { taskId: current.taskId, runId: current.runId, attemptId: current.attemptId, approvalId: id, rule: decision === "allow" ? "owner_allowed" : "owner_declined", tool: current.tool, command: current.command, cwd: current.cwd, detail: kept } as const;
       if (waiters.has(id)) {
         db.prepare("UPDATE approvals SET status = ?, note = ?, resolved_at = ? WHERE id = ? AND status = 'pending'").run(status, kept, now(), id);
@@ -595,14 +610,14 @@ export function createBroker(options: {
   const whereWords = (cwd: string): string => (cwd === "." ? "the top folder of the task's copy" : cwd);
 
   /**
-   * Whether a pending approval may be offered standing permission, decided from Smelt's own records and never from
+   * Whether a pending approval may be offered standing permission, decided from Botbench's own records and never from
    * what a client sends: the approval's row, its task, its attempt's admission, the floor, the grants and the log.
    * Answers the offer and the words to grant, or, as text, why there is none. Anything that cannot be read is a no.
    */
   const eligibility = (approval: Approval): { offer: StandingOffer; granted: string[] } | string => {
     if (approval.status !== "pending") return `it is already ${approval.status}`;
     // Asked before a restart: nothing waits for the answer here, and the task is resumed by an ordinary answer.
-    if (approval.parkedAt !== null || approval.storedDecision !== null || !waiters.has(approval.id)) return "it was asked before Smelt restarted";
+    if (approval.parkedAt !== null || approval.storedDecision !== null || !waiters.has(approval.id)) return "it was asked before Botbench restarted";
     // A grant for a tool's name would allow that tool with any input, and the floor reads command lines only.
     if (approval.tool !== "Bash") return "only a shell command can have one";
     // A planner's request belongs to no task, and a planner is read-only: what it asks is asked every time.
@@ -618,7 +633,7 @@ export function createBroker(options: {
       const split = splitPlain(approval.command);
       // The floor is asked with the command as the card shows it: the same reading that makes it always ask.
       const verdict = gate({ tool: "Bash", input: { command: approval.command }, worktree: ticket.worktree, cwd: path.resolve(ticket.worktree, approval.cwd) }, [], floorSettings);
-      if (verdict.verdict !== "ask" || verdict.floor !== undefined) return verdict.verdict === "ask" ? `Smelt always asks about it (${verdict.floor})` : "it is not a command Smelt asks about";
+      if (verdict.verdict !== "ask" || verdict.floor !== undefined) return verdict.verdict === "ask" ? `Botbench always asks about it (${verdict.floor})` : "it is not a command Botbench asks about";
       if (split === null) return "it is not one plain command";
       const problem = standingProblem(split);
       if (problem !== null) return problem;
@@ -632,7 +647,7 @@ export function createBroker(options: {
       return { offer: { command: showWords(split), repo, cwd: approval.cwd, role: approval.role, approvals }, granted: split };
     } catch (err) {
       console.error(`Whether approval ${approval.id} may be offered standing permission could not be decided: ${words(err)}`);
-      return "Smelt could not check it";
+      return "Botbench could not check it";
     }
   };
 
@@ -689,17 +704,17 @@ export function createBroker(options: {
     try {
       message = JSON.parse(line);
     } catch {
-      return denied("Smelt's permission check was sent a message that is not JSON.");
+      return denied("Botbench's permission check was sent a message that is not JSON.");
     }
-    if (!isObject(message) || typeof message.secret !== "string") return denied("Smelt's permission check was sent a message it cannot read.");
+    if (!isObject(message) || typeof message.secret !== "string") return denied("Botbench's permission check was sent a message it cannot read.");
     // Looked up by hash, so the secret itself is never compared a byte at a time.
     const ticket = tickets.get(hashOf(message.secret));
-    if (!ticket) return denied("Smelt's permission check does not know where this request came from.");
-    if (ticket.attemptId === null) return denied("Smelt's permission check has no running agent for this request yet.", { taskId: ticket.taskId, runId: ticket.runId });
+    if (!ticket) return denied("Botbench's permission check does not know where this request came from.");
+    if (ticket.attemptId === null) return denied("Botbench's permission check has no running agent for this request yet.", { taskId: ticket.taskId, runId: ticket.runId });
     const about = { taskId: ticket.taskId, runId: ticket.runId, attemptId: ticket.attemptId };
     const { tool, input, toolCallId, cwd } = message;
     if (typeof tool !== "string" || tool === "" || typeof toolCallId !== "string" || toolCallId === "" || typeof cwd !== "string" || !path.isAbsolute(cwd) || !isObject(input)) {
-      return denied("Smelt's permission check was sent a tool call it cannot read.", { ...about, tool: typeof tool === "string" ? tool : "" });
+      return denied("Botbench's permission check was sent a tool call it cannot read.", { ...about, tool: typeof tool === "string" ? tool : "" });
     }
     // Asked without grants: nothing a grant allows is ever said over the socket. A shell command hears "ask" here, and
     // the CLI's own request for it is then decided in request(), with the grants, inside this process.
@@ -707,13 +722,13 @@ export function createBroker(options: {
     // With links followed: a directory that is a link out of the worktree is recorded as where it leads.
     const relative = path.relative(ticket.worktree, real(cwd));
     const from = relative === "" ? "." : relative;
-    if (verdict.verdict === "deny") return denied(`Smelt's permission check refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
+    if (verdict.verdict === "deny") return denied(`Botbench's permission check refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
     // A read-only attempt has reading and the shell and nothing else: any other tool is refused, not asked about.
-    if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Smelt's permission check refused this call: the ${stepWords(ticket.role)} only reads and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
+    if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Botbench's permission check refused this call: the ${stepWords(ticket.role)} only reads and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
     if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing") {
       if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
       ticket.seen.set(toolCallId, from);
-      return { verdict: "ask", reason: "Smelt asks the owner before this runs." };
+      return { verdict: "ask", reason: "Botbench asks the owner before this runs." };
     }
     if (verdict.rule === "auto_worktree_edit") {
       const file = String(input.file_path ?? input.notebook_path);
@@ -721,7 +736,7 @@ export function createBroker(options: {
         appendLog(db, { ...about, rule: verdict.rule, tool, command: path.relative(ticket.worktree, path.resolve(cwd, file)), cwd: from });
       } catch (err) {
         // What cannot be logged does not run.
-        return denied(`Smelt could not record this edit, so it was not let through: ${words(err)}`, { ...about, tool });
+        return denied(`Botbench could not record this edit, so it was not let through: ${words(err)}`, { ...about, tool });
       }
     }
     return { verdict: "pass", reason: "" };
@@ -745,33 +760,33 @@ export function createBroker(options: {
     socket.on("close", () => sockets.delete(socket));
     // A caller that says nothing, or never hangs up after its answer, is not kept.
     socket.setTimeout(SOCKET_READ_MS, () => {
-      refuseUnread("Smelt's permission check was sent no complete message in time.");
+      refuseUnread("Botbench's permission check was sent no complete message in time.");
       setTimeout(() => socket.destroy(), 1000).unref();
     });
     socket.on("error", () => socket.destroy());
     socket.on("data", (chunk: string) => {
       if (done) return;
       buffer += chunk;
-      if (buffer.length > MAX_MESSAGE) return refuseUnread("Smelt's permission check was sent a message that is too long.");
+      if (buffer.length > MAX_MESSAGE) return refuseUnread("Botbench's permission check was sent a message that is too long.");
       const end = buffer.indexOf("\n");
       if (end === -1) return;
       let answer: Reply;
       try {
         answer = decide(buffer.slice(0, end));
       } catch (err) {
-        answer = { verdict: "deny", reason: `Smelt's permission check failed: ${words(err)}` };
+        answer = { verdict: "deny", reason: `Botbench's permission check failed: ${words(err)}` };
       }
       reply(answer);
     });
-    socket.on("end", () => refuseUnread("Smelt's permission check was sent a message with no end."));
+    socket.on("end", () => refuseUnread("Botbench's permission check was sent a message with no end."));
   };
 
   const listen = (): Promise<void> =>
     inUse().then(
       (taken) =>
         new Promise<void>((resolve, reject) => {
-          if (taken) return reject(new Error(`Another Smelt is already running on this data directory (it answers permission requests at ${socketPath}). Stop it first, or give this one its own SMELT_HOME.`));
-          // What a Smelt that stopped left pending stays pending, marked as asked before this start. Nothing waits for it
+          if (taken) return reject(new Error(`Another Botbench is already running on this data directory (it answers permission requests at ${socketPath}). Stop it first, or give this one its own BOTBENCH_HOME.`));
+          // What a Botbench that stopped left pending stays pending, marked as asked before this start. Nothing waits for it
           // in this process; the engine decides whether its task can be resumed. A store that cannot be written is no start.
           try {
             db.prepare("UPDATE approvals SET parked_at = ? WHERE status = 'pending' AND parked_at IS NULL").run(now());
@@ -784,30 +799,19 @@ export function createBroker(options: {
         }),
     );
 
-  /** Whether a live broker already answers on the socket: then this data directory belongs to a running Smelt. */
-  const inUse = (): Promise<boolean> =>
-    new Promise((resolve) => {
-      if (!fs.existsSync(socketPath)) return resolve(false);
-      const probe = net.connect(socketPath);
-      const done = (taken: boolean): void => {
-        probe.destroy();
-        resolve(taken);
-      };
-      probe.setTimeout(2000, () => done(true));
-      probe.on("connect", () => done(true));
-      probe.on("error", () => done(false));
-    });
+  /** Whether a live broker already answers on the socket: then this data directory belongs to a running Botbench. */
+  const inUse = (): Promise<boolean> => socketAnswers(socketPath);
 
   const listenNow = (resolve: () => void, reject: (err: Error) => void): void => {
     const opening = net.createServer({ allowHalfOpen: true }, onConnection);
-    opening.once("error", (err) => reject(new Error(`Smelt's permission socket could not be opened at ${socketPath}: ${words(err)}. Until it can, every command a task asks for is denied.`)));
+    opening.once("error", (err) => reject(new Error(`Botbench's permission socket could not be opened at ${socketPath}: ${words(err)}. Until it can, every command a task asks for is denied.`)));
     opening.listen(socketPath, () => {
       try {
         // The directory already keeps other accounts out; the socket says so itself as well.
         fs.chmodSync(socketPath, 0o600);
       } catch (err) {
         opening.close();
-        return reject(new Error(`Smelt's permission socket could not be made owner-only: ${words(err)}`));
+        return reject(new Error(`Botbench's permission socket could not be made owner-only: ${words(err)}`));
       }
       opening.on("error", (err) => console.error(`The permission broker's socket failed: ${words(err)}`));
       server = opening;
@@ -851,7 +855,7 @@ export function createBroker(options: {
       }
       for (const id of ids) {
         // Whoever waited in this process is let go with a refusal; the approval itself stays for the owner.
-        waiters.get(id)?.({ decision: "decline", note: null, approvalId: id, refused: "Smelt is stopping. The request waits for the owner until Smelt runs again." });
+        waiters.get(id)?.({ decision: "decline", note: null, approvalId: id, refused: "Botbench is stopping. The request waits for the owner until Botbench runs again." });
         waiters.delete(id);
         announce(id);
       }
@@ -875,7 +879,7 @@ export function createBroker(options: {
     if (closed) return;
     closed = true;
     tickets.clear();
-    // Only what this broker is waiting on: the store may be shared with a Smelt that is still running.
+    // Only what this broker is waiting on: the store may be shared with a Botbench that is still running.
     for (const id of [...waiters.keys()]) supersedeWhere(null, "id = ?", id);
     // Should the rows not have been writable, still nobody is left waiting: a request with no broker is declined.
     for (const [id, resolve] of waiters) resolve({ decision: "decline", note: null, approvalId: id, refused: null });
@@ -883,7 +887,7 @@ export function createBroker(options: {
     const open = server;
     server = null;
     for (const socket of sockets) socket.destroy();
-    // Only a broker that opened the socket removes it: the file may be a running Smelt's.
+    // Only a broker that opened the socket removes it: the file may be a running Botbench's.
     if (!open) return;
     await new Promise<void>((resolve) => open.close(() => resolve()));
     fs.rmSync(socketPath, { force: true });

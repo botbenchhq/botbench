@@ -27,7 +27,7 @@ interface Rig {
 }
 
 async function rig(t: T, offerStandingAfter?: number): Promise<Rig> {
-  const dir = tempDir("smelt-ladder-");
+  const dir = tempDir("botbench-ladder-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -109,7 +109,7 @@ const rules = (db: DatabaseSync): string[] => actionLog(db).map((e) => e.rule);
 // ---- The comparison alone ----
 
 const REPO = "/Users/owner/code/sample";
-const WORKTREE = "/Users/owner/.smelt/worktrees/run-1/task-1";
+const WORKTREE = "/Users/owner/.botbench/worktrees/run-1/task-1";
 const standing = (words: string[], over: Partial<Grant> = {}): Grant => ({ id: 9, kind: "standing", role: "implementer", repo: REPO, cwd: ".", words, runId: null, taskId: 4, createdAt: "2026-11-22T10:00:00.000Z", ...over });
 const scope = { role: "implementer", repo: REPO, runId: 5 };
 const verdict = (command: string, grants: Grant[], over: { cwd?: string; scope?: typeof scope; input?: Record<string, unknown> } = {}): unknown =>
@@ -336,7 +336,7 @@ test("the same command in another repository, another directory or for another r
 test("AE6: a request the floor catches, or one the splitter cannot read, never offers and cannot be granted, however often it was approved; a grant forged in the database does not let it run", async (t) => {
   const r = await rig(t, 1);
   const a = agent(r);
-  const never = ["git push", "git push --force", "rm -rf /tmp/smelt-ladder-nothing", "sudo ls", "ls | head", "echo $HOME", "npm test > out.txt", "cat ~/.zshrc", "FOO=1 npm test", "npm test # twice"];
+  const never = ["git push", "git push --force", "rm -rf /tmp/botbench-ladder-nothing", "sudo ls", "ls | head", "echo $HOME", "npm test > out.txt", "cat ~/.zshrc", "FOO=1 npm test", "npm test # twice"];
   for (const [i, command] of never.entries()) {
     for (let n = 0; n < 4; n++) assert.equal(await decide(r, a, command, `toolu_${i}_${n}`), null, `${command}, approved ${n} times`);
     const { answer } = await a.ask(command, `toolu_${i}_last`);
@@ -536,7 +536,7 @@ test("a card asked before a restart never offers and cannot be granted: nothing 
   const second = await a.ask("npm test", "toolu_2");
   const pending = card(r, "toolu_2");
   assert.ok(r.broker.standingOffer(pending.id));
-  // Smelt stops while the card waits: the request is kept, parked.
+  // Botbench stops while the card waits: the request is kept, parked.
   a.admission.park();
   assert.equal((await second.answer).decision, "decline");
   assert.notEqual(listApprovals(r.db, "pending").find((p) => p.id === pending.id)!.parkedAt, null);
@@ -546,7 +546,7 @@ test("a card asked before a restart never offers and cannot be granted: nothing 
   assert.equal(listApprovals(r.db, "pending").find((p) => p.id === pending.id)!.storedDecision, null);
 });
 
-/** What the seven shipped migrations make, written out: the schema a Smelt of unit 9 left on disk. */
+/** What the seven shipped migrations make, written out: the schema a Botbench of unit 9 left on disk. */
 const V7_SCHEMA = `
 CREATE TABLE schema_version (version INTEGER NOT NULL);
 CREATE TABLE attempts (
@@ -676,7 +676,7 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `;
 
 test("a database at schema version 7 gains revocations, the standing log rules and the paging index, and keeps its tasks, approvals, grants and log", (t) => {
-  const dir = tempDir("smelt-ladder-v7-");
+  const dir = tempDir("botbench-ladder-v7-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
@@ -828,7 +828,7 @@ test("critique: the directory is recorded with links followed; one that leads ou
   assert.equal(await settled(linked.answer), false);
   assert.equal(card(r, "toolu_5").cwd, path.join("..", "outside"));
 
-  // A directory handed over inside Smelt in a roundabout spelling is not offered either.
+  // A directory handed over inside Botbench in a roundabout spelling is not offered either.
   for (const [i, cwd] of ["sub/..", "sub/../..", "./sub", "/tmp"].entries()) {
     const answer = r.broker.request({ taskId: a.taskId, attemptId: a.attemptId, role: "implementer", tool: "Bash", command: "npm test", input: { command: "npm test" }, cwd, reason: null, toolCallId: `toolu_odd_${i}` });
     const odd = card(r, `toolu_odd_${i}`);

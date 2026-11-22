@@ -1,10 +1,10 @@
-# Voice: the words Smelt shows
+# Voice: the words Botbench shows
 
 Read this before writing any text a person sees: a label, a state, an error, a helper line, an accessible name, the tab title, and any sentence the server sends to a screen. The research behind it is `ui-copy-research.md` in this directory.
 
 ## Principles
 
-- **Familiar words.** Say what other products say: chat, task, plan, branch, allow, deny, working. A word from Smelt's code is not a word for the screen.
+- **Familiar words.** Say what other products say: chat, task, plan, branch, allow, deny, working. A word from Botbench's code is not a word for the screen.
 - **Anyone can approach it.** A first-time reader who is not an engineer knows what each control does before tapping it.
 - **Plain first, precise behind.** The plain sentence leads. The exact command, path, id or git term stays one tap away or in helper text. Text never gets vaguer to get plainer.
 - **Show what the agent did.** Every action is a line in the transcript. Nothing is hidden; detail is folded, never removed.
@@ -14,7 +14,7 @@ Read this before writing any text a person sees: a label, a state, an error, a h
 
 ## Glossary
 
-The third column is the list the automated guard reads (`e2e/voice.ts`): every term in backticks there fails a test when it appears as a whole word, in any case, with or without a final "s", in text Smelt wrote. Text a person, the agent or a program wrote (a prompt, a reply, a command, a path, output) is not checked.
+The third column is the list the automated guard reads (`e2e/voice.ts`): every term in backticks there fails a test when it appears as a whole word, in any case, with or without a final "s", in text Botbench wrote. Text a person, the agent or a program wrote (a prompt, a reply, a command, a path, output) is not checked.
 
 | On screen | What it means internally | Never shown |
 |---|---|---|
@@ -35,8 +35,9 @@ The third column is the list the automated guard reads (`e2e/voice.ts`): every t
 | Failed | Failed | `blocked` |
 | Plan → Build → Review; planner, builder, reviewer only where a person needs the distinction | Roles: planner, implementer, reviewer | `implementer`, `role` |
 | usage limit; "Paused · usage limit (resumes 3:14)" only with a real reset time | A rate limit reported by the agent | `rate limit` |
-| Smelt, "the permission check", "the safety rules", "live updates" | The broker, the gate, the safety floor and never-list, the hook, the event stream, the store | `broker`, `gate`, `floor`, `never-list`, `hook`, `stream`, `SSE`, `superseded`, `resume cursor`, `pgid`, `admission`, `schema`, `migration` |
+| Botbench, "the permission check", "the safety rules", "live updates" | The broker, the gate, the safety floor and never-list, the hook, the event stream, the store | `broker`, `gate`, `floor`, `never-list`, `hook`, `stream`, `SSE`, `superseded`, `resume cursor`, `pgid`, `admission`, `schema`, `migration` |
 | Task, Run, Plan, Branch, Usage, Connect | The same | |
+| Botbench | The product, which was called Smelt before it was renamed. The old name stays only in code that reads an old installation, never on screen | `Smelt` |
 
 On screen since the build and verify steps landed: Checking (the project's checks are running) and Cancelled (the owner stopped the run before this task started). Check results read "Checks passed", "Checks failed" or "No checks are set up for this repository", never a bare colour.
 
@@ -52,7 +53,7 @@ Tool activity stays visible. It builds trust, and it is the evidence.
 2. **One tap:** the full command or path, the agent's own reason when it gave one, the output, and the change an edit made.
 3. **One level deeper, "Technical details":** the tool's name and its raw arguments.
 4. **Open without a tap:** anything that failed and anything waiting for approval.
-5. **Never a guess.** A tool Smelt has no verb for is shown by its own name and its main argument. A line count is counted from the edit's own text or left out. A duration comes from stored times or is left out.
+5. **Never a guess.** A tool Botbench has no verb for is shown by its own name and its main argument. A line count is counted from the edit's own text or left out. A duration comes from stored times or is left out.
 6. **Never raw arguments as the line**, and never a summary in place of the evidence: the evidence is always behind the line.
 
 Token counts are not in the main line of a transcript. They are under the "Worked for" row of the reply they belong to.

@@ -35,10 +35,10 @@ export interface RouteContext {
 export function requestUrl(req: http.IncomingMessage): URL {
   const raw = req.url ?? "/";
   try {
-    return raw.startsWith("/") ? new URL(`http://smelt.invalid${raw}`) : new URL(raw, "http://smelt.invalid");
+    return raw.startsWith("/") ? new URL(`http://botbench.invalid${raw}`) : new URL(raw, "http://botbench.invalid");
   } catch {
     // A target that is no address at all names no route, so it is treated as one: refused without a session, 404 with.
-    return new URL("http://smelt.invalid/unreadable-request-target");
+    return new URL("http://botbench.invalid/unreadable-request-target");
   }
 }
 

@@ -4,10 +4,10 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
-import { checkoutState, git, initRepo, smeltBranches, tempDir, worktreeCount } from "../support/repo.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
+import { checkoutState, git, initRepo, botbenchBranches, tempDir, worktreeCount } from "../support/repo.ts";
 
-// A run built end to end on the real Claude Code, on the owner's login, through Smelt's HTTP API, in a real temporary
+// A run built end to end on the real Claude Code, on the owner's login, through Botbench's HTTP API, in a real temporary
 // repository: the planner plans, the owner's edit fixes the plan to two tiny tasks, the owner approves, and the build
 // line builds them one after the other. Every prompt is tiny and both roles ask for the cheapest model.
 
@@ -15,7 +15,7 @@ const RUN_TIMEOUT = 420_000;
 const JSON_TYPE = { "content-type": "application/json" };
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   home: string;
@@ -24,7 +24,7 @@ interface Live {
 type Body = Record<string, unknown>;
 
 async function start(t: TestContext, files: Record<string, string>, setup: string[]): Promise<Live> {
-  const dir = tempDir("smelt-live-build-");
+  const dir = tempDir("botbench-live-build-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -85,7 +85,7 @@ async function approveAs(live: Live, tasks: { title: string; criteria: string[] 
 
 const taskEvents = (live: Live, id: number) => live.server.db.prepare("SELECT id, status FROM task_events WHERE task_id = ? ORDER BY id").all(id).map((r) => ({ id: Number(r.id), status: String(r.status) }));
 
-test("live: a two-task run builds the first task fully before starting the second; each ends with Smelt's commit on its own branch, after the setup command ran in its copy; the source checkout is unchanged", { timeout: RUN_TIMEOUT }, async (t) => {
+test("live: a two-task run builds the first task fully before starting the second; each ends with Botbench's commit on its own branch, after the setup command ran in its copy; the source checkout is unchanged", { timeout: RUN_TIMEOUT }, async (t) => {
   const live = await start(t, { "README.md": "# Sample\n" }, ["echo setting up the copy"]);
   const before = checkoutState(live.repo);
   const asked: Body[] = [];
@@ -118,14 +118,14 @@ test("live: a two-task run builds the first task fully before starting the secon
   const secondStart = taskEvents(live, second).find((e) => e.status === "building")!;
   assert.ok(firstEnd && secondStart && firstEnd.id < secondStart.id, "the second task started only after the first had finished");
 
-  assert.deepEqual(smeltBranches(live.repo), taskIds.map((id) => `smelt/run-${runId}/task-${id}`));
+  assert.deepEqual(botbenchBranches(live.repo), taskIds.map((id) => `botbench/run-${runId}/task-${id}`));
   for (const [i, id] of taskIds.entries()) {
     const task = (await call(live, "GET", `/api/tasks/${id}`)).body;
     assert.equal(task.status, "awaiting_decision", String(task.reason));
     const word = i === 0 ? "one" : "two";
     assert.equal(git(live.repo, "show", `${task.branch}:${word}.txt`).trim(), word);
-    assert.equal(git(live.repo, "log", "-1", "--format=%an <%ae>", String(task.branch)).trim(), "Smelt <smelt@localhost>");
-    assert.equal(git(live.repo, "rev-list", "--count", `${task.baseCommit}..${task.branch}`).trim(), "1", "one commit, Smelt's, on the task's branch");
+    assert.equal(git(live.repo, "log", "-1", "--format=%an <%ae>", String(task.branch)).trim(), "Botbench <botbench@localhost>");
+    assert.equal(git(live.repo, "rev-list", "--count", `${task.baseCommit}..${task.branch}`).trim(), "1", "one commit, Botbench's, on the task's branch");
     assert.deepEqual((task.files as Body[]).map((f) => f.path), [`${word}.txt`], "each task's branch holds its own work only");
     assert.deepEqual((task.evidence as Body[]).map((row) => [row.kind, row.command, row.outcome, row.exitCode]), [["setup", "echo setting up the copy", "passed", 0]]);
     assert.match(String((task.evidence as Body[])[0]!.output), /setting up the copy/);

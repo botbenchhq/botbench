@@ -39,7 +39,7 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         if (read !== reads.current) return;
-        setProblem(err instanceof ApiError ? `Approvals could not be read. ${err.message}` : "Approvals could not be read: Smelt could not be reached.");
+        setProblem(err instanceof ApiError ? `Approvals could not be read. ${err.message}` : "Approvals could not be read: Botbench could not be reached.");
       },
     );
   }, [onSignedOut]);

@@ -15,7 +15,7 @@ const KEY_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
 
 /** The parent environment of a shell that has provider keys exported. */
 function parentWithKeys(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "en_US.UTF-8", SMELT_UNRELATED: "x" };
+  const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "en_US.UTF-8", BOTBENCH_UNRELATED: "x" };
   for (const name of KEY_VARS) env[name] = `value-of-${name}`;
   return env;
 }
@@ -43,7 +43,7 @@ test("AE7: the environment built for a child has no provider API keys", () => {
   assert.equal(env.PATH, process.env.PATH);
   assert.equal(env.HOME, process.env.HOME);
   assert.equal(env.LC_ALL, "en_US.UTF-8");
-  assert.equal("SMELT_UNRELATED" in env, false, "variables outside the allowlist are dropped");
+  assert.equal("BOTBENCH_UNRELATED" in env, false, "variables outside the allowlist are dropped");
 });
 
 test("AE7: a key cannot be passed back in through the extra variables", () => {
@@ -76,8 +76,8 @@ test("the Claude Code arguments leave out personal settings and personal MCP ser
     return i === -1 ? undefined : args[i + 1];
   };
   assert.equal(valueOf("--setting-sources"), "project", "user and local settings are not loaded");
-  assert.ok(args.includes("--strict-mcp-config"), "only the MCP servers Smelt names are used");
-  assert.deepEqual(JSON.parse(valueOf("--mcp-config") ?? "null"), { mcpServers: {} }, "and Smelt names none");
+  assert.ok(args.includes("--strict-mcp-config"), "only the MCP servers Botbench names are used");
+  assert.deepEqual(JSON.parse(valueOf("--mcp-config") ?? "null"), { mcpServers: {} }, "and Botbench names none");
   assert.equal(args.filter((a) => a === "--mcp-config").length, 1);
   assert.equal(valueOf("--input-format"), "stream-json");
   assert.equal(valueOf("--output-format"), "stream-json");
@@ -145,7 +145,7 @@ test("killing a group that is already gone is not an error", async () => {
 });
 
 test("an output line that is not JSON becomes an error event", () => {
-  assert.deepEqual(parseClaudeLine("this is not json"), [{ type: "error", message: "Claude Code printed a line Smelt could not read.", raw: "this is not json" }]);
+  assert.deepEqual(parseClaudeLine("this is not json"), [{ type: "error", message: "Claude Code printed a line Botbench could not read.", raw: "this is not json" }]);
   const [event] = parseClaudeLine('{"type":"assistant","message":');
   assert.equal(event?.type, "error");
   assert.deepEqual(parseClaudeLine("   "), []);
@@ -218,17 +218,17 @@ test("a permission the CLI denied becomes a permission_denied event naming the t
   assert.deepEqual(parseClaudeLine('{"type":"system","subtype":"task_summary","summary":"x"}'), []);
 });
 
-test("an attempt behind the permission gate asks Smelt about every tool call and answers the CLI's prompts itself; the repository's settings stay out", () => {
-  const args = claudeArgs({ model: "haiku", allowEdits: true, gated: true, instructionsFile: "/smelt-home/instructions/abc.md" });
+test("an attempt behind the permission gate asks Botbench about every tool call and answers the CLI's prompts itself; the repository's settings stay out", () => {
+  const args = claudeArgs({ model: "haiku", allowEdits: true, gated: true, instructionsFile: "/botbench-home/instructions/abc.md" });
   const valueOf = (flag: string): string | undefined => {
     const i = args.indexOf(flag);
     return i === -1 ? undefined : args[i + 1];
   };
-  // The CLI's permission prompts come to Smelt on the protocol it is already driven over; nothing is auto-denied or auto-allowed.
+  // The CLI's permission prompts come to Botbench on the protocol it is already driven over; nothing is auto-denied or auto-allowed.
   assert.equal(valueOf("--permission-prompt-tool"), "stdio");
   assert.equal(args.includes("--permission-prompts"), false, "prompts are answered, not dropped");
   assert.equal(args.includes("--permission-mode"), false);
-  // The one settings object is Smelt's own, given on the command line: an ask rule for every shell command, and the pre-tool hook.
+  // The one settings object is Botbench's own, given on the command line: an ask rule for every shell command, and the pre-tool hook.
   assert.equal(args.filter((a) => a === "--settings").length, 1);
   const settings = JSON.parse(valueOf("--settings") ?? "null") as { permissions: { ask: string[]; allow?: unknown }; hooks: Record<string, { matcher: string; hooks: { type: string; command: string; timeout: number }[] }[]> };
   assert.deepEqual(Object.keys(settings).sort(), ["hooks", "permissions"]);
@@ -248,7 +248,7 @@ test("an attempt behind the permission gate asks Smelt about every tool call and
   assert.equal(valueOf("--setting-sources"), "");
   assert.ok(args.includes("--strict-mcp-config"));
   assert.equal(valueOf("--allowedTools"), "Edit(./**)");
-  assert.equal(valueOf("--append-system-prompt-file"), "/smelt-home/instructions/abc.md");
+  assert.equal(valueOf("--append-system-prompt-file"), "/botbench-home/instructions/abc.md");
   for (const flag of ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--plugin-dir", "--bare", "--add-dir"]) {
     assert.equal(args.includes(flag), false, `${flag} must not be passed`);
   }
@@ -300,7 +300,7 @@ test("a permission prompt from the CLI becomes a permission_request, and one tha
 });
 
 test("a repository's instructions file is handed over as text when it is an ordinary file of the repository, and not otherwise", (t) => {
-  const dir = tempDir("smelt-instructions-");
+  const dir = tempDir("botbench-instructions-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const worktree = path.join(dir, "worktree");
   fs.mkdirSync(worktree);
@@ -359,10 +359,10 @@ test("a shell command that ran without the owner having allowed it is noticed fr
 test("the attempt's gate secret is blanked out of an event before it is stored, wherever in the event it stands", () => {
   const secret = "ab".repeat(32);
   // What an allowed `env` would bring back.
-  const result = { type: "tool_result", id: "toolu_e", output: `HOME=/Users/owner\nSMELT_BROKER_SECRET=${secret}\nSMELT_BROKER_SOCKET=/home/broker.sock`, isError: false } as const;
+  const result = { type: "tool_result", id: "toolu_e", output: `HOME=/Users/owner\nBOTBENCH_BROKER_SECRET=${secret}\nBOTBENCH_BROKER_SOCKET=/home/broker.sock`, isError: false } as const;
   const stored = blank(result, secret);
   assert.equal(JSON.stringify(stored).includes(secret), false);
-  assert.match(stored.output, /^HOME=\/Users\/owner\nSMELT_BROKER_SECRET=\[the attempt's gate secret, removed by Smelt\]\nSMELT_BROKER_SOCKET=/);
+  assert.match(stored.output, /^HOME=\/Users\/owner\nBOTBENCH_BROKER_SECRET=\[the attempt's gate secret, removed by Botbench\]\nBOTBENCH_BROKER_SOCKET=/);
   const call = { type: "tool_call", id: "toolu_c", name: "Bash", input: { command: `echo ${secret} ${secret}` } } as const;
   assert.equal(JSON.stringify(blank(call, secret)).includes(secret), false);
   // An event without it is passed on as it is.
@@ -403,7 +403,7 @@ test("the model list Claude Code 2.1.322 reports is read as its choices and its 
   // The CLI's answer to an `initialize` request, as printed on 2026-11-22: four of its fourteen entries, each cut to the
   // fields read here, and without the account it also describes.
   const line =
-    '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"default","resolvedModel":"claude-fable-5-2","displayName":"Default (recommended)","description":"Fable 5.2"},{"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus 5.5","description":"For complex work and everyday tasks"},{"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku 5.5","description":"Fastest for quick answers"},{"value":"claude-haiku-4-5-20251001","resolvedModel":"claude-haiku-4-5-20251001","displayName":"Haiku 4.5","description":"Fastest for quick answers"}],"claude_code_version":"2.1.322"}}}';
+    '{"type":"control_response","response":{"subtype":"success","request_id":"botbench-models","response":{"models":[{"value":"default","resolvedModel":"claude-fable-5-2","displayName":"Default (recommended)","description":"Fable 5.2"},{"value":"opus","resolvedModel":"claude-opus-5-5","displayName":"Opus 5.5","description":"For complex work and everyday tasks"},{"value":"haiku","resolvedModel":"claude-haiku-5-5","displayName":"Haiku 5.5","description":"Fastest for quick answers"},{"value":"claude-haiku-4-5-20251001","resolvedModel":"claude-haiku-4-5-20251001","displayName":"Haiku 4.5","description":"Fastest for quick answers"}],"claude_code_version":"2.1.322"}}}';
   assert.deepEqual(parseModelList(line), {
     models: [
       { id: "opus", label: "Opus 5.5", resolved: "claude-opus-5-5" },
@@ -413,10 +413,10 @@ test("the model list Claude Code 2.1.322 reports is read as its choices and its 
     cliDefault: "Fable 5.2",
   });
   // What the CLI prints is data: an entry whose name could not be passed back as an argument is left out.
-  const odd = '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[{"value":"--bare","displayName":"x"},{"value":"sonnet","resolvedModel":"--not a name"},{"value":7},"haiku"]}}}';
+  const odd = '{"type":"control_response","response":{"subtype":"success","request_id":"botbench-models","response":{"models":[{"value":"--bare","displayName":"x"},{"value":"sonnet","resolvedModel":"--not a name"},{"value":7},"haiku"]}}}';
   // The full name an alias stands for is kept only when it is itself a model name; it is what a session reports, so the client can show the label for it.
   assert.deepEqual(parseModelList(odd), { models: [{ id: "sonnet" }], cliDefault: null });
-  for (const nothing of ["", "not json", '{"type":"control_response","response":{"subtype":"error","request_id":"smelt-models","error":"no"}}', '{"type":"control_response","response":{"subtype":"success","request_id":"smelt-models","response":{"models":[]}}}', '{"type":"system","subtype":"init","model":"claude-haiku-5-5"}']) {
+  for (const nothing of ["", "not json", '{"type":"control_response","response":{"subtype":"error","request_id":"botbench-models","error":"no"}}', '{"type":"control_response","response":{"subtype":"success","request_id":"botbench-models","response":{"models":[]}}}', '{"type":"system","subtype":"init","model":"claude-haiku-5-5"}']) {
     assert.equal(parseModelList(nothing), null, nothing);
   }
 });
@@ -424,8 +424,8 @@ test("the model list Claude Code 2.1.322 reports is read as its choices and its 
 test("a result the CLI marks as an error is an error in its own words, as printed for a model it does not know", () => {
   // Recorded from Claude Code 2.1.322 on 2026-11-22, started with a model name that does not exist; long fields left out.
   const line =
-    '{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"terminal_reason":"api_error","result":"There\'s an issue with the selected model (smelt-no-such-model-1). It may not exist or you may not have access to it. Run --model to pick a different model."}';
-  const detail = "api_error: There's an issue with the selected model (smelt-no-such-model-1). It may not exist or you may not have access to it. Run --model to pick a different model.";
+    '{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"terminal_reason":"api_error","result":"There\'s an issue with the selected model (botbench-no-such-model-1). It may not exist or you may not have access to it. Run --model to pick a different model."}';
+  const detail = "api_error: There's an issue with the selected model (botbench-no-such-model-1). It may not exist or you may not have access to it. Run --model to pick a different model.";
   assert.deepEqual(parseClaudeLine(line), [
     { type: "usage", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     { type: "error", message: detail, raw: null },

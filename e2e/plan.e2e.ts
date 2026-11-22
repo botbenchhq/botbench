@@ -4,19 +4,19 @@ import { checkoutState, initRepo, worktreeCount, write } from "../test/support/r
 import type { Page } from "@playwright/test";
 import { checkDesign, copyShot, expect, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
 
-// Runs and the plan gate in the real client, at a phone's size, against a real Smelt process, a real temporary
+// Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
 
-/** A real repository beside the test's Smelt home, with the owner part-way through their own work. */
-function sourceRepo(smeltHome: string): string {
-  const repo = path.join(path.dirname(smeltHome), "sample-repo");
+/** A real repository beside the test's Botbench home, with the owner part-way through their own work. */
+function sourceRepo(botbenchHome: string): string {
+  const repo = path.join(path.dirname(botbenchHome), "sample-repo");
   initRepo(repo);
   write(repo, "README.md", "# Sample\nthe owner is half-way through this line\n");
   return repo;
 }
 
 /**
- * Keep a full-page screenshot when SMELT_SHOTS is set. For a full-page capture Chrome is resized, and it then leaves an
+ * Keep a full-page screenshot when BOTBENCH_SHOTS is set. For a full-page capture Chrome is resized, and it then leaves an
  * inline size on a textarea that sizes itself to its content; that is the capture's doing and not the client's, so
  * what the capture added is taken off again before the design check looks for inline styles.
  */
@@ -30,13 +30,13 @@ async function shot(page: Page, name: string): Promise<void> {
   });
 }
 
-test("LIVE: start a run from a prompt, see the plan arrive without a reload, edit a title, delete a task, approve, see it build, and cancel it; every screen follows the design system", async ({ page, smelt }) => {
-  const foreign = watchRequests(page, smelt);
-  const repo = sourceRepo(smelt.home);
+test("LIVE: start a run from a prompt, see the plan arrive without a reload, edit a title, delete a task, approve, see it build, and cancel it; every screen follows the design system", async ({ page, botbench }) => {
+  const foreign = watchRequests(page, botbench);
+  const repo = sourceRepo(botbench.home);
   const before = checkoutState(repo);
-  await signIn(page, smelt);
+  await signIn(page, botbench);
   // A mark on the page that a reload would wipe out.
-  await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+  await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
   // The navigation lists the destinations; starting something new is a button in its list's view.
   const nav = page.getByRole("navigation", { name: "Screens" });
@@ -72,8 +72,8 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("run-repo")).toHaveText(repo);
   await expect(page.getByTestId("run-preapproved")).toContainText("npm test");
   await expect(page.locator('[data-event="user_prompt"]')).toContainText("a.txt containing a", { timeout: 60_000 });
-  // The planning prompt is Smelt's, with the owner's words inside it: the row does not say the owner wrote it.
-  await expect(page.locator('[data-event="user_prompt"] .gw-message__label')).toHaveText("Smelt, to Claude Code");
+  // The planning prompt is Botbench's, with the owner's words inside it: the row does not say the owner wrote it.
+  await expect(page.locator('[data-event="user_prompt"] .gw-message__label')).toHaveText("Botbench, to Claude Code");
   await checkDesign(page, "run, planning");
   // While the planner works there is no plan to approve, and nothing offers to.
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
@@ -82,11 +82,11 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // The planner is read-only: a command it wants to run asks the owner, and is declined here, as an owner could.
   const approve = page.getByRole("button", { name: /^Approve \d+ tasks?$/ });
   await expect(async () => {
-    const pending = (await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
-    for (const approval of pending.approvals) await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "No commands while planning." } });
+    const pending = (await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
+    for (const approval of pending.approvals) await page.request.post(`${botbench.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "No commands while planning." } });
     await expect(approve).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 240_000, intervals: [1_000] });
-  expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce), "the plan arrived without a reload").toBe(true);
+  expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "the plan arrived without a reload").toBe(true);
   await expect(page.getByTestId("run-status")).toHaveText(/^Plan ready for review\./);
   const plan = page.getByRole("list", { name: "Plan" });
   const rows = plan.locator(":scope > li");
@@ -142,7 +142,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
 
   // Approve: the run says in plain words that it builds, one task at a time, and the owner can still cancel it.
   await approve.click();
-  await expect(page.getByTestId("run-status")).toHaveText(/^Working\. Smelt builds the tasks one at a time/);
+  await expect(page.getByTestId("run-status")).toHaveText(/^Working\. Botbench builds the tasks one at a time/);
   const queued = page.getByTestId("run-tasks").getByRole("listitem").filter({ has: page.locator(".gw-run-status") });
   await expect(queued).toHaveCount(2);
   await expect(queued.nth(0)).toContainText("Create a.txt <b>first</b>");
@@ -175,14 +175,14 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
 
   // Nothing of the owner's was touched.
   expect(checkoutState(repo)).toEqual(before);
-  expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce)).toBe(true);
+  expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
   expect(foreign).toEqual([]);
 });
 
-test("a spec file that does not exist is reported in words and nothing starts; a prompt and a spec file together are not sent", async ({ page, smelt }) => {
-  const repo = sourceRepo(smelt.home);
-  await signIn(page, smelt);
-  await page.goto(`${smelt.base}/#/runs/new`);
+test("a spec file that does not exist is reported in words and nothing starts; a prompt and a spec file together are not sent", async ({ page, botbench }) => {
+  const repo = sourceRepo(botbench.home);
+  await signIn(page, botbench);
+  await page.goto(`${botbench.base}/#/runs/new`);
   await expect(page.getByRole("heading", { name: "New run", level: 1 })).toBeVisible();
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
@@ -191,7 +191,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
   await page.getByRole("button", { name: "Start run" }).click();
   await expect(page.getByRole("alert")).toHaveText(/The run was not started\. Give a prompt or the path of a spec file\./);
 
-  const missing = path.join(path.dirname(smelt.home), "no-such-spec.md");
+  const missing = path.join(path.dirname(botbench.home), "no-such-spec.md");
   await page.getByLabel("Spec file path").fill(missing);
   await page.getByLabel("Prompt").fill("and a prompt as well");
   await page.getByRole("button", { name: "Start run" }).click();
@@ -207,7 +207,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
   // Nothing started: no run is listed, and no planner was launched.
   await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page.getByTestId("run-list-state")).toHaveText("No runs yet");
-  const runs = (await (await page.request.get(`${smelt.base}/api/runs`)).json()) as { runs: unknown[] };
+  const runs = (await (await page.request.get(`${botbench.base}/api/runs`)).json()) as { runs: unknown[] };
   expect(runs.runs).toEqual([]);
   expect(worktreeCount(repo)).toBe(1);
 });

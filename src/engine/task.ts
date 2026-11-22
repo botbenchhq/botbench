@@ -14,7 +14,7 @@ import { commandProblem, insertEvidence, runCommand, type StationCommand } from 
 
 /**
  * The stations a task can be at so far. `building` covers making its worktree, running the repository's setup
- * commands there and its builder's turn. `verifying` is the repository's check commands running on the work Smelt
+ * commands there and its builder's turn. `verifying` is the repository's check commands running on the work Botbench
  * committed. `awaiting_decision` means nothing further happens until the owner decides; `interrupted`, `failed` and
  * `cancelled` are ends that carry a reason.
  */
@@ -47,7 +47,7 @@ export interface Task {
   worktreePath: string | null;
   branch: string | null;
   baseCommit: string | null;
-  /** The task branch's commit after Smelt committed the work. */
+  /** The task branch's commit after Botbench committed the work. */
   headCommit: string | null;
   attemptId: number | null;
   /** What its checks found once it was built; null before that, or when it never got there. */
@@ -267,13 +267,13 @@ export interface Tasks {
 
 export interface TasksOptions {
   db: DatabaseSync;
-  /** Smelt's data directory; worktrees go under it. */
+  /** Botbench's data directory; worktrees go under it. */
   home: string;
   driver: Driver;
   /** Where the attempt's permission requests go to wait for the owner. */
   broker: Broker;
   model?: string;
-  /** The commands Smelt runs itself in a repository's new worktrees. None when left out. */
+  /** The commands Botbench runs itself in a repository's new worktrees. None when left out. */
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   /** Called when a transcript event was stored. */
   onEvent: () => void;
@@ -285,7 +285,7 @@ export interface TasksOptions {
 
 /**
  * Builds tasks, one at a time. A task is one implementer turn in its own
- * worktree: Smelt makes the worktree from the repository's current commit,
+ * worktree: Botbench makes the worktree from the repository's current commit,
  * starts an attempt there that may edit files in it and must ask the owner,
  * through the broker, for everything else, sends the prompt, and when the turn
  * ends commits everything to the task branch itself, however the turn ended.
@@ -294,7 +294,7 @@ export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
   let closed = false;
   let current: DriverSession | null = null;
-  /** Set while a turn runs: called when Smelt begins to stop, it decides whether that turn's task is parked. */
+  /** Set while a turn runs: called when Botbench begins to stop, it decides whether that turn's task is parked. */
   let parkCurrent: (() => void) | null = null;
   /** The task being built now, the run it belongs to, and the way to stop its setup command or turn. */
   let active: { taskId: number; runId: number | null; stop: AbortController } | null = null;
@@ -331,7 +331,7 @@ export function createTasks(options: TasksOptions): Tasks {
   /** Commit whatever is in the task's worktree; the commit, or null when it could not be made and the task has failed saying why. */
   const commit = async (task: Task, reason?: string): Promise<string | null> => {
     try {
-      await commitWork({ path: task.worktreePath!, message: `Smelt task ${task.id}: ${firstLine(task.prompt)}` });
+      await commitWork({ path: task.worktreePath!, message: `Botbench task ${task.id}: ${firstLine(task.prompt)}` });
       return (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! })).headCommit;
     } catch (err) {
       // The files are still in the worktree; the task says what happened to it and why they are not committed.
@@ -343,7 +343,7 @@ export function createTasks(options: TasksOptions): Tasks {
   /**
    * The builder finished: commit its work, then run the repository's check commands on it, in its worktree, each with
    * its time limit, and record each as evidence. The task goes on to wait for the owner whatever the checks found; it
-   * says what that was. A check stopped by a cancel or by Smelt stopping ends the task as cancelled or interrupted.
+   * says what that was. A check stopped by a cancel or by Botbench stopping ends the task as cancelled or interrupted.
    */
   const verify = async (task: Task, stopped?: AbortSignal): Promise<void> => {
     const headCommit = await commit(task);
@@ -370,7 +370,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     if (interrupted) {
       if (cancelled(task)) return void move(task.id, "cancelled", { reason: "The run was cancelled while this task's checks ran. The work is committed to its branch; the checks did not finish." });
-      return void move(task.id, "interrupted", { reason: "Smelt stopped while this task's checks ran. The work is committed to its branch; the checks did not finish." });
+      return void move(task.id, "interrupted", { reason: "Botbench stopped while this task's checks ran. The work is committed to its branch; the checks did not finish." });
     }
     move(task.id, "awaiting_decision", { checks: failed ? "failed" : "passed" });
   };
@@ -382,7 +382,7 @@ export function createTasks(options: TasksOptions): Tasks {
   const build = async (id: number): Promise<void> => {
     const queued = getTask(db, id);
     if (!queued || queued.status !== "queued") return;
-    if (closed) return void moveFrom(id, "queued", "interrupted", { reason: "Smelt stopped before this task started." });
+    if (closed) return void moveFrom(id, "queued", "interrupted", { reason: "Botbench stopped before this task started." });
     const stop = new AbortController();
     active = { taskId: id, runId: queued.runId, stop };
     try {
@@ -390,7 +390,7 @@ export function createTasks(options: TasksOptions): Tasks {
     } catch (err) {
       // Whatever went wrong unforeseen, the task does not stay at a station nothing works at, holding up its run.
       report(`Building task ${id}`)(err);
-      for (const from of ["queued", "building", "verifying"] as const) moveFrom(id, from, "failed", { reason: `Smelt could not go on with this task: ${words(err)}` });
+      for (const from of ["queued", "building", "verifying"] as const) moveFrom(id, from, "failed", { reason: `Botbench could not go on with this task: ${words(err)}` });
     } finally {
       active = null;
     }
@@ -425,14 +425,14 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     if (stop.signal.aborted) {
       if (cancelled(task)) return finish(task, "cancelled", "The run was cancelled while this task was being prepared. What setup wrote is committed to its branch.");
-      return finish(task, "interrupted", "Smelt stopped while this task was being prepared.");
+      return finish(task, "interrupted", "Botbench stopped while this task was being prepared.");
     }
 
     // The attempt's own way to the permission gate. It is released whichever way the build ends.
     const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: worktree.path });
     let session: DriverSession;
     try {
-      if (closed) throw new Error("Smelt is stopping.");
+      if (closed) throw new Error("Botbench is stopping.");
       session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
@@ -471,7 +471,7 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /**
    * Run one turn of a task's attempt to its end and record where that leaves the task. `resumed` is true for the
-   * turn that re-drives a task after a restart. If Smelt is stopped while the turn waits for the owner, the task
+   * turn that re-drives a task after a restart. If Botbench is stopped while the turn waits for the owner, the task
    * is parked: its approvals stay pending and it stays at `building` for the next start to find.
    */
   const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: boolean, stopped?: AbortSignal): Promise<void> => {
@@ -499,7 +499,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (event.type === "permission_resolved") {
         asking.delete(event.id);
         // The CLI gave up on the request (the turn was stopped): its card must not stay answerable. When it is
-        // Smelt itself that is stopping, the request is kept for the owner instead.
+        // Botbench itself that is stopping, the request is kept for the owner instead.
         if (event.decision === "cancelled" && !parking) admission.supersede(event.toolCallId);
       }
       options.onEvent();
@@ -508,7 +508,7 @@ export function createTasks(options: TasksOptions): Tasks {
     move(id, "building", { attemptId: session.attemptId, ...(resumed ? { note: `resumed after a restart, from attempt ${task.attemptId}` } : {}) });
     let end: TurnEndReason | "not sent";
     try {
-      // Smelt began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
+      // Botbench began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
       end = closed || stopped?.aborted === true || cancelled(task) ? "not sent" : await session.sendTurn(prompt);
     } catch (err) {
       end = "error";
@@ -523,12 +523,12 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     current = null;
     parkCurrent = null;
-    // Parked only if the owner's answer is still outstanding now: it may have come in while Smelt was stopping.
+    // Parked only if the owner's answer is still outstanding now: it may have come in while Botbench was stopping.
     if (parking && leftover === null && end === "interrupted" && waitingOnApproval(db, id)) {
-      // Smelt is stopping while the owner's answer is outstanding. Nothing is committed and nothing ends: the next start finds it.
+      // Botbench is stopping while the owner's answer is outstanding. Nothing is committed and nothing ends: the next start finds it.
       admission.park();
       options.onEvent();
-      return void move(id, "building", { note: "Smelt stopped while this task waited for the owner's answer; the request is kept for the next start" });
+      return void move(id, "building", { note: "Botbench stopped while this task waited for the owner's answer; the request is kept for the next start" });
     }
     admission.release();
     options.onEvent();
@@ -538,7 +538,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // A turn that finished before the cancel reached it is a finished task like any other.
     else if (cancelled(task) && end !== "completed") await finish(task, "cancelled", CANCELLED);
     else if (end === "completed") await verify(task, stopped);
-    else if (end === "not sent") await finish(task, "interrupted", "Smelt stopped before the prompt was sent.");
+    else if (end === "not sent") await finish(task, "interrupted", "Botbench stopped before the prompt was sent.");
     else if (end === "interrupted") await finish(task, "interrupted", "It was stopped before it finished. The work done up to then is committed.");
     // Nothing came of the session at all: the CLI did not take it up again.
     else if (resumed && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
@@ -589,7 +589,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (task.status !== "building") return broker.endParked(id, `Its task is ${task.status}, so there is nothing to resume.`);
     // Other requests of the task still wait for the owner: it is resumed when all of them are answered.
     if (parked.some((approval) => approval.storedDecision === null)) return;
-    // Smelt is stopping: the next start says what became of the answer.
+    // Botbench is stopping: the next start says what became of the answer.
     if (closed) return;
     const problem = (await stopSurvivors(task, parked)) ?? resumeProblem(db, task, parked, driver.capabilities);
     if (problem !== null) return giveUp(task, `This task waited for your answer across a restart and cannot be resumed: ${problem} Your answer was not applied and nothing was run.`);
@@ -615,19 +615,19 @@ export function createTasks(options: TasksOptions): Tasks {
   };
 
   /**
-   * A Smelt that stopped leaves tasks at stations nothing is working at. One that was waiting for the owner is
+   * A Botbench that stopped leaves tasks at stations nothing is working at. One that was waiting for the owner is
    * parked: whatever is left of its CLI process is stopped, and it stays where it is until the owner answers.
    * Every other one is marked interrupted, with its work kept. Say so in each case.
    */
   const recover = async (): Promise<void> => {
-    // A CLI process of the last run that is recorded on no task (Smelt stopped between starting it and writing it down) is stopped too.
+    // A CLI process of the last run that is recorded on no task (Botbench stopped between starting it and writing it down) is stopped too.
     for (const row of db.prepare("SELECT id FROM attempts WHERE pgid IS NOT NULL AND created_at < ? ORDER BY id").all(began)) {
       await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
     }
     // The queued tasks of an approved plan are not on their way anywhere yet: they are their run's to build, and stay queued.
     // A task whose checks were running is stopped. Its work was committed before they started; nothing a check left is committed.
     for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'verifying' ORDER BY id").all()) {
-      move(Number(row.id), "interrupted", { reason: "Smelt stopped while this task's checks ran. The work is committed to its branch; the checks did not finish." });
+      move(Number(row.id), "interrupted", { reason: "Botbench stopped while this task's checks ran. The work is committed to its branch; the checks did not finish." });
     }
     const stale = db.prepare("SELECT id FROM tasks WHERE status IN ('queued', 'building') AND NOT (status = 'queued' AND EXISTS (SELECT 1 FROM runs r WHERE r.id = tasks.run_id AND r.kind = 'planned')) ORDER BY id").all();
     for (const row of stale) {
@@ -639,26 +639,26 @@ export function createTasks(options: TasksOptions): Tasks {
         const unapplied = db.prepare("SELECT 1 FROM approvals WHERE task_id = ? AND status = 'pending' AND stored_decision IS NOT NULL AND stored_at < ? LIMIT 1").get(task.id, began) !== undefined;
         const problem =
           (await stopSurvivors(task, parked)) ??
-          (unapplied ? "Smelt stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
+          (unapplied ? "Botbench stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
         if (problem === null) {
           // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
           move(task.id, "building", { note: "parked across a restart: waiting for the owner's answer to a request made before it" });
           continue;
         }
-        await giveUp(task, `Smelt stopped while this task waited for your answer, and it cannot be resumed: ${problem} The request was closed and nothing was run.`);
+        await giveUp(task, `Botbench stopped while this task waited for your answer, and it cannot be resumed: ${problem} The request was closed and nothing was run.`);
         continue;
       }
-      const reason = "Smelt stopped while this task was on its way.";
+      const reason = "Botbench stopped while this task was on its way.";
       if (task.worktreePath === null) move(task.id, "interrupted", { reason });
       else await finish(task, "interrupted", `${reason} The work done up to then is committed.`);
     }
     // A pending approval whose task is at no station where it could be resumed has nobody to answer to.
     for (const row of db.prepare("SELECT DISTINCT a.task_id AS id FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'pending' AND t.status <> 'building'").all()) {
-      broker.endParked(Number(row.id), "Its task was no longer being built when Smelt started.");
+      broker.endParked(Number(row.id), "Its task was no longer being built when Botbench started.");
     }
   };
 
-  /** The runs that were building when the last Smelt stopped go on: their tasks not started yet are built, in plan order. */
+  /** The runs that were building when the last Botbench stopped go on: their tasks not started yet are built, in plan order. */
   const resumeRuns = async (): Promise<void> => {
     for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status = 'running' ORDER BY id").all()) await runLine(Number(row.id));
   };
@@ -668,16 +668,16 @@ export function createTasks(options: TasksOptions): Tasks {
 
   // An answer stored for a parked approval re-drives its task, in its turn like any other work.
   broker.onStoredAnswer((approval) => {
-    // A planner's request belongs to no task; a run that was planning when Smelt stopped is ended by the runs engine.
+    // A planner's request belongs to no task; a run that was planning when Botbench stopped is ended by the runs engine.
     const taskId = approval.taskId;
     if (taskId === null) return;
     chain = chain.then(() => redrive(taskId)).catch(report(`Resuming task ${taskId}`));
   });
 
   const start = async (repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task> => {
-    if (closed) throw new TaskError(503, "Smelt is shutting down.");
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
     const checked = await checkRepository(repo);
-    if (closed) throw new TaskError(503, "Smelt is shutting down.");
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
     const task = createTask(db, { repo: checked, prompt, requestedModel: model === undefined ? (options.model ?? null) : model, ...(preapproved ? { preapproved } : {}) });
     options.onTaskChange(task);
     chain = chain.then(() => build(task.id)).catch(report(`Building task ${task.id}`));

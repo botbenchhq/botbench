@@ -3,41 +3,41 @@ import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
 import { checkDesign, expect, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
-import { startSmelt, tempDir, type Smelt } from "./smelt.ts";
+import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// Building a run in the real client, at a phone's size, against a real Smelt process whose settings give the
+// Building a run in the real client, at a phone's size, against a real Botbench process whose settings give the
 // repository setup commands, a real temporary repository and, for the test marked LIVE, the owner's Claude Code as
 // planner and builder on its cheapest model.
 
-/** A temporary directory, and a real Smelt started in it whose settings give the repository setup commands. Stopped before the directory goes. */
-const test = base.extend<{ dir: string; smeltFor: (repo: string, setup: string[]) => Promise<Smelt> }>({
+/** A temporary directory, and a real Botbench started in it whose settings give the repository setup commands. Stopped before the directory goes. */
+const test = base.extend<{ dir: string; botbenchFor: (repo: string, setup: string[]) => Promise<Botbench> }>({
   dir: async ({}, use) => {
-    const dir = tempDir("smelt-e2e-build-");
+    const dir = tempDir("botbench-e2e-build-");
     await use(dir);
     fs.rmSync(dir, { recursive: true, force: true });
   },
-  smeltFor: async ({ dir }, use) => {
-    const started: Smelt[] = [];
+  botbenchFor: async ({ dir }, use) => {
+    const started: Botbench[] = [];
     await use(async (repo, setup) => {
-      const smelt = await startSmelt({ home: path.join(dir, "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [repo]: { setup } } } });
-      started.push(smelt);
-      return smelt;
+      const botbench = await startBotbench({ home: path.join(dir, "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [repo]: { setup } } } });
+      started.push(botbench);
+      return botbench;
     });
-    for (const smelt of started) {
-      const { leftover } = await smelt.stop();
-      expect(leftover, "no CLI process is left after Smelt stops").toEqual([]);
+    for (const botbench of started) {
+      const { leftover } = await botbench.stop();
+      expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
     }
   },
 });
 
 /** Decline, until stopped, every request a builder makes: the tasks here need no command. */
-function declineBuilders(page: Page, smelt: Smelt): () => Promise<void> {
+function declineBuilders(page: Page, botbench: Botbench): () => Promise<void> {
   let going = true;
   const loop = (async () => {
     while (going) {
-      const pending = (await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number; taskId: number | null }[] };
+      const pending = (await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number; taskId: number | null }[] };
       for (const approval of pending.approvals) {
-        if (approval.taskId !== null) await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Write the file with your Write tool; run no command." } });
+        if (approval.taskId !== null) await page.request.post(`${botbench.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Write the file with your Write tool; run no command." } });
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
@@ -53,8 +53,8 @@ async function shot(page: Page, name: string): Promise<void> {
 }
 
 /** Start a run on the run screen, decline what its planner asks, and set its plan to `tasks` as the owner can over the API. */
-async function plannedRun(page: Page, smelt: Smelt, repo: string, tasks: { title: string; criteria: string[] }[]): Promise<number> {
-  await page.goto(`${smelt.base}/#/runs/new`);
+async function plannedRun(page: Page, botbench: Botbench, repo: string, tasks: { title: string; criteria: string[] }[]): Promise<number> {
+  await page.goto(`${botbench.base}/#/runs/new`);
   await page.getByLabel("Repository path").fill(repo);
   await expect(page.getByTestId("repo-state")).toHaveText("Usable git repository.");
   await page.getByLabel("Prompt").fill("Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
@@ -63,34 +63,34 @@ async function plannedRun(page: Page, smelt: Smelt, repo: string, tasks: { title
   const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
   let version = -1;
   await expect(async () => {
-    for (const approval of ((await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] }).approvals) {
-      await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Read files instead." } });
+    for (const approval of ((await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] }).approvals) {
+      await page.request.post(`${botbench.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Read files instead." } });
     }
-    const run = (await (await page.request.get(`${smelt.base}/api/runs/${runId}`)).json()) as { status: string; planVersion: number };
+    const run = (await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { status: string; planVersion: number };
     expect(run.status).toBe("awaiting_plan_approval");
     version = run.planVersion;
   }).toPass({ timeout: 240_000, intervals: [1_000] });
-  expect((await page.request.patch(`${smelt.base}/api/runs/${runId}/plan`, { data: { planVersion: version, tasks } })).status()).toBe(200);
+  expect((await page.request.patch(`${botbench.base}/api/runs/${runId}/plan`, { data: { planVersion: version, tasks } })).status()).toBe(200);
   await expect(page.getByRole("button", { name: `Approve ${tasks.length} tasks` })).toBeVisible();
   return runId;
 }
 
-test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for review without a reload, with each task's setup command shown as evidence", async ({ page, dir, smeltFor }) => {
+test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for review without a reload, with each task's setup command shown as evidence", async ({ page, dir, botbenchFor }) => {
   test.setTimeout(480_000);
   const repo = path.join(dir, "repo");
   initRepo(repo);
   const before = checkoutState(repo);
-  const smelt = await smeltFor(repo, ["echo preparing the copy"]);
+  const botbench = await botbenchFor(repo, ["echo preparing the copy"]);
   {
-    const foreign = watchRequests(page, smelt);
-    await signIn(page, smelt);
-    await plannedRun(page, smelt, repo, [
+    const foreign = watchRequests(page, botbench);
+    await signIn(page, botbench);
+    await plannedRun(page, botbench, repo, [
       { title: "Create one.txt holding the word one", criteria: ["one.txt holds the word one"] },
       { title: "Create two.txt holding the word two", criteria: ["two.txt holds the word two"] },
     ]);
     await expect(page.getByText("Approving starts building the tasks, one at a time, in this order.")).toBeVisible();
     await expect(page.getByText(/next version/)).toHaveCount(0);
-    await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+    await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
     // Every state each row's badge shows, in order, as the page draws it.
     await page.evaluate(() => {
@@ -104,7 +104,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
       };
       new MutationObserver(look).observe(document.body, { subtree: true, childList: true, characterData: true });
     });
-    const stopDeclining = declineBuilders(page, smelt);
+    const stopDeclining = declineBuilders(page, botbench);
     await page.getByRole("button", { name: "Approve 2 tasks" }).click();
 
     const rows = page.getByTestId("run-tasks").locator(":scope > li");
@@ -128,7 +128,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
     const states = (row: string[]): string[] => row.filter((word) => word !== "Needs input").filter((word, i, all) => word !== all[i - 1]);
     expect(states(seen[1]!)).toEqual(["Queued", "Working", "Ready for review"]);
     expect(states(seen[0]!).filter((word) => word !== "Queued")).toEqual(["Working", "Ready for review"]);
-    expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce), "no reload").toBe(true);
+    expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "no reload").toBe(true);
 
     // Each task's setup command is evidence on its row: the command, its result in words, how long it took, and its output one tap away.
     for (const row of await rows.all()) {
@@ -155,14 +155,14 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
   }
 });
 
-test("LIVE (planner only): cancel a run while it builds: the dialog says what is kept, the setup at work is stopped, and every task says it was cancelled", async ({ page, dir, smeltFor }) => {
+test("LIVE (planner only): cancel a run while it builds: the dialog says what is kept, the setup at work is stopped, and every task says it was cancelled", async ({ page, dir, botbenchFor }) => {
   const repo = path.join(dir, "repo");
   initRepo(repo);
   // The setup command takes long enough that the run is still building when the owner cancels it. No agent starts.
-  const smelt = await smeltFor(repo, ["sleep 60"]);
+  const botbench = await botbenchFor(repo, ["sleep 60"]);
   {
-    await signIn(page, smelt);
-    const runId = await plannedRun(page, smelt, repo, [
+    await signIn(page, botbench);
+    const runId = await plannedRun(page, botbench, repo, [
       { title: "Create one.txt holding the word one", criteria: ["one.txt holds the word one"] },
       { title: "Create two.txt holding the word two", criteria: ["two.txt holds the word two"] },
     ]);
@@ -183,7 +183,7 @@ test("LIVE (planner only): cancel a run while it builds: the dialog says what is
     await expect(rows.nth(0).locator(".gw-check-list__result")).toHaveText(/^Stopped/);
     await expect(page.getByRole("button", { name: "Cancel run" })).toHaveCount(0);
     await checkDesign(page, "run, cancelled while building");
-    const attempts = (await (await page.request.get(`${smelt.base}/api/runs/${runId}`)).json()) as { tasks: { attemptId: number | null }[] };
+    const attempts = (await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { tasks: { attemptId: number | null }[] };
     expect(attempts.tasks.map((task) => task.attemptId)).toEqual([null, null]);
     await rows.nth(1).getByRole("link").click();
     await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\./);

@@ -34,22 +34,22 @@ export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval
 export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan">): string {
   if (waiting(task)) {
     return task.parked
-      ? "Needs input. Claude Code asked for permission before Smelt restarted and is stopped. Your answer starts it again where it left off."
+      ? "Needs input. Claude Code asked for permission before Botbench restarted and is stopped. Your answer starts it again where it left off."
       : "Needs input. Claude Code asked for permission and is paused until you allow or deny.";
   }
-  if (resuming(task)) return "Resuming. Your answer is saved. Smelt starts Claude Code again where it left off, after any task that is running now, and gives it your answer.";
+  if (resuming(task)) return "Resuming. Your answer is saved. Botbench starts Claude Code again where it left off, after any task that is running now, and gives it your answer.";
   switch (task.status) {
     case "queued":
       return task.ofPlan === null ? "Queued. It starts when the tasks before it have finished." : `Queued. Run ${task.ofPlan} builds its tasks one at a time, in plan order: this one starts when the tasks before it have finished.`;
     case "building":
-      // Before its agent starts, Smelt makes the task's copy and runs the repository's setup commands in it.
-      return task.attemptId === null ? "Working. Smelt is preparing a separate copy of the project for Claude Code." : "Working. Claude Code is working in a separate copy of the project.";
+      // Before its agent starts, Botbench makes the task's copy and runs the repository's setup commands in it.
+      return task.attemptId === null ? "Working. Botbench is preparing a separate copy of the project for Claude Code." : "Working. Claude Code is working in a separate copy of the project.";
     case "verifying":
-      return "Checking. Smelt committed the work to the task's branch and is running this repository's checks on it.";
+      return "Checking. Botbench committed the work to the task's branch and is running this repository's checks on it.";
     case "awaiting_decision":
       return task.headCommit === task.baseCommit
         ? "Ready for review. No file was changed, so nothing was committed."
-        : "Ready for review. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+        : "Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
     case "interrupted":
       return `Stopped. ${task.reason ?? "The task was stopped before it finished."}`;
     case "failed":

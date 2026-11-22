@@ -24,7 +24,7 @@ function result(row: Evidence): { words: string; look: string } {
     case "timed_out":
       return { words: `Timed out after ${duration(row.limitMs).words}`, look: "gw-check-list__result--timed-out" };
     case "stopped":
-      // Stopped by Smelt (the run was cancelled, or Smelt stopped): it says nothing about the command itself.
+      // Stopped by Botbench (the run was cancelled, or Botbench stopped): it says nothing about the command itself.
       return { words: "Stopped before it finished", look: "" };
   }
 }
@@ -43,7 +43,7 @@ function summary(rows: readonly Evidence[], what: { one: string; many: string })
 }
 
 /**
- * The commands Smelt ran on a task, in the order they ran, as the design system's check list: each command, its
+ * The commands Botbench ran on a task, in the order they ran, as the design system's check list: each command, its
  * result in words, how long it took, and its output behind a disclosure. The commands and their output are the
  * owner's and the program's text, marked as such.
  */

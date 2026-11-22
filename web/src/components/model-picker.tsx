@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, getModels, timedOut, type ModelList, type StoredEvent } from "../api/client.ts";
 
 /** The owner's choice of model, kept per browser so it is not picked again for every prompt. */
-const MODEL_KEY = "smelt.model";
+const MODEL_KEY = "botbench.model";
+/** The same entry under the product's old name (Smelt), read for one release while the new one has never been written. */
+const OLD_MODEL_KEY = "smelt.model";
 /** The select's value for "another name". It holds a character no model name may, so it can never be one. */
 const OTHER = "?other";
 /** The select's value while the owner has not chosen and the configured model is not known: the server applies it. */
@@ -19,7 +21,7 @@ interface Choice {
 
 function loadChoice(): Choice | null {
   try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(MODEL_KEY) ?? "null");
+    const parsed: unknown = JSON.parse((window.localStorage.getItem(MODEL_KEY) ?? window.localStorage.getItem(OLD_MODEL_KEY)) ?? "null");
     if (typeof parsed !== "object" || parsed === null) return null;
     const { model, other } = parsed as Record<string, unknown>;
     return (model === null || typeof model === "string") && typeof other === "boolean" ? { model, other } : null;
@@ -61,7 +63,7 @@ export function useModelChoice(onSignedOut: () => void): ModelChoiceState {
       (err: unknown) => {
         if (stale) return;
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setProblem(err instanceof ApiError ? err.message : timedOut(err) ? "Smelt did not answer in time." : "Smelt could not be reached.");
+        setProblem(err instanceof ApiError ? err.message : timedOut(err) ? "Botbench did not answer in time." : "Botbench could not be reached.");
       },
     );
     return () => {
@@ -94,11 +96,11 @@ export function useModelChoice(onSignedOut: () => void): ModelChoiceState {
 }
 
 function sourceWords(state: ModelChoiceState): string {
-  if (state.problem !== null) return `The model list could not be read: ${state.problem} Claude Code's default or a name you type can still be chosen.${state.choice === null ? " Until you choose, the model set in Smelt's configuration is used." : ""}`;
+  if (state.problem !== null) return `The model list could not be read: ${state.problem} Claude Code's default or a name you type can still be chosen.${state.choice === null ? " Until you choose, the model set in Botbench's configuration is used." : ""}`;
   if (state.list === null) return "Reading the models from Claude Code.";
   if (state.list.source === "cli") return "The list is what Claude Code reports on this Mac.";
   return state.list.models.length > 0
-    ? "The list comes from Smelt's configuration: Claude Code reported none."
+    ? "The list comes from Botbench's configuration: Claude Code reported none."
     : "Claude Code reported no list and none is configured. Use Claude Code's default, or name a model.";
 }
 
@@ -129,7 +131,7 @@ export function ModelPicker({ state }: { state: ModelChoiceState }) {
           >
             {ready ? (
               <>
-                {choice === null && <option value={CONFIGURED}>Model from Smelt's configuration</option>}
+                {choice === null && <option value={CONFIGURED}>Model from Botbench's configuration</option>}
                 <option value="">{cliDefault === null ? "Claude Code's default" : `Claude Code's default (${cliDefault})`}</option>
                 {(list?.models ?? []).map((model) => (
                   <option key={model.id} value={model.id}>

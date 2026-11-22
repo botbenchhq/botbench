@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { MIGRATIONS, type Migration } from "./schema.ts";
 
-export const DB_FILE = "smelt.sqlite";
+export const DB_FILE = "botbench.sqlite";
 
 export const now = (): string => new Date().toISOString();
 
@@ -42,7 +42,7 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[] = MIG
   db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
   const current = schemaVersion(db);
   if (current > migrations.length) {
-    throw new Error(`The database is at schema version ${current}, which is newer than this Smelt understands (${migrations.length}). Update Smelt to open it.`);
+    throw new Error(`The database is at schema version ${current}, which is newer than this Botbench understands (${migrations.length}). Update Botbench to open it.`);
   }
   for (let version = current + 1; version <= migrations.length; version++) {
     const m = migrations[version - 1]!;

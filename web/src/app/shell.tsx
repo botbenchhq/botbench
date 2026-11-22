@@ -98,7 +98,7 @@ export function Shell() {
     setSession("signed-in");
   }, []);
   const onSignedOut = useCallback(() => {
-    setNotice("Your session ended, which happens when Smelt restarts. Sign in again.");
+    setNotice("Your session ended, which happens when Botbench restarts. Sign in again.");
     setSession("signed-out");
   }, []);
 
@@ -109,14 +109,14 @@ export function Shell() {
   if (session === "signed-out") return <SignInScreen notice={notice} onSignedIn={onSignedIn} />;
   return (
     <main className="gw-sign-in p-lg">
-      <p className="gw-sign-in__product">Smelt</p>
+      <p className="gw-sign-in__product">Botbench</p>
       {session === "checking" ? (
         <p role="status" className="gw-spinner">
           Checking your session.
         </p>
       ) : (
         <Alert tone="warning" role="status">
-          Cannot reach Smelt. Trying again every two seconds.
+          Cannot reach Botbench. Trying again every two seconds.
         </Alert>
       )}
     </main>

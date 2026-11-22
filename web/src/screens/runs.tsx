@@ -15,7 +15,7 @@ export function RunsScreen({ onSignedOut }: { onSignedOut: () => void }) {
       },
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) onSignedOut();
-        else setFailed(err instanceof ApiError ? `The runs could not be read. ${err.message}` : "The runs could not be read: Smelt could not be reached.");
+        else setFailed(err instanceof ApiError ? `The runs could not be read. ${err.message}` : "The runs could not be read: Botbench could not be reached.");
       },
     );
   }, [onSignedOut]);

@@ -6,10 +6,10 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir } from "../support/repo.ts";
 
-// These tests start the real Claude Code on the owner's login, through Smelt's HTTP API, in real temporary
+// These tests start the real Claude Code on the owner's login, through Botbench's HTTP API, in real temporary
 // repositories, and answer its permission requests the way the client does. Every prompt is tiny and asks for the cheapest model.
 
 const TASK_TIMEOUT = 240_000;
@@ -17,7 +17,7 @@ const JSON_TYPE = { "content-type": "application/json" };
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   dir: string;
@@ -26,7 +26,7 @@ interface Live {
 }
 
 async function start(t: TestContext, files: Record<string, string>): Promise<Live> {
-  const dir = tempDir("smelt-live-apr-");
+  const dir = tempDir("botbench-live-apr-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -275,7 +275,7 @@ test("live: a read-only command (`ls`) and a redirect that writes in the worktre
   const lsResult = events.find((e) => e.type === "tool_result" && e.id === ls.toolCallId);
   assert.ok(lsResult && lsResult.type === "tool_result" && !lsResult.isError && lsResult.output.includes("README.md"), "the allowed ls ran");
 
-  // The redirect never ran; the edit did, on Smelt's own rule, and is in the log with the rule that let it.
+  // The redirect never ran; the edit did, on Botbench's own rule, and is in the log with the rule that let it.
   assert.equal(fs.existsSync(path.join(worktree, "x.txt")), false);
   assert.equal(fs.readFileSync(path.join(worktree, "y.txt"), "utf8").trim(), "y");
   assert.deepEqual(task.files!.map((f) => f.path), ["y.txt"]);

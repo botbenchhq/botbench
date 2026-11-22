@@ -26,7 +26,7 @@ function tempDir(t: TestContext, prefix: string): string {
 const opened = new WeakMap<DatabaseSync, DriverSession[]>();
 
 function store(t: TestContext): DatabaseSync {
-  const db = openStore(tempDir(t, "smelt-live-home-"));
+  const db = openStore(tempDir(t, "botbench-live-home-"));
   const sessions: DriverSession[] = [];
   opened.set(db, sessions);
   // Sessions write to the database as they stop, so they are closed before it.
@@ -59,7 +59,7 @@ function processesInGroup(pgid: number): string[] {
 
 test("live: a one-word turn yields text, usage and turn-end events in order, stored in the database", { timeout: TURN_TIMEOUT }, async (t) => {
   const db = store(t);
-  const { session, events } = await start(db, tempDir(t, "smelt-live-cwd-"));
+  const { session, events } = await start(db, tempDir(t, "botbench-live-cwd-"));
 
   const running = attemptRow(db, session.attemptId);
   assert.equal(running.driver, "claude-code");
@@ -114,7 +114,7 @@ test("live: a one-word turn yields text, usage and turn-end events in order, sto
 
 test("live: a second attempt resumed from the stored cursor recalls a word from the first", { timeout: 2 * TURN_TIMEOUT }, async (t) => {
   const db = store(t);
-  const cwd = tempDir(t, "smelt-live-cwd-");
+  const cwd = tempDir(t, "botbench-live-cwd-");
 
   const first = await start(db, cwd);
   assert.equal(await first.session.sendTurn("The secret word is kiwi. Reply with exactly the word: ok"), "completed");
@@ -132,7 +132,7 @@ test("live: a second attempt resumed from the stored cursor recalls a word from 
 
 test("live: a turn that reads a file yields a tool call, its result, then text", { timeout: TURN_TIMEOUT }, async (t) => {
   const db = store(t);
-  const cwd = tempDir(t, "smelt-live-cwd-");
+  const cwd = tempDir(t, "botbench-live-cwd-");
   fs.writeFileSync(path.join(cwd, "note.txt"), "walrus\n");
   const { session, events } = await start(db, cwd);
 
@@ -152,7 +152,7 @@ test("live: a turn that reads a file yields a tool call, its result, then text",
 
 test("live: interrupting a long turn ends it as interrupted and leaves no child process", { timeout: TURN_TIMEOUT }, async (t) => {
   const db = store(t);
-  const { session, events } = await start(db, tempDir(t, "smelt-live-cwd-"));
+  const { session, events } = await start(db, tempDir(t, "botbench-live-cwd-"));
   const pgid = attemptRow(db, session.attemptId).pgid as number;
 
   const turn = session.sendTurn("Write a 1500 word essay about rivers.");
@@ -183,7 +183,7 @@ test("live: interrupting a long turn ends it as interrupted and leaves no child 
 
 test("live: the real CLI with an empty configuration directory is signed out and no turn starts", { timeout: TURN_TIMEOUT }, async (t) => {
   const db = store(t);
-  const driver = new ClaudeCodeDriver({ configDir: tempDir(t, "smelt-live-config-") });
+  const driver = new ClaudeCodeDriver({ configDir: tempDir(t, "botbench-live-config-") });
 
   const probe = await driver.probe();
   assert.equal(probe.installed, true);
@@ -193,7 +193,7 @@ test("live: the real CLI with an empty configuration directory is signed out and
   assert.equal(probe.billing, "unknown");
   assert.match(probe.problem ?? "", /signed out/);
 
-  await assert.rejects(driver.startAttempt({ db, cwd: tempDir(t, "smelt-live-cwd-"), model: MODEL }), (err: unknown) => err instanceof DriverUnavailableError && err.probe.signedIn === false);
+  await assert.rejects(driver.startAttempt({ db, cwd: tempDir(t, "botbench-live-cwd-"), model: MODEL }), (err: unknown) => err instanceof DriverUnavailableError && err.probe.signedIn === false);
   assert.equal(db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0);
   assert.equal(db.prepare("SELECT count(*) AS n FROM events").get()!.n, 0);
 });

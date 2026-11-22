@@ -46,7 +46,7 @@ interface Open {
 
 /**
  * Turns outside any repository, which is all there is until tasks exist: every
- * attempt works in one empty directory inside Smelt's own data directory.
+ * attempt works in one empty directory inside Botbench's own data directory.
  */
 export function createTurns(options: { db: DatabaseSync; home: string; driver: Driver; model?: string; onEvent: () => void; idleCloseMs?: number }): Turns {
   const { db, driver } = options;
@@ -116,7 +116,7 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
       const done = session.close();
       closing.add(done);
       await done.finally(() => closing.delete(done));
-      throw new TurnError(503, "Smelt is shutting down.");
+      throw new TurnError(503, "Botbench is shutting down.");
     }
     session.onEvent(options.onEvent);
     const entry: Open = { session, model, busy: false };
@@ -125,23 +125,23 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
   };
 
   const start = async (prompt: string, attemptId?: number, choice?: string | null): Promise<{ attemptId: number; turn: number }> => {
-    if (closed) throw new TurnError(503, "Smelt is shutting down.");
+    if (closed) throw new TurnError(503, "Botbench is shutting down.");
     const model = choice === undefined ? options.model : (choice ?? undefined);
     if (attemptId === undefined) return begin(prompt, model);
     const row = attemptRow(attemptId);
-    if (!row) throw new TurnError(404, "Smelt has no record of that conversation.");
+    if (!row) throw new TurnError(404, "Botbench has no record of that conversation.");
     const entry = open.get(attemptId);
     if (entry?.busy) throw new TurnError(409, "Claude Code is still working on the last message. Wait for it to finish, or stop it.");
     if (entry && row.status === "running" && (choice === undefined || entry.model === model)) return send(attemptId, entry, prompt);
     // The session is over (stopped, failed, closed while idle, or from before a restart), or another model was asked for: continue it in a new attempt.
     await drop(attemptId);
-    if (closed) throw new TurnError(503, "Smelt is shutting down.");
+    if (closed) throw new TurnError(503, "Botbench is shutting down.");
     if (typeof row.resume_cursor !== "string" || row.resume_cursor === "") throw new TurnError(409, "This conversation cannot be continued: it ended before Claude Code saved its place. Start a new chat.");
     return begin(prompt, model, row.resume_cursor);
   };
 
   const interrupt = async (attemptId: number): Promise<void> => {
-    if (!attemptRow(attemptId)) throw new TurnError(404, "Smelt has no record of that conversation.");
+    if (!attemptRow(attemptId)) throw new TurnError(404, "Botbench has no record of that conversation.");
     const entry = open.get(attemptId);
     if (!entry?.busy) throw new TurnError(409, "Nothing is running in this conversation, so there is nothing to stop.");
     await entry.session.interruptTurn();

@@ -1,6 +1,6 @@
-# UI copy research for Smelt: how leading AI products label and show agent work
+# UI copy research for Botbench: how leading AI products label and show agent work
 
-Research date: 2026-11-22. Scope: wording only. No repository was read or changed, so the Smelt concepts below are taken from the brief, not from Smelt's code.
+Research date: 2026-11-22. Scope: wording only. No repository was read or changed, so the Botbench concepts below are taken from the brief, not from Botbench's code.
 
 ## How to read this dossier
 
@@ -263,9 +263,9 @@ No public voice-and-tone or UI-writing guide from Anthropic was found. OpenAI's 
 
 ---
 
-## A. Recommended glossary for Smelt
+## A. Recommended glossary for Botbench
 
-| Smelt concept | Recommended | Alternative | Who uses it | Why |
+| Botbench concept | Recommended | Alternative | Who uses it | Why |
 |---|---|---|---|---|
 | Screen "Turn" | **Chat**, with a **New chat** button | Session | claude.ai, ChatGPT/Codex, Gemini, VS Code, Cursor | It is the word people already know; "Turn" is glossary-only at OpenAI. |
 | "turn completed" | No line. At most a quiet divider: **Worked for 2m 14s** | Done | Codex ("Worked for {elapsed}"), VS Code ("Completed N steps") | No product announces completion; the reply ending is the signal. |
@@ -311,8 +311,8 @@ Reasons: Anthropic says "Humans need visibility into agents' problem-solving pro
 ## B. Where the products disagree
 
 1. **Chat vs session vs task.** Consumer apps say chat; Claude Code says session; Jules and Codex say task. Recommendation: **Chat** for the conversational screen and **Task** for a delegated job with a plan, a branch and a decision. That is the split OpenAI's glossary makes, and it matches the owner's goal of familiarity.
-2. **Yes/No vs Allow/Deny.** Claude Code and Codex terminals use "Yes" / "No" sentences; graphical products use "Allow once" / "Always allow". Recommendation: **Allow** buttons. Smelt is a touch app, and Apple and NN/g both advise against Yes/No.
-3. **Deny vs Decline vs Skip vs Reject.** Anthropic uses Deny, ChatGPT uses Decline, VS Code uses Skip, Cursor CLI and Grok use reject. Recommendation: **Deny**, because Smelt mostly drives Claude Code and its rules are Allow / Ask / Deny. "Decline" is a sound second choice and is what Smelt has now, so changing it is optional.
+2. **Yes/No vs Allow/Deny.** Claude Code and Codex terminals use "Yes" / "No" sentences; graphical products use "Allow once" / "Always allow". Recommendation: **Allow** buttons. Botbench is a touch app, and Apple and NN/g both advise against Yes/No.
+3. **Deny vs Decline vs Skip vs Reject.** Anthropic uses Deny, ChatGPT uses Decline, VS Code uses Skip, Cursor CLI and Grok use reject. Recommendation: **Deny**, because Botbench mostly drives Claude Code and its rules are Allow / Ask / Deny. "Decline" is a sound second choice and is what Botbench has now, so changing it is optional.
 4. **Permissions vs Rules vs Allowlist vs Approvals.** Recommendation: **Permissions**. It is the most common and the plainest.
 5. **Worktree as a label.** Claude Code, Codex and VS Code show the word; Conductor says "workspace". Recommendation: lead with "separate copy" and keep "worktree" in the helper text.
 6. **Working vs Running vs In progress.** Recommendation: **Working** (Claude Code, Grok Build, GitHub).
@@ -347,4 +347,4 @@ Reasons: Anthropic says "Humans need visibility into agents' problem-solving pro
 - Material Design dialog guidance (pages would not render); Polaris "actionable language" page (404); GOV.UK plain-English page.
 - The OpenAI Codex launch post quote is a fragment from a fetch that also returned unrelated text.
 - Most quotes passed through a fetch tool's summariser. Spot-check any quote before publishing it outside the team.
-- Smelt's actual screens were not inspected; concept names come from the brief.
+- Botbench's actual screens were not inspected; concept names come from the brief.

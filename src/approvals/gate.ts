@@ -6,7 +6,7 @@ import { matchGrant, type Grant } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
 
 /*
- * The gate: what Smelt itself decides about a tool call before anyone is asked. It is a function of the
+ * The gate: what Botbench itself decides about a tool call before anyone is asked. It is a function of the
  * request, the grants and the safety floor: it writes nothing and asks nobody, and reads the file system only to
  * follow the links in a path.
  *   allow   the call may run, and `rule` says why: an edit or a read inside the worktree, a command the
@@ -31,7 +31,7 @@ export interface GateRequest {
 /** The part of the floor that is not the request: the owner's home, and the entries the owner's config adds. */
 export interface FloorSettings {
   home: string;
-  /** Smelt's data directory, which the floor guards. */
+  /** Botbench's data directory, which the floor guards. */
   dataDir?: string;
   extra?: readonly FloorEntry[];
 }

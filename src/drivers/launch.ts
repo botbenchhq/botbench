@@ -2,7 +2,7 @@ import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 
 /**
- * The only variables a CLI child may inherit. Everything else in Smelt's own
+ * The only variables a CLI child may inherit. Everything else in Botbench's own
  * environment stays behind, so a key exported in the owner's shell cannot turn
  * a subscription session into metered API use.
  */
@@ -58,7 +58,7 @@ const isAllowed = (name: string): boolean => ALLOWED_ENV.has(name) || ALLOWED_EN
 
 /**
  * The environment for a CLI child: the allowlisted variables of `parent`, plus
- * `extra` (settings Smelt chooses itself), minus anything that names a provider
+ * `extra` (settings Botbench chooses itself), minus anything that names a provider
  * credential. `extra` cannot bring a credential back in.
  */
 export function buildChildEnv(parent: NodeJS.ProcessEnv = process.env, extra: Record<string, string> = {}): Record<string, string> {
@@ -77,7 +77,7 @@ export type CliChild = ChildProcessByStdio<Writable, Readable, Readable>;
 export interface LaunchOptions {
   /** The child's working directory. */
   cwd: string;
-  /** Variables Smelt sets for the child on top of the allowlisted ones. */
+  /** Variables Botbench sets for the child on top of the allowlisted ones. */
   extraEnv?: Record<string, string>;
 }
 
@@ -180,15 +180,15 @@ export function runCli(command: string, args: readonly string[], options: Launch
   });
 }
 
-/** A flag Smelt passes to a CLI, and the oldest version of that CLI known to accept it. */
+/** A flag Botbench passes to a CLI, and the oldest version of that CLI known to accept it. */
 export interface RequiredFlag {
   flag: string;
   since: string;
 }
 
 /**
- * Which flags each CLI needs from Smelt, per CLI. `since` is the oldest version
- * Smelt has been run against and seen accept the flag, not the vendor's release
+ * Which flags each CLI needs from Botbench, per CLI. `since` is the oldest version
+ * Botbench has been run against and seen accept the flag, not the vendor's release
  * note: lower it only after driving that older version for real.
  */
 export const VERSION_TABLE = {
@@ -232,7 +232,7 @@ function olderThan(a: readonly number[], b: readonly number[]): boolean {
   return false;
 }
 
-/** Decide from what `<cli> --version` printed whether Smelt can drive that version. Pure: starts nothing. */
+/** Decide from what `<cli> --version` printed whether Botbench can drive that version. Pure: starts nothing. */
 export function checkVersion(versionString: string, cli: CliName = "claude-code"): VersionCheck {
   const version = parseVersion(versionString);
   if (!version) return { supported: false, version: null, missingFlags: [] };

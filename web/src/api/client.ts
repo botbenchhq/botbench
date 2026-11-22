@@ -1,5 +1,5 @@
 /*
- * The only module that talks to the Smelt server. Every request goes to the
+ * The only module that talks to the Botbench server. Every request goes to the
  * origin the page came from and carries the session cookie.
  */
 
@@ -133,7 +133,7 @@ export type TaskStatus = "queued" | "building" | "verifying" | "awaiting_decisio
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
-/** One command Smelt ran on a task, as stored: a setup command before its builder started, or a check after. */
+/** One command Botbench ran on a task, as stored: a setup command before its builder started, or a check after. */
 export interface Evidence {
   id: number;
   kind: "setup" | "check";
@@ -170,7 +170,7 @@ export interface TaskSummary {
   checks: ChecksMark | null;
   /** The task's agent asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
-  /** A request that waits for the owner was asked before Smelt restarted: the agent is stopped, and the answer resumes the task. */
+  /** A request that waits for the owner was asked before Botbench restarted: the agent is stopped, and the answer resumes the task. */
   parked: boolean;
   /** The owner's answer to such a request is stored, and the task is being started again to receive it. */
   resuming: boolean;
@@ -191,10 +191,10 @@ export interface FileChange {
 }
 
 export interface TaskDetail extends TaskSummary {
-  /** The files changed from the base commit to Smelt's commit; null until there is a commit, or when they cannot be read. */
+  /** The files changed from the base commit to Botbench's commit; null until there is a commit, or when they cannot be read. */
   files: FileChange[] | null;
   filesProblem: string | null;
-  /** The commands Smelt ran on the task, in the order they ran. */
+  /** The commands Botbench ran on the task, in the order they ran. */
   evidence: Evidence[];
 }
 
@@ -266,7 +266,7 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   /** The plan's version. A decision names the version it was made on, and is refused when the plan has changed since. */
   planVersion: number;
   plan: PlanTask[];
-  /** The tasks made when the plan was approved, in plan order: where each stands, and the commands Smelt ran on it. */
+  /** The tasks made when the plan was approved, in plan order: where each stands, and the commands Botbench ran on it. */
   tasks: RunTask[];
   /** The commands the run's builders may use without asking, as the owner listed them when starting it. */
   preapproved: string[];
@@ -327,7 +327,7 @@ export interface Approval {
   note: string | null;
   createdAt: string;
   resolvedAt: string | null;
-  /** Set when the request was asked before Smelt restarted: its agent is stopped, and answering resumes the task. */
+  /** Set when the request was asked before Botbench restarted: its agent is stopped, and answering resumes the task. */
   parkedAt: string | null;
   /** The owner's answer to such a request, stored until the resumed task asks again. The status stays pending until then. */
   storedDecision: "allow" | "decline" | null;

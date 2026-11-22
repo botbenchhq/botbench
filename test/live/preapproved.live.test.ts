@@ -6,10 +6,10 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir } from "../support/repo.ts";
 
-// These tests start the real Claude Code on the owner's login, through Smelt's HTTP API, in real temporary
+// These tests start the real Claude Code on the owner's login, through Botbench's HTTP API, in real temporary
 // repositories, with commands pre-approved the way the client sends them. Every prompt is tiny and asks for the cheapest model.
 
 const TASK_TIMEOUT = 240_000;
@@ -17,7 +17,7 @@ const JSON_TYPE = { "content-type": "application/json" };
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   home: string;
@@ -25,7 +25,7 @@ interface Live {
 }
 
 async function start(t: TestContext): Promise<Live> {
-  const dir = tempDir("smelt-live-pre-");
+  const dir = tempDir("botbench-live-pre-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");

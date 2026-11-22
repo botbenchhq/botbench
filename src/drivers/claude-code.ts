@@ -52,7 +52,7 @@ const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
 
 const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true };
 
-/** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Smelt one question and never waits for a person. */
+/** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Botbench one question and never waits for a person. */
 const HOOK_TIMEOUT_S = 20;
 const shellQuote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
 
@@ -63,7 +63,7 @@ const shellQuote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'
  *   rules say; when it prints "deny" the call does not run; when it prints nothing the CLI's rules decide.
  * - A hook that fails (it crashes, prints something else, or runs out of time) counts as having said nothing.
  *   So that a shell command still cannot run unasked then, the ask rule makes the CLI ask about every one.
- *   A hook's "allow" does not get past that rule, and Smelt's hook never prints one.
+ *   A hook's "allow" does not get past that rule, and Botbench's hook never prints one.
  */
 function gateSettings(): string {
   return JSON.stringify({
@@ -87,7 +87,7 @@ function gateSettings(): string {
  * Such an attempt works on a repository's content, and 2.1.322 runs a
  * repository's own hooks without asking, so no settings file is loaded at all.
  *
- * With `gated` as well, the attempt goes through the permission gate: Smelt's
+ * With `gated` as well, the attempt goes through the permission gate: Botbench's
  * own settings object carries the pre-tool hook and the ask rule, and the CLI's
  * permission prompts come to the driver on stdout to be answered on stdin.
  * `instructionsFile` is the repository's instructions as text, which the CLI
@@ -128,7 +128,7 @@ export function claudeArgs(options: { model?: string; resumeCursor?: ResumeCurso
   return args;
 }
 
-const MODELS_REQUEST_ID = "smelt-models";
+const MODELS_REQUEST_ID = "botbench-models";
 /** Asking the CLI what it offers starts no turn. No settings file, hook or MCP server is loaded for it. */
 const MODELS_ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: {} }), "--permission-prompts", "none"];
 const MODELS_TIMEOUT_MS = 10_000;
@@ -224,7 +224,7 @@ export function parsePermissionRequest(parsed: Record<string, unknown>): Extract
 /**
  * Watches one gated attempt's events for a shell command that ran with no allow from the owner. The returned
  * function is given each event in order and answers true for a result that shows such a command ran. That cannot
- * happen while the CLI honours Smelt's settings (the ask rule alone makes every shell command ask); it would
+ * happen while the CLI honours Botbench's settings (the ask rule alone makes every shell command ask); it would
  * if a CLI version silently dropped them, and then the attempt must not go on.
  */
 export function shellWatch(): (event: DriverEvent) => boolean {
@@ -241,7 +241,7 @@ export function shellWatch(): (event: DriverEvent) => boolean {
 /** The event with every occurrence of `secret` blanked, so it reaches neither the store nor a client. */
 export function blank<E extends DriverEvent>(event: E, secret: string): E {
   const text = JSON.stringify(event);
-  return text.includes(secret) ? (JSON.parse(text.replaceAll(secret, "[the attempt's gate secret, removed by Smelt]")) as E) : event;
+  return text.includes(secret) ? (JSON.parse(text.replaceAll(secret, "[the attempt's gate secret, removed by Botbench]")) as E) : event;
 }
 
 /** What the agent is told when the owner declines. */
@@ -261,7 +261,7 @@ export function parseClaudeLine(line: string): DriverEvent[] {
   try {
     parsed = JSON.parse(line);
   } catch {
-    return [{ type: "error", message: "Claude Code printed a line Smelt could not read.", raw: shorten(line) }];
+    return [{ type: "error", message: "Claude Code printed a line Botbench could not read.", raw: shorten(line) }];
   }
   if (!isObject(parsed) || typeof parsed.type !== "string") {
     return [{ type: "error", message: "Claude Code printed a line that is not a message.", raw: shorten(line) }];
@@ -411,7 +411,7 @@ class ClaudeCodeSession implements DriverSession {
     const running = this.running;
     if (!running) return;
     this.interrupting = true;
-    this.write({ type: "control_request", request_id: `smelt-interrupt-${this.turn}`, request: { subtype: "interrupt" } });
+    this.write({ type: "control_request", request_id: `botbench-interrupt-${this.turn}`, request: { subtype: "interrupt" } });
     // The CLI normally ends the turn within milliseconds. If it does not, the turn is ended here.
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([running.done, new Promise((r) => (timer = setTimeout(r, 5000)))]);
@@ -435,7 +435,7 @@ class ClaudeCodeSession implements DriverSession {
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
-      this.answerControl(requestId, { behavior: "deny", message: `Smelt's permission check denied this request without asking the owner: ${why} Nothing was run.` });
+      this.answerControl(requestId, { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` });
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "denied", note: why });
     } else {
       const note = words(given.note);
@@ -450,7 +450,7 @@ class ClaudeCodeSession implements DriverSession {
   }
 
   /**
-   * The CLI asked its host for something. The one thing Smelt answers is a permission prompt of a gated attempt
+   * The CLI asked its host for something. The one thing Botbench answers is a permission prompt of a gated attempt
    * with a turn running; it becomes a `permission_request` event. Everything else is refused on the spot.
    */
   private onControlRequest(parsed: Record<string, unknown>): void {
@@ -460,10 +460,10 @@ class ClaudeCodeSession implements DriverSession {
       return this.record(request);
     }
     const subtype = isObject(parsed.request) ? str(parsed.request.subtype) : null;
-    this.record({ type: "error", message: `Claude Code asked for something Smelt does not answer (${subtype ?? "unreadable"}); it was refused.`, raw: shorten(JSON.stringify(parsed)) });
+    this.record({ type: "error", message: `Claude Code asked for something Botbench does not answer (${subtype ?? "unreadable"}); it was refused.`, raw: shorten(JSON.stringify(parsed)) });
     if (typeof parsed.request_id !== "string") return;
-    if (subtype === "can_use_tool") this.answerControl(parsed.request_id, { behavior: "deny", message: "Smelt could not read this permission request, so it was denied. Nothing was run." });
-    else this.write({ type: "control_response", response: { subtype: "error", request_id: parsed.request_id, error: "Smelt does not answer this request." } });
+    if (subtype === "can_use_tool") this.answerControl(parsed.request_id, { behavior: "deny", message: "Botbench could not read this permission request, so it was denied. Nothing was run." });
+    else this.write({ type: "control_response", response: { subtype: "error", request_id: parsed.request_id, error: "Botbench does not answer this request." } });
   }
 
   /** The CLI no longer waits for these requests (all of them when none is named): say so in the transcript. */
@@ -591,7 +591,7 @@ class ClaudeCodeSession implements DriverSession {
 
   /** The CLI ran a shell command the owner never allowed, so it is not keeping to the gate: nothing more runs in this attempt. */
   private stopUngated(): void {
-    const detail = "Stopped: Claude Code ran a shell command without asking, so it is not keeping to Smelt's permission settings. Nothing more is run in this session.";
+    const detail = "Stopped: Claude Code ran a shell command without asking, so it is not keeping to Botbench's permission settings. Nothing more is run in this session.";
     this.record({ type: "error", message: detail, raw: null });
     if (this.running) this.endTurn("error", detail, "failed");
     void killProcessGroup(this.pgid).catch(() => {});
@@ -670,8 +670,8 @@ export class ClaudeCodeDriver implements Driver {
     const check = checkVersion(versionRun.stdout);
     if (!check.supported) {
       const problem = check.version
-        ? `Claude Code ${check.version} is too old for Smelt: it is not known to accept ${check.missingFlags.join(", ")}. Update Claude Code.`
-        : "Claude Code did not report a version Smelt can read.";
+        ? `Claude Code ${check.version} is too old for Botbench: it is not known to accept ${check.missingFlags.join(", ")}. Update Claude Code.`
+        : "Claude Code did not report a version Botbench can read.";
       return { installed: true, version: check.version, supported: false, signedIn: false, billing: "unknown", problem };
     }
 
@@ -704,7 +704,7 @@ export class ClaudeCodeDriver implements Driver {
     let instructionsDir: string | null = null;
     if (instructions !== null) {
       // An owner-only directory for the one file; it goes when the CLI process does.
-      instructionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-instructions-"));
+      instructionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-instructions-"));
       fs.writeFileSync(path.join(instructionsDir, "instructions.md"), instructions, { mode: 0o600 });
     }
     const cleanUp = (): void => {

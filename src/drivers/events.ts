@@ -27,9 +27,9 @@ export type DriverEvent =
    */
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
   /**
-   * A permission request ended: the owner allowed or declined it (`note` is the owner's, for the agent), Smelt let it
+   * A permission request ended: the owner allowed or declined it (`note` is the owner's, for the agent), Botbench let it
    * run on the run's pre-approved list without asking the owner (`preapproved`) or on a standing permission the owner
-   * gave earlier (`standing`), Smelt refused it without asking the owner (`denied`, `note` says why), or the CLI
+   * gave earlier (`standing`), Botbench refused it without asking the owner (`denied`, `note` says why), or the CLI
    * stopped waiting (`cancelled`).
    */
   | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "declined" | "denied" | "cancelled"; note: string | null }

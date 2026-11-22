@@ -7,9 +7,9 @@ import { writeFileAtomic } from "../store/atomic.ts";
 import { BodyError, json, readJsonBody, requestUrl } from "./router.ts";
 import { isShellRequest } from "./static.ts";
 
-/** The owner's login token, inside Smelt's data directory. */
+/** The owner's login token, inside Botbench's data directory. */
 export const LOGIN_TOKEN_FILE = "login-token";
-export const SESSION_COOKIE = "smelt_session";
+export const SESSION_COOKIE = "botbench_session";
 
 /**
  * Read the owner's login token, creating it on the first start.
@@ -20,7 +20,7 @@ export function loadOrCreateLoginToken(home: string): { token: string; created: 
   if (fs.existsSync(file)) {
     fs.chmodSync(file, 0o600); // owner-only even if something loosened it
     const token = fs.readFileSync(file, "utf8").trim();
-    if (token.length < 32) throw new Error(`${file} does not hold a login token. Delete it and start Smelt again to get a new one.`);
+    if (token.length < 32) throw new Error(`${file} does not hold a login token. Delete it and start Botbench again to get a new one.`);
     return { token, created: false };
   }
   const token = randomBytes(32).toString("base64url");
@@ -30,7 +30,7 @@ export function loadOrCreateLoginToken(home: string): { token: string; created: 
 
 export interface AuthOptions {
   token: string;
-  /** The addresses Smelt listens on. */
+  /** The addresses Botbench listens on. */
   listen: readonly string[];
   /** The bound port; a function because port 0 is only known once the first listener is up. */
   port: () => number;
@@ -77,10 +77,10 @@ export function createAuth(options: AuthOptions): Auth {
   const publicHosts = new Set(options.publicHosts.map((h) => h.toLowerCase()));
   const baseDelay = options.signInDelayMs ?? DEFAULT_SIGN_IN_DELAY_MS;
 
-  // Sessions live in memory only: restarting Smelt signs every device out, and the same token signs them in again.
+  // Sessions live in memory only: restarting Botbench signs every device out, and the same token signs them in again.
   const sessions = new Set<string>();
 
-  /** `Host` values of Smelt's own plain-HTTP listeners. */
+  /** `Host` values of Botbench's own plain-HTTP listeners. */
   const directHosts = (): Set<string> => {
     const port = options.port();
     const hosts = new Set([`localhost:${port}`]);
@@ -88,7 +88,7 @@ export function createAuth(options: AuthOptions): Auth {
     return hosts;
   };
 
-  /** A browser's `Origin` must be Smelt itself: http on a listen address, https on a public name. */
+  /** A browser's `Origin` must be Botbench itself: http on a listen address, https on a public name. */
   const originAllowed = (origin: string): boolean => {
     let url: URL;
     try {

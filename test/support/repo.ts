@@ -44,7 +44,7 @@ export function checkoutState(repo: string): { branch: string; head: string; sta
 }
 
 export const worktreeCount = (repo: string): number => git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).length;
-export const smeltBranches = (repo: string): string[] => git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/smelt/").split("\n").filter(Boolean);
+export const botbenchBranches = (repo: string): string[] => git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/botbench/").split("\n").filter(Boolean);
 
 /**
  * A real repository with one commit in which the real git stalls: its `.git/config` is a named pipe nobody writes to,

@@ -61,7 +61,7 @@ export function useRepository(onSignedOut: () => void): RepositoryChoice {
         (err: unknown) => {
           if (stale) return;
           if (err instanceof ApiError && err.status === 401) return onSignedOut();
-          setRepoState({ kind: "unknown", why: timedOut(err) ? `Smelt did not answer within ${CHECK_REPO_LIMIT_MS / 1000} seconds.` : "Smelt could not be reached." });
+          setRepoState({ kind: "unknown", why: timedOut(err) ? `Botbench did not answer within ${CHECK_REPO_LIMIT_MS / 1000} seconds.` : "Botbench could not be reached." });
         },
       );
     }, CHECK_DELAY_MS);
@@ -126,8 +126,8 @@ export function RepositoryField({ choice }: { choice: RepositoryChoice }) {
 }
 
 const ABOUT = {
-  task: "Claude Code may run these commands in this task without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones Smelt's safety rules catch, such as git push, sudo and deleting outside the task's copy of the project, and anything chained, piped or redirected.",
-  run: "When this run's tasks are built, Claude Code may run these commands without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. While planning it never does: planning only reads, and every command it wants asks. Dangerous commands always ask: the ones Smelt's safety rules catch, such as git push, sudo and deleting outside a task's copy of the project, and anything chained, piped or redirected.",
+  task: "Claude Code may run these commands in this task without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones Botbench's safety rules catch, such as git push, sudo and deleting outside the task's copy of the project, and anything chained, piped or redirected.",
+  run: "When this run's tasks are built, Claude Code may run these commands without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. While planning it never does: planning only reads, and every command it wants asks. Dangerous commands always ask: the ones Botbench's safety rules catch, such as git push, sudo and deleting outside a task's copy of the project, and anything chained, piped or redirected.",
 };
 
 /** The commands the owner confirms may run without asking, once the repository is known: listed, removable, and added to. */

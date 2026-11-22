@@ -4,20 +4,20 @@ import { now } from "../store/db.ts";
 import { gitEnv } from "../worktrees.ts";
 
 /*
- * The commands Smelt itself runs in a task's worktree: the repository's setup commands before its builder starts
+ * The commands Botbench itself runs in a task's worktree: the repository's setup commands before its builder starts
  * (unit 12), and its check commands once the builder's work is committed (unit 13). They are the owner's configured
  * commands, not an agent's, so they do not pass through the permission gate; what they print and how they ended is
  * stored as evidence on the task, append-only. A check runs the project's own code as the agent left it: the agent
  * may have changed what it runs.
  *
  * Each runs as `/bin/sh -c <command>` in the worktree, in a process group of its own, with the caller's environment
- * less every GIT_* variable (as for Smelt's own git calls), no input, and a time limit. When the limit passes, or Smelt
+ * less every GIT_* variable (as for Botbench's own git calls), no input, and a time limit. When the limit passes, or Botbench
  * stops the command (a cancel, a shutdown), the whole group is killed; when the command ends by itself, whatever it left
  * running in its group is killed too, so nothing it started outlives it. A process that leaves the group on purpose
  * (`setsid`, a daemon) is not followed.
  */
 
-/** One command as Smelt runs it: the owner's text and its time limit. */
+/** One command as Botbench runs it: the owner's text and its time limit. */
 export interface StationCommand {
   command: string;
   limitMs: number;
@@ -27,7 +27,7 @@ export interface StationCommand {
 export const DEFAULT_LIMIT_MS = 600_000;
 /** The most of a command's output that is kept: its end, which is where a failure is usually explained. */
 export const MAX_OUTPUT_CHARS = 200_000;
-/** After a command's own process ends, how long its output pipes get to close before Smelt stops reading them. */
+/** After a command's own process ends, how long its output pipes get to close before Botbench stops reading them. */
 const DRAIN_MS = 2000;
 
 export type CommandOutcome = "passed" | "failed" | "timed_out" | "stopped";
@@ -101,7 +101,7 @@ export function runCommand(o: { command: string; cwd: string; limitMs: number; s
     child.stdout.setEncoding("utf8").on("data", add);
     child.stderr.setEncoding("utf8").on("data", add);
     child.on("error", (err) => {
-      add(`Smelt could not start the command: ${err.message}\n`);
+      add(`Botbench could not start the command: ${err.message}\n`);
       finish(null, null);
     });
     child.on("exit", (code, signal) => {

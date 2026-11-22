@@ -30,7 +30,7 @@ interface Rig {
 }
 
 async function rig(t: T): Promise<Rig> {
-  const dir = tempDir("smelt-broker-");
+  const dir = tempDir("botbench-broker-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const worktree = path.join(dir, "worktree");
@@ -92,7 +92,7 @@ function runProxy(input: string, env: Record<string, string>): Promise<{ code: n
 
 const decisionOf = (stdout: string): string => (JSON.parse(stdout) as { hookSpecificOutput: { permissionDecision: string } }).hookSpecificOutput.permissionDecision;
 
-test("the broker's socket is inside the Smelt home, for the owner only, and is gone after close", async (t) => {
+test("the broker's socket is inside the Botbench home, for the owner only, and is gone after close", async (t) => {
   const r = await rig(t);
   assert.equal(path.dirname(r.broker.socketPath), r.home);
   const stat = fs.statSync(r.broker.socketPath);
@@ -258,7 +258,7 @@ test("through the socket: a shell command is sent on to the owner, an edit in th
   const outside = await askBroker(admission.socketPath, admission.secret, hookInput(r, "Write", { file_path: path.join(r.dir, "escape.txt"), content: "out" }, "toolu_05"));
   assert.equal(outside.verdict, "ask");
 
-  // The one thing that ran on Smelt's own say is in the log; asking is logged when the request reaches the owner.
+  // The one thing that ran on Botbench's own say is in the log; asking is logged when the request reaches the owner.
   assert.deepEqual(actionLog(r.db).map((e) => [e.rule, e.taskId, e.attemptId, e.tool, e.command, e.cwd]), [["auto_worktree_edit", r.taskId, r.attemptId, "Write", "y.txt", "."]]);
   // The socket gave no decision to anyone: nothing is pending and nothing was allowed.
   assert.deepEqual(listApprovals(r.db), []);
@@ -271,7 +271,7 @@ test("through the socket: a shell command is sent on to the owner, an edit in th
   assert.equal(r.broker.pending()[1]!.cwd, "");
 
   // The proxy script itself, run as the CLI runs it, prints what the CLI understands.
-  const env = { SMELT_BROKER_SOCKET: admission.socketPath, SMELT_BROKER_SECRET: admission.secret };
+  const env = { BOTBENCH_BROKER_SOCKET: admission.socketPath, BOTBENCH_BROKER_SECRET: admission.secret };
   const asked = await runProxy(JSON.stringify(hookInput(r, "Bash", { command: "sh make-marker.sh" }, "toolu_06")), env);
   assert.deepEqual([asked.code, decisionOf(asked.stdout)], [0, "ask"]);
   const passed = await runProxy(JSON.stringify(hookInput(r, "Write", { file_path: "z.txt", content: "z".repeat(300_000) }, "toolu_07")), env);
@@ -297,7 +297,7 @@ test("if the broker's socket is unavailable, the proxy answers deny", async (t) 
   for (const socketPath of [nowhere, undefined, "", path.join(r.home, "plain-file")]) {
     const reply = await askBroker(socketPath, admission.secret, input);
     assert.equal(reply.verdict, "deny", String(socketPath));
-    assert.match(reply.reason, /Smelt/);
+    assert.match(reply.reason, /Botbench/);
   }
   assert.equal((await askBroker(admission.socketPath, undefined, input)).verdict, "deny", "no secret");
   // A socket that accepts and never answers: the proxy gives up and denies.
@@ -315,7 +315,7 @@ test("if the broker's socket is unavailable, the proxy answers deny", async (t) 
 
   // The script: with the broker gone, with no environment, with input that is not JSON, with no input.
   await r.broker.close();
-  const env = { SMELT_BROKER_SOCKET: admission.socketPath, SMELT_BROKER_SECRET: admission.secret };
+  const env = { BOTBENCH_BROKER_SOCKET: admission.socketPath, BOTBENCH_BROKER_SECRET: admission.secret };
   for (const [what, stdin, withEnv] of [["broker closed", JSON.stringify(input), env], ["no environment", JSON.stringify(input), {}], ["not JSON", "this is not json {", env], ["empty", "", env]] as const) {
     const run = await runProxy(stdin, withEnv);
     assert.equal(run.code, 0, what);
@@ -419,12 +419,12 @@ test("a request the broker cannot record is declined, never allowed", async (t) 
 });
 
 test("approvals left pending when a broker starts on the store stay pending and are marked as asked before that start; nothing ends them", async (t) => {
-  // What a killed Smelt really leaves, and what the engine then does with it, is in test/engine/recover-approval.test.ts.
+  // What a killed Botbench really leaves, and what the engine then does with it, is in test/engine/recover-approval.test.ts.
   const r = await rig(t);
   void r.broker.request({ taskId: r.taskId, attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "ls", cwd: ".", reason: null, toolCallId: "toolu_17" });
   const id = r.broker.pending()[0]!.id;
   assert.equal(r.broker.pending()[0]!.parkedAt, null, "asked in this run");
-  // A second broker opens the same store, as the next start of Smelt would.
+  // A second broker opens the same store, as the next start of Botbench would.
   const home2 = path.join(r.dir, "home2");
   fs.mkdirSync(home2, { mode: 0o700 });
   const again = createBroker({ db: r.db, home: home2, onChange: () => {} });
@@ -436,7 +436,7 @@ test("approvals left pending when a broker starts on the store stay pending and 
   assert.deepEqual(rules(r.db), ["asked_owner"]);
 });
 
-test("a second Smelt on the same data directory is refused, and takes nothing from the first: its socket and its pending approvals stay", async (t) => {
+test("a second Botbench on the same data directory is refused, and takes nothing from the first: its socket and its pending approvals stay", async (t) => {
   const r = await rig(t);
   const admission = r.broker.admit({ taskId: r.taskId, role: "implementer", worktree: r.worktree });
   admission.bind(r.attemptId);
@@ -444,7 +444,7 @@ test("a second Smelt on the same data directory is refused, and takes nothing fr
   const id = r.broker.pending()[0]!.id;
 
   const second = createBroker({ db: r.db, home: r.home, onChange: () => {} });
-  await assert.rejects(second.listen(), /Another Smelt is already running on this data directory/);
+  await assert.rejects(second.listen(), /Another Botbench is already running on this data directory/);
   await second.close();
 
   assert.equal(fs.statSync(r.broker.socketPath).isSocket(), true, "the first broker's socket is still there");

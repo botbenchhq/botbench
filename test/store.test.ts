@@ -9,7 +9,7 @@ import { DB_FILE, migrate, now, openStore, schemaVersion, transaction } from "..
 import { MIGRATIONS } from "../src/store/schema.ts";
 
 function tempDir(t: { after(fn: () => void): void }): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-test-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -42,7 +42,7 @@ const columnNames = (db: DatabaseSync, table: string): unknown[] =>
   db.prepare("SELECT name FROM pragma_table_info(?) ORDER BY cid").all(table).map((r) => r.name);
 
 test("a fresh data directory gets the current schema with owner-only permissions, and reopening changes nothing", (t) => {
-  const home = path.join(tempDir(t), "nested", "smelt-home");
+  const home = path.join(tempDir(t), "nested", "botbench-home");
   const dbFile = path.join(home, DB_FILE);
 
   const first = openStore(home);
@@ -143,7 +143,7 @@ test("a migration that fails part-way leaves the schema and its version untouche
   assert.deepEqual(schemaSql(db), before);
 });
 
-test("a database from a newer Smelt is refused, not downgraded", (t) => {
+test("a database from a newer Botbench is refused, not downgraded", (t) => {
   const home = tempDir(t);
   const newer = new DatabaseSync(path.join(home, DB_FILE));
   migrate(newer, [...MIGRATIONS, { name: "from-the-future", sql: "CREATE TABLE later (id INTEGER PRIMARY KEY);" }]);

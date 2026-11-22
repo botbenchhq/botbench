@@ -6,17 +6,17 @@ import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import { createTask, moveTask } from "../../src/engine/task.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
-import { checkoutState, git, gitProcesses, initRepo, releaseStalled, smeltBranches, stalledRepo, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { checkoutState, git, gitProcesses, initRepo, releaseStalled, botbenchBranches, stalledRepo, tempDir, worktreeCount, write } from "../support/repo.ts";
 
 // No test in this file starts a driver: tasks that reach Claude Code are in test/live/task.live.test.ts.
 
 type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
-async function start(t: T, dir = tempDir("smelt-tasks-api-")): Promise<{ server: SmeltServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
-  // `dir` holds the Smelt home and the test's repositories; removing it removes their worktrees with them.
+async function start(t: T, dir = tempDir("botbench-tasks-api-")): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
+  // `dir` holds the Botbench home and the test's repositories; removing it removes their worktrees with them.
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
@@ -65,7 +65,7 @@ test("every task route refuses a request without a session, and exists for one w
     ["GET", `/api/repos/check?path=${encodeURIComponent(repo)}`],
   ];
   for (const [method, route, body] of routes) {
-    for (const without of [{}, { cookie: "smelt_session=not-a-session" }] as Record<string, string>[]) {
+    for (const without of [{}, { cookie: "botbench_session=not-a-session" }] as Record<string, string>[]) {
       const res = await fetch(`${base}${route}`, { method, headers: { ...without, ...(body ? JSON_TYPE : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
       assert.equal(res.status, 401, `${method} ${route} without a session`);
       assert.deepEqual(await res.json(), { error: "sign in required" });
@@ -124,7 +124,7 @@ test("a repository path that cannot be used is refused before any task row or wo
   assert.equal(server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
   assert.equal(fs.existsSync(path.join(home, "worktrees")), false, "no worktree folder");
   assert.equal(worktreeCount(repo), 1);
-  assert.deepEqual(smeltBranches(repo), []);
+  assert.deepEqual(botbenchBranches(repo), []);
   assert.deepEqual(checkoutState(repo), before);
   assert.deepEqual((await get(base, headers, "/api/tasks")).body, { tasks: [] });
 
@@ -148,7 +148,7 @@ test("a committed task is described with its changed files, and each file's diff
   write(repo, "README.md", "# Sample\nthe owner's uncommitted line\n");
   const before = checkoutState(repo);
 
-  // A task as the engine stores it, with real commits made by Smelt in a real worktree. No driver is involved.
+  // A task as the engine stores it, with real commits made by Botbench in a real worktree. No driver is involved.
   const first = createTask(server.db, { repo, prompt: "an older task" });
   const task = createTask(server.db, { repo, prompt: "change three files" });
   const worktree = await createWorktree({ repo, home, run: "run-api", task: `task-${task.id}` });
@@ -165,9 +165,9 @@ test("a committed task is described with its changed files, and each file's diff
   write(worktree.path, "src/app.txt", "one\n2\nthree\nfour\n");
   fs.rmSync(path.join(worktree.path, "old.txt"));
   write(worktree.path, "odd name's \"file\".txt", "<b>not markup</b>\n");
-  const committed = await commitWork({ path: worktree.path, message: "Smelt task: change three files" });
+  const committed = await commitWork({ path: worktree.path, message: "Botbench task: change three files" });
   assert.ok(committed.committed);
-  // Work left uncommitted after Smelt's commit is not part of the task's changes.
+  // Work left uncommitted after Botbench's commit is not part of the task's changes.
   write(worktree.path, "later.txt", "not committed\n");
   moveTask(server.db, task.id, "awaiting_decision", { headCommit: committed.commit });
 
@@ -212,7 +212,7 @@ test("a committed task is described with its changed files, and each file's diff
     "./hello.txt",
     "hello.txt/",
     ".git/config",
-    "--output=/tmp/smelt-should-not-exist",
+    "--output=/tmp/botbench-should-not-exist",
     "-p",
     ":(top)hello.txt",
     "*.txt",
@@ -225,7 +225,7 @@ test("a committed task is described with its changed files, and each file's diff
     assert.match(String(res.body.error), /not one of this task's changed files|"file"/);
     assert.equal(res.body.diff, undefined);
   }
-  assert.equal(fs.existsSync("/tmp/smelt-should-not-exist"), false);
+  assert.equal(fs.existsSync("/tmp/botbench-should-not-exist"), false);
   assert.equal((await get(base, headers, `/api/tasks/${task.id}/diff`)).status, 400, "no file given");
   assert.equal((await get(base, headers, `/api/tasks/${task.id}/diff?file=hello.txt&file=README.md`)).status, 400, "two files given");
   // A traversal in the address itself reaches no task route.
@@ -245,11 +245,11 @@ test("a committed task is described with its changed files, and each file's diff
 
   // A task whose worktree is gone still answers, and says in words why its files cannot be shown.
   const lost = createTask(server.db, { repo, prompt: "worktree removed by hand" });
-  moveTask(server.db, lost.id, "building", { worktree: { path: path.join(home, "worktrees", "gone", "task-x"), branch: "smelt/gone/task-x", baseCommit } });
+  moveTask(server.db, lost.id, "building", { worktree: { path: path.join(home, "worktrees", "gone", "task-x"), branch: "botbench/gone/task-x", baseCommit } });
   moveTask(server.db, lost.id, "awaiting_decision", { headCommit: baseCommit });
   const gone = (await get(base, headers, `/api/tasks/${lost.id}`)).body;
   assert.equal(gone.files, null);
-  assert.match(String(gone.filesProblem), /not a copy Smelt made/);
+  assert.match(String(gone.filesProblem), /not a copy Botbench made/);
   assert.equal((await get(base, headers, `/api/tasks/${lost.id}/diff?file=hello.txt`)).status, 409);
 
   assert.deepEqual(checkoutState(repo), before, "the owner's checkout is as it was");
@@ -257,8 +257,8 @@ test("a committed task is described with its changed files, and each file's diff
 });
 
 test("starting a task answers at once with its id, and each state it reaches is announced on the event stream", async (t) => {
-  // Smelt's home inside the repository: the task is real and fails at its first step, before any driver could start.
-  const repo = tempDir("smelt-tasks-api-");
+  // Botbench's home inside the repository: the task is real and fails at its first step, before any driver could start.
+  const repo = tempDir("botbench-tasks-api-");
   initRepo(repo);
   const { server, base, headers } = await start(t, repo);
   const before = checkoutState(repo);
@@ -291,7 +291,7 @@ test("starting a task answers at once with its id, and each state it reaches is 
   assert.deepEqual([task.branch, task.headCommit, task.attemptId, task.files], [null, null, null, null]);
   assert.equal(server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0, "no driver was started");
   assert.deepEqual(checkoutState(repo), before);
-  assert.deepEqual(smeltBranches(repo), []);
+  assert.deepEqual(botbenchBranches(repo), []);
 });
 
 test("a repository git cannot read in time is answered as not usable with the reason, a task is not started in it, and no git process is left", { timeout: 30_000 }, async (t) => {

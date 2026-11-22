@@ -105,7 +105,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setSending(null);
-        setProblem(err instanceof ApiError ? `Your answer was not saved. ${err.message}` : "Your answer was not sent: Smelt could not be reached. Nothing was allowed.");
+        setProblem(err instanceof ApiError ? `Your answer was not saved. ${err.message}` : "Your answer was not sent: Botbench could not be reached. Nothing was allowed.");
         refresh();
       },
     );
@@ -120,7 +120,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setSending(null);
-        setProblem(err instanceof ApiError ? `Always allow was not set, and nothing was allowed. ${err.message}` : "Always allow was not set: Smelt could not be reached. Nothing was allowed.");
+        setProblem(err instanceof ApiError ? `Always allow was not set, and nothing was allowed. ${err.message}` : "Always allow was not set: Botbench could not be reached. Nothing was allowed.");
         refresh();
       },
     );
@@ -150,7 +150,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
           </Fact>
         )}
       </ul>
-      {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Smelt restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
+      {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
       {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
       {problem !== null && (
         <p role="alert" className="gw-approval__error">
@@ -201,7 +201,7 @@ export function ApprovalCard({ approval, more, onSignedOut }: { approval: Approv
               onConfirm={grant}
             >
               <p>
-                From now on Smelt runs exactly this command without asking you, each time the same step asks for it from this folder in a task of this repository. A different argument still asks, and dangerous commands always ask. If the command runs a script or a test, it runs whatever those files hold at the time, with your account's rights. This request is allowed too. You can take it back on the Permissions screen.
+                From now on Botbench runs exactly this command without asking you, each time the same step asks for it from this folder in a task of this repository. A different argument still asks, and dangerous commands always ask. If the command runs a script or a test, it runs whatever those files hold at the time, with your account's rights. This request is allowed too. You can take it back on the Permissions screen.
               </p>
               <dl className="gw-key-value">
                 <div className="gw-key-value__item">

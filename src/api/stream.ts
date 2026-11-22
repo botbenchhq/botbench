@@ -77,7 +77,7 @@ export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTB
 
   const handle = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     const header = req.headers["last-event-id"];
-    const query = new URL(req.url ?? "/", "http://smelt.invalid").searchParams.get("after");
+    const query = new URL(req.url ?? "/", "http://botbench.invalid").searchParams.get("after");
     // The header is the browser's own account of what it last received, so it wins over the address it first connected with.
     const given = typeof header === "string" ? header : query;
     const newest = Number(db.prepare("SELECT coalesce(max(id), 0) AS id FROM events").get()!.id);

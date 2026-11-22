@@ -15,11 +15,11 @@ import { initRepo, tempDir } from "./repo.ts";
  * must be made again (two turns on the cheapest model):
  *   node test/support/capture-redrive.ts
  *
- * What it records is a real Claude Code session, driven through Smelt's own driver and permission broker:
+ * What it records is a real Claude Code session, driven through Botbench's own driver and permission broker:
  *   attempt 1  is asked to run `sh make-marker.sh`, asks for permission, and is stopped while it waits.
  *   attempt 2  resumes that session and is told to run `sh other.sh` instead; it asks for permission
  *              for that, is allowed, runs it and ends its turn.
- * Attempt 2 is the scenario a model cannot be made to produce on demand under Smelt's own words after a
+ * Attempt 2 is the scenario a model cannot be made to produce on demand under Botbench's own words after a
  * restart: a resumed turn whose first permission request is not the one that was waiting. The second
  * prompt here is the capture's own, and the recording says so.
  */
@@ -28,7 +28,7 @@ const FIRST_PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, e
 const SECOND_PROMPT = "Do not run that command after all. Run the command `sh other.sh` with your Bash tool instead, exactly once. Then reply with the single word: done";
 const OUT = path.resolve(import.meta.dirname, "..", "recordings", "redrive-other-request.json");
 
-const dir = tempDir("smelt-capture-");
+const dir = tempDir("botbench-capture-");
 const home = path.join(dir, "home");
 const repo = path.join(dir, "repo");
 initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n', "other.sh": '#!/bin/sh\necho other > "$(dirname "$0")/other.txt"\n' });
@@ -38,7 +38,7 @@ await broker.listen();
 const driver = new ClaudeCodeDriver();
 const taskId = createTask(db, { repo, prompt: FIRST_PROMPT }).id;
 
-/** One attempt as Smelt's engine runs it: its permission requests go to the broker and wait there. */
+/** One attempt as Botbench's engine runs it: its permission requests go to the broker and wait there. */
 async function attempt(prompt: string, resumeCursor: string | undefined, onAsked: (session: DriverSession, approvalId: number) => Promise<void>): Promise<DriverSession> {
   const admission = broker.admit({ taskId, role: "implementer", worktree: repo });
   const session = await driver.startAttempt({ db, cwd: repo, allowEdits: true, gate: admission, model: "haiku", ...(resumeCursor === undefined ? {} : { resumeCursor }) });
@@ -67,7 +67,7 @@ const second = await attempt(SECOND_PROMPT, cursor, async (_session, approvalId)
 
 const approvals = listApprovals(db).map(({ attemptId, tool, command, cwd, toolCallId, status }) => ({ attempt: attemptId === first.attemptId ? 1 : 2, tool, command, cwd, toolCallId, status }));
 const recording = {
-  about: "A real Claude Code session, recorded through Smelt's driver and permission broker by test/support/capture-redrive.ts. Attempt 1 asked to run `sh make-marker.sh` and was stopped while it waited. Attempt 2 resumed the session under the capture's own prompt (not the one Smelt sends after a restart) and asked to run `sh other.sh` instead, was allowed, and finished.",
+  about: "A real Claude Code session, recorded through Botbench's driver and permission broker by test/support/capture-redrive.ts. Attempt 1 asked to run `sh make-marker.sh` and was stopped while it waited. Attempt 2 resumed the session under the capture's own prompt (not the one Botbench sends after a restart) and asked to run `sh other.sh` instead, was allowed, and finished.",
   cli: execFileSync("claude", ["--version"], { encoding: "utf8" }).trim(),
   model: "haiku",
   recordedAt: new Date().toISOString(),

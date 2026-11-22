@@ -10,7 +10,7 @@ import { tempDir } from "../support/repo.ts";
 
 // The safety floor and the word splitting under it are pure functions: every case here is a command as text.
 
-const WORKTREE = "/Users/owner/.smelt/worktrees/run-1/task-1";
+const WORKTREE = "/Users/owner/.botbench/worktrees/run-1/task-1";
 const HOME = "/Users/owner";
 const at = (cwd = WORKTREE): FloorContext => ({ worktree: WORKTREE, cwd, home: HOME });
 
@@ -219,7 +219,7 @@ test("where the agent stands decides what a relative target means", () => {
 });
 
 test("a target that leaves the worktree through a link is outside, when the caller follows links as the gate does", (t) => {
-  const dir = tempDir("smelt-floor-");
+  const dir = tempDir("botbench-floor-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const worktree = path.join(dir, "worktree");
   fs.mkdirSync(path.join(worktree, "real"), { recursive: true });
@@ -320,10 +320,10 @@ test("the ways round the floor that the critique found each ask", () => {
     ["cp x ~/.bash_aliases", "guarded-place"],
     ["cp x ~/.oh-my-zsh/custom/a.zsh", "guarded-place"],
     ["cp x /private/var/at/tabs/owner", "guarded-place"],
-    // Smelt's own records, and other tasks' worktrees.
-    ["cp /Users/owner/.smelt/login-token x", "guarded-place"],
-    ["cp x /Users/owner/.smelt/smelt.sqlite", "guarded-place"],
-    ["cp x /Users/owner/.smelt/worktrees/run-2/task-2/a", "guarded-place"],
+    // Botbench's own records, and other tasks' worktrees.
+    ["cp /Users/owner/.botbench/login-token x", "guarded-place"],
+    ["cp x /Users/owner/.botbench/botbench.sqlite", "guarded-place"],
+    ["cp x /Users/owner/.botbench/worktrees/run-2/task-2/a", "guarded-place"],
     // Disks by other spellings and other tools.
     ["dd if=x of=//dev/disk0", "disk-tool"],
     ["dd if=x of=/private/../dev/disk0", "disk-tool"],
@@ -335,9 +335,9 @@ test("the ways round the floor that the critique found each ask", () => {
     ["diskutil apfs resizeContainer disk0 0", "disk-tool"],
     ["diskutil mergePartitions APFS x disk0s1 disk0s2", "disk-tool"],
   ];
-  const ctx = { ...at(), dataDir: "/Users/owner/.smelt" };
+  const ctx = { ...at(), dataDir: "/Users/owner/.botbench" };
   for (const [command, rule] of cases) assert.equal(floor(command, ctx), rule, command);
-  // What stays ordinary: the task's own worktree lies inside Smelt's data directory and is not guarded for it.
+  // What stays ordinary: the task's own worktree lies inside Botbench's data directory and is not guarded for it.
   for (const command of ["cp a b", `cp ${WORKTREE}/a ${WORKTREE}/b`, "rm -rf sub -x", "find build -name x -delete", "rsync -a --delete a/ b/", "sh make-marker.sh", "cat /dev/null", "git status", "git log --oneline -3", "npm test -- path/to/file", "dd if=a of=b"]) {
     assert.equal(floor(command, ctx), null, command);
   }

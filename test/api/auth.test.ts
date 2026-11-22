@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { LOGIN_TOKEN_FILE, MAX_WAITING_SIGN_INS, SESSION_COOKIE } from "../../src/api/auth.ts";
 import { DEFAULT_CONFIG_FILE, loadConfig, type Config } from "../../src/config.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 
 type T = { after(fn: () => unknown): void };
 
@@ -19,8 +19,8 @@ const JSON_TYPE = { "content-type": "application/json" };
 const hasIpv6Loopback = Object.values(os.networkInterfaces()).flat().some((i) => i?.address === "::1");
 
 /** Start the real server on a free port with its data in a temporary directory. */
-async function start(t: T, overrides: Partial<Config> = {}, signInDelayMs = 1): Promise<{ server: SmeltServer; home: string; token: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-auth-"));
+async function start(t: T, overrides: Partial<Config> = {}, signInDelayMs = 1): Promise<{ server: BotbenchServer; home: string; token: string }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...overrides };
@@ -200,7 +200,7 @@ test("a flood of guesses is turned away unchecked instead of queueing without en
   assert.ok(performance.now() - began < 1500, "turned away at once, not after the wait");
 });
 
-test("with no extra address configured, Smelt listens on the loopback address only", async (t) => {
+test("with no extra address configured, Botbench listens on the loopback address only", async (t) => {
   const shipped = loadConfig({ defaults: DEFAULT_CONFIG_FILE });
   assert.deepEqual(shipped.listen, ["127.0.0.1"]);
   assert.deepEqual(shipped.publicHosts, []);
@@ -216,7 +216,7 @@ test("with no extra address configured, Smelt listens on the loopback address on
       socket.once("error", () => resolve(false));
     });
   assert.equal(await connects("127.0.0.1"), true);
-  // Every other address this machine has, on every interface, must not answer on Smelt's port.
+  // Every other address this machine has, on every interface, must not answer on Botbench's port.
   const others = Object.values(os.networkInterfaces())
     .flat()
     .filter((i) => i !== undefined && i.address !== "127.0.0.1")
@@ -265,7 +265,7 @@ test("the token file is owner-only and the token is in no response after sign-in
 });
 
 test("the entry point prints the token only on the start that created it", async (t) => {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "smelt-auth-entry-")), "home");
+  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-entry-")), "home");
   t.after(() => fs.rmSync(path.dirname(home), { recursive: true, force: true }));
   const entry = fileURLToPath(new URL("../../src/server.ts", import.meta.url));
 
@@ -277,7 +277,7 @@ test("the entry point prints the token only on the start that created it", async
     probe.close();
     await once(probe, "close");
 
-    const child = spawn(process.execPath, [entry], { env: { ...process.env, SMELT_HOME: home, SMELT_PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [entry], { env: { ...process.env, BOTBENCH_HOME: home, BOTBENCH_PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
     t.after(() => void child.kill("SIGKILL"));
     const exited = once(child, "exit");
     let stdout = "";
@@ -339,7 +339,7 @@ test("a foreign Origin, or a body that is not JSON, is refused on a write route"
   const noType = await request({ port, method: "POST", path: "/api/sign-in", body: JSON.stringify({ token }) });
   assert.equal(noType.status, 415, "no content type at all");
 
-  // The same requests with Smelt's own origin and a JSON body are accepted.
+  // The same requests with Botbench's own origin and a JSON body are accepted.
   const ok = await post({ "content-type": "application/json; charset=utf-8", origin: own });
   assert.equal(ok.status, 200);
   assert.equal((await post({ ...JSON_TYPE, origin: `http://localhost:${port}` })).status, 200);

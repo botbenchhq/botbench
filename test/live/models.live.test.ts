@@ -8,9 +8,9 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
 import { modelNameProblem } from "../../src/drivers/contract.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 
-// These tests start the real Claude Code on the owner's login, through Smelt's HTTP API.
+// These tests start the real Claude Code on the owner's login, through Botbench's HTTP API.
 // Every prompt is tiny and every model named here is one of the cheapest the CLI lists.
 
 const TURN_TIMEOUT = 180_000;
@@ -19,8 +19,8 @@ const JSON_TYPE = { "content-type": "application/json" };
 const FULL_NAME = "claude-haiku-4-5-20251001";
 const ALIAS = "haiku";
 
-async function start(t: TestContext): Promise<{ server: SmeltServer; base: string; headers: Record<string, string> }> {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "smelt-live-models-")));
+async function start(t: TestContext): Promise<{ server: BotbenchServer; base: string; headers: Record<string, string> }> {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-live-models-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": { model: ALIAS, models: ["sonnet"] } }, roles: { implementer: { driver: "claude-code" } } };
@@ -142,14 +142,14 @@ test("live: a turn started with a chosen model reports that model in its session
 
 test("live: a model name the CLI does not know ends the turn as an error in the CLI's own words, and no process is left", { timeout: TURN_TIMEOUT }, async (t) => {
   const { server, base, headers } = await start(t);
-  const unknown = "smelt-no-such-model-1";
+  const unknown = "botbench-no-such-model-1";
   const started = await sendTurn(base, headers, { prompt: "Reply with exactly the word: wren", model: unknown });
   const pgid = Number(server.db.prepare("SELECT pgid FROM attempts WHERE id = ?").get(started.attemptId)!.pgid);
   const events = await turnEnded(base, headers, started.attemptId, started.turn);
 
   const end = events.at(-1)!.payload;
   assert.equal(end.type === "turn_ended" && end.reason, "error");
-  const words = /issue with the selected model \(smelt-no-such-model-1\)/;
+  const words = /issue with the selected model \(botbench-no-such-model-1\)/;
   assert.match(String(end.type === "turn_ended" && end.detail), words);
   assert.ok(events.some((e) => e.payload.type === "error" && words.test(e.payload.message)), "an error event carries the CLI's sentence");
   assert.doesNotMatch(events.map((e) => (e.payload.type === "text" ? e.payload.text : "")).join(" "), /wren/i, "nothing answered");

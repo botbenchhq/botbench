@@ -38,7 +38,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
       (err: unknown) => {
         setBusy(false);
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setError(err instanceof ApiError ? `The run was not started. ${err.message}` : "The run was not started: Smelt could not be reached.");
+        setError(err instanceof ApiError ? `The run was not started. ${err.message}` : "The run was not started: Botbench could not be reached.");
       },
     );
   };
@@ -61,7 +61,7 @@ export function NewRunScreen({ onSignedOut }: { onSignedOut: () => void }) {
               Spec file path
             </label>
             <input id="run-spec" name="specPath" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={specPath} onChange={(e) => setSpecPath(e.target.value)} aria-describedby="run-spec-about" className="gw-field__control" />
-            <p id="run-spec-about" className="gw-field__description">Or the full path of a .md, .markdown or .txt file on this Mac that describes the work. Smelt reads it once, now.</p>
+            <p id="run-spec-about" className="gw-field__description">Or the full path of a .md, .markdown or .txt file on this Mac that describes the work. Botbench reads it once, now.</p>
           </div>
           <ModelPicker state={models} />
           <PreapprovedEditor choice={repository} scope="run" />

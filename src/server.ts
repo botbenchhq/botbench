@@ -8,14 +8,15 @@ import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { LOCAL_CONFIG_FILE, DEFAULT_CONFIG_FILE, floorEntries, loadConfig, offerStandingAfter, repositoryCommands, ROOT, smeltHome, type Config } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, offerStandingAfter, repositoryCommands, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
 import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { createRuns } from "./engine/run.ts";
 import { createTasks } from "./engine/task.ts";
 import { openStore } from "./store/db.ts";
+import { moveOldHome } from "./store/move-home.ts";
 
-export interface SmeltServer {
+export interface BotbenchServer {
   /** The port actually bound, which differs from the configured one when that is 0. */
   port: number;
   addresses: string[];
@@ -62,7 +63,7 @@ export interface StartOptions {
 
 
 /** Open the store under `home` and serve on every configured address. */
-export async function startServer(options: StartOptions): Promise<SmeltServer> {
+export async function startServer(options: StartOptions): Promise<BotbenchServer> {
   const { config, home } = options;
   const db = openStore(home);
   const login = loadOrCreateLoginToken(home);
@@ -81,7 +82,7 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
     throw err;
   }
   try {
-    // Without its socket the gate could only refuse, so Smelt does not start half-working.
+    // Without its socket the gate could only refuse, so Botbench does not start half-working.
     await broker.listen();
   } catch (err) {
     stream.close();
@@ -136,23 +137,39 @@ export async function startServer(options: StartOptions): Promise<SmeltServer> {
   return { port, addresses: [...config.listen], db, broker, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
 }
 
+/**
+ * What a start reads from the environment: the data folder (and the old default one an installation may have left), the
+ * owner's settings file, and a port that overrides the configured one. The old SMELT_* names are read for one release.
+ */
+export function startupSettings(env: NodeJS.ProcessEnv, log: Log): { homes: { home: string; legacy: string | null }; localConfig: string; port: number | undefined } {
+  const homes = dataHomes(env, log);
+  // BOTBENCH_CONFIG names the owner's settings file for one start, in place of botbench.local.json.
+  const localConfig = localConfigFile(env, log);
+  // BOTBENCH_PORT overrides the configured port for one start, e.g. to run a second instance.
+  const raw = envSetting(env, "PORT", log);
+  const port = raw === undefined ? undefined : Number(raw);
+  if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) throw new Error(`BOTBENCH_PORT must be a port number, got "${raw}"`);
+  return { homes, localConfig, port };
+}
+
 const runDirectly = process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === import.meta.filename;
 if (runDirectly) {
-  // SMELT_CONFIG names the owner's settings file for one start, in place of smelt.local.json.
-  const config = loadConfig({ defaults: DEFAULT_CONFIG_FILE, local: process.env.SMELT_CONFIG ? path.resolve(process.env.SMELT_CONFIG) : LOCAL_CONFIG_FILE });
-  // SMELT_PORT overrides the configured port for one start, e.g. to run a second instance.
-  const port = process.env.SMELT_PORT === undefined ? config.port : Number(process.env.SMELT_PORT);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`SMELT_PORT must be a port number, got "${process.env.SMELT_PORT}"`);
-  const server = await startServer({ config: { ...config, port }, home: smeltHome() });
+  const log: Log = (line) => console.log(line);
+  const settings = startupSettings(process.env, log);
+  const config = loadConfig({ defaults: DEFAULT_CONFIG_FILE, local: settings.localConfig });
+  const { home } = settings.homes;
+  // An installation from before the rename is moved into place before anything opens it; a failure stops the start.
+  await moveOldHome({ ...settings.homes, log });
+  const server = await startServer({ config: { ...config, port: settings.port ?? config.port }, home });
   for (const address of server.addresses) {
-    console.log(`Smelt is listening on http://${address.includes(":") ? `[${address}]` : address}:${server.port}`);
+    console.log(`Botbench is listening on http://${address.includes(":") ? `[${address}]` : address}:${server.port}`);
   }
   if (server.newLoginToken !== undefined) {
     // Shown once, on the start that created it. Afterwards it is only in the owner-only file under the data directory.
-    console.log(`Login token (shown this once, kept in ${path.join(smeltHome(), LOGIN_TOKEN_FILE)}): ${server.newLoginToken}`);
+    console.log(`Login token (shown this once, kept in ${path.join(home, LOGIN_TOKEN_FILE)}): ${server.newLoginToken}`);
   }
   // Closing stops every CLI process first, which can take a few seconds. A second signal during that
-  // time is ignored: letting it kill Smelt would leave those processes running with nobody to stop them.
+  // time is ignored: letting it kill Botbench would leave those processes running with nobody to stop them.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => void server.close());
   }

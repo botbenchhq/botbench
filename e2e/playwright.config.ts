@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-// The tests start their own Smelt processes (see smelt.ts) and drive the built
+// The tests start their own Botbench processes (see botbench.ts) and drive the built
 // client in the Chrome installed on this machine, at a phone's size.
 export default defineConfig({
   testDir: ".",

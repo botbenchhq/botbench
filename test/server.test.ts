@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { Config } from "../src/config.ts";
 import { LOGIN_TOKEN_FILE } from "../src/api/auth.ts";
-import { startServer, type SmeltServer } from "../src/server.ts";
+import { startServer, type BotbenchServer } from "../src/server.ts";
 import { DB_FILE } from "../src/store/db.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -16,8 +16,8 @@ import { fileURLToPath } from "node:url";
 const mode = (file: string): number => fs.statSync(file).mode & 0o777;
 
 /** Start the real server on a free port with its data in a temporary directory. */
-async function start(t: { after(fn: () => unknown): void }, overrides: Partial<Config> = {}): Promise<{ server: SmeltServer; home: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "smelt-server-"));
+async function start(t: { after(fn: () => unknown): void }, overrides: Partial<Config> = {}): Promise<{ server: BotbenchServer; home: string }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-server-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...overrides };
@@ -26,7 +26,7 @@ async function start(t: { after(fn: () => unknown): void }, overrides: Partial<C
   return { server, home };
 }
 
-/** Sign in over real HTTP with the token Smelt wrote under `home`; returns the session cookie to send back. */
+/** Sign in over real HTTP with the token Botbench wrote under `home`; returns the session cookie to send back. */
 async function signIn(port: number, home: string): Promise<{ cookie: string }> {
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const res = await fetch(`http://127.0.0.1:${port}/api/sign-in`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }) });
@@ -97,7 +97,7 @@ test("starting on a port that is taken fails and leaves the first server working
 });
 
 test("npm start's entry point creates the data directory, answers health, and exits on SIGTERM", async (t) => {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "smelt-entry-")), "home");
+  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-entry-")), "home");
   t.after(() => fs.rmSync(path.dirname(home), { recursive: true, force: true }));
   // Ask the OS for a free port, then hand it to the real process.
   const probe = net.createServer().listen(0, "127.0.0.1");
@@ -107,7 +107,7 @@ test("npm start's entry point creates the data directory, answers health, and ex
   await once(probe, "close");
 
   const entry = fileURLToPath(new URL("../src/server.ts", import.meta.url));
-  const child = spawn(process.execPath, [entry], { env: { ...process.env, SMELT_HOME: home, SMELT_PORT: String(port) }, stdio: ["ignore", "pipe", "inherit"] });
+  const child = spawn(process.execPath, [entry], { env: { ...process.env, BOTBENCH_HOME: home, BOTBENCH_PORT: String(port) }, stdio: ["ignore", "pipe", "inherit"] });
   t.after(() => void child.kill("SIGKILL"));
   let out = "";
   child.stdout.setEncoding("utf8");

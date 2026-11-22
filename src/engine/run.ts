@@ -21,7 +21,7 @@ import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, word
  *      ▼                             ▼           ▼
  *   failed, cancelled             cancelled   cancelled                      (the task at work is stopped; the rest are not built)
  *
- * The planner is read-only. It works in a detached worktree of the run's base commit under the Smelt home, never in
+ * The planner is read-only. It works in a detached worktree of the run's base commit under the Botbench home, never in
  * the owner's checkout; the driver starts it without any tool that writes; every shell command it wants goes to the
  * owner through the gate under the planner role, where no grant applies. The worktree is removed when planning ends,
  * however it ends. What the planner replies is data: it is validated and stored as text.
@@ -295,8 +295,8 @@ const SPEC_LIMIT_MS = 2000;
 const isInside = (child: string, parent: string): boolean => child === parent || child.startsWith(parent + path.sep);
 
 /**
- * Read the spec file a client named. A client that holds the owner's session can make Smelt read a file with this,
- * so only this is read: a full path to a regular file named .md, .markdown or .txt, outside Smelt's own data folder,
+ * Read the spec file a client named. A client that holds the owner's session can make Botbench read a file with this,
+ * so only this is read: a full path to a regular file named .md, .markdown or .txt, outside Botbench's own data folder,
  * of at most `MAX_SPEC_BYTES` bytes, that is valid UTF-8 text with no NUL in it. A pipe or a device is never read
  * from, and the whole read has a time limit. Returns the file's real path and its text; nothing of a refused file.
  */
@@ -305,7 +305,7 @@ export async function readSpec(input: unknown, o: { home: string }): Promise<{ p
   if (input.length > MAX_PATH) throw new RunError(400, "The spec file's path is too long.");
   const given = path.resolve(input);
   const allowed = (file: string): boolean => SPEC_EXTENSIONS.includes(path.extname(file).toLowerCase());
-  if (!allowed(given)) throw new RunError(400, `The spec file ${given} is not a .md, .markdown or .txt file. Smelt reads a spec only from a text file with one of those endings.`);
+  if (!allowed(given)) throw new RunError(400, `The spec file ${given} is not a .md, .markdown or .txt file. Botbench reads a spec only from a text file with one of those endings.`);
 
   const read = async (): Promise<{ path: string; text: string }> => {
     let real: string;
@@ -324,7 +324,7 @@ export async function readSpec(input: unknown, o: { home: string }): Promise<{ p
     } catch {
       // A home that is not there yet holds nothing to guard.
     }
-    if (isInside(real, home)) throw new RunError(400, `The spec file ${given} is inside Smelt's own data folder, which is never read as a spec.`);
+    if (isInside(real, home)) throw new RunError(400, `The spec file ${given} is inside Botbench's own data folder, which is never read as a spec.`);
     let handle: fs.promises.FileHandle;
     try {
       // Never waits on a pipe nobody writes to, and follows no link that appeared since the path was resolved.
@@ -337,9 +337,9 @@ export async function readSpec(input: unknown, o: { home: string }): Promise<{ p
     try {
       const stat = await handle.stat();
       if (!stat.isFile()) throw new RunError(400, `The spec file ${given} is not a regular file.`);
-      // A second name for a file says nothing of where the file belongs: it could be one inside Smelt's own folder.
-      if (stat.nlink > 1) throw new RunError(400, `The spec file ${given} has more than one name (it is a hard link), so Smelt cannot tell where it belongs. Copy it to a file of its own.`);
-      if (stat.size > MAX_SPEC_BYTES) throw new RunError(400, `The spec file ${given} is too large: ${stat.size} bytes, and Smelt reads at most ${MAX_SPEC_BYTES}.`);
+      // A second name for a file says nothing of where the file belongs: it could be one inside Botbench's own folder.
+      if (stat.nlink > 1) throw new RunError(400, `The spec file ${given} has more than one name (it is a hard link), so Botbench cannot tell where it belongs. Copy it to a file of its own.`);
+      if (stat.size > MAX_SPEC_BYTES) throw new RunError(400, `The spec file ${given} is too large: ${stat.size} bytes, and Botbench reads at most ${MAX_SPEC_BYTES}.`);
       // One byte more than the limit is asked for, so a file that grew since it was measured is still refused.
       const buffer = Buffer.alloc(MAX_SPEC_BYTES + 1);
       let filled = 0;
@@ -347,7 +347,7 @@ export async function readSpec(input: unknown, o: { home: string }): Promise<{ p
         const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
         if (bytesRead === 0) break;
         filled += bytesRead;
-        if (filled === buffer.length) throw new RunError(400, `The spec file ${given} is too large: Smelt reads at most ${MAX_SPEC_BYTES} bytes.`);
+        if (filled === buffer.length) throw new RunError(400, `The spec file ${given} is too large: Botbench reads at most ${MAX_SPEC_BYTES} bytes.`);
       }
       if (filled === 0) throw new RunError(400, `The spec file ${given} is empty.`);
       const bytes = buffer.subarray(0, filled);
@@ -369,7 +369,7 @@ export async function readSpec(input: unknown, o: { home: string }): Promise<{ p
 
   return new Promise((resolve, reject) => {
     // A read that outlives its limit ends on its own later and closes its file; nobody waits for it.
-    const timer = setTimeout(() => reject(new RunError(400, `The spec file ${given} could not be read within ${SPEC_LIMIT_MS / 1000} seconds. If it is on an external drive or in a protected folder, Smelt may not be allowed to read it there.`)), SPEC_LIMIT_MS);
+    const timer = setTimeout(() => reject(new RunError(400, `The spec file ${given} could not be read within ${SPEC_LIMIT_MS / 1000} seconds. If it is on an external drive or in a protected folder, Botbench may not be allowed to read it there.`)), SPEC_LIMIT_MS);
     read().then(resolve, reject).finally(() => clearTimeout(timer));
   });
 }
@@ -402,7 +402,7 @@ export interface Runs {
 
 export interface RunsOptions {
   db: DatabaseSync;
-  /** Smelt's data directory; planning worktrees go under it. */
+  /** Botbench's data directory; planning worktrees go under it. */
   home: string;
   driver: Driver;
   /** Where the planner's permission requests go to wait for the owner. */
@@ -424,7 +424,7 @@ export interface RunsOptions {
 /** How one go of the planner ended. */
 type Outcome = { tasks: PlanTask[]; model: string | null } | { problem: string } | { cancelled: true };
 
-const STOPPED = "Smelt stopped before this run's plan was made.";
+const STOPPED = "Botbench stopped before this run's plan was made.";
 
 /**
  * Plans runs, one planner at a time, and takes the owner's decisions at the plan gate.
@@ -524,7 +524,7 @@ export function createRuns(options: RunsOptions): Runs {
           else if (second.end !== "completed") outcome = { problem: problemOf(second.end) };
           else {
             plan = parsePlan(second.text);
-            outcome = plan.ok ? { tasks: plan.tasks, model } : { problem: `The planner returned a plan Smelt could not accept, twice. What was wrong with the second: ${plan.errors.join(" ")}` };
+            outcome = plan.ok ? { tasks: plan.tasks, model } : { problem: `The planner returned a plan Botbench could not accept, twice. What was wrong with the second: ${plan.errors.join(" ")}` };
           }
         } else outcome = { tasks: plan.tasks, model };
       }
@@ -573,20 +573,20 @@ export function createRuns(options: RunsOptions): Runs {
   };
 
   /**
-   * A Smelt that stopped while planning leaves a run at `planning` with nobody planning it. Say so, and leave nothing
+   * A Botbench that stopped while planning leaves a run at `planning` with nobody planning it. Say so, and leave nothing
    * of it behind. The runs are read before this engine takes its first request, so every one found is the last run's.
    */
   const recover = async (): Promise<void> => {
     for (const row of db.prepare("SELECT id FROM runs WHERE kind = 'planned' AND status = 'planning' ORDER BY id").all()) {
       const run = getRun(db, Number(row.id))!;
       if (run.attemptId !== null) await stopSurvivor(db, run.attemptId).catch(report(`Stopping the planner left by run ${run.id}`));
-      broker.endRunApprovals(run.id, "Smelt stopped while the planner waited for this answer.");
+      broker.endRunApprovals(run.id, "Botbench stopped while the planner waited for this answer.");
       await removePlanningWorktree({ repo: run.repo, home, run: `run-${run.id}` }).catch(report(`Removing the planning worktree left by run ${run.id}`));
       if (planTasks(db, run.id).length > 0) move(run.id, "awaiting_plan_approval", { reason: `${STOPPED} The planner had been asked to change the plan; the plan is as it was.` });
       else move(run.id, "failed", { reason: `${STOPPED} Start the run again.` });
     }
     // No planner is at work yet, so every planning worktree still under the home is a leftover, whatever its run says
-    // now: one cancelled just before Smelt was killed, or one whose removal failed.
+    // now: one cancelled just before Botbench was killed, or one whose removal failed.
     const root = path.join(home, "worktrees");
     for (const name of fs.existsSync(root) ? fs.readdirSync(root) : []) {
       const id = /^run-([1-9]\d{0,14})$/.exec(name);
@@ -604,7 +604,7 @@ export function createRuns(options: RunsOptions): Runs {
 
   const start = async (input: StartRun): Promise<Run> => {
     const stopping = (): void => {
-      if (closed) throw new RunError(503, "Smelt is shutting down.");
+      if (closed) throw new RunError(503, "Botbench is shutting down.");
     };
     stopping();
     const hasPrompt = input.prompt !== undefined && input.prompt !== null;
@@ -644,7 +644,7 @@ export function createRuns(options: RunsOptions): Runs {
   };
 
   const approve = (id: number, planVersion: unknown): { run: Run; tasks: Task[] } => {
-    if (closed) throw new RunError(503, "Smelt is shutting down.");
+    if (closed) throw new RunError(503, "Botbench is shutting down.");
     const approved = approvePlan(db, id, planVersion, options.implementerModel ?? null);
     announce(approved.run);
     for (const task of approved.tasks) announceTask(task);
@@ -660,7 +660,7 @@ export function createRuns(options: RunsOptions): Runs {
       versionGiven(planVersion);
       if (waiting.status !== "awaiting_plan_approval") throw notWaiting(waiting, "change");
       sameVersion(waiting, planVersion);
-      if (closed) throw new RunError(503, "Smelt is shutting down.");
+      if (closed) throw new RunError(503, "Botbench is shutting down.");
       const stands = planTasks(db, id).map(({ title, criteria }) => ({ title, criteria }));
       writeRun(db, id, "planning", { reason: null, detail: `changes requested by the owner: ${feedback.trim().slice(0, 500)}` });
       return { run: getRun(db, id)!, plan: stands, words: feedback.trim() };

@@ -27,7 +27,7 @@ export interface FloorContext {
   cwd: string;
   /** The owner's home directory. */
   home: string;
-  /** Smelt's data directory: its records and every other task's worktree. Left out, nothing of Smelt's is guarded. */
+  /** Botbench's data directory: its records and every other task's worktree. Left out, nothing of Botbench's is guarded. */
   dataDir?: string;
   /** Follows the links in a full path. Left out, paths are taken as written. */
   real?: (absolute: string) => string;
@@ -166,7 +166,7 @@ function guardedPlace(word: string, reading: Reading): boolean {
       // The home directory itself and every folder that holds it.
       if (home.startsWith(place)) return true;
       if (GUARDED_ROOTS.some((root) => place.startsWith(root))) return true;
-      // Smelt's own records and other tasks' worktrees; this task's worktree is its own to work in.
+      // Botbench's own records and other tasks' worktrees; this task's worktree is its own to work in.
       if (ctx.dataDir !== undefined && under(both(ctx.dataDir), written) && !under(both(ctx.worktree), written)) return true;
       if (!place.startsWith(home)) return false;
       const below = place.slice(home.length);
@@ -241,7 +241,7 @@ export const FLOOR_RULES: readonly FloorRule[] = [
   },
   {
     // Anything aimed at the shell profiles, SSH and GnuPG folders, keychains, login items, git's and npm's own settings,
-    // cloud logins, `/etc`, the home directory as a whole, or Smelt's own records; and the keychain and SSH key tools.
+    // cloud logins, `/etc`, the home directory as a whole, or Botbench's own records; and the keychain and SSH key tools.
     name: "guarded-place",
     matches: (r) => runs(r, oneOf("security", "ssh-add", "ssh-keygen")) || r.segments.some((segment) => segment.some((word) => guardedPlace(word, r))),
   },

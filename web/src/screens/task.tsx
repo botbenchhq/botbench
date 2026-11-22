@@ -41,7 +41,7 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
           ))}
         </code>
       </pre>
-      {state.truncated && <p className="gw-diff__note">These changes are longer than Smelt shows here. All of them are on the branch.</p>}
+      {state.truncated && <p className="gw-diff__note">These changes are longer than Botbench shows here. All of them are on the branch.</p>}
     </figure>
   );
 }
@@ -83,7 +83,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
     const failed = (what: string) => (err: unknown): void => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       if (read !== reads.current) return;
-      setProblem(err instanceof ApiError ? `${what} could not be read. ${err.message}` : `${what} could not be read: Smelt could not be reached.`);
+      setProblem(err instanceof ApiError ? `${what} could not be read. ${err.message}` : `${what} could not be read: Botbench could not be reached.`);
     };
     getTask(id).then((next) => {
       // Several states can be announced within milliseconds; only the newest read may set what the screen shows.
@@ -142,7 +142,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
       ({ diff, truncated }) => setDiffs((have) => ({ ...have, [file]: { kind: "loaded", diff, truncated } })),
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setDiffs((have) => ({ ...have, [file]: { kind: "failed", why: err instanceof ApiError ? err.message : "Smelt could not be reached." } }));
+        setDiffs((have) => ({ ...have, [file]: { kind: "failed", why: err instanceof ApiError ? err.message : "Botbench could not be reached." } }));
       },
     );
   };
@@ -156,7 +156,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
     );
   };
 
-  // Between the end of the turn and Smelt's commit the task is still building, but Claude Code is no longer working.
+  // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
   const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : asking.parkedAt === null ? "Claude Code is paused until you answer." : "Claude Code is stopped until you answer.") : null;
 
   return (
@@ -212,7 +212,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                     </li>
                   ))}
                 </ul>
-                <p>You listed these when you started the task. They run without asking, with further arguments too, unless Smelt's safety rules catch them (git push, sudo, deleting outside the task's copy and the like) or they are chained, piped or redirected: those still ask.</p>
+                <p>You listed these when you started the task. They run without asking, with further arguments too, unless Botbench's safety rules catch them (git push, sudo, deleting outside the task's copy and the like) or they are chained, piped or redirected: those still ask.</p>
               </section>
             )}
 
@@ -221,7 +221,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             {task.evidence.some((row) => row.kind === "setup") && (
               <section aria-labelledby="setup-heading" className="gw-stack gw-gap-sm">
                 <h2 id="setup-heading">Setup</h2>
-                <p>Smelt ran this repository's setup commands in the task's copy before Claude Code started, as your settings list them.</p>
+                <p>Botbench ran this repository's setup commands in the task's copy before Claude Code started, as your settings list them.</p>
                 <CommandEvidence rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
               </section>
             )}
@@ -303,7 +303,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   </div>
                 </div>
                 <p data-testid="not-merged">
-                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Smelt sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs with your account's rights.`}
+                  {`Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. ${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs with your account's rights.`}
                 </p>
               </section>
             )}

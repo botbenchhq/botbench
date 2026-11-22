@@ -6,18 +6,18 @@ import { test, type TestContext } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { openStore } from "../../src/store/db.ts";
-import { checkoutState, git, initRepo, smeltBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { checkoutState, git, initRepo, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
 
-// These tests start the real Claude Code on the owner's login, through Smelt's
+// These tests start the real Claude Code on the owner's login, through Botbench's
 // HTTP API, in real temporary repositories. Every prompt is tiny and asks for the cheapest model.
 
 const TASK_TIMEOUT = 240_000;
 const JSON_TYPE = { "content-type": "application/json" };
 
 interface Live {
-  server: SmeltServer;
+  server: BotbenchServer;
   base: string;
   headers: Record<string, string>;
   dir: string;
@@ -25,9 +25,9 @@ interface Live {
   repo: string;
 }
 
-/** A real Smelt server, and a real repository with the owner part-way through their own work on `main`. */
+/** A real Botbench server, and a real repository with the owner part-way through their own work on `main`. */
 async function start(t: TestContext, files: Record<string, string> = { "README.md": "# Sample\n" }): Promise<Live> {
-  const dir = tempDir("smelt-live-task-");
+  const dir = tempDir("botbench-live-task-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
@@ -110,7 +110,7 @@ async function until(what: string, done: () => boolean | Promise<boolean>, ms = 
 
 const groupAlive = (pgid: number): boolean => execFileSync("ps", ["-A", "-o", "pgid="], { encoding: "utf8" }).split("\n").some((line) => Number(line.trim()) === pgid);
 
-test("live: a task to create hello.txt ends awaiting a decision with Smelt's commit on a task branch, and the source checkout is unchanged", { timeout: TASK_TIMEOUT }, async (t) => {
+test("live: a task to create hello.txt ends awaiting a decision with Botbench's commit on a task branch, and the source checkout is unchanged", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t);
   const before = checkoutState(live.repo);
   const stream = await openStream(t, live);
@@ -131,15 +131,15 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
   assert.equal(task.status, "awaiting_decision");
   assert.equal(task.reason, null);
   assert.equal(task.repo, live.repo);
-  assert.match(task.branch ?? "", new RegExp(`^smelt/run-\\d+/task-${taskId}$`));
+  assert.match(task.branch ?? "", new RegExp(`^botbench/run-\\d+/task-${taskId}$`));
   assert.equal(task.baseCommit, before.head);
   assert.notEqual(task.headCommit, before.head);
 
-  // The commit is on the task branch, made by Smelt, and holds the file with that content.
+  // The commit is on the task branch, made by Botbench, and holds the file with that content.
   assert.equal(git(live.repo, "rev-parse", task.branch!).trim(), task.headCommit);
   assert.equal(git(live.repo, "rev-parse", `${task.branch}^`).trim(), before.head, "one commit on top of the base");
   assert.equal(git(live.repo, "show", `${task.branch}:hello.txt`).trim(), "hi");
-  assert.equal(git(live.repo, "log", "-1", "--format=%an <%ae>|%cn", task.branch!).trim(), "Smelt <smelt@localhost>|Smelt");
+  assert.equal(git(live.repo, "log", "-1", "--format=%an <%ae>|%cn", task.branch!).trim(), "Botbench <botbench@localhost>|Botbench");
   assert.deepEqual(task.files!.map((f) => [f.path, f.status, f.added, f.removed]), [["hello.txt", "added", 1, 0]]);
   const diff = (await (await fetch(`${live.base}/api/tasks/${taskId}/diff?file=hello.txt`, { headers: live.headers })).json()) as { diff: string };
   assert.match(diff.diff, /\n\+hi\n?/);
@@ -148,10 +148,10 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
   assert.deepEqual(checkoutState(live.repo), before);
   assert.equal(fs.readFileSync(path.join(live.repo, "README.md"), "utf8"), "# Sample\nthe owner is half-way through this line\n");
   assert.equal(fs.existsSync(path.join(live.repo, "hello.txt")), false);
-  assert.deepEqual(smeltBranches(live.repo), [task.branch]);
+  assert.deepEqual(botbenchBranches(live.repo), [task.branch]);
   assert.equal(worktreeCount(live.repo), 2);
 
-  // The agent worked in the task's worktree under Smelt's home, and its transcript is the attempt's.
+  // The agent worked in the task's worktree under Botbench's home, and its transcript is the attempt's.
   const worktree = path.join(live.home, "worktrees", task.branch!.split("/")[1]!, `task-${taskId}`);
   assert.equal(fs.readFileSync(path.join(worktree, "hello.txt"), "utf8").trim(), "hi");
   const events = await transcript(live, task.attemptId!);
@@ -167,7 +167,7 @@ test("live: a task to create hello.txt ends awaiting a decision with Smelt's com
   assert.deepEqual([...new Set(states)], ["queued", "building", "awaiting_decision"]);
   assert.deepEqual(server_states(live, taskId), ["queued", "building", "building", "awaiting_decision"]);
 
-  // The task's turn is over, so its CLI process is gone without waiting for Smelt to stop.
+  // The task's turn is over, so its CLI process is gone without waiting for Botbench to stop.
   const attempt = live.server.db.prepare("SELECT status, pgid FROM attempts WHERE id = ?").get(task.attemptId)!;
   assert.deepEqual({ ...attempt }, { status: "ended", pgid: null });
   const list = (await (await fetch(`${live.base}/api/tasks`, { headers: live.headers })).json()) as { tasks: TaskBody[] };
@@ -178,7 +178,7 @@ const server_states = (live: Live, taskId: number): unknown[] => live.server.db.
 
 // What a task may run, and how the owner is asked, is in approval.live.test.ts.
 
-test("live: stopping Smelt while a task builds interrupts it, and Smelt still commits the work done so far", { timeout: TASK_TIMEOUT }, async (t) => {
+test("live: stopping Botbench while a task builds interrupts it, and Botbench still commits the work done so far", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t);
   const before = checkoutState(live.repo);
   const stream = await openStream(t, live);
@@ -205,7 +205,7 @@ test("live: stopping Smelt while a task builds interrupts it, and Smelt still co
 
 test("live: with Claude Code signed out, a task fails with the reason in words and leaves no worktree or branch behind", { timeout: 60_000 }, async (t) => {
   // The real CLI, pointed at an empty configuration directory, reports itself signed out. No model is reached.
-  const emptyConfig = tempDir("smelt-live-claude-config-");
+  const emptyConfig = tempDir("botbench-live-claude-config-");
   const saved = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = emptyConfig;
   t.after(() => {
@@ -225,7 +225,7 @@ test("live: with Claude Code signed out, a task fails with the reason in words a
   assert.deepEqual([task.attemptId, task.headCommit, task.files], [null, null, null]);
   assert.equal(live.server.db.prepare("SELECT count(*) AS n FROM attempts").get()!.n, 0);
   assert.equal(worktreeCount(live.repo), 1, "the worktree nothing happened in is removed");
-  assert.deepEqual(smeltBranches(live.repo), []);
+  assert.deepEqual(botbenchBranches(live.repo), []);
   assert.deepEqual(fs.readdirSync(path.join(live.home, "worktrees")), []);
   assert.deepEqual(checkoutState(live.repo), before);
 });

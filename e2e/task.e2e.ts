@@ -2,26 +2,26 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
 import { checkDesign, copyShot, expect, SHOTS, signIn, test, watchRequests, openNewTask } from "./helpers.ts";
-import { startSmelt, tempDir } from "./smelt.ts";
+import { startBotbench, tempDir } from "./botbench.ts";
 
-// Tasks in the real client, at a phone's size, against a real Smelt process and real temporary repositories.
+// Tasks in the real client, at a phone's size, against a real Botbench process and real temporary repositories.
 
-/** A real repository beside the test's Smelt home, with the owner part-way through their own work. */
-function sourceRepo(smeltHome: string): string {
-  const repo = path.join(path.dirname(smeltHome), "sample-repo");
+/** A real repository beside the test's Botbench home, with the owner part-way through their own work. */
+function sourceRepo(botbenchHome: string): string {
+  const repo = path.join(path.dirname(botbenchHome), "sample-repo");
   initRepo(repo);
   write(repo, "README.md", "# Sample\nthe owner is half-way through this line\n");
   return repo;
 }
 
-test("LIVE: start a task in a repository, watch its transcript, expand the changed file's diff and see the branch, without a reload; the new screens follow the design system", async ({ page, context, smelt }) => {
+test("LIVE: start a task in a repository, watch its transcript, expand the changed file's diff and see the branch, without a reload; the new screens follow the design system", async ({ page, context, botbench }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  const foreign = watchRequests(page, smelt);
-  const repo = sourceRepo(smelt.home);
+  const foreign = watchRequests(page, botbench);
+  const repo = sourceRepo(botbench.home);
   const before = checkoutState(repo);
-  await signIn(page, smelt);
+  await signIn(page, botbench);
   // A mark on the page that a reload would wipe out.
-  await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+  await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
   // The navigation lists the screens that exist, and gets to each.
   const nav = page.getByRole("navigation", { name: "Screens" });
@@ -55,7 +55,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Working. Claude Code is working in a separate copy of the project.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
-  await expect(page.getByTestId("branch")).toHaveValue(/^smelt\/run-\d+\/task-\d+$/);
+  await expect(page.getByTestId("branch")).toHaveValue(/^botbench\/run-\d+\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
   // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
   const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();
@@ -64,11 +64,11 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
   // pauses for the owner. This test is about the edit, so any such request is declined, as an owner could.
-  const built = "Ready for review. Smelt committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
+  const built = "Ready for review. Botbench committed the work to the task's branch. Accepting or rejecting it arrives in a later version.";
   await expect(async () => {
-    const pending = (await (await page.request.get(`${smelt.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
+    const pending = (await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] };
     for (const approval of pending.approvals) {
-      await page.request.post(`${smelt.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Not needed for this task; just create the file." } });
+      await page.request.post(`${botbench.base}/api/approvals/${approval.id}`, { data: { decision: "decline", note: "Not needed for this task; just create the file." } });
     }
     await expect(page.getByTestId("task-status")).toHaveText(built, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
@@ -108,7 +108,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.getByTestId("copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
   await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Smelt sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow runs with your account's rights.",
+    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files; it is not a sandbox: a command you allow runs with your account's rights.",
   );
   // No primary action on this screen, and nothing that claims to accept, reject, merge or push.
   await expect(page.getByRole("button", { name: /accept|reject|merge|push|approve|stop/i })).toHaveCount(0);
@@ -146,16 +146,16 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("driver-state")).toContainText("signed in");
 
-  expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce), "all of it without a reload").toBe(true);
-  expect(foreign, "requests to anything but Smelt").toEqual([]);
+  expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "all of it without a reload").toBe(true);
+  expect(foreign, "requests to anything but Botbench").toEqual([]);
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("a repository path that cannot be used is reported in words, and Start task starts nothing", async ({ page, smelt }) => {
-  const repo = sourceRepo(smelt.home);
-  const plain = tempDir("smelt-e2e-plain-");
+test("a repository path that cannot be used is reported in words, and Start task starts nothing", async ({ page, botbench }) => {
+  const repo = sourceRepo(botbench.home);
+  const plain = tempDir("botbench-e2e-plain-");
   try {
-    await signIn(page, smelt);
+    await signIn(page, botbench);
     const starts: string[] = [];
     page.on("request", (request) => {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/tasks") starts.push(request.url());
@@ -189,41 +189,41 @@ test("a repository path that cannot be used is reported in words, and Start task
     await expect(page.getByRole("alert")).toContainText("Say what the task is.");
 
     expect(starts, "no task was asked for").toEqual([]);
-    expect(await (await page.request.get(`${smelt.base}/api/tasks`)).json()).toEqual({ tasks: [] });
-    expect(fs.existsSync(path.join(smelt.home, "worktrees"))).toBe(false);
+    expect(await (await page.request.get(`${botbench.base}/api/tasks`)).json()).toEqual({ tasks: [] });
+    expect(fs.existsSync(path.join(botbench.home, "worktrees"))).toBe(false);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
   } finally {
     fs.rmSync(plain, { recursive: true, force: true });
   }
 });
 
-test("an address that names no screen says so in words, and a long one stays inside the screen", async ({ page, smelt }) => {
-  await signIn(page, smelt);
+test("an address that names no screen says so in words, and a long one stays inside the screen", async ({ page, botbench }) => {
+  await signIn(page, botbench);
   const address = `/${"nowhere".repeat(40)}`;
-  await page.goto(`${smelt.base}/#${address}`);
+  await page.goto(`${botbench.base}/#${address}`);
   await expect(page.getByRole("alert")).toContainText(`There is no screen at ${address}.`);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(`There is no screen at ${address}.`);
   await expect(page.getByRole("navigation", { name: "Screens" }).locator('[aria-current="page"]')).toHaveCount(0);
   await checkDesign(page, "no such screen");
 });
 
-test("a task address that names no task says so in words", async ({ page, smelt }) => {
-  await signIn(page, smelt);
-  await page.goto(`${smelt.base}/#/tasks/4242`);
+test("a task address that names no task says so in words", async ({ page, botbench }) => {
+  await signIn(page, botbench);
+  await page.goto(`${botbench.base}/#/tasks/4242`);
   await expect(page.getByRole("alert")).toHaveText("ErrorThere is no task 4242.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(0);
 });
 
 test("a task that cannot be built shows that it failed and why, as it happens, and lists as failed", async ({ page }) => {
-  // Smelt's home inside the repository itself, the one place a worktree must never go: the task is real and fails at
+  // Botbench's home inside the repository itself, the one place a worktree must never go: the task is real and fails at
   // its first step, before Claude Code is started.
-  const repo = tempDir("smelt-e2e-inside-");
+  const repo = tempDir("botbench-e2e-inside-");
   initRepo(repo);
-  const smelt = await startSmelt({ home: path.join(repo, "home") });
+  const botbench = await startBotbench({ home: path.join(repo, "home") });
   try {
-    await signIn(page, smelt);
-    await page.evaluate(() => ((window as unknown as { smeltLoadedOnce: boolean }).smeltLoadedOnce = true));
+    await signIn(page, botbench);
+    await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
     const nav = page.getByRole("navigation", { name: "Screens" });
     await openNewTask(page);
     await page.getByLabel("Repository path").fill(repo);
@@ -245,20 +245,20 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await nav.getByRole("link", { name: "Tasks", exact: true }).click();
     await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Create hello\.txt.*Failed.*Task 1 · /);
     await expect(page.getByTestId("task-list")).not.toContainText("second line");
-    expect(await page.evaluate(() => (window as unknown as { smeltLoadedOnce?: boolean }).smeltLoadedOnce)).toBe(true);
+    expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
   } finally {
-    expect((await smelt.stop()).leftover).toEqual([]);
+    expect((await botbench.stop()).leftover).toEqual([]);
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test("a repository git cannot read in time: the screen leaves Checking and says why, Start task starts nothing, and a newer path replaces the older check", async ({ page, smelt }) => {
-  const repo = sourceRepo(smelt.home);
-  const stalled = path.join(path.dirname(smelt.home), "stalled-repo");
+test("a repository git cannot read in time: the screen leaves Checking and says why, Start task starts nothing, and a newer path replaces the older check", async ({ page, botbench }) => {
+  const repo = sourceRepo(botbench.home);
+  const stalled = path.join(path.dirname(botbench.home), "stalled-repo");
   stalledRepo(stalled);
   try {
-    await signIn(page, smelt);
+    await signIn(page, botbench);
     const starts: string[] = [];
     const dropped: string[] = [];
     page.on("request", (request) => {
@@ -297,26 +297,26 @@ test("a repository git cannot read in time: the screen leaves Checking and says 
     await expect(state).toHaveText("Usable git repository.");
 
     expect(starts, "no task was asked for").toEqual([]);
-    expect(await (await page.request.get(`${smelt.base}/api/tasks`)).json()).toEqual({ tasks: [] });
+    expect(await (await page.request.get(`${botbench.base}/api/tasks`)).json()).toEqual({ tasks: [] });
   } finally {
     releaseStalled(stalled);
   }
 });
 
-test("a check Smelt does not answer ends at the client's own time limit, in words", async ({ page, smelt }) => {
-  const repo = sourceRepo(smelt.home);
-  await signIn(page, smelt);
+test("a check Botbench does not answer ends at the client's own time limit, in words", async ({ page, botbench }) => {
+  const repo = sourceRepo(botbench.home);
+  await signIn(page, botbench);
   await openNewTask(page);
   const state = page.getByTestId("repo-state");
-  smelt.freeze();
+  botbench.freeze();
   try {
     await page.getByLabel("Repository path").fill(repo);
     await expect(state).toHaveText("Checking.");
-    await expect(state).toHaveText("The path could not be checked: Smelt did not answer within 10 seconds.", { timeout: 14_000 });
+    await expect(state).toHaveText("The path could not be checked: Botbench did not answer within 10 seconds.", { timeout: 14_000 });
   } finally {
-    smelt.thaw();
+    botbench.thaw();
   }
-  // Once Smelt answers again, the next path typed is checked as usual.
+  // Once Botbench answers again, the next path typed is checked as usual.
   await page.getByLabel("Repository path").fill(`${repo}/`);
   await expect(state).toHaveText("Usable git repository.");
 });

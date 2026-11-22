@@ -25,9 +25,11 @@ export interface Work {
   files: FileChange[];
 }
 
-const BRANCH_PREFIX = "smelt/";
-const AUTHOR_NAME = "Smelt";
-const AUTHOR_EMAIL = "smelt@localhost";
+const BRANCH_PREFIX = "botbench/";
+/** Task branches made before the product was renamed from Smelt; their tasks still work, and no new branch gets this prefix. */
+const OLD_BRANCH_PREFIX = "smelt/";
+const AUTHOR_NAME = "Botbench";
+const AUTHOR_EMAIL = "botbench@localhost";
 /** Ids become a directory name and part of a branch name, so they are kept to letters, digits, "-" and "_". */
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -42,7 +44,7 @@ const SAFE = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-
 
 /**
  * The caller's environment without any GIT_* variable, so nothing inherited can point git at another repository, index
- * or config. Smelt's own git calls run with it, and so do the setup commands Smelt runs in a worktree.
+ * or config. Botbench's own git calls run with it, and so do the setup commands Botbench runs in a worktree.
  */
 export function gitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -92,7 +94,7 @@ function onMountedVolume(p: string): boolean {
 function timeoutWords(dir: string, limitMs: number): string {
   const base = `The folder ${dir} could not be read in time: git did not answer within ${limitMs / 1000} seconds and was stopped.`;
   if (process.platform !== "darwin" || !onMountedVolume(dir)) return base;
-  return `${base} The folder is on a drive under /Volumes, and macOS may be blocking a background service from reading an external drive. Allow access for the program that runs Smelt in System Settings → Privacy & Security → Files and Folders, or use a repository on the internal disk.`;
+  return `${base} The folder is on a drive under /Volumes, and macOS may be blocking a background service from reading an external drive. Allow access for the program that runs Botbench in System Settings → Privacy & Security → Files and Folders, or use a repository on the internal disk.`;
 }
 
 /**
@@ -118,7 +120,7 @@ function git(dir: string, args: string[], limitMs = GIT_WORK_LIMIT_MS): Promise<
     const collect = (chunk: string, to: "out" | "err"): void => {
       if (to === "out") stdout += chunk;
       else stderr += chunk;
-      if (stdout.length + stderr.length > MAX_OUTPUT) stop(new GitError(`git ${args[0]} in ${dir} printed more than Smelt reads and was stopped.`, "", null));
+      if (stdout.length + stderr.length > MAX_OUTPUT) stop(new GitError(`git ${args[0]} in ${dir} printed more than Botbench reads and was stopped.`, "", null));
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, "out"));
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, "err"));
@@ -186,7 +188,7 @@ export async function sourceHead(repo: string): Promise<string> {
 }
 
 /**
- * Create a worktree for one task at `<home>/worktrees/<run>/<task>`, on a new branch `smelt/<run>/<task>` that starts at
+ * Create a worktree for one task at `<home>/worktrees/<run>/<task>`, on a new branch `botbench/<run>/<task>` that starts at
  * `commit` (a run's base commit), or at the commit the repository's HEAD points at when none is given. Nothing in the
  * repository's own working folder, index or current branch is written.
  */
@@ -207,7 +209,7 @@ export async function createWorktree(o: { repo: string; home: string; run: strin
   }
   const runDir = path.join(path.resolve(o.home), "worktrees", o.run);
   const dir = path.join(runDir, o.task);
-  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The folder for the task's copy, ${dir}, would be inside the repository ${repo}. Smelt's home must be somewhere else.`);
+  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The folder for the task's copy, ${dir}, would be inside the repository ${repo}. Botbench's home must be somewhere else.`);
   if (fs.existsSync(dir)) throw new Error(`The folder for the task's copy, ${dir}, already exists.`);
 
   // A name already in use, by an earlier run or anything else, is left alone: the new branch gets the next free name.
@@ -235,11 +237,11 @@ function removeIfEmpty(dir: string): void {
 }
 
 /**
- * Check `dir` is the top of a linked worktree on a Smelt task branch, and return that branch and the repository's shared git folder.
+ * Check `dir` is the top of a linked worktree on a Botbench task branch, and return that branch and the repository's shared git folder.
  * The owner's own checkout is never one, so nothing here can commit in it or remove it.
  */
 async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: string }> {
-  const notOurs = (why: string, cause?: unknown): Error => new Error(`${dir} is not a copy Smelt made (a git worktree): ${why}.`, { cause });
+  const notOurs = (why: string, cause?: unknown): Error => new Error(`${dir} is not a copy Botbench made (a git worktree): ${why}.`, { cause });
   if (!isDirectory(dir)) throw notOurs("no such folder");
   let lines: string[];
   try {
@@ -261,15 +263,15 @@ async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: s
     branch = (await git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"], GIT_CHECK_LIMIT_MS)).trim();
   } catch (err) {
     unlessTimeout(err);
-    throw new Error(`The copy at ${dir} is not on a branch, so it is not on its Smelt task branch.`, { cause: err });
+    throw new Error(`The copy at ${dir} is not on a branch, so it is not on its Botbench task branch.`, { cause: err });
   }
-  if (!branch.startsWith(BRANCH_PREFIX)) throw new Error(`The copy at ${dir} is on branch ${branch}, not on its Smelt task branch.`);
+  if (!branch.startsWith(BRANCH_PREFIX) && !branch.startsWith(OLD_BRANCH_PREFIX)) throw new Error(`The copy at ${dir} is on branch ${branch}, not on its Botbench task branch.`);
   return { branch, commonDir: realPath(commonDir) };
 }
 
 /**
  * Stage everything in the worktree (changed, deleted and new files, except ignored ones) and commit it to the task branch
- * as Smelt. The owner's git identity is neither read nor needed, and no hook runs.
+ * as Botbench. The owner's git identity is neither read nor needed, and no hook runs.
  */
 export async function commitWork(o: { path: string; message: string }): Promise<CommitResult> {
   if (o.message.trim() === "") throw new Error("A commit message is required.");
@@ -356,13 +358,23 @@ export async function removeWorktree(o: { repo: string; path: string; deleteBran
   removeIfEmpty(path.dirname(dir));
 }
 
-/** Where a run's planner works: one folder per run under the Smelt home, beside where that run's task worktrees go. */
+/**
+ * Point git's links between `repo` and its task worktrees at where the worktrees are now, after the data folder that
+ * holds them was moved: the repository's record of each worktree, and each worktree's own `.git` file. Nothing else in
+ * the repository is written.
+ */
+export async function repairWorktrees(repo: string, paths: readonly string[]): Promise<void> {
+  if (paths.length === 0) return;
+  await git(path.resolve(repo), ["worktree", "repair", ...paths.map((p) => path.resolve(p))]);
+}
+
+/** Where a run's planner works: one folder per run under the Botbench home, beside where that run's task worktrees go. */
 export const planningDir = (home: string, run: string): string => path.join(path.resolve(home), "worktrees", run, "planner");
 
 /**
  * Create the worktree a run's planner reads in, at `<home>/worktrees/<run>/planner`: a detached checkout of `commit`,
  * on no branch, so nothing a planner did could ever be on one. Nothing in the repository's own working folder, index
- * or current branch is written. A folder left there by a Smelt that stopped while planning is removed first.
+ * or current branch is written. A folder left there by a Botbench that stopped while planning is removed first.
  */
 export async function createPlanningWorktree(o: { repo: string; home: string; run: string; commit: string }): Promise<string> {
   if (!SLUG.test(o.run)) throw new Error(`Invalid run id ${JSON.stringify(o.run)}: use 1 to 64 letters, digits, "-" or "_", starting with a letter or digit.`);
@@ -370,7 +382,7 @@ export async function createPlanningWorktree(o: { repo: string; home: string; ru
   const repo = path.resolve(o.repo);
   await sourceHead(repo);
   const dir = planningDir(o.home, o.run);
-  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The planning folder ${dir} would be inside the repository ${repo}. Smelt's home must be somewhere else.`);
+  if (isInside(realPath(dir), realPath(repo))) throw new Error(`The planning folder ${dir} would be inside the repository ${repo}. Botbench's home must be somewhere else.`);
   await removePlanningWorktree({ repo, home: o.home, run: o.run });
   fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
   try {
@@ -384,7 +396,7 @@ export async function createPlanningWorktree(o: { repo: string; home: string; ru
 
 /**
  * Remove a run's planning worktree, whatever is in it: a planner's worktree holds no work to keep. Only the folder
- * Smelt itself names for that run under its home is ever removed, so this cannot reach the owner's checkout.
+ * Botbench itself names for that run under its home is ever removed, so this cannot reach the owner's checkout.
  * A folder that is not there is fine; git's own record of it is pruned either way.
  */
 export async function removePlanningWorktree(o: { repo: string; home: string; run: string }): Promise<void> {

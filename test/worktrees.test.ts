@@ -39,9 +39,9 @@ interface Scratch {
 }
 type T = { after(fn: () => void): void };
 
-/** A temporary directory holding a real repository path and a Smelt home. Every test must leave the repository with no extra worktree. */
+/** A temporary directory holding a real repository path and a Botbench home. Every test must leave the repository with no extra worktree. */
 function scratch(t: T, init = true): Scratch {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "smelt-wt-test-"));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-test-"));
   const repo = path.join(dir, "source");
   const home = path.join(dir, "home");
   fs.mkdirSync(repo);
@@ -71,7 +71,7 @@ function sourceRepo(t: T): Scratch & { base: string } {
   return { ...s, base };
 }
 
-/** Everything about the owner's checkout that Smelt must leave alone. */
+/** Everything about the owner's checkout that Botbench must leave alone. */
 function ownerState(repo: string, files: string[]): Record<string, string> {
   const state: Record<string, string> = {
     status: git(repo, "status", "--porcelain", "--untracked-files=all"),
@@ -106,7 +106,7 @@ test("AE2: creating a worktree, committing in it and removing it leaves the owne
 
   const wt = await createWorktree({ repo, home, run: "run1", task: "task1" });
   assert.equal(wt.path, path.join(home, "worktrees", "run1", "task1"));
-  assert.equal(wt.branch, "smelt/run1/task1");
+  assert.equal(wt.branch, "botbench/run1/task1");
   assert.equal(wt.baseCommit, base);
   assert.deepEqual(ownerState(repo, files), before, "after create");
   // The worktree starts from the commit, without the owner's uncommitted changes.
@@ -145,21 +145,21 @@ test("modified, deleted, created and ignored files: the commit holds the work on
   assert.equal(done.committed, true);
   assert.ok(done.committed);
   assert.match(done.commit, /^[0-9a-f]{40}$/);
-  assert.equal(head(repo, "refs/heads/smelt/run1/task1"), done.commit);
+  assert.equal(head(repo, "refs/heads/botbench/run1/task1"), done.commit);
   assert.equal(head(repo, `${done.commit}^`), base);
   assert.equal(git(repo, "rev-list", "--count", `${base}..${done.commit}`), "1\n");
   assert.equal(git(repo, "ls-tree", "-r", "--name-only", done.commit), ".gitignore\nREADME.md\nnew/deep/file.txt\nsrc/app.txt\n");
-  assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>|%B", done.commit), "Smelt <smelt@localhost>|Smelt <smelt@localhost>|-m looks like a flag\n\nbody line\n\n");
+  assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>|%B", done.commit), "Botbench <botbench@localhost>|Botbench <botbench@localhost>|-m looks like a flag\n\nbody line\n\n");
   assert.equal(git(wt.path, "status", "--porcelain"), "", "nothing is left uncommitted");
 
   // A clean tree is reported, not an error, and adds no commit.
   const again = await commitWork({ path: wt.path, message: "nothing here" });
   assert.deepEqual(again, { committed: false, reason: "nothing to commit" });
-  assert.equal(head(repo, "refs/heads/smelt/run1/task1"), done.commit);
+  assert.equal(head(repo, "refs/heads/botbench/run1/task1"), done.commit);
 
   await removeWorktree({ repo, path: wt.path, deleteBranch: false });
   assert.equal(fs.existsSync(wt.path), false);
-  assert.equal(head(repo, "refs/heads/smelt/run1/task1"), done.commit, "the branch outlives the worktree");
+  assert.equal(head(repo, "refs/heads/botbench/run1/task1"), done.commit, "the branch outlives the worktree");
   assert.equal(git(repo, "show", `${done.commit}:src/app.txt`), "one\n2\nthree\n");
   assert.equal(git(repo, "show", `${done.commit}:new/deep/file.txt`), "brand new\n");
   assert.throws(() => git(repo, "cat-file", "-e", `${done.commit}:old.txt`));
@@ -171,11 +171,11 @@ test("two tasks get two worktrees and two branches from the same base commit", a
   const a = await createWorktree({ repo, home, run: "run1", task: "task-a" });
   const b = await createWorktree({ repo, home, run: "run1", task: "task_b" });
   assert.notEqual(a.path, b.path);
-  assert.deepEqual([a.branch, b.branch], ["smelt/run1/task-a", "smelt/run1/task_b"]);
+  assert.deepEqual([a.branch, b.branch], ["botbench/run1/task-a", "botbench/run1/task_b"]);
   assert.deepEqual([a.baseCommit, b.baseCommit], [base, base]);
   assert.equal(worktreeCount(repo), 3);
-  assert.equal(git(a.path, "branch", "--show-current"), "smelt/run1/task-a\n");
-  assert.equal(git(b.path, "branch", "--show-current"), "smelt/run1/task_b\n");
+  assert.equal(git(a.path, "branch", "--show-current"), "botbench/run1/task-a\n");
+  assert.equal(git(b.path, "branch", "--show-current"), "botbench/run1/task_b\n");
 
   write(a.path, "only-a.txt", "a\n");
   const done = await commitWork({ path: a.path, message: "a's work" });
@@ -190,7 +190,7 @@ test("two tasks get two worktrees and two branches from the same base commit", a
 
   await removeWorktree({ repo, path: a.path, deleteBranch: true });
   await removeWorktree({ repo, path: b.path, deleteBranch: true });
-  assert.equal(git(repo, "branch", "--list", "smelt/*"), "", "deleteBranch removes the task branches");
+  assert.equal(git(repo, "branch", "--list", "botbench/*"), "", "deleteBranch removes the task branches");
   assert.equal(git(repo, "branch", "--show-current"), "main\n");
   assert.equal(fs.existsSync(path.join(home, "worktrees", "run1")), false, "the empty run directory is tidied away");
 });
@@ -208,20 +208,20 @@ test("a branch name taken by an earlier run gets a new name; the old branch keep
   const newer = ownerCommit(repo, "owner moves on");
 
   const second = await createWorktree({ repo, home, run: "run1", task: "task1" });
-  assert.equal(second.branch, "smelt/run1/task1-2");
+  assert.equal(second.branch, "botbench/run1/task1-2");
   assert.equal(second.baseCommit, newer);
   assert.equal(head(second.path), newer);
   assert.equal(fs.existsSync(path.join(second.path, "first.txt")), false, "the old branch was not reused");
-  assert.equal(head(repo, "refs/heads/smelt/run1/task1"), done.commit, "the old branch was not reset");
+  assert.equal(head(repo, "refs/heads/botbench/run1/task1"), done.commit, "the old branch was not reset");
 
-  // A second Smelt home meets both existing names.
+  // A second Botbench home meets both existing names.
   const third = await createWorktree({ repo, home: path.join(dir, "other-home"), run: "run1", task: "task1" });
-  assert.equal(third.branch, "smelt/run1/task1-3");
+  assert.equal(third.branch, "botbench/run1/task1-3");
 
   await removeWorktree({ repo, path: second.path, deleteBranch: true });
   await removeWorktree({ repo, path: third.path, deleteBranch: true });
-  assert.equal(git(repo, "branch", "--list", "smelt/*").trim(), "smelt/run1/task1");
-  assert.equal(head(repo, "refs/heads/smelt/run1/task1"), done.commit, "deleting the newer branches leaves the old one alone");
+  assert.equal(git(repo, "branch", "--list", "botbench/*").trim(), "botbench/run1/task1");
+  assert.equal(head(repo, "refs/heads/botbench/run1/task1"), done.commit, "deleting the newer branches leaves the old one alone");
 });
 
 test("a path that is not a git repository, or a repository with no commits, is rejected and nothing is created", async (t) => {
@@ -251,8 +251,8 @@ test("run and task ids that are not simple slugs, and a home inside the reposito
     await assert.rejects(createWorktree({ repo, home, run: "run1", task: bad }), /task id/, `task ${JSON.stringify(bad)}`);
   }
   assert.equal(fs.existsSync(home), false);
-  await assert.rejects(createWorktree({ repo, home: path.join(repo, "smelt-home"), run: "run1", task: "task1" }), /inside the repository/);
-  assert.equal(fs.existsSync(path.join(repo, "smelt-home")), false);
+  await assert.rejects(createWorktree({ repo, home: path.join(repo, "botbench-home"), run: "run1", task: "task1" }), /inside the repository/);
+  assert.equal(fs.existsSync(path.join(repo, "botbench-home")), false);
   assert.equal(git(repo, "for-each-ref"), before);
   assert.equal(git(repo, "status", "--porcelain"), "");
 });
@@ -275,12 +275,12 @@ test("removing a worktree with uncommitted changes is refused, and so is treatin
   await assert.rejects(removeWorktree({ repo, path: wt.path, deleteBranch: false }), /uncommitted changes/);
   assert.equal(worktreeCount(repo), 2);
 
-  // The owner's checkout is never a Smelt worktree: no commit, no removal.
+  // The owner's checkout is never a Botbench worktree: no commit, no removal.
   write(repo, "owner.txt", "owner's untracked file\n");
   const before = ownerState(repo, ["owner.txt"]);
-  await assert.rejects(commitWork({ path: repo, message: "must not happen" }), /not a copy Smelt made/);
-  await assert.rejects(removeWorktree({ repo, path: repo, deleteBranch: true }), /not a copy Smelt made/);
-  await assert.rejects(describeWork({ path: repo, baseCommit: wt.baseCommit }), /not a copy Smelt made/);
+  await assert.rejects(commitWork({ path: repo, message: "must not happen" }), /not a copy Botbench made/);
+  await assert.rejects(removeWorktree({ repo, path: repo, deleteBranch: true }), /not a copy Botbench made/);
+  await assert.rejects(describeWork({ path: repo, baseCommit: wt.baseCommit }), /not a copy Botbench made/);
   assert.deepEqual(ownerState(repo, ["owner.txt"]), before);
 
   // A worktree that left its task branch could lose commits on removal, so that is refused too.
@@ -301,7 +301,7 @@ test("the per-file summary and each file's unified diff are right for an added, 
   const wt = await createWorktree({ repo, home, run: "run1", task: "task1" });
 
   const nothing = await describeWork({ path: wt.path, baseCommit: wt.baseCommit });
-  assert.deepEqual(nothing, { branch: "smelt/run1/task1", baseCommit: base, headCommit: base, files: [] });
+  assert.deepEqual(nothing, { branch: "botbench/run1/task1", baseCommit: base, headCommit: base, files: [] });
 
   write(wt.path, "src/app.txt", "one\n2\nthree\nfour\n");
   fs.rmSync(path.join(wt.path, "old.txt"));
@@ -315,7 +315,7 @@ test("the per-file summary and each file's unified diff are right for an added, 
 
   const work = await describeWork({ path: wt.path, baseCommit: wt.baseCommit });
   assert.deepEqual(work, {
-    branch: "smelt/run1/task1",
+    branch: "botbench/run1/task1",
     baseCommit: base,
     headCommit: done.commit,
     files: [
@@ -362,7 +362,7 @@ test("the per-file summary and each file's unified diff are right for an added, 
   await removeWorktree({ repo, path: wt.path, deleteBranch: true });
 });
 
-test("the owner's repository hooks do not run for Smelt, and the owner's user.name and user.email are neither needed nor changed", async (t) => {
+test("the owner's repository hooks do not run for Botbench, and the owner's user.name and user.email are neither needed nor changed", async (t) => {
   const { dir, repo, home } = sourceRepo(t);
   const marker = path.join(dir, "hook-ran");
   for (const hook of ["pre-commit", "commit-msg", "post-commit", "post-checkout", "prepare-commit-msg"]) {
@@ -389,7 +389,7 @@ test("the owner's repository hooks do not run for Smelt, and the owner's user.na
   assert.ok(done.committed);
 
   assert.equal(fs.existsSync(marker), false, "no hook ran");
-  assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>", done.commit), "Smelt <smelt@localhost>|Smelt <smelt@localhost>\n");
+  assert.equal(git(repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>", done.commit), "Botbench <botbench@localhost>|Botbench <botbench@localhost>\n");
   assert.equal(fs.readFileSync(path.join(repo, ".git", "config"), "utf8"), config, "the repository's config is unchanged");
   assert.equal(git(repo, "config", "--local", "user.name"), "\n");
   assert.equal(head(repo), base);
@@ -398,7 +398,7 @@ test("the owner's repository hooks do not run for Smelt, and the owner's user.na
   assert.equal(fs.existsSync(marker), false);
 });
 
-test("git variables inherited from the caller's environment do not redirect Smelt to another repository", async (t) => {
+test("git variables inherited from the caller's environment do not redirect Botbench to another repository", async (t) => {
   const { repo, home, base } = sourceRepo(t);
   const decoy = sourceRepo(t);
   write(decoy.repo, "decoy.txt", "untracked in the decoy\n");
@@ -455,38 +455,38 @@ test("a source repository on a detached HEAD with a dirty index works and stays 
   assert.equal(head(repo, `${done.commit}^`), base);
 });
 
-test("a worktree whose git folder was repointed from inside is refused, so nothing a task wrote there can run a command when Smelt commits", async (t) => {
+test("a worktree whose git folder was repointed from inside is refused, so nothing a task wrote there can run a command when Botbench commits", async (t) => {
   const s = sourceRepo(t);
   const wt = await createWorktree({ repo: s.repo, home: s.home, run: "run-1", task: "task-1" });
   const realGitFile = read(wt.path, ".git");
   const marker = path.join(s.dir, "filter-ran.txt");
 
   // What an agent that may write below its worktree could build there: a git folder of its own that looks like a linked
-  // worktree on a smelt/ branch, with a config whose clean filter is a command, and the worktree's .git file pointed at it.
+  // worktree on a botbench/ branch, with a config whose clean filter is a command, and the worktree's .git file pointed at it.
   const evil = path.join(wt.path, "inner");
   fs.mkdirSync(evil);
-  git(evil, "init", "--quiet", "-b", "smelt/inner");
+  git(evil, "init", "--quiet", "-b", "botbench/inner");
   write(evil, "seed.txt", "seed\n");
   git(evil, "add", "-A");
   ownerCommit(evil, "seed");
-  git(evil, "branch", "smelt/linked");
+  git(evil, "branch", "botbench/linked");
   git(evil, "config", "filter.run.clean", `sh -c 'echo ran > "${marker}"; cat'`);
   const linked = path.join(evil, ".git", "worktrees", "w");
   fs.mkdirSync(linked, { recursive: true });
-  fs.writeFileSync(path.join(linked, "HEAD"), "ref: refs/heads/smelt/linked\n");
+  fs.writeFileSync(path.join(linked, "HEAD"), "ref: refs/heads/botbench/linked\n");
   fs.writeFileSync(path.join(linked, "commondir"), "../..\n");
   fs.writeFileSync(path.join(linked, "gitdir"), `${path.join(wt.path, ".git")}\n`);
   fs.writeFileSync(path.join(wt.path, ".git"), `gitdir: ${linked}\n`);
   write(wt.path, ".gitattributes", "* filter=run\n");
   write(wt.path, "payload.txt", "anything\n");
 
-  await assert.rejects(commitWork({ path: wt.path, message: "work" }), /not a copy Smelt made/);
-  await assert.rejects(describeWork({ path: wt.path, baseCommit: wt.baseCommit }), /not a copy Smelt made/);
-  await assert.rejects(fileDiff({ path: wt.path, baseCommit: wt.baseCommit, file: "payload.txt" }), /not a copy Smelt made/);
-  await assert.rejects(removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true }), /not a copy Smelt made/);
+  await assert.rejects(commitWork({ path: wt.path, message: "work" }), /not a copy Botbench made/);
+  await assert.rejects(describeWork({ path: wt.path, baseCommit: wt.baseCommit }), /not a copy Botbench made/);
+  await assert.rejects(fileDiff({ path: wt.path, baseCommit: wt.baseCommit, file: "payload.txt" }), /not a copy Botbench made/);
+  await assert.rejects(removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true }), /not a copy Botbench made/);
   assert.equal(fs.existsSync(marker), false, "the filter command did not run");
 
-  // Put back as Smelt made it, the worktree is Smelt's again and is removed like any other.
+  // Put back as Botbench made it, the worktree is Botbench's again and is removed like any other.
   fs.writeFileSync(path.join(wt.path, ".git"), realGitFile);
   fs.rmSync(evil, { recursive: true, force: true });
   fs.rmSync(path.join(wt.path, ".gitattributes"));
@@ -495,7 +495,7 @@ test("a worktree whose git folder was repointed from inside is refused, so nothi
 });
 
 test("a git process that does not answer is stopped at its time limit, and the error says the folder could not be read in time", { timeout: 20_000 }, async (t) => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "smelt-wt-stall-"));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-stall-"));
   const repo = path.join(dir, "source");
   t.after(() => {
     releaseStalled(repo);

@@ -14,7 +14,7 @@ Three test mistakes, each caught by a failing run, not by reading. Eight tests a
 - A shared fixture grants nothing a scenario might need to be asked about. A test that waits for a card checks first that no grant covers the command.
 - "Gone" for a process is waited for, with a limit, not read once after a kill.
 
-## 2026-11-22: screens were labelled with Smelt's own engineering words
+## 2026-11-22: screens were labelled with Smelt's own engineering words (Botbench was then called Smelt)
 The owner's correction: "I don't think anyone referred to a chat as a turn in the UI… This should be intuitive and familiar, anyone could approach this." The plan's domain terms are the names in code, and they had gone straight onto the screens: Turn, attempt, worktree, standing permission, pre-approved, Trust, driver, "Turn completed.", raw tool arguments as a transcript line, and server errors that spoke of the permission gate and the broker. The owner added a limit on the fix: "be careful when hiding certain things like tool calls… people like to see that as it builds trust, so don't just blindly change it." Rules going forward:
 - A name in code is not a word for a screen. Every string a person sees, the server's included, takes its words from `docs/product/voice.md`, which says what each means internally and which words are never shown.
 - The list is enforced, not remembered: the browser tests read every screen they reach for the banned words (`checkWords`, called by `checkDesign`), and a unit test reads every sentence the server builds. A new internal word goes into the glossary's third column, in that one place.

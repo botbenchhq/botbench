@@ -7,7 +7,7 @@ import { createWorktree } from "../../src/worktrees.ts";
 import { write } from "./repo.ts";
 
 /*
- * A Smelt that stops without warning while a task waits for the owner, for the tests of what the next
+ * A Botbench that stops without warning while a task waits for the owner, for the tests of what the next
  * start finds. Run as its own process, it opens the real store under `home`, puts a task at `building`
  * in a real worktree with an attempt, asks the real broker for each of `commands`, and then exits where
  * it stands: nothing is closed, the approvals are left pending and the broker's socket file is left behind.
@@ -22,7 +22,7 @@ interface Order {
   /** The model the task was started with; left out, the CLI's own default. */
   model?: string;
   commands: string[];
-  /** Leave a real process group behind, recorded as the attempt's, as a CLI that outlived its Smelt would be. */
+  /** Leave a real process group behind, recorded as the attempt's, as a CLI that outlived its Botbench would be. */
   survivor?: boolean;
   /** Record the attempt as made an hour before it was, so a process group under its number began after it. */
   attemptMadeEarlier?: boolean;

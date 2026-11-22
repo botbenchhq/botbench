@@ -38,7 +38,7 @@ function detail(db: DatabaseSync, run: Run): Record<string, unknown> {
   return {
     id, repo, prompt, specPath, specText, title: title(run), status, reason, requestedModel, plannerModel, baseCommit, attemptId, planVersion,
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
-    // Each task with where it stands and the commands Smelt ran on it; its transcript and diff are on its own route.
+    // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     tasks: runTasks(db, id).map((task) => ({
       id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch, checks: task.checks,
       waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),

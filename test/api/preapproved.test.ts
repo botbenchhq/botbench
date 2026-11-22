@@ -7,16 +7,16 @@ import { actionLog, listApprovals } from "../../src/approvals/broker.ts";
 import { runGrants } from "../../src/approvals/grants.ts";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import type { Config } from "../../src/config.ts";
-import { startServer, type SmeltServer } from "../../src/server.ts";
+import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 
-// No test in this file starts a driver: a task that is really started here lies in a repository that holds Smelt's
+// No test in this file starts a driver: a task that is really started here lies in a repository that holds Botbench's
 // own home, so it fails at its first step, before Claude Code could be started.
 
 type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
-async function start(t: T, repo: string, repositories: Config["repositories"], floor?: Config["floor"]): Promise<{ server: SmeltServer; base: string; headers: Record<string, string> }> {
+async function start(t: T, repo: string, repositories: Config["repositories"], floor?: Config["floor"]): Promise<{ server: BotbenchServer; base: string; headers: Record<string, string> }> {
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...(repositories ? { repositories } : {}), ...(floor ? { floor } : {}) };
   const server = await startServer({ config, home: path.join(repo, "home"), signInDelayMs: 1 });
   t.after(() => server.close());
@@ -29,7 +29,7 @@ async function start(t: T, repo: string, repositories: Config["repositories"], f
 }
 
 function repository(t: T): string {
-  const repo = tempDir("smelt-preapproved-api-");
+  const repo = tempDir("botbench-preapproved-api-");
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   initRepo(repo);
   return repo;
@@ -48,7 +48,7 @@ const settingsRoute = (repo: string): string => `/api/repos/settings?path=${enco
 test("a repository's settings and a task's pre-approved list need a session", async (t) => {
   const repo = repository(t);
   const { server, base } = await start(t, repo, { [repo]: { preapproved: ["npm test"] } });
-  for (const without of [{}, { cookie: "smelt_session=not-a-session" }] as Record<string, string>[]) {
+  for (const without of [{}, { cookie: "botbench_session=not-a-session" }] as Record<string, string>[]) {
     const settings = await fetch(`${base}${settingsRoute(repo)}`, { headers: without });
     assert.equal(settings.status, 401);
     assert.deepEqual(await settings.json(), { error: "sign in required" });
@@ -134,7 +134,7 @@ test("a task started with a pre-approved list has exactly those commands as its 
   assert.deepEqual(server.db.prepare("SELECT run_id FROM tasks ORDER BY id").all().map((row) => row.run_id), [1, 2, 3]);
 });
 
-test("an entry the owner's config adds to the floor reaches the running broker: the command asks though it was pre-approved, and Smelt's own data directory is guarded", async (t) => {
+test("an entry the owner's config adds to the floor reaches the running broker: the command asks though it was pre-approved, and Botbench's own data directory is guarded", async (t) => {
   const repo = repository(t);
   const { server, base, headers } = await start(t, repo, undefined, [{ name: "no-publish", command: "npm publish" }]);
   assert.equal((await post(base, headers, { repo, prompt: "p", preapproved: ["npm publish", "npm test", "cat"] })).status, 200);

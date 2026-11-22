@@ -22,7 +22,7 @@ interface Verbs {
 
 const verbs = (field: string, file: boolean, base: string, running: string, done: string): Verbs => ({ field, file, waiting: `Wants to ${base}`, running, done, refused: `Did not ${base}`, failed: base === "run" ? null : `Could not ${base}` });
 
-/** The tools Smelt has a plain verb for, by the name Claude Code gives them. */
+/** The tools Botbench has a plain verb for, by the name Claude Code gives them. */
 const VERBS: Record<string, Verbs> = {
   Bash: verbs("command", false, "run", "Running", "Ran"),
   Read: verbs("file_path", true, "read", "Reading", "Read"),
@@ -60,7 +60,7 @@ export function callReason(input: unknown): string | null {
 const STATE_WORDS: Record<CallState, string> = { waiting: "waiting for your answer", running: "running", done: "", failed: "failed", refused: "not run", unfinished: "did not finish" };
 
 export interface CallLine {
-  /** The plain verb. Null when Smelt has none that is certainly true: the tool's own name is shown in its place. */
+  /** The plain verb. Null when Botbench has none that is certainly true: the tool's own name is shown in its place. */
   verb: string | null;
   /** The tool's own name, as the agent reported it. */
   tool: string;

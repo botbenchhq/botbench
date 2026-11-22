@@ -1,4 +1,4 @@
-Smelt
+Botbench
 Copyright 2026 Jon Lange
 
 Files copied from other projects are listed here with their source and
@@ -8,14 +8,15 @@ Copied files (stored in this repository)
 ----------------------------------------
 
 web/vendor/groundwork/ is a copy of Groundwork, the owner's shared design
-system: version 0.4.0, source commit 6ddf2106fe13ead71e00681ca609eabea821c0e2
+system, from its repository https://github.com/jon-lange/design-system:
+version 0.4.0, source commit 6ddf2106fe13ead71e00681ca609eabea821c0e2
 (6ddf210, the merge of its pull request 7 into main), the `dist/` directory of
 that repository, unmodified, written by its own `scripts/sync.mjs`.
 `hashes.json` in the copy holds the SHA-256 of every file.
 
   Groundwork
   Copyright 2026 Jon Lange
-  Licensed under the Apache License, Version 2.0, the same licence as Smelt.
+  Licensed under the Apache License, Version 2.0, the same licence as Botbench.
   The copy carries Groundwork's own licence text and notice:
   web/vendor/groundwork/LICENSE and web/vendor/groundwork/NOTICE. That NOTICE
   names files by their paths in Groundwork's repository; the list below gives
@@ -61,9 +62,9 @@ withholds the right to sell a product or service whose value derives
 substantially from the software, and requires its notice to travel with any
 copy. That is a restriction on top of what the Apache License 2.0 allows, so
 code under it cannot be offered as part of an Apache-2.0 project without
-passing the restriction on. Outcome: Smelt does not use Nexvyn UI. No file,
-component or style was copied from it, and it is not a dependency. Smelt's
-client components are written for this repository and follow DESIGN.md.
+passing the restriction on. Outcome: Botbench (then called Smelt) does not
+use Nexvyn UI. No file, component or style was copied from it, and it is not a
+dependency. Botbench's client components are written for this repository and follow DESIGN.md.
 
 Bundled at build time (not stored in this repository)
 -----------------------------------------------------

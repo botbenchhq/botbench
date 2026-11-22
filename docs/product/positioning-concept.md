@@ -1,10 +1,10 @@
-# smelt — product and brand concept
+# botbench — product and brand concept
 
 **Working positioning, 21 November 2026**
 
 ## The idea
 
-**Smelt is the software factory you own.** It turns coding work into a governed sequence: plan, build, check, independently review, and decide. It runs the developer's installed AI coding CLIs and stores its orchestration state, branches, transcripts, evidence, and approval records on their machine. The CLIs still communicate with their model providers.
+**Botbench is the software factory you own.** It turns coding work into a governed sequence: plan, build, check, independently review, and decide. It runs the developer's installed AI coding CLIs and stores its orchestration state, branches, transcripts, evidence, and approval records on their machine. The CLIs still communicate with their model providers.
 
 **Hero headline:** From prompt to proof.
 
@@ -12,9 +12,9 @@
 
 **Primary CTA:** Start a run.
 
-**Supporting promise:** Give smelt a task, approve the plan, and come back to a branch, a diff, the check results, and a clear decision. No babysitting the terminal.
+**Supporting promise:** Give botbench a task, approve the plan, and come back to a branch, a diff, the check results, and a clear decision. No babysitting the terminal.
 
-**Short pitch:** Smelt is an owner-controlled command center for AI coding agents. It works with the tools you already use, builds on separate Git worktrees, runs the checks you configure, asks a second model to review when enabled, and puts the evidence in front of you before you accept the result.
+**Short pitch:** Botbench is an owner-controlled command center for AI coding agents. It works with the tools you already use, builds on separate Git worktrees, runs the checks you configure, asks a second model to review when enabled, and puts the evidence in front of you before you accept the result.
 
 **One-line description (accurate for the planned first release):** A local-first software factory for turning AI coding runs into review-ready branches.
 
@@ -42,7 +42,7 @@ The strongest customer is a solo technical founder, power user, or very small en
 
 **Not defensible on their own:** multi-agent support, worktree isolation, already-paid subscriptions, a phone client, a task board, or running checks. Conductor supports multiple agents with individual worktrees and review flows; Vibe Kanban covers worktrees, progress, diffs and some approvals; OpenHands Agent Canvas is self-hostable and supports several agent backends; Claude Code supports mobile remote control. This is an active and overlapping market.
 
-**Potential strategic wedge:** Build an exceptionally reliable *decision and evidence workflow*. Rather than a control board for agents, smelt is a control board for **engineering outcomes**.
+**Potential strategic wedge:** Build an exceptionally reliable *decision and evidence workflow*. Rather than a control board for agents, botbench is a control board for **engineering outcomes**.
 
 ### What could become a moat, in order
 
@@ -52,7 +52,7 @@ The strongest customer is a solo technical founder, power user, or very small en
 4. **Empirical model routing.** Actual successful outcome rates by repo and task type, adjusted for verification failures, interventions, and time-to-accept—not merely cheapest tokens. Route between compatible permitted drivers.
 5. **Habit + workflow gravity.** A morning decision inbox that becomes the place where builders start and accept AI work. Once this is habitually better than reviewing raw CLI transcripts, it can earn retention.
 
-**Current verdict:** Smelt has an interesting wedge, not yet an established moat. The product must win on *decision quality, reliability and handoff experience* rather than claiming to be the first model-agnostic coding factory.
+**Current verdict:** Botbench has an interesting wedge, not yet an established moat. The product must win on *decision quality, reliability and handoff experience* rather than claiming to be the first model-agnostic coding factory.
 
 ## Design direction
 
@@ -79,7 +79,7 @@ The strongest customer is a solo technical founder, power user, or very small en
 
 ## Golden path and sample UX copy
 
-**Create:** "What should smelt build?" — choose an existing local repo and give a task or markdown spec.
+**Create:** "What should botbench build?" — choose an existing local repo and give a task or markdown spec.
 
 **Plan:** "Review the plan before the line starts." — edit or remove planner-generated independent tasks and set specific allowed commands.
 
@@ -117,15 +117,15 @@ Recruit 10–15 multi-subscription technical builders who have actual repositori
 - **Model advantage:** cross-model review findings that the implementer actually fixes, versus superficial comments.
 - **Ease:** median time from fresh install to first real branch and from a morning notification to an accept/reject decision.
 
-**The make-or-break question:** After two weeks, do users deliberately return to Smelt as the default place to delegate code, or do they go back to Claude/Codex/Conductor? If they don't return, more integrations will not rescue the positioning.
+**The make-or-break question:** After two weeks, do users deliberately return to Botbench as the default place to delegate code, or do they go back to Claude/Codex/Conductor? If they don't return, more integrations will not rescue the positioning.
 
 ## Naming and messaging
 
-**Name:** `smelt` — short, memorable, a transformation metaphor. Use it as a noun, not a sentence like “Smelt your subscriptions.” It can also refer to a fish or the past tense of smell, so clean visual identity, domain diligence and consistent lowercase wordmark matter.
+**Name:** `botbench` (this draft was written for the earlier name, Smelt, which the owner replaced with Botbench on 2026-11-22). Use it as a noun. A clean visual identity, domain diligence and a consistent lowercase wordmark matter.
 
 **Recommended pair:**
 
-> smelt.
+> botbench.
 >
 > **From prompt to proof.**
 >
@@ -137,7 +137,7 @@ Recruit 10–15 multi-subscription technical builders who have actual repositori
 
 ### Sources reviewed
 
-- User's uploaded *Forge Software Factory - Plan*, dated Nov 21, 2026 (renamed Smelt here).
+- User's uploaded *Forge Software Factory - Plan*, dated Nov 21, 2026 (renamed Botbench here).
 - Conductor — https://www.conductor.build/docs/concepts/parallel-agents
 - OpenHands — https://github.com/OpenHands/OpenHands
 - Vibe Kanban — https://github.com/BloopAI/vibe-kanban/blob/main/docs/core-features/monitoring-task-execution.mdx
