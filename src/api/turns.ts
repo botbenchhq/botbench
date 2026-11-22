@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Driver, DriverProbe, DriverSession } from "../drivers/contract.ts";
+import type { TurnEndReason } from "../drivers/events.ts";
 
 export const SCRATCH_DIR = "scratch";
 export const DEFAULT_IDLE_CLOSE_MS = 15 * 60_000;
@@ -22,8 +23,11 @@ export interface Turns {
    * turn goes to that attempt's session if it is still open; otherwise a new
    * attempt resumes it from its stored cursor, and the returned id is the new one.
    * Resolves as soon as the turn has been handed to the CLI.
+   * `model` is the model asked for: a name, null for the CLI's own default, or left out for the configured one.
+   * An open session keeps the model it was started on, so a turn that asks for another one continues the
+   * conversation in a new attempt on that model.
    */
-  start(prompt: string, attemptId?: number): Promise<{ attemptId: number; turn: number }>;
+  start(prompt: string, attemptId?: number, model?: string | null): Promise<{ attemptId: number; turn: number }>;
   /** Stop the attempt's running turn. Resolves once it has ended. */
   interrupt(attemptId: number): Promise<void>;
   /** Whether a turn is running in the attempt right now. */
@@ -34,6 +38,8 @@ export interface Turns {
 
 interface Open {
   session: DriverSession;
+  /** The model the session was started with; undefined for the CLI's own default. */
+  model: string | undefined;
   busy: boolean;
   idle?: NodeJS.Timeout;
 }
@@ -84,13 +90,16 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
     const before = lastTurn(id);
     // The driver stores the prompt before this returns, so the turn's number can be read back.
     const done = entry.session.sendTurn(prompt);
-    const settle = (): void => {
+    const settle = (reason?: TurnEndReason): void => {
       entry.busy = false;
+      // After any turn that ended in an error (a model the CLI does not know, for one) the process is not kept;
+      // the conversation continues from its cursor in a new attempt.
+      if (reason === "error") return void drop(id).catch(() => {});
       // An idle CLI process is not kept for ever: the attempt can be resumed from its cursor.
       entry.idle = setTimeout(() => void drop(id).catch(() => {}), idleCloseMs);
       entry.idle.unref();
     };
-    done.then(settle, settle);
+    done.then(settle, () => settle());
     const turn = lastTurn(id);
     // No new turn in the store means the session refused the prompt (its CLI has just gone): say so, do not pretend.
     if (turn === before) throw new TurnError(409, "The prompt was not accepted: the session has ended. Send it again to continue in a new one.");
@@ -99,8 +108,8 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
 
   // Attempts being started. Shutdown waits for them, so none comes up after the database has closed.
   const starting = new Set<Promise<unknown>>();
-  const begin = async (prompt: string, resumeCursor?: string): Promise<{ attemptId: number; turn: number }> => {
-    const launching = driver.startAttempt({ db, cwd, ...(options.model ? { model: options.model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
+  const begin = async (prompt: string, model: string | undefined, resumeCursor?: string): Promise<{ attemptId: number; turn: number }> => {
+    const launching = driver.startAttempt({ db, cwd, ...(model ? { model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
     starting.add(launching);
     const session = await launching.finally(() => starting.delete(launching));
     if (closed) {
@@ -110,24 +119,25 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
       throw new TurnError(503, "Smelt is shutting down.");
     }
     session.onEvent(options.onEvent);
-    const entry: Open = { session, busy: false };
+    const entry: Open = { session, model, busy: false };
     open.set(session.attemptId, entry);
     return send(session.attemptId, entry, prompt);
   };
 
-  const start = async (prompt: string, attemptId?: number): Promise<{ attemptId: number; turn: number }> => {
+  const start = async (prompt: string, attemptId?: number, choice?: string | null): Promise<{ attemptId: number; turn: number }> => {
     if (closed) throw new TurnError(503, "Smelt is shutting down.");
-    if (attemptId === undefined) return begin(prompt);
+    const model = choice === undefined ? options.model : (choice ?? undefined);
+    if (attemptId === undefined) return begin(prompt, model);
     const row = attemptRow(attemptId);
     if (!row) throw new TurnError(404, "No such attempt.");
     const entry = open.get(attemptId);
     if (entry?.busy) throw new TurnError(409, "A turn is already running in this attempt.");
-    if (entry && row.status === "running") return send(attemptId, entry, prompt);
-    // The session is over (stopped, failed, closed while idle, or from before a restart): continue it in a new attempt.
+    if (entry && row.status === "running" && (choice === undefined || entry.model === model)) return send(attemptId, entry, prompt);
+    // The session is over (stopped, failed, closed while idle, or from before a restart), or another model was asked for: continue it in a new attempt.
     await drop(attemptId);
     if (closed) throw new TurnError(503, "Smelt is shutting down.");
     if (typeof row.resume_cursor !== "string" || row.resume_cursor === "") throw new TurnError(409, "This attempt cannot be continued: it never got far enough to be resumed.");
-    return begin(prompt, row.resume_cursor);
+    return begin(prompt, model, row.resume_cursor);
   };
 
   const interrupt = async (attemptId: number): Promise<void> => {

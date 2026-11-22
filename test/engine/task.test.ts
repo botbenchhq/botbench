@@ -72,7 +72,7 @@ test("a database at the previous schema version gains the task tables and keeps 
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 5);
+  assert.equal(schemaVersion(db), 6);
   assert.deepEqual({ ...db.prepare("SELECT * FROM attempts").get() }, {
     id: 1, driver: "claude-code", model: "haiku", resume_cursor: "cursor-abc", status: "ended", pgid: null,
     created_at: "2026-11-21T10:00:00.000Z", updated_at: "2026-11-21T10:05:00.000Z",
@@ -80,7 +80,7 @@ test("a database at the previous schema version gains the task tables and keeps 
   assert.deepEqual({ ...db.prepare("SELECT * FROM events").get() }, { id: 1, attempt_id: 1, turn: 1, ts: "2026-11-21T10:01:00.000Z", type: "text", payload: '{"type":"text","text":"kept"}' });
   assert.deepEqual(
     db.prepare("SELECT name FROM pragma_table_info('tasks') ORDER BY cid").all().map((r) => r.name),
-    ["id", "run_id", "repo_path", "prompt", "status", "reason", "worktree_path", "branch", "base_commit", "head_commit", "attempt_id", "depends_on", "created_at", "updated_at"],
+    ["id", "run_id", "repo_path", "prompt", "status", "reason", "worktree_path", "branch", "base_commit", "head_commit", "attempt_id", "depends_on", "created_at", "updated_at", "requested_model"],
   );
   assert.deepEqual(db.prepare("SELECT name FROM pragma_table_info('task_events') ORDER BY cid").all().map((r) => r.name), ["id", "task_id", "ts", "status", "detail"]);
 
@@ -101,12 +101,12 @@ test("a new task is stored as queued, with nothing it does not have yet, togethe
   assert.equal(stored.updated_at, stored.created_at);
   assert.deepEqual({ ...stored, created_at: null, updated_at: null }, {
     id: 1, run_id: null, repo_path: "/repos/sample", prompt: "create hello.txt containing hi", status: "queued", reason: null,
-    worktree_path: null, branch: null, base_commit: null, head_commit: null, attempt_id: null, depends_on: "", created_at: null, updated_at: null,
+    worktree_path: null, branch: null, base_commit: null, head_commit: null, attempt_id: null, depends_on: "", created_at: null, updated_at: null, requested_model: null,
   });
   assert.deepEqual(eventRows(db, task.id), [{ status: "queued", detail: null }]);
   assert.deepEqual(getTask(db, task.id), task);
   assert.deepEqual(task, {
-    id: 1, runId: null, repo: "/repos/sample", prompt: "create hello.txt containing hi", status: "queued", reason: null,
+    id: 1, runId: null, repo: "/repos/sample", prompt: "create hello.txt containing hi", requestedModel: null, status: "queued", reason: null,
     worktreePath: null, branch: null, baseCommit: null, headCommit: null, attemptId: null, dependsOn: "", createdAt: stored.created_at, updatedAt: stored.created_at,
   });
   assert.equal(getTask(db, 2), null);

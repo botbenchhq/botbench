@@ -58,7 +58,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
         if (style.backdropFilter !== "none") decorations.push(`backdrop-filter on ${describe(el)}`);
       }
     }
-    for (const el of document.querySelectorAll("button, input, textarea, a[href]")) {
+    for (const el of document.querySelectorAll("button, input, textarea, select, a[href]")) {
       const box = el.getBoundingClientRect();
       if (box.height < 44 || box.width < 44) small.push(`${describe(el)} is ${box.width}x${box.height}`);
     }

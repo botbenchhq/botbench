@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDriver, getTranscript, interruptTurn, openEventStream, startTurn, type DriverState, type StoredEvent } from "../api/client.ts";
 import { Header } from "../components/header.tsx";
+import { ModelPicker, modelWords, sessionModel, useModelChoice } from "../components/model-picker.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
@@ -43,6 +44,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
+  const models = useModelChoice(onSignedOut);
   const startRef = useRef<Promise<{ attemptId: number; turn: number }> | null>(null);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -137,9 +139,12 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
     const text = prompt.trim();
     if (running) return;
     if (text === "") return promptRef.current?.focus();
+    const model = models.request();
+    if (!model.ok) return setError(`The prompt was not sent. ${model.why}`);
     setError(null);
     setStarting(true);
-    const started = startTurn(text, conversation.at(-1));
+    // A model other than the one the conversation is on continues it in a new attempt on that model.
+    const started = startTurn(text, conversation.at(-1), model.model);
     startRef.current = started;
     started.then(
       ({ attemptId, turn }) => {
@@ -195,6 +200,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   const canSend = driver !== null && driver.problem === null;
+  const session = useMemo(() => sessionModel(shown), [shown]);
 
   return (
     <div className="mx-auto flex h-screen max-w-transcript flex-col">
@@ -202,6 +208,11 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         <p data-testid="driver-state" className="font-mono text-mono text-muted">
           {driverWords(driver, driverFailed)}
         </p>
+        {session !== null && (
+          <p data-testid="turn-model" className="break-all font-mono text-mono text-muted">
+            {modelWords(session)}
+          </p>
+        )}
       </Header>
 
       {!connected && (
@@ -226,6 +237,7 @@ export function TurnScreen({ onSignedOut }: { onSignedOut: () => void }) {
         )}
         {canSend ? (
           <form onSubmit={submit} className="flex flex-col gap-sm">
+            <ModelPicker state={models} />
             <label htmlFor="prompt" className="font-mono text-mono text-muted">
               Prompt
             </label>

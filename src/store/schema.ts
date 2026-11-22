@@ -134,6 +134,14 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
   {
+    // The model the owner asked for when the task was started. NULL means the CLI's own default.
+    // The model that answered is on the task's attempt, taken from the driver's session event.
+    name: "task model",
+    sql: `
+ALTER TABLE tasks ADD COLUMN requested_model TEXT;
+`,
+  },
+  {
     // Approvals that outlive a restart. `parked_at` is set when a start finds the approval pending from a Smelt
     // that stopped; only such an approval can carry the owner's answer (`stored_decision`, with `note`) until the
     // task is re-driven, and it ends as that answer or as superseded, never as anything else.

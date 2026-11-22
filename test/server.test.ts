@@ -43,7 +43,7 @@ test("the running server answers a health request and created its data directory
   const res = await fetch(`http://127.0.0.1:${server.port}/health`, { headers: await signIn(server.port, home) });
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /^application\/json/);
-  assert.deepEqual(await res.json(), { status: "ok", schemaVersion: 5 });
+  assert.deepEqual(await res.json(), { status: "ok", schemaVersion: 6 });
 });
 
 test("the server answers nothing else: other paths and other methods get 404", async (t) => {

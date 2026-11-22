@@ -12,7 +12,7 @@ import type { DriverEvent, PermissionResponse, TurnEndReason } from "../../src/d
  * What is real: every event after the prompt is one the real CLI produced, in its order, and each recorded tool call
  * is put to the real permission gate as the CLI's pre-tool hook put it.
  * What is not: the CLI produced those events for the prompt in the recording, and the replay plays them after
- * whatever prompt its caller sends; that difference is the scenario. The replay's own are the answer to `probe`,
+ * whatever prompt its caller sends; that difference is the scenario. The replay's own are the answers to `probe` and `models`,
  * and the turn's end when it is stopped or given an answer the recording has no continuation for (it says so in
  * an error). No test may read those as what a CLI does.
  */
@@ -144,6 +144,8 @@ export function replayDriver(recording: Recording): Driver {
     name: "claude-code",
     capabilities: CAPABILITIES,
     probe,
+    // A recording holds no list of models.
+    models: () => Promise.resolve({ source: "config", models: [], default: null, cliDefault: null }),
     startAttempt: (options) => {
       if (options.resumeCursor !== recording.resumeCursor) return Promise.reject(new Error(`This recording resumes session ${recording.resumeCursor} and holds nothing for ${options.resumeCursor ?? "a new session"}.`));
       const at = now();

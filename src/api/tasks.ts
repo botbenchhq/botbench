@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { checkRepository, getTask, listTasks, TaskError, words, type Task } from "../engine/task.ts";
 import { describeWork, fileDiff, type FileChange } from "../worktrees.ts";
-import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
+import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -19,11 +19,11 @@ export const MAX_DIFF = 400_000;
  * is stored and the task is being started again to receive it.
  */
 function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
-  const { id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
+  const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, createdAt, updatedAt } = task;
   const pending = status === "building" ? pendingApprovals(db, id) : [];
   const waiting = pending.filter((approval) => approval.storedDecision === null);
   return {
-    id, repo, prompt, status, reason, branch, baseCommit, headCommit, attemptId,
+    id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,
@@ -43,9 +43,11 @@ async function changedFiles(task: Task): Promise<{ files: FileChange[] | null; f
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
-  if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "..." }');
+  if (!isObject(body) || typeof body.repo !== "string" || typeof body.prompt !== "string" || body.prompt.trim() === "") throw new TaskError(400, 'expected { "repo": "/full/path", "prompt": "...", "model"?: string | null }');
+  // Checked before the repository is looked at, and long before a task row or a worktree exists.
+  const model = modelChoice(body);
   if (body.prompt.length > MAX_PROMPT) throw new TaskError(400, `The prompt is too long: ${MAX_PROMPT} characters at most.`);
-  const task = await ctx.tasks.start(body.repo, body.prompt);
+  const task = await ctx.tasks.start(body.repo, body.prompt, model);
   json(res, 200, { taskId: task.id });
 }
 

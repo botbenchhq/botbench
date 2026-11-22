@@ -1,7 +1,7 @@
 import type http from "node:http";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { DriverUnavailableError } from "../drivers/contract.ts";
-import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
+import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { eventsAfter, parseEventId } from "./stream.ts";
 import { TurnError } from "./turns.ts";
 
@@ -9,10 +9,11 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 async function startTurn(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
-  if (!isObject(body) || typeof body.prompt !== "string" || body.prompt.trim() === "") return json(res, 400, { error: 'expected { "prompt": "...", "attemptId"?: number }' });
+  if (!isObject(body) || typeof body.prompt !== "string" || body.prompt.trim() === "") return json(res, 400, { error: 'expected { "prompt": "...", "attemptId"?: number, "model"?: string | null }' });
+  const model = modelChoice(body);
   const { attemptId } = body;
   if (attemptId !== undefined && !(typeof attemptId === "number" && Number.isSafeInteger(attemptId) && attemptId > 0)) return json(res, 400, { error: '"attemptId" must be an attempt id' });
-  json(res, 200, await ctx.turns.start(body.prompt, attemptId));
+  json(res, 200, await ctx.turns.start(body.prompt, attemptId, model));
 }
 
 /**
@@ -28,6 +29,9 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       json(res, 200, { signedIn: true });
     } else if (method === "GET" && pathname === "/api/driver") {
       json(res, 200, { driver: CLAUDE_CODE, ...(await ctx.turns.probe()) });
+    } else if (method === "GET" && pathname === "/api/models") {
+      // The driver's own account of what can be chosen. It answers in seconds or falls back to the configured list.
+      json(res, 200, { driver: CLAUDE_CODE, ...(await ctx.driver.models()) });
     } else if (method === "GET" && pathname === "/api/stream") {
       ctx.stream.handle(req, res);
     } else if (method === "POST" && pathname === "/api/turns") {

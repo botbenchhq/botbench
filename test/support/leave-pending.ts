@@ -19,6 +19,8 @@ interface Order {
   repo: string;
   /** The session the attempt would resume from; left out, the attempt has none. */
   cursor?: string;
+  /** The model the task was started with; left out, the CLI's own default. */
+  model?: string;
   commands: string[];
   /** Leave a real process group behind, recorded as the attempt's, as a CLI that outlived its Smelt would be. */
   survivor?: boolean;
@@ -41,7 +43,7 @@ const db = openStore(order.home);
 const broker = createBroker({ db, home: order.home, onChange: () => {} });
 await broker.listen();
 
-const task = createTask(db, { repo: order.repo, prompt: "Run the command `sh make-marker.sh` with your Bash tool, exactly once." });
+const task = createTask(db, { repo: order.repo, prompt: "Run the command `sh make-marker.sh` with your Bash tool, exactly once.", requestedModel: order.model ?? null });
 const worktree = await createWorktree({ repo: order.repo, home: order.home, run: "run-0000aaaa", task: `task-${task.id}` });
 let pgid: number | null = null;
 if (order.survivor) {

@@ -15,7 +15,7 @@ function tempDir(t: { after(fn: () => void): void }): string {
 }
 const mode = (file: string): number => fs.statSync(file).mode & 0o777;
 // Written out, not derived from the code under test: bump it by hand when a migration is added.
-const CURRENT = 5;
+const CURRENT = 6;
 // The version 1 schema exactly as it shipped. A database created by that release must still open.
 const V1_SCHEMA = `
 CREATE TABLE schema_version (version INTEGER NOT NULL);

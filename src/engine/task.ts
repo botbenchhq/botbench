@@ -31,6 +31,8 @@ export interface Task {
   runId: number | null;
   repo: string;
   prompt: string;
+  /** The model asked for when the task was started. Null means the CLI's own default. */
+  requestedModel: string | null;
   status: TaskStatus;
   /** Why the task was interrupted or failed, in words for the owner. */
   reason: string | null;
@@ -67,6 +69,7 @@ function toTask(row: Record<string, unknown>): Task {
     runId: int(row.run_id),
     repo: String(row.repo_path),
     prompt: String(row.prompt),
+    requestedModel: text(row.requested_model),
     status: String(row.status) as TaskStatus,
     reason: text(row.reason),
     worktreePath: text(row.worktree_path),
@@ -95,10 +98,10 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: TaskStatu
 };
 
 /** Store a new task as queued. The row and its first event are written together. */
-export function createTask(db: DatabaseSync, o: { repo: string; prompt: string }): Task {
+export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null }): Task {
   return transaction(db, () => {
     const at = now();
-    const id = Number(db.prepare("INSERT INTO tasks (repo_path, prompt, status, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?)").run(o.repo, o.prompt, at, at).lastInsertRowid);
+    const id = Number(db.prepare("INSERT INTO tasks (repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, 'queued', ?, ?)").run(o.repo, o.prompt, o.requestedModel ?? null, at, at).lastInsertRowid);
     insertEvent(db, id, at, "queued", null);
     return getTask(db, id)!;
   });
@@ -181,8 +184,11 @@ const firstLine = (s: string, max = 60): string => {
 };
 
 export interface Tasks {
-  /** Check the repository, store the task as queued and return it at once. The build goes on in the background. */
-  start(repo: unknown, prompt: string): Promise<Task>;
+  /**
+   * Check the repository, store the task as queued and return it at once. The build goes on in the background.
+   * `model` is the model asked for: a name, null for the CLI's own default, or left out for the configured one.
+   */
+  start(repo: unknown, prompt: string, model?: string | null): Promise<Task>;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /** Interrupt the task being built, commit what it did, and leave no CLI process behind. Tasks still queued are marked interrupted. */
@@ -259,7 +265,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let session: DriverSession;
     try {
       if (closed) throw new Error("Smelt is stopping.");
-      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(options.model ? { model: options.model } : {}) });
+      session = await driver.startAttempt({ db, cwd: worktree.path, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       // Nothing happened in the worktree, so it and its branch go again.
@@ -385,12 +391,13 @@ export function createTasks(options: TasksOptions): Tasks {
     const problem = (await stopSurvivors(task, parked)) ?? resumeProblem(db, task, parked, driver.capabilities);
     if (problem !== null) return giveUp(task, `This task waited for your answer across a restart and cannot be resumed: ${problem} Your answer was not applied and nothing was run.`);
 
+    // The model stays the one the task was started with, whatever is configured by now.
     const previous = task.attemptId!;
     const resumeCursor = String(db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(previous)!.resume_cursor);
     const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, resumes: previous });
     let session: DriverSession;
     try {
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, resumeCursor, ...(options.model ? { model: options.model } : {}) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
@@ -444,11 +451,11 @@ export function createTasks(options: TasksOptions): Tasks {
     chain = chain.then(() => redrive(approval.taskId)).catch(report(`Resuming task ${approval.taskId}`));
   });
 
-  const start = async (repo: unknown, prompt: string): Promise<Task> => {
+  const start = async (repo: unknown, prompt: string, model?: string | null): Promise<Task> => {
     if (closed) throw new TaskError(503, "Smelt is shutting down.");
     const checked = await checkRepository(repo);
     if (closed) throw new TaskError(503, "Smelt is shutting down.");
-    const task = createTask(db, { repo: checked, prompt });
+    const task = createTask(db, { repo: checked, prompt, requestedModel: model === undefined ? (options.model ?? null) : model });
     options.onTaskChange(task);
     chain = chain.then(() => build(task.id)).catch(report(`Building task ${task.id}`));
     return task;

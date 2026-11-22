@@ -12,7 +12,6 @@ import type { DriverEvent } from "../../src/drivers/events.ts";
 import { killProcessGroup, processGroupAlive } from "../../src/drivers/launch.ts";
 import { createTask, createTasks, getTask, type Task, type Tasks } from "../../src/engine/task.ts";
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
-import { MIGRATIONS } from "../../src/store/schema.ts";
 import { checkoutState, git, initRepo, tempDir } from "../support/repo.ts";
 import type { Left } from "../support/leave-pending.ts";
 import { loadRecording, replayDriver } from "../support/replay.ts";
@@ -33,7 +32,7 @@ interface Stopped extends Left {
 }
 
 /** A Smelt home in which a task waited for the owner when its Smelt was killed. */
-function stoppedWhileWaiting(t: T, options: { cursor?: string; commands?: string[]; survivor?: boolean; attemptMadeEarlier?: boolean } = {}): Stopped {
+function stoppedWhileWaiting(t: T, options: { cursor?: string; model?: string; commands?: string[]; survivor?: boolean; attemptMadeEarlier?: boolean } = {}): Stopped {
   const dir = tempDir("smelt-recover-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
@@ -57,13 +56,13 @@ interface Started {
 }
 
 /** The next start on the same home: the store opened again, a new broker listening, and the engine recovered. */
-async function startAgain(t: T, home: string, driver: Driver = new ClaudeCodeDriver()): Promise<Started> {
+async function startAgain(t: T, home: string, driver: Driver = new ClaudeCodeDriver(), model?: string): Promise<Started> {
   const db = openStore(home);
   const changes: Approval[] = [];
   const taskChanges: Task[] = [];
   const broker = createBroker({ db, home, onChange: (approval) => changes.push(approval) });
   await broker.listen();
-  const tasks = createTasks({ db, home, driver, broker, onEvent: () => {}, onTaskChange: (task) => taskChanges.push(task) });
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(task) });
   let closed = false;
   const close = async (): Promise<void> => {
     if (closed) return;
@@ -364,6 +363,8 @@ test("an answer that was stored but not yet applied when Smelt stopped again is 
   assert.equal(broker.answer(s.approvalIds[0]!, "allow").storedDecision, "allow");
   await broker.close();
   db.close();
+  // A process takes longer than this to start again; the store tells the two runs apart by the clock.
+  await new Promise((resolve) => setTimeout(resolve, 20));
 
   const again = await startAgain(t, s.home);
   const task = getTask(again.db, s.taskId)!;
@@ -409,17 +410,132 @@ test("replayed from a real session: a re-driven turn whose first request does no
   assert.equal(git(s.repo, "show", `${s.branch}:partial.txt`), "written before the stop\n");
 });
 
+test("a re-driven task keeps the model it was started with, not the one configured now; a task started on the CLI's own default is resumed on that", async (t) => {
+  const recording = loadRecording("redrive-other-request.json");
+  for (const [asked, expected] of [["haiku", "haiku"], [undefined, null]] as const) {
+    const s = stoppedWhileWaiting(t, { cursor: recording.resumeCursor, ...(asked ? { model: asked } : {}) });
+    // Since the task was started, the configured model has changed.
+    const again = await startAgain(t, s.home, replayDriver(recording), "sonnet");
+    assert.equal(getTask(again.db, s.taskId)!.requestedModel, expected);
+    again.broker.answer(s.approvalIds[0]!, "allow");
+    await until("the resuming attempt", () => getTask(again.db, s.taskId)!.attemptId !== s.attemptId);
+    const resumed = getTask(again.db, s.taskId)!.attemptId!;
+    assert.equal(again.db.prepare("SELECT model FROM attempts WHERE id = ?").get(resumed)!.model, expected, `the attempt that resumes a task started with ${asked ?? "the default"}`);
+  }
+});
+
+// The version 5 schema exactly as it shipped with units 1 to 7 and 25. A database created by that release must still open.
+const V5_SCHEMA = `
+CREATE TABLE schema_version (version INTEGER NOT NULL);
+INSERT INTO schema_version (version) VALUES (5);
+CREATE TABLE attempts (
+  id INTEGER PRIMARY KEY,
+  driver TEXT NOT NULL,
+  model TEXT,
+  resume_cursor TEXT,
+  status TEXT NOT NULL,
+  pgid INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attempt_id INTEGER NOT NULL REFERENCES attempts (id),
+  turn INTEGER NOT NULL,
+  ts TEXT NOT NULL,
+  type TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE INDEX events_attempt ON events (attempt_id, id);
+CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+CREATE TRIGGER events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY,
+  run_id INTEGER,
+  repo_path TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT,
+  worktree_path TEXT,
+  branch TEXT,
+  base_commit TEXT,
+  head_commit TEXT,
+  attempt_id INTEGER REFERENCES attempts (id),
+  depends_on TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  ts TEXT NOT NULL,
+  status TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX task_events_task ON task_events (task_id, id);
+CREATE TRIGGER task_events_no_update BEFORE UPDATE ON task_events
+BEGIN SELECT RAISE(ABORT, 'task_events is append-only'); END;
+CREATE TRIGGER task_events_no_delete BEFORE DELETE ON task_events
+BEGIN SELECT RAISE(ABORT, 'task_events is append-only'); END;
+
+CREATE TABLE approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  attempt_id INTEGER NOT NULL REFERENCES attempts (id),
+  role TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  reason TEXT,
+  tool_call_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'allowed', 'declined', 'superseded')),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+CREATE INDEX approvals_status ON approvals (status, id);
+CREATE INDEX approvals_task ON approvals (task_id, status);
+CREATE TRIGGER approvals_answered_once BEFORE UPDATE ON approvals WHEN OLD.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'this approval is already answered'); END;
+CREATE TRIGGER approvals_request_fixed BEFORE UPDATE OF id, task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, created_at ON approvals
+BEGIN SELECT RAISE(ABORT, 'what an approval asks for cannot be changed'); END;
+CREATE TRIGGER approvals_no_delete BEFORE DELETE ON approvals
+BEGIN SELECT RAISE(ABORT, 'approvals are never deleted'); END;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT
+);
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+
+ALTER TABLE tasks ADD COLUMN requested_model TEXT;
+`;
+
 test("a database from before this unit gains the parked-approval columns and the new log rules, and keeps its approvals and its log", (t) => {
   const dir = tempDir("smelt-recover-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
   const old = new DatabaseSync(path.join(home, DB_FILE));
-  old.exec("CREATE TABLE schema_version (version INTEGER NOT NULL); INSERT INTO schema_version (version) VALUES (4);");
-  for (const migration of MIGRATIONS.slice(0, 4)) old.exec(migration.sql);
+  old.exec(V5_SCHEMA);
   old.exec(`
     INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('claude-code', 'ended', 't0', 't0');
-    INSERT INTO tasks (repo_path, prompt, status, created_at, updated_at) VALUES ('/r', 'p', 'awaiting_decision', 't0', 't0');
+    INSERT INTO tasks (repo_path, prompt, requested_model, status, created_at, updated_at) VALUES ('/r', 'p', 'haiku', 'awaiting_decision', 't0', 't0');
     INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at, resolved_at) VALUES (1, 1, 'implementer', 'Bash', 'ls', '.', 'toolu_1', 'allowed', 't1', 't2');
     INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, command, cwd) VALUES ('t1', 1, 1, 1, 'asked_owner', 'Bash', 'ls', '.');
     INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail) VALUES ('t2', 1, 1, 1, 'owner_allowed', 'Bash', 'ls', '.', 'kept');
@@ -428,7 +544,8 @@ test("a database from before this unit gains the parked-approval columns and the
 
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(schemaVersion(db), 5);
+  assert.equal(schemaVersion(db), 6);
+  assert.equal(db.prepare("SELECT requested_model FROM tasks").get()!.requested_model, "haiku");
   assert.deepEqual(listApprovals(db).map((a) => [a.id, a.status, a.command, a.parkedAt, a.storedDecision]), [[1, "allowed", "ls", null, null]]);
   assert.deepEqual(actionLog(db).map((e) => [e.id, e.ts, e.rule, e.approvalId, e.detail]), [[1, "t1", "asked_owner", 1, null], [2, "t2", "owner_allowed", 1, "kept"]]);
   db.prepare("INSERT INTO action_log (ts, task_id, approval_id, rule, tool, command, cwd) VALUES ('t3', 1, 1, 'stored_answer_applied', 'Bash', 'ls', '.')").run();

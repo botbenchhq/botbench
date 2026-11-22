@@ -100,9 +100,25 @@ export async function signIn(token: string): Promise<void> {
 
 export const getDriver = (): Promise<DriverState> => request("GET", "/api/driver");
 
+/** The models the driver offers and where the list came from. `default` null means the CLI's own default. */
+export interface ModelList {
+  driver: string;
+  source: "cli" | "config";
+  models: { id: string; label?: string }[];
+  default: string | null;
+  /** What the CLI says its own default is. */
+  cliDefault: string | null;
+}
+
+/** The server asks the CLI, which it gives 10 seconds; a request silent for longer is not going to answer. */
+export const getModels = (): Promise<ModelList> => request("GET", "/api/models", undefined, 15_000);
+
+/** A model for a request: a name, null for the CLI's own default, or undefined to leave it to the server's configuration. */
+const withModel = (model: string | null | undefined): { model?: string | null } => (model === undefined ? {} : { model });
+
 /** Starting a turn launches the CLI, which takes a second or two. A server silent for half a minute is not going to answer. */
-export const startTurn = (prompt: string, attemptId?: number): Promise<{ attemptId: number; turn: number }> =>
-  request("POST", "/api/turns", attemptId === undefined ? { prompt } : { prompt, attemptId }, 30_000);
+export const startTurn = (prompt: string, attemptId?: number, model?: string | null): Promise<{ attemptId: number; turn: number }> =>
+  request("POST", "/api/turns", { prompt, ...(attemptId === undefined ? {} : { attemptId }), ...withModel(model) }, 30_000);
 
 export async function interruptTurn(attemptId: number): Promise<void> {
   await request("POST", `/api/turns/${attemptId}/interrupt`, {});
@@ -116,6 +132,8 @@ export interface TaskSummary {
   id: number;
   repo: string;
   prompt: string;
+  /** The model asked for when the task was started; null is the CLI's own default. */
+  requestedModel: string | null;
   status: TaskStatus;
   /** Why the task was interrupted or failed. */
   reason: string | null;
@@ -161,7 +179,7 @@ export const checkRepo = (path: string, giveUp: AbortSignal): Promise<RepoCheck>
   request("GET", `/api/repos/check?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
 /** Whether a request ended because its time limit passed. */
 export const timedOut = (err: unknown): boolean => err instanceof DOMException && err.name === "TimeoutError";
-export const startTask = (repo: string, prompt: string): Promise<{ taskId: number }> => request("POST", "/api/tasks", { repo, prompt }, 30_000);
+export const startTask = (repo: string, prompt: string, model?: string | null): Promise<{ taskId: number }> => request("POST", "/api/tasks", { repo, prompt, ...withModel(model) }, 30_000);
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>

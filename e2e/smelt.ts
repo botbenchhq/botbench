@@ -54,12 +54,12 @@ async function launchServer(home: string, port: number, settings: string, env: R
 /**
  * Start a real Smelt process: `node src/server.ts`, its data in `home`, on a
  * free port (or `port`, to come back on the same one). Turns ask for the
- * cheapest model. `env` adds to the process environment.
+ * cheapest model unless `settings` gives the owner's settings file. `env` adds to the process environment.
  */
-export async function startSmelt(options: { home?: string; port?: number; env?: Record<string, string> } = {}): Promise<Smelt> {
+export async function startSmelt(options: { home?: string; port?: number; env?: Record<string, string>; settings?: unknown } = {}): Promise<Smelt> {
   const home = options.home ?? path.join(tempDir("smelt-e2e-"), "home");
   const settings = path.join(path.dirname(home), "settings.json");
-  fs.writeFileSync(settings, JSON.stringify({ drivers: { "claude-code": { model: "haiku" } } }));
+  fs.writeFileSync(settings, JSON.stringify(options.settings ?? { drivers: { "claude-code": { model: "haiku" } } }));
   const first = await launchServer(home, options.port ?? 0, settings, options.env ?? {});
   const port = first.port;
   let child = first.child;
