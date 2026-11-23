@@ -542,6 +542,50 @@ export function logSandboxedCalls(db: DatabaseSync, session: Pick<DriverSession,
   });
 }
 
+/**
+ * For an agent that asks Botbench before it acts but keeps one turn per session (Antigravity): each `permission_request`
+ * of `session` goes through `broker` as a request of `who` (a chat, or a task's review) and is answered, a decline
+ * for anything that fails on the way (broker failure is deny). Each tool call that asked nothing (Botbench's own rules
+ * let it run or refused it, or it never needed asking, as a read inside the folder) is a line of the action log, kept
+ * by the agent's sandbox to `where`. Returns a function that stops both.
+ */
+export function askThroughBroker(db: DatabaseSync, broker: Pick<Broker, "request">, session: Pick<DriverSession, "attemptId" | "onEvent" | "respondToRequest">, o: { who: { taskId: number; chat?: undefined } | { taskId: null; chat: true }; role: string; agent: string; cwd: string; where: string; onAnswer?(): void }): () => void {
+  const asked = new Set<string>();
+  const calls = new Map<string, { name: string; input: unknown }>();
+  const decided = new Map<string, { decision: string; note: string | null }>();
+  const log = (id: string): void => {
+    const call = calls.get(id);
+    if (call === undefined) return;
+    calls.delete(id);
+    if (asked.has(id)) return;
+    const input = call.input;
+    const named = isObject(input) ? input : null;
+    const command = typeof named?.CommandLine === "string" ? named.CommandLine : typeof named?.query === "string" ? named.query : JSON.stringify(input ?? null);
+    const outcome = decided.get(id);
+    const detail = outcome === undefined || outcome.decision !== "denied" ? `${o.agent} ran this without asking you, by Botbench's rules, kept by its sandbox to ${o.where}.` : `Botbench refused this without asking you: ${outcome.note ?? "its rules do not allow it."}`;
+    try {
+      appendLog(db, { taskId: o.who.taskId, attemptId: session.attemptId, rule: "sandboxed", tool: shorten(call.name, 200), command: shorten(command, MAX_COMMAND), cwd: o.cwd, detail });
+    } catch (err) {
+      console.error(`A tool call of attempt ${session.attemptId} could not be written to the action log: ${words(err)}`);
+    }
+  };
+  return session.onEvent((event) => {
+    if (event.type === "tool_call") calls.set(event.id, { name: event.name, input: event.input });
+    else if (event.type === "permission_resolved" && !asked.has(event.toolCallId)) decided.set(event.toolCallId, { decision: event.decision, note: event.note });
+    else if (event.type === "tool_result") log(event.id);
+    else if (event.type === "turn_ended") for (const id of [...calls.keys()]) log(id);
+    else if (event.type === "permission_request") {
+      asked.add(event.toolCallId);
+      void broker
+        .request({ ...o.who, attemptId: session.attemptId, role: o.role, tool: event.name, command: summarize(event.name, event.input), input: event.input, cwd: ".", reason: event.reason, toolCallId: event.toolCallId })
+        .then((answer) => session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, chat: answer.chat !== undefined, bookkeeping: answer.bookkeeping !== undefined }))
+        // A request the agent stopped waiting for (the turn was stopped) has no one to tell; it was not run.
+        .catch(() => {})
+        .finally(() => o.onAnswer?.());
+    }
+  });
+}
+
 /** Write one tool call an agent ran under its own sandbox, never put to the broker, to the action log (`sandboxed`). */
 export function logSandboxedCall(db: DatabaseSync, call: { name: string; input: unknown }, o: { taskId: number | null; runId?: number | null; attemptId: number; cwd: string; detail: string }): void {
   const input = call.input;

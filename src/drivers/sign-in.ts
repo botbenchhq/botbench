@@ -40,6 +40,15 @@ export interface SignInDefinition {
   readonly signOutCommand: string;
   /** Variables Botbench sets for both: where the CLI keeps its login, and no browser opened on the Mac. */
   readonly env: Readonly<Record<string, string>>;
+  /**
+   * The sign-in is one Botbench keeps in a folder of its own, apart from the CLI's in a terminal (Antigravity): signing
+   * out removes it there (`removeSignIn`) and runs no command, and a terminal sign-in cannot stand in for it.
+   */
+  readonly keptByBotbench?: boolean;
+  /** Sign-out for a sign-in Botbench keeps: removes the CLI's sign-in file from Botbench's folder. Nothing is read. */
+  readonly removeSignIn?: () => void;
+  /** The code the owner pasted, as it goes to the CLI, or null when it is not one. pastedCode when left out. */
+  readonly pasted?: (value: unknown) => string | null;
   /** The CLI waits on its input for the code the vendor's page shows after sign-in. */
   readonly takesCode: boolean;
   /** How long Botbench waits for the owner before it stops the sign-in. */
@@ -131,6 +140,40 @@ export function codexSignIn(home?: string): SignInDefinition {
     limitMs: FIFTEEN_MINUTES,
     parse: parseCodexSignIn,
   };
+}
+
+const GOOGLE_HOSTS = ["accounts.google.com"];
+/** Where Google's page sends the owner after an Antigravity sign-in: it shows the code, which is also in its address. */
+export const ANTIGRAVITY_CALLBACK = "https://antigravity.google/oauth-callback";
+
+/** Antigravity's `agy acp --login`: Google's sign-in page, once the CLI asks for the code (so its input is ready). */
+export function parseAntigravitySignIn(output: string): SignInPrompt | null {
+  const text = plainText(output);
+  if (!/paste the authorization code/i.test(text)) return null;
+  const url = linkOn(text, GOOGLE_HOSTS);
+  if (url === null) return null;
+  const link = new URL(url);
+  // Only Google's own page that lands on Antigravity's page showing the code: anything else would never be pasted back.
+  if (link.pathname !== "/o/oauth2/auth" || link.searchParams.get("redirect_uri") !== ANTIGRAVITY_CALLBACK || link.searchParams.get("response_type") !== "code") return null;
+  return { url, code: null };
+}
+
+/**
+ * What the owner pastes back to `agy acp --login`, which takes the code or the whole address of the page Google landed
+ * on: a code, or that address on Antigravity's own page, on one line. Null for anything else.
+ */
+export function pastedAntigravityCode(value: unknown): string | null {
+  const code = pastedCode(value);
+  if (code !== null) return code;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (text.length > 4096 || /\s/.test(text)) return null;
+  try {
+    const url = new URL(text);
+    return url.origin === "https://antigravity.google" && url.pathname === "/oauth-callback" && url.username === "" && url.password === "" && url.searchParams.getAll("code").length === 1 ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 /** What a code the owner pastes back may be: the characters of an authorization code and its state, on one line. */

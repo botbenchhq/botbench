@@ -89,9 +89,9 @@ test("a repository attached under Let this chat read a repository is checked, se
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
   // An agent that cannot read a repository: Send waits, and says the repository is read only by the other agents.
-  await askOnly(page, "Antigravity");
+  await askOnly(page, "Claude Code");
   await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
-  await expect(page.getByTestId("composer-reason")).toHaveText("Antigravity cannot read a repository: it answers from the conversation alone. The repository is read only by the other agents: ask only them, or choose None for the repository to read.");
+  await expect(page.getByTestId("composer-reason")).toHaveText("Claude Code works on a repository only as a task, in a separate copy, so a chat does not give it one. The repository is read only by the other agents: ask only them, or choose None for the repository to read.");
   await checkDesign(page, "chat, a repository to read and an agent that cannot read it");
   expect(sent).toEqual([]);
   await askOnly(page, "Codex");
