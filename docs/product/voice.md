@@ -93,6 +93,8 @@ On screen since the More menu on Work: each row ends in a More button named for 
 
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
+On screen since the wide layout (from 1024px; below it nothing changed): beside every screen but Settings, the column "Chats and work", with "Search chats and work" (hint "Words in a title", the button "Clear the search"), its count line ("1 run and 26 tasks", "2 chats, 1 run and 4 tasks", "1 run and 100 tasks. The 20 oldest finished are not listed.", "3 of 27 match "login"", "None of 27 match "zebra""), "No title has those words. Clear the search to see them all." when nothing matches, "Nothing yet. Each chat, run and task you start is listed here." and "Reading chats and work."; each row is the title with its state as the board says it and "Run 4" or "Task 7" ("Ready for review · Task 7"; a chat's state is "Chat"). Settings is two panes, its sections Agents, Appearance, Notifications, Signed-in devices, This workbench (Runs, Web, Workbench and Memory), Permissions and Usage.
+
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.
 
 ## Tool activity

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { agentState } from "../app/chat.ts";
 import { ApiError, getAgents, getAskEveryCommand, getChatWebAccess, getDefaultMode, getWorkbench, openEventStream, setAskEveryCommand, setChatWebAccess, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
@@ -10,12 +10,31 @@ import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
 import { ModePicker } from "../components/mode-choice.tsx";
+import { useWide } from "../app/wide.ts";
+import { Permissions } from "./trust.tsx";
+import { Usage } from "./usage.tsx";
 
-/** The screens reached from Settings, first on it: each its own screen, with a link back. */
-const LINKED: readonly { href: string; name: string; about: string }[] = [
-  { href: "#/trust", name: "Permissions", about: "What is always allowed, and what ran" },
-  { href: "#/usage", name: "Usage", about: "How much each agent did" },
+/** A section of the two-pane Settings, from 1024px. */
+export type SettingsSection = "agents" | "appearance" | "notifications" | "devices" | "workbench" | "permissions" | "usage";
+
+/**
+ * Every section of Settings, in the order the two-pane Settings lists them, with the address that opens each.
+ * Permissions and Usage keep their own addresses; below 1024px they are screens of their own, reached from the rows at
+ * the top of Settings (`about` is what those rows say under the name). Approach from OpenMausBot
+ * src/components/settings/settings-places.ts: one ordered list of every place in Settings, which both layouts read.
+ */
+const SECTIONS: readonly { section: SettingsSection; name: string; href: string; about?: string }[] = [
+  { section: "agents", name: "Agents", href: "#/settings/agents" },
+  { section: "appearance", name: "Appearance", href: "#/settings/appearance" },
+  { section: "notifications", name: "Notifications", href: "#/settings/notifications" },
+  { section: "devices", name: "Signed-in devices", href: "#/settings/devices" },
+  { section: "workbench", name: "This workbench", href: "#/settings/workbench" },
+  { section: "permissions", name: "Permissions", href: "#/trust", about: "What is always allowed, and what ran" },
+  { section: "usage", name: "Usage", href: "#/usage", about: "How much each agent did" },
 ];
+
+/** The screens reached from Settings below 1024px, first on it: each its own screen, with a link back. */
+const LINKED = SECTIONS.flatMap(({ href, name, about }) => (about === undefined ? [] : [{ href, name, about }]));
 
 /** What Botbench lets the agent do, in words, from the steps the server reports. */
 function agentSteps(agent: AgentState): string {
@@ -268,7 +287,8 @@ function AskEveryCommand({ onSignedOut }: { onSignedOut: () => void }) {
   );
 }
 
-export function SettingsScreen({ section, onSignedOut }: { section: "agents" | null; onSignedOut: () => void }) {
+export function SettingsScreen({ section, onSignedOut }: { section: SettingsSection | null; onSignedOut: () => void }) {
+  const wide = useWide();
   const [agents, setAgents] = useState<AgentState[] | null>(null);
   // Opened at its Agents section (#/settings/agents): that section is brought into view and its heading takes the focus,
   // so a screen reader starts there too.
@@ -322,6 +342,126 @@ export function SettingsScreen({ section, onSignedOut }: { section: "agents" | n
     return openEventStream(0, { onEvent: () => {}, onConnection: () => {}, onSignedOut, onAgent: (a) => a.state !== "starting" && a.state !== "waiting" && refresh() });
   }, [refresh, onSignedOut]);
 
+  const agentsGroup = (
+    <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-agents`}>
+      <h2 ref={agentsHeading} tabIndex={-1} className="ds-settings-row__heading" id={`${id}-agents`}>
+        Agents
+      </h2>
+      {AGENTS.map(({ agent: key, name }) => {
+        const agent = agents?.find((found) => found.agent === key) ?? null;
+        return (
+          <div key={key} data-testid={`agent-${key}`} className="ds-settings-row">
+            <div className="ds-settings-row__text">
+              <p className="ds-settings-row__label">{name}</p>
+              <p className="ds-settings-row__description">{agent !== null ? `${agentAbout(agent)} ${agentSteps(agent)}`.trim() : problem ?? (agents === null ? `Checking ${name}.` : `${name} is not offered by this Botbench.`)}</p>
+            </div>
+            <div className="ds-settings-row__control">
+              <p data-testid="agent-state" role="status" className="ds-settings-row__status">
+                {agent !== null ? agentState(agent) : problem !== null ? "Could not be checked" : agents === null ? "Checking" : "Not offered"}
+              </p>
+              {agent !== null && <AgentConnection agent={key} product={name} installed={agent.installed} supported={agent.supported} signedIn={agent.signedIn} version={version} onChanged={refresh} />}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const runsGroup = (
+    <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-runs`}>
+      <h2 className="ds-settings-row__heading" id={`${id}-runs`}>
+        Runs
+      </h2>
+      <ModePicker name="default-mode" legend="Default mode" hint="A new run starts with this mode chosen. You can pick another for each run." value={runMode} onChange={chooseMode} />
+      {modeProblem !== null && (
+        <Alert tone="error" role="alert">
+          {modeProblem}
+        </Alert>
+      )}
+      <AskEveryCommand onSignedOut={onSignedOut} />
+    </div>
+  );
+
+  const appearanceGroup = (
+    <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-appearance`}>
+      <h2 className="ds-settings-row__heading" id={`${id}-appearance`}>
+        Appearance
+      </h2>
+      <div className="ds-settings-row">
+        <div className="ds-settings-row__text">
+          <label className="ds-settings-row__label" htmlFor={`${id}-mode`}>
+            Mode
+          </label>
+          <p className="ds-settings-row__description" id={`${id}-mode-about`}>
+            Dark is the default. Match device follows this device's own light or dark setting. Kept on this device only.
+          </p>
+        </div>
+        <div className="ds-settings-row__control">
+          <div className="ds-select">
+            <select className="ds-field__control ds-select__control" id={`${id}-mode`} value={choice} aria-describedby={`${id}-mode-about`} onChange={(e) => chooseAppearance(e.currentTarget.value as Appearance)}>
+              {MODES.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (wide) {
+    // From 1024px: the design system's master-detail pattern, with the sections in the list pane and only the chosen
+    // one beside it, as a settings page. Agents is chosen when the address names none. Approach from OpenMausBot
+    // src/components/settings/SettingsWindow.tsx and SettingsNav.tsx: the list of pages on the left marks the open one
+    // as current, and the page beside it is the only one drawn.
+    const chosen = SECTIONS.find((s) => s.section === (section ?? "agents"))!;
+    const content: Record<SettingsSection, ReactNode> = {
+      agents: agentsGroup,
+      appearance: appearanceGroup,
+      notifications: <NotificationSettings onSignedOut={onSignedOut} />,
+      devices: <DeviceSettings onSignedOut={onSignedOut} />,
+      workbench: (
+        <>
+          {runsGroup}
+          <ChatWebAccess onSignedOut={onSignedOut} />
+          <WatchSettings onSignedOut={onSignedOut} />
+          <WorkbenchName onSignedOut={onSignedOut} />
+          <MemorySettings onSignedOut={onSignedOut} />
+        </>
+      ),
+      permissions: <Permissions onSignedOut={onSignedOut} />,
+      usage: <Usage onSignedOut={onSignedOut} />,
+    };
+    return (
+      <Frame current={null}>
+        <main data-testid="settings-panes" className="ds-app-shell__main ds-master-detail min-w-0 px-lg">
+          <div className="ds-master-detail__list">
+            <PageHeader title="Settings" compact>
+              <p className="ds-page-header__description">Each change is saved as you make it.</p>
+            </PageHeader>
+            <ul data-testid="settings-sections" className="ds-list">
+              {SECTIONS.map((s) => (
+                <li key={s.section} className="ds-list__row">
+                  <a href={s.href} className="ds-list__link" aria-current={s === chosen ? "true" : undefined}>
+                    <span className="ds-list__body">
+                      <span className="ds-list__primary">{s.name}</span>
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {/* The section's own groups carry its headings, so the region is named by the row that opened it. */}
+          <section data-testid="settings-section" className="ds-master-detail__detail ds-settings-page" aria-label={chosen.name}>
+            {content[chosen.section]}
+          </section>
+        </main>
+      </Frame>
+    );
+  }
+
   return (
     <Frame current={null}>
       <Page pattern="ds-settings-page">
@@ -343,41 +483,9 @@ export function SettingsScreen({ section, onSignedOut }: { section: "agents" | n
             ))}
           </ul>
 
-          <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-agents`}>
-            <h2 ref={agentsHeading} tabIndex={-1} className="ds-settings-row__heading" id={`${id}-agents`}>
-              Agents
-            </h2>
-            {AGENTS.map(({ agent: key, name }) => {
-              const agent = agents?.find((found) => found.agent === key) ?? null;
-              return (
-                <div key={key} data-testid={`agent-${key}`} className="ds-settings-row">
-                  <div className="ds-settings-row__text">
-                    <p className="ds-settings-row__label">{name}</p>
-                    <p className="ds-settings-row__description">{agent !== null ? `${agentAbout(agent)} ${agentSteps(agent)}`.trim() : problem ?? (agents === null ? `Checking ${name}.` : `${name} is not offered by this Botbench.`)}</p>
-                  </div>
-                  <div className="ds-settings-row__control">
-                    <p data-testid="agent-state" role="status" className="ds-settings-row__status">
-                      {agent !== null ? agentState(agent) : problem !== null ? "Could not be checked" : agents === null ? "Checking" : "Not offered"}
-                    </p>
-                    {agent !== null && <AgentConnection agent={key} product={name} installed={agent.installed} supported={agent.supported} signedIn={agent.signedIn} version={version} onChanged={refresh} />}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {agentsGroup}
 
-          <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-runs`}>
-            <h2 className="ds-settings-row__heading" id={`${id}-runs`}>
-              Runs
-            </h2>
-            <ModePicker name="default-mode" legend="Default mode" hint="A new run starts with this mode chosen. You can pick another for each run." value={runMode} onChange={chooseMode} />
-            {modeProblem !== null && (
-              <Alert tone="error" role="alert">
-                {modeProblem}
-              </Alert>
-            )}
-            <AskEveryCommand onSignedOut={onSignedOut} />
-          </div>
+          {runsGroup}
 
           <ChatWebAccess onSignedOut={onSignedOut} />
 
@@ -387,32 +495,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: "agents" | n
 
           <MemorySettings onSignedOut={onSignedOut} />
 
-          <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-appearance`}>
-            <h2 className="ds-settings-row__heading" id={`${id}-appearance`}>
-              Appearance
-            </h2>
-            <div className="ds-settings-row">
-              <div className="ds-settings-row__text">
-                <label className="ds-settings-row__label" htmlFor={`${id}-mode`}>
-                  Mode
-                </label>
-                <p className="ds-settings-row__description" id={`${id}-mode-about`}>
-                  Dark is the default. Match device follows this device's own light or dark setting. Kept on this device only.
-                </p>
-              </div>
-              <div className="ds-settings-row__control">
-                <div className="ds-select">
-                  <select className="ds-field__control ds-select__control" id={`${id}-mode`} value={choice} aria-describedby={`${id}-mode-about`} onChange={(e) => chooseAppearance(e.currentTarget.value as Appearance)}>
-                    {MODES.map((mode) => (
-                      <option key={mode.value} value={mode.value}>
-                        {mode.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
+          {appearanceGroup}
 
           <NotificationSettings onSignedOut={onSignedOut} />
 
