@@ -175,6 +175,14 @@ export type LogRule =
   | "bookkeeping"
   /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it (src/peers/messages.ts). */
   | "peer_message_conflict"
+  /** An invite to pair with another workbench was made, withdrawn, or expired (src/peers/). Never holds the invite. */
+  | "peer_invite"
+  /** A step of pairing with another workbench: a pair request taken or refused, a confirmation, an end (src/peers/). */
+  | "peer_pairing"
+  /** Fixed-shape traffic sent to a paired workbench without a Send: an answer, a confirmation, a notice, a refusal (src/peers/). */
+  | "peer_protocol"
+  /** Traffic the peer listener refused, at most one row a minute per caller, with how many (src/peers/listener.ts). */
+  | "peer_refused"
   /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
   | "issue_claim"
   /** The owner answered an agent's question; `detail` holds the answer as given. */

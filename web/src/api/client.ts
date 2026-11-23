@@ -1024,7 +1024,15 @@ export type LogRule =
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory"
   /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
-  | "peer_message_conflict";
+  | "peer_message_conflict"
+  /** An invite to pair with another workbench was made, withdrawn, or expired. */
+  | "peer_invite"
+  /** A step of pairing with another workbench. */
+  | "peer_pairing"
+  /** A fixed reply or notice sent to a paired workbench without asking. */
+  | "peer_protocol"
+  /** What the listener for paired workbenches refused, at most one entry a minute, with how many. */
+  | "peer_refused";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {
