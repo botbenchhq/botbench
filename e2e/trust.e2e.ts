@@ -107,6 +107,10 @@ test("Check a command answers for each mode in words, the rule behind each named
     await page.getByRole("button", { name: "Check", exact: true }).click();
     await expect(page.getByRole("alert")).toHaveText("Give a command to check.");
     await expect(result).toHaveCount(0);
+    // The reason is about the command it was given: typing another clears it, and the box is no longer marked.
+    await box.fill("ls");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(box).not.toHaveAttribute("aria-invalid", "true");
 
     // Light, at a phone's width and a desktop's.
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
@@ -122,9 +126,15 @@ test("Check a command answers for each mode in words, the rule behind each named
     }
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "dark"));
     await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await run("ls src");
     await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: it runs kept in the task's copy, and the safety rules do not name it\.$/));
-    await checkDesign(page, "trust, a command that runs, dark, 1280px");
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(result).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px, dark`).toBe(true);
+      await checkDesign(page, `trust, a command that runs, dark, ${width}px`);
+    }
 
     // Nothing was asked, logged or granted.
     expect(await (await page.request.get(`${botbench.base}/api/approvals`)).json()).toEqual({ approvals: [] });

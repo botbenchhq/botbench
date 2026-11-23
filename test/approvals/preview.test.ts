@@ -8,7 +8,7 @@ import { commandProblem, previewCommand, type ModePreview } from "../../src/appr
 import { createTask } from "../../src/engine/task.ts";
 import { setAskEveryCommand } from "../../src/engine/modes.ts";
 import { openStore } from "../../src/store/db.ts";
-import { initRepo, tempDir } from "../support/repo.ts";
+import { initRepo, ownerCommit, tempDir } from "../support/repo.ts";
 import { bannedIn } from "../../e2e/voice.ts";
 
 // What a command would get in each mode, asked of the gate itself with a real store and a real repository. No driver
@@ -107,6 +107,24 @@ test("Ask before every command makes a Manual command ask, unless it is listed; 
 test("a listed entry that could never be allowed for a task is left out, as a task's start refuses it", (t) => {
   const { ask } = setup(t);
   assert.ok(ask("sh", ["sh"]).every((m) => m.rule !== "preapproved"));
+});
+
+test("a link the repository tracks is followed as a task's copy of it would follow it", (t) => {
+  const dir = tempDir("botbench-preview-link-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  const db = openStore(home);
+  t.after(() => db.close());
+  const repo = path.join(dir, "repo");
+  initRepo(repo);
+  // A tracked link that leads out of the copy: `rm -r out` deletes what lies outside it, and the always-ask list names that.
+  fs.symlinkSync("..", path.join(repo, "out"));
+  ownerCommit(repo, "a link out");
+  const modes = previewCommand(db, { settings: { home: path.join(dir, "owner"), dataDir: home }, repo, preapproved: [], command: "rm -r out" });
+  assert.deepEqual(modes.map((m) => [m.verdict, m.floor]), [["ask", "recursive-delete-outside-worktree"], ["ask", "recursive-delete-outside-worktree"], ["refuse", "recursive-delete-outside-worktree"]]);
+  // A plain folder of the repository is inside the copy: it runs.
+  fs.mkdirSync(path.join(repo, "build"));
+  assert.ok(previewCommand(db, { settings: { home: path.join(dir, "owner"), dataDir: home }, repo, preapproved: [], command: "rm -r build" }).every((m) => m.rule === "mode_confined"));
 });
 
 test("every line the check sends a screen keeps to the glossary", (t) => {

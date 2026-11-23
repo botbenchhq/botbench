@@ -51,9 +51,13 @@ export function previewCommand(db: DatabaseSync, o: { settings: FloorSettings & 
   const problem = commandProblem(o.command);
   if (problem !== null) throw new Error(problem);
   const repo = realRepo(o.repo);
-  // Where a task's copy lies, as a build's request names it: inside Botbench's data folder, so that the other tasks'
-  // copies and Botbench's records around it are guarded as they are for a real one. It need not exist.
-  const worktree = path.join(o.settings.dataDir, "worktrees", "run-preview", "task-preview");
+  // A task's copy is read in two places, and the stricter answer is given. Where it lies, inside Botbench's data folder
+  // (it need not exist), so that the other tasks' copies and Botbench's records around it are guarded as for a real one;
+  // and the repository's own checkout in its place, so that a link the repository holds (`out -> ..`) leads where it
+  // would lead from a copy. The checkout is only looked at, as the gate looks at paths: its links are followed, nothing
+  // in it is read or changed. A link the checkout has that its committed files do not, or the other way round, is the
+  // one difference left.
+  const copies = [path.join(o.settings.dataDir, "worktrees", "run-preview", "task-preview"), repo];
   const listed: Grant[] = o.preapproved
     .filter((entry) => entryProblem(entry) === null)
     .map((entry, i) => ({ id: -(i + 1), kind: "preapproved", role: IMPLEMENTER, repo, cwd: ".", words: splitPlain(entry)!, runId: PREVIEW_RUN, taskId: null, createdAt: "" }));
@@ -67,7 +71,9 @@ export function previewCommand(db: DatabaseSync, o: { settings: FloorSettings & 
     everyCommand = true;
   }
   return RUN_MODES.map((mode) => {
-    const verdict = gate({ tool: "Bash", input: { command: o.command }, worktree, cwd: worktree, mode, confined: true, askEveryCommand: everyCommand, outsideText: false, scope: { role: IMPLEMENTER, repo, runId: PREVIEW_RUN } }, grants, o.settings);
+    const verdicts = copies.map((worktree) => gate({ tool: "Bash", input: { command: o.command }, worktree, cwd: worktree, mode, confined: true, askEveryCommand: everyCommand, outsideText: false, scope: { role: IMPLEMENTER, repo, runId: PREVIEW_RUN } }, grants, o.settings));
+    // The first that does not let it run: a deny, a refusal or an ask; else the first, as both allow.
+    const verdict = verdicts.find((v) => v.verdict !== "allow") ?? verdicts[0]!;
     switch (verdict.verdict) {
       case "allow": {
         if (verdict.rule === "preapproved" || verdict.rule === "standing") {

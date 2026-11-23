@@ -78,7 +78,8 @@ function CommandCheck({ onSignedOut }: { onSignedOut: () => void }) {
   const [repo, setRepo] = useState("");
   const [command, setCommand] = useState("");
   const [checked, setChecked] = useState<Checked | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  /** Why the last check gave no answer, with the repository and command it was about: changing either clears it, as for an answer. */
+  const [failed, setFailed] = useState<{ path: string; command: string; text: string } | null>(null);
   const [checking, setChecking] = useState(false);
   // The first repository Botbench knows is chosen once the list arrives, so the box can be used at once.
   const chosen = repo !== "" ? repo : (known[0]?.path ?? "");
@@ -86,8 +87,8 @@ function CommandCheck({ onSignedOut }: { onSignedOut: () => void }) {
   const check = (e: FormEvent): void => {
     e.preventDefault();
     if (checking) return;
-    if (chosen === "") return setProblem("Choose a repository.");
-    setProblem(null);
+    if (chosen === "") return setFailed({ path: chosen, command, text: "Choose a repository." });
+    setFailed(null);
     setChecking(true);
     previewCommand(chosen, command).then(
       (answer) => {
@@ -98,11 +99,12 @@ function CommandCheck({ onSignedOut }: { onSignedOut: () => void }) {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setChecking(false);
         setChecked(null);
-        setProblem(err instanceof ApiError ? err.message : "The command was not checked: Botbench could not be reached.");
+        setFailed({ path: chosen, command, text: err instanceof ApiError ? err.message : "The command was not checked: Botbench could not be reached." });
       },
     );
   };
   const shown = checked !== null && checked.path === chosen && checked.command === command ? checked : null;
+  const problem = failed !== null && failed.path === chosen && failed.command === command ? failed.text : null;
   const described = [`${id}-command-about`, ...(problem === null ? [] : [`${id}-problem`])].join(" ");
 
   return (
