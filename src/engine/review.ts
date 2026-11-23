@@ -13,7 +13,8 @@ import { agentName, MAX_REVIEW_DIFF, parseVerdict, reviewerPrompt, type PlanTask
  * Codex see src/drivers/codex.ts), with no network, no way to ask the owner anything and a time limit. Its reply is
  * stored on the task as one review of its round, append-only, and is a model's opinion, not a check. A reviewer that
  * cannot start, fails, runs out of time or is stopped leaves a review that says so in plain words. The reply is data: it
- * is never run. Only its verdict line is read by Botbench, to decide whether the builder is asked for fixes; the builder
+ * is never run. Only its verdict line is read by Botbench, to decide whether the builder is asked for fixes, and the lines
+ * under its "Checked:" heading, without which it cannot be satisfied (engine/refine.ts, `reviewOutcome`); the builder
  * is then given the reply as another model's opinion, set apart as data (engine/refine.ts).
  */
 

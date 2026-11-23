@@ -66,7 +66,7 @@ test("a task's reviews, its rounds of fixes, the outcome and its plain line are 
   insertRefinement(db, { taskId: id, round: 1, attemptId: null, outcome: "finished", changed: true, reply: REPLY, problem: null, fromCommit: first, headCommit: fixed, startedAt: new Date().toISOString() });
   moveTask(db, id, "verifying", { headCommit: fixed });
   moveTask(db, id, "reviewing", { checks: "passed" });
-  reviewed(2, "looks_right", "Verdict: looks right\nFindings:\n- none", fixed);
+  reviewed(2, "looks_right", "Verdict: looks right\nChecked:\n- calc.py: add returns a + b\n- the criterion: add(a, b) is defined\nNot checked: nothing left out\nFindings:\n- none", fixed);
   moveTask(db, id, "awaiting_decision");
 
   task = await get(`/api/tasks/${id}`);
@@ -77,8 +77,10 @@ test("a task's reviews, its rounds of fixes, the outcome and its plain line are 
   assert.equal(task.earlierAttempts, 1, "the build's session is kept, and the screen says so above the latest one");
   assert.equal(task.reviewLine, "Codex raised 1 concern. Claude Code addressed 1. Codex is satisfied.");
   assert.equal(task.checks, "passed", "what the checks found for the fixed work");
-  const reviews = task.reviews as { round: number; verdict: string; headCommit: string }[];
+  const reviews = task.reviews as { round: number; verdict: string; headCommit: string; checked: string[]; accountNote: string | null }[];
   assert.deepEqual(reviews.map((r) => [r.round, r.verdict, r.headCommit]), [[1, "concerns", first], [2, "looks_right", fixed]]);
+  // What each review says it checked, for the screen; the first gave no account and carries the plain note.
+  assert.deepEqual(reviews.map((r) => [r.checked, r.accountNote]), [[[], "The reviewer gave no account of what it checked."], [["calc.py: add returns a + b", "the criterion: add(a, b) is defined"], null]]);
   assert.equal((task.review as { round: number }).round, 2, "the latest review, as before");
   const refinements = task.refinements as Record<string, unknown>[];
   assert.equal(refinements.length, 1);

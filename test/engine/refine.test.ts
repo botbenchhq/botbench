@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { reviewOutcome as reviewOutcomeOf } from "../../src/engine/modes.ts";
-import { loopRecord, outcomeLine, reviewOutcome, taskRefinements } from "../../src/engine/refine.ts";
+import { loopRecord, outcomeLine, parseChecked, reviewOutcome, taskRefinements } from "../../src/engine/refine.ts";
 import { taskReviews } from "../../src/engine/review.ts";
 import { createRun, createRuns, getRun, storePlan, type Runs } from "../../src/engine/run.ts";
 import { taskEvidence, type StationCommand } from "../../src/engine/stations.ts";
@@ -89,7 +89,7 @@ const outcome = (db: DatabaseSync, id: number) => {
   return { outcome: reviewOutcome(record), line: outcomeLine(record) };
 };
 
-test("concerns: the builder is given the review, fixes the work in the same copy with the same permissions, the checks run again on the new commit, and the reviewer, asked again with the builder's reasons, is satisfied", async (t) => {
+test("concerns: the builder is given the review, fixes the work in the same copy with the same permissions, the checks run again on the new commit, and the reviewer, asked again with the builder's reasons, says it looks right (its recorded reply names nothing it checked, so it is not satisfied)", async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "second-review"]);
   const { taskId } = approved(e);
   await e.tasks.idle();
@@ -120,7 +120,7 @@ test("concerns: the builder is given the review, fixes the work in the same copy
   assert.deepEqual(checkRounds(e.db, taskId), ["1:failed", "2:passed"]);
   assert.equal(task.checks, "passed");
 
-  // Asked again with the new diff and the builder's reasons; satisfied.
+  // Asked again with the new diff and the builder's reasons; it looks right, with no account of what it checked.
   assert.equal(e.reviewer.started.length, 2);
   assert.match(e.reviewer.prompts[1]!, /This is your review number 2 of this task/);
   assert.match(e.reviewer.prompts[1]!, /<builder-reasons>\n- none\n<\/builder-reasons>/);
@@ -130,7 +130,7 @@ test("concerns: the builder is given the review, fixes the work in the same copy
   assert.deepEqual([fix!.round, fix!.outcome, fix!.changed, fix!.fromCommit, fix!.headCommit], [1, "finished", true, first!.headCommit, task.headCommit]);
   assert.match(fix!.reply, /Addressed:\n- calc\.py:2/);
   assert.equal(fix!.attemptId, task.attemptId);
-  assert.deepEqual(outcome(e.db, taskId), { outcome: "satisfied", line: "Codex raised 1 concern. Claude Code addressed 1. Codex is satisfied." });
+  assert.deepEqual(outcome(e.db, taskId), { outcome: "unaccounted", line: "Codex raised 1 concern. Claude Code addressed 1. Codex said it looks right but gave no account of what it checked: needs your judgment." });
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM approvals").get()!.n, 0, "nothing was asked of the owner");
 });
 
@@ -242,7 +242,7 @@ test("a restart while the builder works on fixes takes the round up again once, 
   assert.match(e.builder.prompts[3]!, /<review>\nVerdict: concerns/);
   assert.deepEqual(taskReviews(e.db, taskId).map((r) => r.verdict), ["concerns", "looks_right"]);
   assert.equal(taskRefinements(e.db, taskId)[0]!.changed, true);
-  assert.equal(outcome(e.db, taskId).outcome, "satisfied");
+  assert.equal(outcome(e.db, taskId).outcome, "unaccounted", "the recorded second review names nothing it checked");
 });
 
 test("rounds of fixes are append-only, follow a review of the same round, and a run's cap is fixed once it starts", async (t) => {
@@ -281,10 +281,26 @@ test("a fully autonomous run whose loop ends with a failed review hands the task
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM decisions WHERE task_id = ?").get(taskId)!.n, 0);
 });
 
-test("a fully autonomous run whose loop ends with the reviewer satisfied, its checks passing on the fixed work, is accepted by the mode", async (t) => {
+test("a fully autonomous run whose loop ends with a looks-right verdict that names nothing it checked, its checks passing on the fixed work, hands the task back to the owner and accepts nothing", async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "second-review"]);
   const { taskId } = approved(e, 2, "full");
   await e.tasks.idle();
+  const task = getTask(e.db, taskId)!;
+  assert.equal(taskReviews(e.db, taskId).at(-1)!.verdict, "looks_right");
+  assert.equal(task.checks, "passed");
+  assert.equal(reviewOutcomeOf(e.db, taskId), "unaccounted");
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.match(task.reason!, /It needs your review: The reviewer gave no account of what it checked\./);
+  assert.equal(e.db.prepare("SELECT count(*) AS n FROM decisions WHERE task_id = ?").get(taskId)!.n, 0);
+});
+
+test("a fully autonomous run whose loop ends with a looks-right review that names what it checked, its checks passing on the fixed work, is accepted by the mode", async (t) => {
+  const e = await line(t, ["done", "refine"], ["review", "checked-review"]);
+  const { taskId } = approved(e, 2, "full");
+  await e.tasks.idle();
+  const last = taskReviews(e.db, taskId).at(-1)!;
+  assert.equal(last.verdict, "looks_right");
+  assert.ok(parseChecked(last.text).length >= 2, `the recorded review says what it checked:\n${last.text}`);
   assert.equal(reviewOutcomeOf(e.db, taskId), "satisfied");
   assert.equal(getTask(e.db, taskId)!.status, "accepted", getTask(e.db, taskId)!.reason ?? "");
   assert.equal(e.db.prepare("SELECT decided_by FROM decisions WHERE task_id = ?").get(taskId)!.decided_by, "mode");

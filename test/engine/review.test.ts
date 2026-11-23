@@ -245,6 +245,6 @@ test("the review's verdict is read only from its first line in the asked form", 
   assert.equal(parseVerdict(""), null);
   const prompt = reviewerPrompt({ task: ONE[0]!, diff: "", cut: null });
   assert.match(prompt, /\(The task changed no file\.\)/);
-  assert.match(prompt, /Verdict: looks right\nFindings:/);
+  assert.match(prompt, /Verdict: looks right\nChecked:\n/);
 });
 
