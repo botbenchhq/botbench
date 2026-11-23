@@ -8,9 +8,9 @@ It is for developers on macOS who use Claude Code. If a teammate runs their own 
 
 <!-- CAPTURE: a 20 to 30 second screen recording at phone size, from a real task in a practice repository: type the task in the message box, Send, the approval card appears, Allow once, the task reads Ready for review with its changed file and branch, Accept. Upload it to GitHub and put its <video> tag here, above the screenshots. -->
 
-<img src="docs/images/desktop-work.png" alt="Botbench on a desktop screen, dark theme: a column of chats and work on the left, each row an issue on jon-lange/botbench with its run number and state; on the right a finished task whose reviewer, Codex, raised concerns in three rounds, with the one changed file, docs/reviews/design-vs-paperclip.md, the note it was accepted with, and its branch botbench/dev3/run-6/task-6" width="100%">
+<img src="docs/images/desktop-work.png" alt="A task on a desktop screen, dark theme. Checks: 2 of 2 checks passed, npm run typecheck and npm test, each Passed. Then Codex's review of Claude Code's work: Codex raised 3 concerns, then 4; Claude Code addressed 1 and explained 6; needs your judgment. Review 1 lists what Codex checked" width="720">
 
-*On a desktop screen, from a real run on this repository.*
+*On a desktop screen: a real task's checks and its reviewer's verdict, from a run on this repository.*
 
 <p>
   <img src="docs/images/approval-card.png" alt="A task titled by its own words, showing one approval card: Claude Code asks to run a command, sh make-marker.sh, with its folder and reason, Allow once, Deny, and Deny and say what to do instead; below it the transcript line Needs input, Wants to run sh make-marker.sh" width="200">
@@ -66,6 +66,9 @@ It is for developers on macOS who use Claude Code. If a teammate runs their own 
 | | Opening a pull request for an accepted task, with your own `git` and `gh`; never merged | `src/engine/delivery.ts`, `src/github.ts` |
 | | A run started from one GitHub issue you name, read with your own `gh` and treated as outside text (no command allowed in advance or always allowed, no network unless you allow it, never fully autonomous); its pull request closes the issue. Nothing is posted to GitHub | `src/engine/intake.ts` |
 | | Named workbenches, and a read-only view of other workbenches' open pull requests and pushed branches on the same remote, with a warning when one already covers your issue or your files. With `"claimIssues": true` for a repository in the settings file (off by default), a run from an issue that you set to open pull requests claims the issue as it starts: two empty branches other workbenches see, created by the remote only if no other workbench holds the issue, so the later one stops and opens no pull request; they are deleted if the run ends without a pull request | `src/workbench.ts`, `src/engine/peers.ts`, `src/engine/claims.ts`, `web/src/app/peers.ts` |
+| | Checking a ready task together with another workbench's open pull request: Botbench merges the two in a temporary copy and runs the repository's own setup and checks on the merge, confined like any check, then shows the result, labelled as including another workbench's code. It pushes nothing and removes the copy. The result counts only while both branches are still at the commits it ran on. With "require checking together" set for a repository by its owner through the API, a fully autonomous run does not accept a task by itself while an open pull request from another workbench that changes the same files has no passing, current check together | `src/engine/combined.ts`, `src/api/check-together.ts`, `web/src/components/check-together.tsx` |
+| | Watching a repository for open issues that carry a label you chose (`"watch": { "label": …, "intervalMinutes": … }` in the settings file): Work lists each as a proposal, with Start and Dismiss. It starts nothing by itself, and an issue is proposed once | `src/engine/watch.ts`, `docs/adr/0008-watch-issues.md` |
+| | When a builder's usage limit is reached, its task waits and Botbench starts the builder again once, in the same session, at the reset time the agent gave (or after 30 minutes, or `autonomy.usageLimitWaitSeconds`); a second limit stops the task for you | `src/engine/usage-limit.ts` |
 | | Chat with Claude Code, Codex, Grok or Antigravity outside a repository, or ask several at once and compare | `web/src/screens/turn.tsx` |
 | | One message box to start chats, tasks and runs; dictation transcribed on the Mac; Accept or Reject; runs board, usage, settings, signed-in devices; recovery after a restart | `web/src/screens/`, `src/dictation/`, `src/api/auth.ts` |
 | **In the code, not confirmed on a real iPhone** | Adding Botbench to the phone's Home Screen, and notifications when an approval is waiting or a task is ready | `src/push.ts`, `web/public/` |
@@ -152,7 +155,7 @@ Two developers, each with their own Mac, their own Botbench and their own agents
 - **You are warned before you overlap.** Under the message box, when another workbench already has a pull request open for the issue you attached, or has started on it. Under Your decision, when another workbench's open pull request changes the same files as your task, so the two may conflict when both are merged.
 - **Only one of you takes an issue, if you choose.** With `"claimIssues": true` for the repository in each settings file, a run from an issue that opens pull requests claims the issue as it starts, with two empty branches on the remote. The remote takes only the first claim; the other workbench's run stops and says who started first. Nothing is pushed for a run that keeps its work on your Mac.
 
-Apart from a claim, nothing is written to GitHub for this, and nothing another workbench wrote is put in a prompt to your agents. It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. Checking two branches together is not built yet: see [What's next](#whats-next).
+Apart from a claim, nothing is written to GitHub for this, and nothing another workbench wrote is put in a prompt to your agents. It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. Checking your task together with another workbench's open pull request is built: on a task that is ready for review, you ask for it, and Botbench merges the two in a temporary copy and runs the repository's own checks on the merge (`src/engine/combined.ts`). What it can and cannot tell you is in the table above.
 
 <img src="docs/images/desktop-peers.png" alt="The Work screen on a desktop, Other workbenches: two branches pushed by teammates, botbench/dev2/run-19/issue-70 and botbench/dev3/run-15/issue-72, each with its workbench name, the issue it started on, how long ago, and the repository" width="100%">
 
@@ -186,13 +189,10 @@ Its author, on this repository. Where it can, Botbench is built with Botbench, u
 
 Planned, not in this code. Each links to its issue.
 
-- **Taking an issue shows to other workbenches** ([#82](https://github.com/jon-lange/botbench/issues/82)).
-- **A check that two workbenches' branches must pass together**, so "these fit" is something that ran ([#83](https://github.com/jon-lange/botbench/issues/83)).
-- **Workbenches that talk directly**, with a decision record and threat review before any code ([#84](https://github.com/jon-lange/botbench/issues/84)).
+- **Workbenches that talk directly** (Peers P5): a decision record and threat review are written, in [ADR 0004](docs/adr/0004-peers-direct-messages.md); the code is not.
 - **Codex as a builder**, not only a reviewer ([#70](https://github.com/jon-lange/botbench/issues/70)).
 - **One container per task** ([#72](https://github.com/jon-lange/botbench/issues/72)).
-- **Watching a repository for new issues** and proposing runs ([#73](https://github.com/jon-lange/botbench/issues/73)).
-- **Waiting for a usage limit to reset**, then resuming once ([#71](https://github.com/jon-lange/botbench/issues/71)).
+- **An agent that asks you a question**: a card with lettered choices that the builder or planner raises ([#88](https://github.com/jon-lange/botbench/issues/88)).
 
 The order and the reasons are in [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md).
 
