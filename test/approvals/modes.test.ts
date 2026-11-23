@@ -145,6 +145,9 @@ test("a fully autonomous run accepts only when every check passed, the review is
   assert.equal(no({ checks: "passed", review: "unresolved", refusals: [] }), "It needs your review: The reviewer raised concerns.");
   assert.equal(no({ checks: "passed", review: "failed", refusals: [] }), "It needs your review: The review did not finish.");
   assert.equal(no({ checks: "passed", review: "none", refusals: ["git push origin HEAD"] }), "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
+  assert.equal(no({ checks: "passed", review: "none", refusals: [], protectedFiles: ["test/recordings/a.json"] }), "It needs your review: It changed 1 file under a protected path, which only you can accept: test/recordings/a.json.");
+  assert.equal(no({ checks: "passed", review: "satisfied", refusals: [], unexpectedFiles: ["src/server.ts", "notes.txt"] }), "It needs your review: It changed 2 files not expected from the plan: src/server.ts, notes.txt.");
+  assert.equal(autoAccept({ checks: "passed", review: "none", refusals: [], protectedFiles: [], unexpectedFiles: [] }).accept, true);
   assert.equal(no({ checks: "failed", review: "unresolved", refusals: ["sudo ls", "WebFetch https://x"] }), "It needs your review: A check failed. The reviewer raised concerns. Botbench refused 2 things an agent asked to do during this task (sudo ls; WebFetch https://x).");
 });
 

@@ -3,12 +3,13 @@ import type { Confinement } from "../confinement.ts";
 import { DriverUnavailableError, type Driver, type DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now } from "../store/db.ts";
-import { commitsDiff } from "../worktrees.ts";
+import { commitsDiff, describeCommits } from "../worktrees.ts";
 import { agentName, MAX_REVIEW_DIFF, parseVerdict, reviewerPrompt, type PlanTask, type PreviousReview } from "./roles.ts";
 
 /*
  * The review station (U20, in part). Once a task of a run that names a reviewer is built, committed and checked, the
- * reviewer is sent the task's title, its acceptance criteria and its diff, from the commit it started from to the commit
+ * reviewer is sent the task's title, its acceptance criteria, the full list of the files it changed (with the request to
+ * flag any that does not belong to the task) and its diff, from the commit it started from to the commit
  * Botbench made, cut at MAX_REVIEW_DIFF characters. It works read-only in the task's copy (the driver decides how; for
  * Codex see src/drivers/codex.ts), with no network, no way to ask the owner anything and a time limit. Its reply is
  * stored on the task as one review of its round, append-only, and is a model's opinion, not a check. A reviewer that
@@ -144,15 +145,17 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
   };
 
   let diff: string;
+  let files: string[];
   try {
     diff = await commitsDiff({ path: o.worktree, baseCommit: o.baseCommit, headCommit: o.headCommit });
+    files = (await describeCommits({ repo: o.worktree, baseCommit: o.baseCommit, headCommit: o.headCommit })).map((file) => file.path);
   } catch (err) {
     problem = `${name} was not started: Botbench could not read the task's changes (${words(err)}).`;
     return store();
   }
   diffChars = diff.length;
   diffCut = diff.length > MAX_REVIEW_DIFF;
-  const prompt = reviewerPrompt({ task: o.task, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null, tools: o.driver.capabilities.tools !== false, ...(o.previous ? { previous: o.previous } : {}) });
+  const prompt = reviewerPrompt({ task: o.task, files, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null, tools: o.driver.capabilities.tools !== false, ...(o.previous ? { previous: o.previous } : {}) });
 
   if (o.signal?.aborted) {
     outcome = "stopped";
