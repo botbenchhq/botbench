@@ -1,5 +1,5 @@
 import path from "node:path";
-import { hereDocuments, quotedPieces, roughSegments, splitPlain, type HereDocument, type QuotedWord } from "./shell.ts";
+import { hereDocuments, quotedPieces, roughSegments, splitPlain, strictShape, type HereDocument, type QuotedWord, type StrictWord } from "./shell.ts";
 
 /*
  * The safety floor: the commands that always ask the owner, whatever grants exist. It is a short table of
@@ -9,10 +9,12 @@ import { hereDocuments, quotedPieces, roughSegments, splitPlain, type HereDocume
  * The floor leans towards asking. A rule looks at every word of the command as if a program could start
  * there, so `env sudo ls` and `xargs rm -rf` are caught, and so is `echo sudo`: asking once too often is
  * the cheap mistake. An argument that holds a command of its own (`env -S 'sudo ls'`) is read as one too.
- * Words are read as paths the way the shell hands them over: a search pattern, a sed or awk script and the code
- * given to an interpreter are text, of which only full paths count as places (`textPlace`); the text of a
- * here-document is input to the program it is given to (`hereKind`); a glob under a folder inside the worktree stays
- * inside it (`globInsideWorktree`). Where the reading is not sure of itself it reads every word, as it always did.
+ * The floor decides in two steps (`floor`). The earlier reading, which reads every word roughly, decides first
+ * (`readingAsWritten`). Only a verdict it names under one of these rules can be lifted, and only for a command of the
+ * strict shape (shell.ts `strictShape`), read again the way the shell hands its words over (`readingByShape`): a
+ * search pattern, a sed or awk script and the code given to an interpreter are text, of which only full paths count as
+ * places (`textPlace`); the text of a here-document is input to the program it is given to (`hereKind`); a glob under
+ * a folder inside the worktree stays inside it (`globInsideWorktree`). Every other command keeps the earlier verdict.
  * The floor reads the command line only. What a program then does (a script's content, an alias, an npm
  * script) is not seen here, and the floor names known dangerous forms, not everything that can do harm.
  * It decides from the text and the context it is given; it touches the file system only through `real`.
@@ -126,23 +128,16 @@ const operands = (rest: Words): Words => {
 const optionShaped = (word: string): boolean => /^-[A-Za-z]+$|^--[a-z-]+$/.test(word);
 
 /**
- * Whether an operand of `rm` that is a glob can only name places strictly inside the worktree: one last part with a
- * glob in it (`*`, `?`, `[…]`), under a folder shown to lie strictly inside the worktree (`test-results/*`; `*` and `./*`
- * only from a folder below its top). What `rm` is handed is then an entry of that folder, which `rm -r` deletes without
- * following it if it is a link. Not when the part could match `..` or `.` (it starts with `.` or a bracket), when another
- * part follows it (a link it matched would be followed), when a brace list, a variable or a substitution could put
- * anything there, or when a zsh glob qualifier, which can run code, may follow it (`*(e:…:)`). Only when nothing before
- * the `rm` could have moved the folder or put a link where it is (`globsStay`).
+ * Whether an operand of `rm` that is a glob can only name places strictly inside the worktree: a relative, unquoted
+ * folder shown to lie strictly inside the worktree with links followed, then exactly `/*` (`rm -rf test-results/*`).
+ * `rm` is then handed entries of that folder, and deletes a link among them without following it. Only in a command
+ * where nothing could have changed folder or put a link in place first (`globsStay`); any other glob (`**`, `***`, `?`,
+ * a bracket, a brace, a `.` that could match `..`) is not.
  */
 function globInsideWorktree(word: string, reading: Reading): boolean {
-  const glob = word.search(/[*?[]/);
-  if (!reading.globsStay || glob === -1 || /[{}$`\\]/.test(word) || /[^\s;&|<>()]\(/.test(reading.raw)) return false;
-  // A `cd` anywhere, also behind another word (`builtin cd ~ &&`, `if cd ~; then`), may have moved where the folder is.
-  if (reading.segments.some((segment) => segment.some((w) => oneOf("cd", "chdir", "pushd", "popd")(program(w))))) return false;
-  const cut = word.lastIndexOf("/", glob);
-  const last = word.slice(cut + 1);
-  if (cut === 0 || last === "" || last.includes("/") || last.startsWith(".") || last.startsWith("[")) return false;
-  return insideWorktree(cut === -1 ? "." : word.slice(0, cut), reading);
+  if (!reading.globsStay || !/^[A-Za-z0-9_.:@%+,-][A-Za-z0-9_./:@%+,-]*\/\*$/.test(word)) return false;
+  const folder = word.slice(0, -2);
+  return !folder.split("/").includes("..") && insideWorktree(folder, reading);
 }
 
 /** A recursive run of a program over something that is not shown to lie inside the worktree. No operand at all shows nothing. `globs`: an operand may be a glob inside it (`rm` only). */
@@ -251,18 +246,22 @@ function fragmentPlace(word: string, reading: Reading): boolean {
  */
 function textPlace(text: string, reading: Reading): boolean {
   const home = reading.ctx.home;
-  return text
-    .replace(/\$\{HOME\}|\$HOME\b/g, home)
-    .split(/[\s'"`(),;:=<>|&]+/)
-    .some((word) => {
-      if (/^~[A-Za-z0-9_.-]+(?:\/|$)/.test(word)) return true;
-      const written = word.startsWith("~/") ? path.join(home, word.slice(2)) : word.startsWith("/") ? word : null;
-      if (written === null) return false;
-      const glob = written.search(/[*?[\]{}]/);
-      if (glob !== -1) return path.resolve(written.slice(0, glob) || "/") !== "/" && reachesGuarded(written.slice(0, glob), reading);
-      const full = path.resolve(written);
-      return full !== "/" && guardedAt(full, reading.ctx);
-    });
+  const written = text.replace(/\$\{HOME\}|\$HOME\b/g, home);
+  // `~name` where a word could start: another user's home.
+  if (/(?:^|[^A-Za-z0-9_.\-/~$])~[A-Za-z0-9_.-]+(?:\/|$|[^A-Za-z0-9_.-])/.test(written)) return true;
+  // Every full path written out, wherever it starts in the text, whatever the language's quoting around it (`'/x'`,
+  // `q{/x}`, `qw[/x]`, `("/x")`, `=/x`): a `/` or `~/` after the start or a character no path holds, to the next
+  // character no path holds. Glob characters stay in it, and count as far as they may reach.
+  for (const match of written.matchAll(/(?:^|[^A-Za-z0-9_.\-~$])(~?\/[^\s'"`(),;<>|&=:]*)/g)) {
+    const found = match[1]!;
+    const place = found.startsWith("~/") ? path.join(home, found.slice(2)) : found;
+    if (found.startsWith("~") && !found.startsWith("~/")) continue;
+    const glob = place.search(/[*?[\]{}]/);
+    if (glob !== -1) {
+      if (path.resolve(place.slice(0, glob) || "/") !== "/" && reachesGuarded(place.slice(0, glob), reading)) return true;
+    } else if (path.resolve(place) !== "/" && guardedAt(path.resolve(place), reading.ctx)) return true;
+  }
+  return false;
 }
 
 /**
@@ -612,8 +611,25 @@ function textArguments(piece: readonly QuotedWord[]): { word: QuotedWord; matche
 
 /** Programs and builtins that change what later programs see: variables, the environment, options, aliases, functions. */
 const SETS_THE_SHELL = new Set(["export", "declare", "typeset", "local", "readonly", "set", "setopt", "unsetopt", "shopt", "alias", "unalias", "unset", "hash", "enable", "disable", "source", ".", "eval", "emulate", "function"]);
-/** Programs that can neither change folder nor put a link in place, before an `rm` whose globs may stay inside the worktree. */
-const CANNOT_MOVE = new Set(["mkdir", "rm", "true"]);
+
+/**
+ * Whether nothing that runs before or alongside an `rm` of a command of the strict shape could change folder or put a
+ * link where its glob looks: `rm` stands only as the first word of a piece (not behind `find -exec`, not in quoted text a
+ * program may run), and every piece up to the last `rm` is `rm` or `mkdir` with no variable set, alone in its pipeline.
+ * What comes after the last `rm` runs only once it has finished (`;`, `&&`, `||`, a line break), so it is not looked at.
+ */
+function globsStayIn(shape: { pieces: readonly (readonly StrictWord[])[]; joins: readonly string[] }): boolean {
+  const firstWord = (piece: readonly StrictWord[]): StrictWord => piece.find((word) => !word.redirect)!;
+  const rmWord = (word: StrictWord): boolean => word.kind !== "bare" ? /(?:^|[^A-Za-z0-9_.-])rm(?:$|[^A-Za-z0-9_.-])/.test(word.text) : program(word.text) === "rm";
+  if (shape.pieces.some((piece) => piece.some((word) => word !== firstWord(piece) && rmWord(word)))) return false;
+  const last = shape.pieces.findLastIndex((piece) => program(firstWord(piece).text) === "rm");
+  if (last === -1) return false;
+  return shape.pieces.slice(0, last + 1).every((piece, at) => {
+    const first = firstWord(piece);
+    const alone = (at === 0 || shape.joins[at - 1] !== "|") && shape.joins[at] !== "|";
+    return alone && !ASSIGNS.test(first.text) && (first.text === "rm" || first.text === "mkdir");
+  });
+}
 
 /** Interpreters a here-document can give code to: what the code runs is still read, and only full paths in it count as places. */
 const INTERPRETER = /^(?:python[0-9.]*|node|perl|ruby|php)$/;
@@ -656,7 +672,7 @@ const roughWithout = (command: string, words: readonly QuotedWord[], home: strin
 const joinLines = (text: string): string => text.replace(/\\\r?\n/g, "");
 
 /** What the rules read of a command that is not one plain command. */
-function notPlainReading(given: string, ctx: FloorContext): Reading {
+function notPlainReading(given: string, ctx: FloorContext, shape: { pieces: readonly (readonly StrictWord[])[]; joins: readonly string[] }): Reading {
   const here = hereDocuments(given);
   // Not sure where its here-documents are: the whole text is read as commands and paths, as it always was.
   const command = joinLines(here?.command ?? given);
@@ -700,10 +716,7 @@ function notPlainReading(given: string, ctx: FloorContext): Reading {
     texts: [...args.map((arg) => arg.word.text), ...code],
     named: [...named(command, shellSegments), ...commands.flatMap((text) => named(text, rough(text)))],
     plain: false,
-    globsStay: quoted !== null && commands.length === 0 && (() => {
-      const last = quoted.pieces.findLastIndex((piece) => piece.some((word) => program(word.text) === "rm"));
-      return last !== -1 && quoted.pieces.every((piece, at) => !piece.slice(1).some((word) => program(word.text) === "rm") && (at > last || (!ASSIGNS.test(piece[0]!.text) && !piece[0]!.text.includes("/") && CANNOT_MOVE.has(program(piece[0]!.text)))));
-    })(),
+    globsStay: bodies.length === 0 && globsStayIn(shape),
     raw: [command, ...commands, ...code].join("\n"),
     ctx,
   };
@@ -727,32 +740,61 @@ const holds = (segment: Words, entry: FloorEntry): boolean =>
  * always asks the owner. The same text and context give the same answer.
  */
 export function floor(given: string, ctx: FloorContext): string | null {
-  const words = splitPlain(given);
-  let reading: Reading;
-  if (words === null) {
-    reading = notPlainReading(given, ctx);
-  } else {
-    // An argument with a space in it may be a command for the program to run (`env -S`, `git … foreach`, `find -exec sh -c`);
-    // a search pattern is not one, and a script or code is read as places only for its full paths.
-    // The same words read with their quotes, to know which stood inside them: a plain command is one piece.
-    const read = quotedPieces(given);
-    const quotedWords = read !== null && read.pieces.length === 1 && read.pieces[0]!.length === words.length ? read.pieces[0]!.map((word, at) => ({ ...word, from: at })) : [];
-    const args = textArguments(quotedWords);
-    const isArg = (at: number, matched?: boolean): boolean => args.some((arg) => arg.word.from === at && (matched === undefined || arg.matched === matched));
-    const inner = (skip: (at: number) => boolean): string[][] => words.flatMap((word, at) => (word.includes(" ") && !skip(at) ? roughSegments(word, ctx.home) : []));
-    reading = {
-      segments: [words, ...inner((at) => isArg(at, true))],
-      paths: [words.filter((_, at) => !isArg(at)), ...inner((at) => isArg(at))],
-      fragments: [],
-      texts: args.map((arg) => arg.word.text),
-      named: [],
-      plain: true,
-      globsStay: false,
-      raw: given,
-      ctx,
-    };
-  }
-  // The owner's own entries first: they say in the owner's words why this asks.
-  for (const entry of ctx.extra ?? []) if (reading.segments.some((segment) => holds(segment, entry))) return entry.name;
+  const before = decide(readingAsWritten(given, ctx));
+  // Only a rule of the floor that the earlier reading named can be lifted, never an entry of the owner's, and only for a
+  // command of the strict shape (shell.ts `strictShape`); every other command keeps the earlier reading's verdict.
+  if (before === null || before === NOT_PLAIN || !FLOOR_RULES.some((rule) => rule.name === before)) return before;
+  const shape = strictShape(given);
+  if (shape === null) return before;
+  const after = decide(readingByShape(given, ctx, shape));
+  return after === null || after === NOT_PLAIN ? after : before;
+}
+
+/** The owner's own entries first, as they say in the owner's words why a command asks; then the floor's rules in order. */
+function decide(reading: Reading): string | null {
+  for (const entry of reading.ctx.extra ?? []) if (reading.segments.some((segment) => holds(segment, entry))) return entry.name;
   return FLOOR_RULES.find((rule) => rule.matches(reading))?.name ?? null;
+}
+
+/**
+ * The floor's reading as it was before issue 133, and its verdict for every command not of the strict shape: every word
+ * of a command that is not plain read roughly, quotes dropped, as a possible program and a possible place, and every
+ * argument of a plain command with a space in it read as a command of its own.
+ */
+function readingAsWritten(given: string, ctx: FloorContext): Reading {
+  // A backslash at the end of a line joins it to the next, before anything else is read (`git pu\<newline>sh`).
+  const command = joinLines(given);
+  const words = splitPlain(given);
+  const outer = words === null ? roughSegments(command, ctx.home) : [words];
+  // An argument with a space in it may be a command for the program to run (`env -S`, `git … foreach`, `find -exec sh -c`).
+  const inner = outer.flatMap((segment) => segment.filter((word) => word.includes(" ")).flatMap((word) => roughSegments(word, ctx.home)));
+  const segments = [...outer, ...inner];
+  const quoted = words === null ? quotedPieces(command, true) : null;
+  const named = words !== null ? [] : quoted === null ? allLive(segments) : [...quoted.pieces, ...allLive(quoted.substitutes ? segments : inner)];
+  return { segments, paths: segments, fragments: [], texts: [], named, plain: words !== null, globsStay: false, raw: command, ctx };
+}
+
+/** The reading of issue 133, for a command of the strict shape: words read as places the way the shell hands them over. */
+function readingByShape(given: string, ctx: FloorContext, shape: { pieces: readonly (readonly StrictWord[])[]; joins: readonly string[] }): Reading {
+  const words = splitPlain(given);
+  if (words === null) return notPlainReading(given, ctx, shape);
+  // An argument with a space in it may be a command for the program to run (`env -S`, `git … foreach`, `find -exec sh -c`);
+  // a search pattern is not one, and a script or code is read as places only for its full paths. The same words read
+  // with their quotes, to know which stood inside them: a plain command is one piece.
+  const read = quotedPieces(given);
+  const quotedWords = read !== null && read.pieces.length === 1 && read.pieces[0]!.length === words.length ? read.pieces[0]!.map((word, at) => ({ ...word, from: at })) : [];
+  const args = textArguments(quotedWords);
+  const isArg = (at: number, matched?: boolean): boolean => args.some((arg) => arg.word.from === at && (matched === undefined || arg.matched === matched));
+  const inner = (skip: (at: number) => boolean): string[][] => words.flatMap((word, at) => (word.includes(" ") && !skip(at) ? roughSegments(word, ctx.home) : []));
+  return {
+    segments: [words, ...inner((at) => isArg(at, true))],
+    paths: [words.filter((_, at) => !isArg(at)), ...inner((at) => isArg(at))],
+    fragments: [],
+    texts: args.map((arg) => arg.word.text),
+    named: [],
+    plain: true,
+    globsStay: false,
+    raw: given,
+    ctx,
+  };
 }

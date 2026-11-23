@@ -88,8 +88,9 @@ const OPERATORS = new Set([";", "&", "|", "\n", "\r", "(", ")", "{", "}"]);
  * one stood inside double quotes, where this reading does not follow it. Null whenever this reading is not sure of
  * itself: an open quote, a backslash outside quotes, ANSI-C quoting (`$'…'`), or a character that is neither printable ASCII nor a tab or line
  * break. It is used only to find which program each piece starts, and never lets anything through on its own.
+ * `asBefore`: read ANSI-C quoting as plain quotes, as this reading did before issue 133 (the floor's earlier reading).
  */
-export function quotedPieces(command: string): { pieces: QuotedWord[][]; substitutes: boolean } | null {
+export function quotedPieces(command: string, asBefore = false): { pieces: QuotedWord[][]; substitutes: boolean } | null {
   let substitutes = false;
   /** Inside a backquoted command outside double quotes: the next backquote ends it. They do not nest unescaped. */
   let inBackquotes = false;
@@ -124,7 +125,7 @@ export function quotedPieces(command: string): { pieces: QuotedWord[][]; substit
   for (; i < command.length; i++) {
     const c = command[i]!;
     // ANSI-C and locale quoting (`$'…'`, `$"…"`) end where a plain quote would not: not followed.
-    if (c === "$" && (command[i + 1] === "'" || command[i + 1] === '"')) return null;
+    if (!asBefore && c === "$" && (command[i + 1] === "'" || command[i + 1] === '"')) return null;
     if (c === "'") {
       const end = command.indexOf("'", i + 1);
       if (end === -1) return null;
@@ -179,6 +180,8 @@ export function quotedPieces(command: string): { pieces: QuotedWord[][]; substit
 export interface HereDocument {
   /** The lines between the operator's line and the delimiter line. */
   text: string;
+  /** The delimiter was quoted (`<<'EOF'`, `<<"EOF"`, `<<\EOF`): the shell expands nothing in the text. */
+  quoted: boolean;
   /**
    * The shell hands the text over as written: the delimiter is quoted (`<<'EOF'`, `<<"EOF"`, `<<\EOF`), or nothing in
    * the text is one the shell would expand ($, a backquote, a backslash). Otherwise the shell runs what its substitutions hold.
@@ -295,7 +298,7 @@ export function hereDocuments(command: string): { command: string; bodies: HereD
           lines.push(p.tabs ? line.replace(/^\t+/, "") : line);
         }
         const text = lines.join("\n");
-        bodies.push({ text, literal: p.quoted || !/[$`\\]/.test(text), before: command.slice(p.pieceStart, p.at), piece: command.slice(p.pieceStart, p.pieceEnd!) });
+        bodies.push({ text, quoted: p.quoted, literal: p.quoted || !/[$`\\]/.test(text), before: command.slice(p.pieceStart, p.at), piece: command.slice(p.pieceStart, p.pieceEnd!) });
       }
       pending = [];
       copied = i;
@@ -318,4 +321,128 @@ export function hereDocuments(command: string): { command: string; bodies: HereD
 export function showWords(words: readonly string[]): string {
   const bare = (word: string): boolean => word !== "" && !word.startsWith("=") && [...word].every((c) => BARE.test(c));
   return words.map((word) => (bare(word) ? word : word.includes("'") ? `"${word}"` : `'${word}'`)).join(" ");
+}
+
+/** One word of a command of the strict shape (`strictShape`), and what kind of word it is. */
+export interface StrictWord {
+  text: string;
+  /** All of it in single quotes, all of it in double quotes, or unquoted. */
+  kind: "single" | "double" | "bare";
+  /** The word follows a redirection. */
+  redirect: boolean;
+}
+
+/** The only characters an unquoted word may hold, besides `$NAME`, `${NAME}`, and `*` or `?` alone (never `**`). */
+const STRICT_BARE = /[A-Za-z0-9_./:=@%+,-]/;
+/** Words that, at the start of a piece, change how what follows is read or run: the shell's own words, prefixes that run another program, and builtins that change the shell's state. */
+const NOT_A_PROGRAM = new Set([
+  "if", "then", "else", "elif", "fi", "while", "until", "for", "do", "done", "case", "esac", "function", "select", "coproc", "time", "!", "{", "}", "[", "[[", "repeat", "foreach", "end",
+  "builtin", "command", "exec", "noglob", "nocorrect", "-", "env", "nice", "nohup", "timeout", "xargs", "sudo", "doas", "su", "stdbuf", "watch", "flock", "caffeinate", "unbuffer", "parallel", "script", "time",
+  "export", "declare", "typeset", "local", "readonly", "integer", "float", "set", "setopt", "unsetopt", "shopt", "alias", "unalias", "unset", "hash", "unhash", "rehash", "enable", "disable", "source", ".", "eval", "emulate", "trap", "ulimit", "umask", "cd", "chdir", "pushd", "popd", "dirs", "autoload", "zmodload", "bindkey", "fc", "history", "r", "functions", "vared", "read", "getopts", "let", "shift", "zstyle", "zle",
+]);
+
+/**
+ * A command of the strict shape, as its pieces of words, or null for anything else. Only a command of this shape may be
+ * read more leniently than the floor's earlier reading (floor.ts); every other command gets exactly that reading's
+ * verdict. The shape:
+ *   - pieces joined by `;`, `&&`, `||`, `|` or a line break; no `&` on its own, no `|&`;
+ *   - every word wholly in single quotes, wholly in double quotes with no `$` or backquote (a backslash only as the shell
+ *     reads it there), or unquoted and made of letters, digits and `_ . / : = @ % + , -`, `$NAME`, `${NAME}` and `*` or
+ *     `?` (never two `*` together); no word that starts with `=` (zsh's `=program`); quoted and unquoted text never glued
+ *     in one word;
+ *   - redirections `<`, `>`, `>>` with an optional descriptor digit and an unquoted target, `N>&M`, and `<<`/`<<-` with a
+ *     quoted delimiter (here-documents found by `hereDocuments`, every one with a quoted delimiter);
+ *   - every piece starts with a program, unquoted, after any `NAME=value` words, that is none of `NOT_A_PROGRAM`;
+ *     no piece is empty, but for a last one (`npm test;`).
+ * `joins` holds the operator after each piece: `|` where the next piece runs at the same time, `;` where it runs after.
+ * Anything else anywhere (a backquote, `$(`, `<(`, a brace, a bracket, a parenthesis, `~`, `#`, `!`, a tab-less control
+ * character, a character outside ASCII) is no strict shape.
+ */
+export function strictShape(command: string): { pieces: StrictWord[][]; joins: string[] } | null {
+  for (const c of command) if (c !== "\n" && c !== "\t" && !PRINTABLE.test(c)) return null;
+  const here = hereDocuments(command);
+  if (here === null || here.bodies.some((body) => !body.quoted)) return null;
+  const text = here.command;
+  const pieces: StrictWord[][] = [[]];
+  /** The operator after each piece but the last: `|`, or `;` for any that runs the next piece after it (`;`, `&&`, `||`, a line break). */
+  const joins: string[] = [];
+  const ends = (at: number): boolean => at >= text.length || /[ \t\n;&|<>]/.test(text[at]!);
+  let i = 0;
+  let redirect: "none" | "target" | "delimiter" = "none";
+  const push = (word: StrictWord): void => void pieces[pieces.length - 1]!.push(word);
+  while (i < text.length) {
+    const c = text[i]!;
+    const next = text[i + 1];
+    if (c === " " || c === "\t") {
+      i++;
+      continue;
+    }
+    if (redirect === "none" && (c === "\n" || c === ";" || (c === "&" && next === "&") || c === "|")) {
+      if (c === "|" && next === "&") return null;
+      joins.push(c === "|" && next !== "|" ? "|" : ";");
+      pieces.push([]);
+      i += (c === "&" || c === "|") && next === c ? 2 : 1;
+      continue;
+    }
+    if (c === "&" || c === "\n" || c === ";" || c === "|") return null;
+    if (redirect === "none" && (/[<>]/.test(c) || (/[0-9]/.test(c) && /[<>]/.test(next ?? "") && (i === 0 || /[ \t\n;&|]/.test(text[i - 1]!))))) {
+      const op = /^[0-9]?(?:<<-?|>>|>&[0-9]|>|<)/.exec(text.slice(i))?.[0];
+      if (op === undefined || /^[0-9]?<<</.test(text.slice(i)) || /^[0-9]?(?:<>|>\|)/.test(text.slice(i))) return null;
+      i += op.length;
+      redirect = op.includes("<<") ? "delimiter" : op.includes(">&") ? "none" : "target";
+      if (op.includes(">&") && !ends(i)) return null;
+      continue;
+    }
+    let word: StrictWord;
+    if (c === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end === -1) return null;
+      word = { text: text.slice(i + 1, end), kind: "single", redirect: redirect !== "none" };
+      i = end + 1;
+    } else if (c === '"') {
+      let j = i + 1;
+      let value = "";
+      for (; j < text.length && text[j] !== '"'; j++) {
+        if (text[j] === "$" || text[j] === "`") return null;
+        // Inside double quotes a backslash only takes away the meaning of $, `, ", \ and a line break.
+        if (text[j] === "\\" && '$`"\\\n'.includes(text[j + 1] ?? "")) j++;
+        value += text[j]!;
+      }
+      if (j >= text.length) return null;
+      word = { text: value, kind: "double", redirect: redirect !== "none" };
+      i = j + 1;
+    } else {
+      let j = i;
+      while (j < text.length && !ends(j)) {
+        const d = text[j]!;
+        if (STRICT_BARE.test(d)) j++;
+        else if (d === "$" && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/.test(text.slice(j))) j += /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/.exec(text.slice(j))![0].length;
+        else if ((d === "*" || d === "?") && text[j + 1] !== "*" && text[j - 1] !== "*") j++;
+        else return null;
+      }
+      word = { text: text.slice(i, j), kind: "bare", redirect: redirect !== "none" };
+      if (word.text.startsWith("=")) return null;
+      i = j;
+    }
+    // Quoted and unquoted text glued in one word (`'a'{b,c}`, `"x"$Y`) is no strict shape.
+    if (!ends(i)) return null;
+    if (redirect === "target" && word.kind !== "bare") return null;
+    if (redirect === "delimiter" && word.kind === "bare") return null;
+    redirect = "none";
+    push(word);
+  }
+  if (redirect !== "none") return null;
+  // Empty pieces only at the end (`npm test;`, a last line break); one between operators is not read.
+  while (pieces.length > 1 && pieces[pieces.length - 1]!.length === 0) {
+    pieces.pop();
+    joins.pop();
+  }
+  if (pieces.some((piece) => piece.length === 0)) return null;
+  const kept = pieces;
+  for (const piece of kept) {
+    const first = piece.find((word) => !word.redirect && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word.text));
+    if (first === undefined || first.kind !== "bare" || /[$*?]/.test(first.text)) return null;
+    if (NOT_A_PROGRAM.has(first.text.slice(first.text.lastIndexOf("/") + 1).toLowerCase())) return null;
+  }
+  return { pieces: kept, joins };
 }
