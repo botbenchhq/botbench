@@ -744,6 +744,35 @@ export type PeersView =
   | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[]; checkedAt: string }
   | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
 /** The view for each repository the owner has used. Reading it never holds up anything else. */
+/** How a watched repository's polls stand (src/engine/watch.ts). `said` is what gh printed: program output, shown as such. */
+export interface WatchStatus {
+  path: string;
+  repository: string | null;
+  label: string;
+  intervalMinutes: number;
+  state: "waiting" | "checking" | "checked" | "failed";
+  checkedAt: string | null;
+  problem: string | null;
+  said: string | null;
+  nextAt: string | null;
+}
+/** An open issue with the watched label, proposed as a run. Its title and author are outside text, shown as plain text. */
+export interface Proposal {
+  id: number;
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  author: string | null;
+  /** How GitHub said the author relates to the repository when the issue was first seen; null when it did not say. */
+  authorRelation: AuthorRelation | null;
+  repoPath: string;
+  firstSeenAt: string;
+}
+export const getWatch = (): Promise<{ watches: WatchStatus[]; proposals: Proposal[] }> => request("GET", "/api/watch", undefined, 30_000);
+export const getProposal = async (id: number): Promise<Proposal> => (await request<{ proposal: Proposal }>("GET", `/api/watch/proposals/${id}`, undefined, 30_000)).proposal;
+export const dismissProposal = async (id: number): Promise<void> => void (await request<{ dismissed: true }>("POST", `/api/watch/proposals/${id}/dismiss`, {}, 30_000));
+
 export const getPeers = async (): Promise<PeersView[]> => (await request<{ views: PeersView[] }>("GET", "/api/peers", undefined, 90_000)).views;
 export const getPeersOf = async (repo: string): Promise<PeersView> => (await request<{ view: PeersView }>("GET", `/api/peers?path=${encodeURIComponent(repo)}`, undefined, 90_000)).view;
 
@@ -998,6 +1027,8 @@ export interface StreamHandlers {
   onRun?(announcement: RunAnnouncement): void;
   /** Called when an agent's sign-in moved on, or it was signed out. */
   onAgent?(announcement: { driver: string; state: string }): void;
+  /** Called when the issue watch's proposals or a watched repository's state changed. */
+  onWatch?(): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -1059,6 +1090,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("agent", (message) => {
       alive();
       handlers.onAgent?.(JSON.parse((message as MessageEvent<string>).data) as { driver: string; state: string });
+    });
+    source.addEventListener("watch", () => {
+      alive();
+      handlers.onWatch?.();
     });
     source.onmessage = (message) => {
       alive();

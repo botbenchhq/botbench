@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, issueSourceOf, lookUpIssue, timedOut, type IssuePreview } from "../api/client.ts";
 import type { AttachedIssue } from "../app/composer.ts";
 import { authorWords, hostsHint } from "../app/run-words.ts";
@@ -30,8 +30,12 @@ export interface IssueChoiceState {
   remove(): void;
 }
 
-/** The issue choice for the repository at `repo` ("" for none), asked about only while a run is being set up. */
-export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () => void): IssueChoiceState {
+/**
+ * The issue choice for the repository at `repo` ("" for none), asked about only while a run is being set up. `preset`
+ * is an issue proposed on Work that the owner chose Start on: once the From an issue row is offered for that same
+ * repository, it is looked up as if the owner had typed its number, and attached when it is read.
+ */
+export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () => void, preset: { repo: string; number: number } | null = null): IssueChoiceState {
   const [source, setSource] = useState<Source>({ state: "none" });
   const [given, setGiven] = useState("");
   const [looking, setLooking] = useState(false);
@@ -39,6 +43,9 @@ export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () =>
   const [preview, setPreview] = useState<IssuePreview | null>(null);
   const [allowHosts, setAllowHosts] = useState(false);
   const [attached, setAttached] = useState<AttachedIssue | null>(null);
+  /** The repository the offered source was read for, so a preset is looked up only in its own. */
+  const sourceFor = useRef<string | null>(null);
+  const presetDone = useRef<{ repo: string; number: number } | null>(null);
 
   // Another repository: nothing read for the last one is kept.
   useEffect(() => {
@@ -48,11 +55,15 @@ export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () =>
     setAllowHosts(false);
     setAttached(null);
     const path = repo.trim();
+    sourceFor.current = null;
     if (!wanted || path === "") return setSource({ state: "none" });
     setSource({ state: "checking" });
     const older = new AbortController();
     issueSourceOf(path, older.signal).then(
-      (found) => setSource(found.repository === null ? { state: "none" } : { state: "offered", repository: found.repository, hosts: found.hosts }),
+      (found) => {
+        sourceFor.current = found.repository === null ? null : path;
+        setSource(found.repository === null ? { state: "none" } : { state: "offered", repository: found.repository, hosts: found.hosts });
+      },
       (err: unknown) => {
         if (older.signal.aborted) return;
         if (err instanceof ApiError && err.status === 401) onSignedOut();
@@ -62,15 +73,16 @@ export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () =>
     return () => older.abort();
   }, [repo, wanted, onSignedOut]);
 
-  const lookUp = (): void => {
-    if (looking || given.trim() === "") return;
+  const lookUpText = (text: string, attachWhenRead: boolean): void => {
     setLooking(true);
     setProblem(null);
     setPreview(null);
-    lookUpIssue(repo.trim(), given.trim()).then(
+    lookUpIssue(repo.trim(), text).then(
       (found) => {
         setLooking(false);
         setPreview(found);
+        // Hosts stay off: a run from an issue reaches no network host unless the owner allows them for it.
+        if (attachWhenRead) setAttached({ fetchId: found.fetchId, allowHosts: false, number: found.number, title: found.title });
       },
       (err: unknown) => {
         setLooking(false);
@@ -79,6 +91,20 @@ export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () =>
       },
     );
   };
+  const lookUp = (): void => {
+    if (looking || given.trim() === "") return;
+    lookUpText(given.trim(), false);
+  };
+
+  // An issue Start was chosen on: looked up once, in its own repository, as soon as that repository's issues are offered.
+  useEffect(() => {
+    if (preset === null || source.state !== "offered" || sourceFor.current !== preset.repo || repo.trim() !== preset.repo) return;
+    if (presetDone.current?.repo === preset.repo && presetDone.current.number === preset.number) return;
+    presetDone.current = preset;
+    setGiven(String(preset.number));
+    lookUpText(String(preset.number), true);
+    // lookUpText reads only `repo`, which is part of the check above.
+  }, [preset, source, repo]);
 
   return {
     source,
