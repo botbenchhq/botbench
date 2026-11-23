@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
@@ -8,7 +8,7 @@ import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
-import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
+import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { jumpCount } from "../components/follow.ts";
 import { Icon, SPRITE } from "../components/icon.tsx";
 import { MODES } from "../components/mode-choice.tsx";
@@ -43,6 +43,55 @@ function saveConversation(ids: number[]): void {
   } catch {
     // Private browsing may refuse storage; the conversation then lasts until a reload.
   }
+}
+
+/**
+ * A chat opened from its row on Work: its attempts become the conversation this device shows, and Chat opens on it.
+ * The chat the device showed before is not lost: Botbench keeps every chat, and Work lists it.
+ */
+export function OpenChat({ id, onSignedOut }: { id: number; onSignedOut: () => void }) {
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    getChat(id).then(
+      (chat) => {
+        if (!live) return;
+        saveConversation(chat.attempts);
+        window.location.replace("#/turn");
+      },
+      (err: unknown) => {
+        if (!live) return;
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setProblem(`The chat could not be opened. ${err instanceof ApiError ? err.message : "Botbench could not be reached."}`);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [id, onSignedOut]);
+  return (
+    <Frame current="turn">
+      <Page>
+        <PageHeader title="Chat" />
+        {problem === null ? (
+          <p role="status" className="ds-spinner">
+            Opening the chat.
+          </p>
+        ) : (
+          <div className="ds-stack ds-gap-sm">
+            <Alert tone="error" role="alert">
+              {problem}
+            </Alert>
+            <p>
+              <a href="#/work" className="ds-link">
+                Back to Work
+              </a>
+            </p>
+          </div>
+        )}
+      </Page>
+    </Frame>
+  );
 }
 
 /** What is wrong with the agent, or null: while it is being checked and when all is well, the header says nothing. */
