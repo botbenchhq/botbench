@@ -5,6 +5,9 @@
 
 export type TurnEndReason = "completed" | "interrupted" | "error";
 
+/** The detail of a stopped `turn_ended` the server writes for a turn a restart cut off; the same words as its `RESTART_STOPPED`. */
+export const RESTART_STOPPED = "Stopped: Botbench restarted";
+
 /** The normalized events a driver emits; the same union as the server's `DriverEvent`. */
 export type DriverEvent =
   | { type: "user_prompt"; text: string }

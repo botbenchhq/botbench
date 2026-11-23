@@ -11,7 +11,7 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
-import { now } from "../../src/store/db.ts";
+import { now, openStore } from "../../src/store/db.ts";
 
 // No test in this file starts a driver: turns that reach Claude Code are in test/live/turns.live.test.ts.
 
@@ -326,6 +326,36 @@ test("GET /api/attempts/:id/events returns stored events in order, and only thos
     assert.equal((await fetch(`${base}/api/attempts/${attempt}/events?after=${bad}`, { headers })).status, 400, `after=${bad}`);
   }
   assert.equal((await fetch(`${base}/api/attempts/${attempt}/events`, { method: "POST", headers: { ...headers, ...JSON_TYPE }, body: "{}" })).status, 404);
+});
+
+test("a chat turn a restart cut off is served, after the next start, as stopped because Botbench restarted, and not as running", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  // What the last Botbench left of a Codex chat turn it was killed in: the attempt still running, the prompt, part of a reply.
+  const before = openStore(home);
+  const at = now();
+  const attempt = Number(before.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('codex', NULL, NULL, 'running', NULL, ?, ?)").run(at, at).lastInsertRowid);
+  const round = Number(before.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES ('ask', 'Name a colour', NULL, ?)").run(at).lastInsertRowid);
+  before.prepare("INSERT INTO chat_attempts (attempt_id, round_id, created_at) VALUES (?, ?, ?)").run(attempt, round, at);
+  insertEvent(before, attempt, 1, { type: "user_prompt", text: "[From Botbench] framed" });
+  insertEvent(before, attempt, 1, { type: "text", text: "Blue. It is" });
+  before.close();
+
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const server = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const headers = await signIn(base, fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim());
+  type Served = { status: string; turnRunning: boolean; events: Array<{ turn: number; payload: DriverEvent }> };
+  const read = async (): Promise<Served> => (await (await fetch(`${base}/api/attempts/${attempt}/events`, { headers })).json()) as Served;
+  // Start-up recovery runs beside the first requests.
+  let served = await read();
+  for (const deadline = Date.now() + 5000; served.status === "running" && Date.now() < deadline; served = await read()) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(served.status, "interrupted");
+  assert.equal(served.turnRunning, false);
+  assert.deepEqual(served.events.map((e) => e.payload.type), ["user_prompt", "text", "turn_ended"]);
+  assert.deepEqual(served.events.at(-1), { ...served.events.at(-1), turn: 1, payload: { type: "turn_ended", reason: "interrupted", detail: "Stopped: Botbench restarted" } });
 });
 
 test("the event stream replays stored events after Last-Event-ID, each with its row id, and sends heartbeats", async (t) => {

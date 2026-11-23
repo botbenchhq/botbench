@@ -12,7 +12,7 @@ import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
-import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
+import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
@@ -979,8 +979,10 @@ export function createTasks(options: TasksOptions): Tasks {
    * is in the store. Returns the tasks to take up, in the order they were started.
    */
   const recover = async (): Promise<number[]> => {
-    // A CLI process of the last run that is recorded on no task (Botbench stopped between starting it and writing it down) is stopped too.
-    for (const row of db.prepare("SELECT id FROM attempts WHERE pgid IS NOT NULL AND created_at < ? ORDER BY id").all(began)) {
+    // A CLI process of the last run that is recorded on no task (Botbench stopped between starting it and writing it down,
+    // or a chat or review turn) is stopped too, and every turn of the last run still running is recorded as stopped:
+    // one whose process number was not written yet, or was cleared before its end was, has nothing left to stop.
+    for (const row of db.prepare("SELECT id FROM attempts WHERE (pgid IS NOT NULL OR status = 'running') AND created_at < ? ORDER BY id").all(began)) {
       await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
     }
     const unstoppable = await closeLeftCommands(db, began);
@@ -990,7 +992,7 @@ export function createTasks(options: TasksOptions): Tasks {
       const id = Number(row.id);
       const assigned = reviewAssignment(db, id);
       transaction(db, () => {
-        storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `Botbench stopped before ${agentName(assigned?.agent ?? "the reviewer")} finished its review.`);
+        storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `${RESTART_STOPPED}. ${agentName(assigned?.agent ?? "The reviewer")} did not finish its review.`);
         // A fully autonomous run accepts no task whose review did not finish: it says why it waits for the owner.
         const left = getTask(db, id)!;
         const verdict = runModeOf(db, left.runId) === "full" ? qualifies(id, left.checks) : null;

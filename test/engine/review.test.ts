@@ -5,6 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { createBroker, type Broker } from "../../src/approvals/broker.ts";
 import { CODEX_CAPABILITIES } from "../../src/drivers/codex.ts";
+import { RESTART_STOPPED } from "../../src/engine/recover.ts";
 import { taskReview } from "../../src/engine/review.ts";
 import { MAX_REVIEW_DIFF, parseVerdict, PLANNER, IMPLEMENTER, REVIEWER, reviewerPrompt, roleProblem, sameModelProblem, type PlanTask } from "../../src/engine/roles.ts";
 import { createRun, createRuns, getRun, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
@@ -213,7 +214,13 @@ test("a task left being reviewed when Botbench stopped has its review recorded a
   const task = getTask(e.db, id)!;
   assert.equal(task.status, "awaiting_decision");
   const review = taskReview(e.db, id)!;
-  assert.deepEqual([review.outcome, review.problem, review.text], ["stopped", "Botbench stopped before Codex finished its review.", ""]);
+  // What the review view shows for it, by the words the transcript uses for the turn.
+  assert.deepEqual([review.outcome, review.problem, review.text], ["stopped", `${RESTART_STOPPED}. Codex did not finish its review.`, ""]);
+  // The reviewer's own turn, which the restart cut off, ends as stopped once, and its attempt runs no more.
+  const reviewer = Number(e.db.prepare("SELECT id FROM attempts WHERE driver = 'codex' ORDER BY id DESC LIMIT 1").get()!.id);
+  assert.equal(e.db.prepare("SELECT status FROM attempts WHERE id = ?").get(reviewer)!.status, "interrupted");
+  const ends = e.db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'turn_ended'").all(reviewer).map((r) => JSON.parse(String(r.payload)));
+  assert.deepEqual(ends, [{ type: "turn_ended", reason: "interrupted", detail: RESTART_STOPPED }]);
   assert.ok(task.headCommit !== null && task.headCommit !== task.baseCommit);
   await after.close();
 });
