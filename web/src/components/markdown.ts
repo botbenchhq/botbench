@@ -33,6 +33,7 @@ const BULLET = /^[ \t]*[-*+][ \t]+(\S.*)$/;
 const NUMBERED = /^[ \t]*(\d{1,9})([.)])[ \t]+(\S.*)$/;
 /** A thematic break (---, * * *) is not supported, so it must not be read as a bullet item either. */
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const HTML_BLOCK = /^ {0,3}<[A-Za-z/!?]/;
 
 /** The fence a line opens, or null. A backtick fence's info string may hold no backtick, so ```a``` stays inline code. */
 function fenceOpened(line: string): string | null {
@@ -50,7 +51,11 @@ export function parseMarkdown(source: string): Block[] {
   let paragraph = null as string[] | null;
   let list = null as { ordered: boolean; items: { marker: string; lines: string[] }[] } | null;
   const flush = () => {
-    if (paragraph !== null) blocks.push({ kind: "paragraph", children: parseInline(paragraph.join("\n")) });
+    if (paragraph !== null) {
+      const whole = paragraph.join("\n");
+      // A paragraph that starts with a tag is an HTML block, which this subset does not draw: it is kept as written.
+      blocks.push({ kind: "paragraph", children: HTML_BLOCK.test(whole) ? [{ kind: "text", text: whole }] : parseInline(whole) });
+    }
     if (list !== null) blocks.push({ kind: "list", ordered: list.ordered, items: list.items.map((i) => ({ marker: i.marker, children: parseInline(i.lines.join("\n")) })) });
     paragraph = null;
     list = null;
@@ -139,6 +144,47 @@ function codeSpans(text: string, escaped: Set<number>): { start: number; end: nu
   return spans;
 }
 
+/**
+ * The stretches of text[from, to) that are links, images or HTML tags, which this subset does not draw: each is shown
+ * as written, so no marker inside one is drawn either. In order and apart; a link inside a link is part of the outer.
+ * One pass: brackets are matched with a stack, and the next ")" or ">" is found by a search that only moves forward.
+ */
+function literalStretches(text: string, from: number, to: number): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  const brackets: number[] = [];
+  // Where the last search for each character ended (`to` when there is none left), so no stretch is searched twice.
+  const found = { ")": -1, ">": -1 };
+  const next = (ch: ")" | ">", after: number) => {
+    if (found[ch] < after) {
+      let j = Math.max(after, found[ch] + 1);
+      while (j < to && text[j] !== ch) j++;
+      found[ch] = j;
+    }
+    return found[ch] >= to ? -1 : found[ch];
+  };
+  const add = (start: number, end: number) => {
+    while (out.length > 0 && out.at(-1)!.start >= start) out.pop();
+    out.push({ start, end });
+  };
+  for (let i = from; i < to; i++) {
+    const ch = text[i];
+    if (ch === "[") brackets.push(i);
+    else if (ch === "]" && brackets.length > 0) {
+      const open = brackets.pop()!;
+      const close = text[i + 1] === "(" ? next(")", i + 2) : -1;
+      if (close === -1) continue;
+      add(open > from && text[open - 1] === "!" ? open - 1 : open, close + 1);
+      i = close;
+    } else if (ch === "<" && /[A-Za-z/!?]/.test(text[i + 1] ?? "")) {
+      const close = next(">", i + 1);
+      if (close === -1) continue;
+      add(i, close + 1);
+      i = close;
+    }
+  }
+  return out;
+}
+
 /** Parse one paragraph's or one item's text into inline nodes. */
 function parseInline(text: string): Inline[] {
   // A backslash before a marker shows the marker; any other backslash is a backslash.
@@ -218,6 +264,8 @@ function parseInline(text: string): Inline[] {
           openers.pop();
           unlink(opener);
         }
+        // A floor above the shrunken stack would hide openers pushed later in the places it no longer covers.
+        for (const [c, f] of bottom) if (f > openers.length) bottom.set(c, openers.length);
       }
     }
     if (d.count === 0) unlink(closer);
@@ -226,9 +274,17 @@ function parseInline(text: string): Inline[] {
 
   let at = 0;
   const plainUntil = (end: number) => {
+    const literal = literalStretches(text, at, end);
+    let r = 0;
     for (let i = at; i < end; ) {
       const ch = text[i]!;
-      if (escaped.has(i + 1) && ch === "\\") {
+      const stretch = literal[r];
+      if (stretch !== undefined && stretch.start === i) {
+        // A link, an image or a tag is shown as written, markers inside it included.
+        pending += text.slice(i, stretch.end);
+        i = stretch.end;
+        r++;
+      } else if (escaped.has(i + 1) && ch === "\\") {
         pending += text[i + 1];
         i += 2;
       } else if ((ch === "*" || ch === "_") && !escaped.has(i)) {
@@ -237,8 +293,9 @@ function parseInline(text: string): Inline[] {
         delimiter(ch, i - start, text[start - 1], text[i]);
       } else {
         // Copy a stretch of plain text in one slice.
+        const stop = Math.min(end, stretch?.start ?? end);
         let j = i + 1;
-        while (j < end && text[j] !== "*" && text[j] !== "_" && text[j] !== "\\") j++;
+        while (j < stop && text[j] !== "*" && text[j] !== "_" && text[j] !== "\\") j++;
         pending += text.slice(i, j);
         i = j;
       }

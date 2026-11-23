@@ -113,17 +113,24 @@ test("headings, quotes, tables, rules, links and images are shown as the text th
 });
 
 test("a javascript: link is plain text and makes no link; an image is plain text and loads nothing", () => {
-  const blocks = parseMarkdown("Click [x](javascript:alert(1)) or see ![a](http://x/y.png) and [**b**](data:text/html,hi)");
-  assert.equal(shown(blocks), "Click [x](javascript:alert(1)) or see ![a](http://x/y.png) and [b](data:text/html,hi)");
-  assert.deepEqual([...kinds(blocks)].sort(), ["paragraph", "strong", "text"]);
+  const source = "Click [x](javascript:alert(1)) or see ![a](http://x/y.png) and [**b**](data:text/html,hi) or ![_c_](d)";
+  assert.deepEqual(parseMarkdown(source), [para(text(source))]);
+  // Markers outside a link are still drawn; only the link's own text is kept as written.
+  assert.deepEqual(parseMarkdown("**a** [*b*](c) _d_"), [para({ kind: "strong", children: [text("a")] }, text(" [*b*](c) "), { kind: "em", children: [text("d")] })]);
+  // Brackets with no link after them are only brackets.
+  assert.deepEqual(parseMarkdown("[**a**] b"), [para(text("["), { kind: "strong", children: [text("a")] }, text("] b"))]);
 });
 
 test("raw HTML is literal text, never an element", () => {
-  for (const source of ["<script>alert(1)</script>", '<img src=x onerror="alert(1)">', "a <b>bold</b> <iframe src=//x></iframe>", "<div>\n**x**\n</div>"]) {
-    const blocks = parseMarkdown(source);
-    assert.equal(shown(blocks), source.replace(/\*\*/g, ""), source);
-    for (const kind of kinds(blocks)) assert.ok(["paragraph", "text", "strong"].includes(kind), `${source}: ${kind}`);
+  // A paragraph that starts with a tag is an HTML block, kept whole as written; a tag inside a sentence is kept as written.
+  for (const source of ["<script>alert(1)</script>", '<img src=x onerror="alert(1)">', "<div>\n**x**\n</div>", "</p> *a*", 'a <img alt="**x**" src=y> and <b title=_t_>'] ) {
+    assert.deepEqual(parseMarkdown(source), [para(text(source))], source);
   }
+  assert.deepEqual(parseMarkdown("a <b>**bold**</b> b"), [para(text("a <b>"), { kind: "strong", children: [text("bold")] }, text("</b> b"))]);
+});
+
+test("an emphasis that failed to close does not stop a later one from being drawn", () => {
+  assert.deepEqual(parseMarkdown("_a b* c_ *bold*"), [para({ kind: "em", children: [text("a b* c")] }, text(" "), { kind: "em", children: [text("bold")] })]);
 });
 
 test("the tree holds only the supported kinds, whatever the text", () => {
@@ -149,6 +156,8 @@ test("hostile sizes finish in linear time without throwing: long lines, long wor
     "*_".repeat(n / 2) + "x" + "_*".repeat(n / 2),
     "[".repeat(n) + "](".repeat(n / 2),
     "<".repeat(n),
+    // Many stretches between code spans, each with an unclosed tag and link: no search may run past its own stretch.
+    "`x` <a [b](".repeat(n / 12),
     "\\".repeat(n),
     "- a\n".repeat(n / 4),
     "```\n".repeat(n / 4),
