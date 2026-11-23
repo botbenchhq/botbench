@@ -288,6 +288,7 @@ Do not put Botbench on the public internet. Its sign-in is one token, made for a
 - If you chose pull requests for a run: your own `git` pushes the accepted task's branch (never the default branch, never by force) and your own `gh` opens the pull request.
 - If you chose pull requests for a run started from an issue, and turned on `claimIssues` for its repository: when the run starts, your own `git` pushes one empty commit to two branches, `botbench/claims/issue-<number>` and `botbench/<workbench>/run-<N>/issue-<number>-at-<time>`, and deletes them if the run ends without a pull request. Nothing is pushed for a run that keeps its work on your Mac.
 - If the repository has a GitHub remote: your own `gh` and `git` read the other workbenches' open pull requests and pushed branches. Nothing is written.
+- Every 6 hours, one request to `api.github.com` asking for Botbench's latest release, with nothing about you in it (`BOTBENCH_UPDATES=off` turns it off). When you update, from Settings or automatically if you chose that, your Mac fetches that release's commit from github.com.
 - If you use it from your phone: the traffic between phone and Mac, over the private network you chose.
 - Nothing else from Botbench itself. Plans, transcripts, diffs, check results, approvals and the append-only action log stay in a database in `~/.botbench`.
 

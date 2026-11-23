@@ -243,7 +243,7 @@ test.describe("at 390×844", () => {
     await expect(page.getByTestId("settings-panes")).toHaveCount(0);
     await expect(page.getByTestId("settings-links").getByRole("link")).toHaveText([/^Permissions/, /^Usage/]);
     // Every group, one under the other, in the order it always had.
-    await expect(page.locator("main .ds-settings-row__heading")).toHaveText(["Agents", "Runs", "Web", "Watched issues", "Where commands run", "Workbench", "Memory", "Appearance", "Notifications", "Signed-in devices"]);
+    await expect(page.locator("main .ds-settings-row__heading")).toHaveText(["Agents", "Runs", "Web", "Watched issues", "Where commands run", "Workbench", "Memory", "Version", "Appearance", "Notifications", "Signed-in devices"]);
     await checkDesign(page, "settings, phone, one column");
 
     await page.getByTestId("settings-links").getByRole("link", { name: /^Permissions/ }).click();

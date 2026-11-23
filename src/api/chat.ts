@@ -83,6 +83,8 @@ export interface Chat {
   /** Stop a running chat turn of an agent with no conversation of its own. False when no such turn runs in this attempt. */
   interrupt(attemptId: number): Promise<boolean>;
   turnRunning(attemptId: number): boolean;
+  /** Whether any chat reply is being written now. */
+  anyRunning(): boolean;
   info(attemptId: number): ChatAttemptInfo | null;
   close(): Promise<void>;
 }
@@ -424,5 +426,5 @@ export function createChat(o: ChatOptions): Chat {
     }));
   };
 
-  return { send, interrupt, turnRunning: (id) => running.has(id), info: (id) => chatAttemptInfo(db, id), close };
+  return { send, interrupt, turnRunning: (id) => running.has(id), anyRunning: () => running.size > 0, info: (id) => chatAttemptInfo(db, id), close };
 }
