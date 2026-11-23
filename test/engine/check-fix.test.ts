@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { createBroker, type Broker } from "../../src/approvals/broker.ts";
-import { checkFixLine, checkFixPrompt, checkFixView, DEFAULT_CHECK_FIX_ROUNDS, insertCheckFix, MAX_CHECK_OUTPUT_TAIL, taskCheckFixes, type CheckFix } from "../../src/engine/check-fix.ts";
+import { checkFixLine, checkFixPrompt, checkFixView, DEFAULT_CHECK_FIX_ROUNDS, endedCheckFix, insertCheckFix, MAX_CHECK_OUTPUT_TAIL, taskCheckFixes, type CheckFix } from "../../src/engine/check-fix.ts";
 import { loopRecord, outcomeLine, taskRefinements } from "../../src/engine/refine.ts";
 import { taskReviews } from "../../src/engine/review.ts";
 import { createRun, createRuns, storePlan, type Runs } from "../../src/engine/run.ts";
@@ -272,6 +272,40 @@ test("rounds of fixes for a failing check are append-only, and a version of the 
   // What the checks found may change for the commit a round made, and for no other.
   assert.throws(() => db.prepare("UPDATE tasks SET head_commit = 'c', checks = 'passed' WHERE id = ?").run(taskId), /recorded once/);
   db.prepare("UPDATE tasks SET head_commit = 'b', checks = 'passed' WHERE id = ?").run(taskId);
+});
+
+test("a round that ended the loop is found for the next start to hand the task on; a changed or stopped one, or one a review came after, is not", (t) => {
+  const dir = tempDir("botbench-check-fix-ended-");
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const db = openStore(path.join(dir, "home"));
+  t.after(() => db.close());
+  const at = new Date().toISOString();
+  const runId = Number(db.prepare("INSERT INTO runs (kind, repo_path, prompt, created_at, updated_at) VALUES ('single', '/r', 'p', ?, ?)").run(at, at).lastInsertRowid);
+  const task = (): number => Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, status, created_at, updated_at) VALUES (?, '/r', 'p', 'building', ?, ?)").run(runId, at, at).lastInsertRowid);
+  const checked = (id: number, round: number): void => void db.prepare("INSERT INTO evidence (task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms) VALUES (?, 'check', ?, 1, 'npm test', 'failed', 1, NULL, 'boom', 0, 1000, ?, ?, 1)").run(id, round, at, at);
+  const ended = (id: number, o: Partial<CheckFix>): void => insertCheckFix(db, { taskId: id, checkRound: 1, afterFixes: 0, attemptId: null, outcome: "finished", changed: false, reply: "", problem: null, fromCommit: "a", headCommit: "a", startedAt: at, ...o });
+  const unchanged = task();
+  checked(unchanged, 1);
+  assert.equal(endedCheckFix(db, unchanged), null, "no round has ended yet: the builder is on it");
+  ended(unchanged, {});
+  assert.equal(endedCheckFix(db, unchanged)?.headCommit, "a");
+  const failedRound = task();
+  checked(failedRound, 1);
+  ended(failedRound, { outcome: "failed", problem: "it broke" });
+  assert.ok(endedCheckFix(db, failedRound) !== null);
+  const changed = task();
+  checked(changed, 1);
+  ended(changed, { changed: true, headCommit: "b" });
+  assert.equal(endedCheckFix(db, changed), null, "changed work is checked again");
+  const stopped = task();
+  checked(stopped, 1);
+  ended(stopped, { outcome: "stopped", problem: "cancelled", headCommit: null });
+  assert.equal(endedCheckFix(db, stopped), null);
+  const rechecked = task();
+  checked(rechecked, 1);
+  ended(rechecked, {});
+  checked(rechecked, 2);
+  assert.equal(endedCheckFix(db, rechecked), null, "a later round of checks has no round of fixes of its own");
 });
 
 // The words and bounds, without a process.

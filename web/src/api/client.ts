@@ -455,6 +455,8 @@ export interface TaskDetail extends TaskSummary {
   checkFixes: CheckFix[];
   /** What came of those rounds, in a plain line, once they are over; null before, or with none. */
   checkFixLine: string | null;
+  /** Every request Botbench refused without asking during the task, in full, oldest first. */
+  refused: string[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
   /** Its latest review, once there is one. */

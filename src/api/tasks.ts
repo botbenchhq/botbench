@@ -8,7 +8,7 @@ import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositoryClaims, repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
 import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
-import { runModeOf } from "../engine/modes.ts";
+import { modeRefusals, runModeOf } from "../engine/modes.ts";
 import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
 import { reviewAssignment, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
@@ -229,7 +229,9 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   const { db } = ctx;
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
+    // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
+    refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {

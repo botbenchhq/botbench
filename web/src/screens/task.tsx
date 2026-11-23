@@ -396,6 +396,20 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
               </section>
             )}
 
+            {task.refused.length > 0 && (
+              <section aria-labelledby="refused-heading" data-testid="refused" className="ds-stack ds-gap-sm">
+                <h2 id="refused-heading">Refused without asking</h2>
+                <p>{`Botbench refused ${task.refused.length === 1 ? "this request" : `these ${task.refused.length} requests`} during this task without asking you. Each is shown in full.`}</p>
+                <ul className="ds-stack ds-gap-xs">
+                  {task.refused.map((command, i) => (
+                    <li key={i}>
+                      <code>{command}</code>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
             {task.decision !== null ? (
               <section aria-labelledby="decision-heading" className="ds-stack ds-gap-sm">
                 <h2 id="decision-heading">{task.decision.decision === "accept" ? (task.decision.decidedBy === "mode" ? "Accepted without you" : "Accepted") : "Rejected"}</h2>

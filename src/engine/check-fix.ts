@@ -119,6 +119,20 @@ export function checkFixRoundOf(db: DatabaseSync, taskId: number): OpenCheckFix 
   };
 }
 
+/**
+ * A round of fixes for a failing check that ended the loop (it did not finish, or changed nothing) while its task was
+ * still to be handed on: it is the round of the task's latest round of check evidence, and no review began after it.
+ * A start that finds such a task at `building` hands it on with its checks failed, rather than starting a builder.
+ */
+export function endedCheckFix(db: DatabaseSync, taskId: number): CheckFix | null {
+  const latest = db.prepare("SELECT max(round) AS n FROM evidence WHERE task_id = ? AND kind = 'check'").get(taskId)?.n;
+  if (typeof latest !== "number") return null;
+  const fix = taskCheckFixes(db, taskId).find((row) => row.checkRound === latest);
+  if (fix === undefined || fix.outcome === "stopped" || (fix.outcome === "finished" && fix.changed)) return null;
+  if (db.prepare("SELECT 1 FROM reviews WHERE task_id = ? AND started_at >= ? LIMIT 1").get(taskId, fix.endedAt)) return null;
+  return fix;
+}
+
 /** The end of a command's output, at most `MAX_CHECK_OUTPUT_TAIL` characters, and how much was left out before it. */
 export function outputTail(output: string): { tail: string; left: number } {
   if (output.length <= MAX_CHECK_OUTPUT_TAIL) return { tail: output, left: 0 };

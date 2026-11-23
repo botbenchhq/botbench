@@ -17,7 +17,7 @@ import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
-import { checkFixesUsed, checkFixPrompt, checkFixRoundOf, DEFAULT_CHECK_FIX_ROUNDS, insertCheckFix, workVersion, type OpenCheckFix } from "./check-fix.ts";
+import { checkFixesUsed, checkFixPrompt, checkFixRoundOf, DEFAULT_CHECK_FIX_ROUNDS, endedCheckFix, insertCheckFix, workVersion, type OpenCheckFix } from "./check-fix.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
@@ -1324,6 +1324,9 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     if (stage === "checks") return check(task, commands.checks, stop.signal);
     if (stage === "setup") return setUpAndDrive(task, stop);
+    // Stopped after a round of fixes for a failing check ended the loop and before the task was handed on: it is handed on now.
+    const ended = refineRoundOf(db, task.id) === null ? endedCheckFix(db, task.id) : null;
+    if (ended !== null && task.status === "building") return review(task, "building", { ...(ended.headCommit === null ? {} : { headCommit: ended.headCommit }), checks: "failed" }, stop.signal);
 
     // Never a second agent beside the first in one copy: what is left of the one before is stopped first, or nothing starts.
     const problem = await stopSurvivors(task, []);
