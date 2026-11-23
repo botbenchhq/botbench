@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { asRefusalKind, refusalBlocksAccept, type RefusalKind } from "../approvals/refusals.ts";
 import { now } from "../store/db.ts";
-import { loopRecord, reviewOutcome as loopOutcome } from "./refine.ts";
+import { loopRecord, NO_ACCOUNT, reviewOutcome as loopOutcome } from "./refine.ts";
 import { reviewAssignment } from "./review.ts";
 
 /*
@@ -41,15 +41,17 @@ export function setDefaultMode(db: DatabaseSync, mode: RunMode): void {
 }
 
 /**
- * Where a task's review stands: "none" (its run has no reviewer), "satisfied", "unresolved" (concerns, or no verdict in
+ * Where a task's review stands: "none" (its run has no reviewer), "satisfied", "unaccounted" (it looks right, but the
+ * review does not say what it checked), "unresolved" (concerns, or no verdict in
  * the asked form, after the last round of fixes) or "failed" (a review or a round of fixes did not finish, or there is no
  * review yet). Read from the refine loop's records (engine/refine.ts).
  */
-export type ReviewOutcome = "none" | "satisfied" | "unresolved" | "failed";
+export type ReviewOutcome = "none" | "satisfied" | "unaccounted" | "unresolved" | "failed";
 export function reviewOutcome(db: DatabaseSync, taskId: number): ReviewOutcome {
   const assigned = reviewAssignment(db, taskId);
   if (assigned === null) return "none";
-  // The refine loop's outcome: "satisfied" only when the loop ended with the reviewer saying it looks right. A review
+  // The refine loop's outcome: "satisfied" only when the loop ended with the reviewer saying it looks right and what it
+  // checked. A review
   // that has not happened yet is not a satisfied one.
   const record = loopRecord(db, taskId, assigned.agent);
   return record.reviews.length === 0 ? "failed" : loopOutcome(record);
@@ -94,11 +96,12 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   if (facts.checks === "failed") why.push("A check failed.");
   else if (facts.checks !== "passed") why.push("No checks ran on it.");
   if (facts.review === "unresolved") why.push("The reviewer raised concerns.");
+  else if (facts.review === "unaccounted") why.push(`${NO_ACCOUNT}.`);
   else if (facts.review === "failed") why.push("The review did not finish.");
   const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
   if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${shorten(blocking.join("; "))}).`);
   if (why.length > 0) return { accept: false, why: `It needs your review: ${why.join(" ")}` };
-  const review = facts.review === "satisfied" ? "the reviewer said it looks right" : "this run has no reviewer";
+  const review = facts.review === "satisfied" ? "the reviewer said it looks right and what it checked" : "this run has no reviewer";
   if (facts.refusals.length === 0) return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };
   const harmless = facts.refusals.map((refusal) => refusal.command);
   return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and what Botbench refused (${shorten(harmless.join("; "))}) was not on the always-ask list and would not have reached outside the task's copy.` };

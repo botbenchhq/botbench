@@ -59,8 +59,11 @@ export type Send =
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[] }
   | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice } & ({ prompt: string } | { specPath: string } | {}));
 
-/** Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens. */
-export type Blocked = { reason: string; required: "repository" | null };
+/**
+ * Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens; `connect`
+ * is true when the reason is that the agent cannot be used, and the reason then ends with the one link to connect one.
+ */
+export type Blocked = { reason: string; required: "repository" | null; connect?: true };
 
 const inRepository = (repo: RepoPick): repo is { kind: "known" | "other"; path: string } => repo.kind === "known" || repo.kind === "other";
 
@@ -69,7 +72,7 @@ export const REPO_HINT = "Enter the full path of a git repository on this Mac.";
 export function blocked(f: Facts): Blocked | null {
   const say = (reason: string, required: "repository" | null = null): Blocked => ({ reason, required });
   if (f.builder.state === "checking") return say("Checking that Claude Code is ready.");
-  if (f.builder.state === "problem") return say(`${f.builder.words} Nothing can be sent until this is fixed.`);
+  if (f.builder.state === "problem") return { ...say(`${f.builder.words} Nothing can be sent until this is fixed.`), connect: true };
   // Only New task and New run make a repository needed; with no repository otherwise, Send is a chat.
   if (f.repo.kind === "needed") return say("Choose a repository", "repository");
   const run = inRepository(f.repo) && f.kind === "run";

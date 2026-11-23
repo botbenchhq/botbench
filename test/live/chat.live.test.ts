@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { createChat } from "../../src/api/chat.ts";
+import { createBroker } from "../../src/approvals/broker.ts";
 import { createTurns } from "../../src/api/turns.ts";
 import { AntigravityDriver } from "../../src/drivers/antigravity.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
@@ -23,11 +24,14 @@ test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a re
   const home = path.join(dir, "home");
   const db = openStore(home);
   const claude = new ClaudeCodeDriver();
-  const turns = createTurns({ db, home, driver: claude, onEvent: () => {} });
+  const broker = createBroker({ db, home, onChange: () => {} });
+  await broker.listen();
+  const turns = createTurns({ db, home, driver: claude, broker, onEvent: () => {} });
   const chat = createChat({ db, home, turns, claude, agents: { codex: new CodexDriver(), grok: new GrokDriver(), antigravity: new AntigravityDriver() }, onEvent: () => {} });
   t.after(async () => {
     await chat.close();
     await turns.close();
+    await broker.close();
     db.close();
   });
   const target = path.join(dir, "written.txt");

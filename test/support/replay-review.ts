@@ -18,13 +18,16 @@ import type { DriverEvent, TurnEndReason } from "../../src/drivers/events.ts";
  * and, from test/recordings/refine-round.json:
  *   "second-review" the CLI's second review, after the builder changed `a - b` to `a + b`: verdict looks right
  *   "hostile"       the CLI's review of a diff whose code runs `rm -rf ~`: verdict concerns, a finding that names the command
+ * and, from test/recordings/refine-checked-review.json:
+ *   "checked-review" the CLI's second review of the same fixed work, sent the prompt that asks what it checked: verdict
+ *                    looks right, with "Checked:" lines
  * What is not: the CLI printed those lines for the capture's prompt and copy, and the replay plays them after whatever
  * prompt its caller sends. The replay's own are the answers to `probe` and `models`, the hold ("hang": the session
  * announces itself and then waits until it is stopped), and the turn's end when it is stopped. No test may read those as
  * what a CLI does.
  */
 
-export type ReviewSession = "review" | "signed-out" | "second-review" | "hostile" | "hang";
+export type ReviewSession = "review" | "signed-out" | "second-review" | "hostile" | "checked-review" | "hang";
 
 interface Recording {
   cli: string;
@@ -33,7 +36,8 @@ interface Recording {
 export const loadReviewRecording = (): Recording => JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "codex-review.json"), "utf8")) as Recording;
 const recorded = (): Record<Exclude<ReviewSession, "hang">, { lines: string[] }> => {
   const refine = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "refine-round.json"), "utf8")) as { sessions: Record<"second-review" | "hostile", { lines: string[] }> };
-  return { ...loadReviewRecording().sessions, ...refine.sessions };
+  const checked = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "refine-checked-review.json"), "utf8")) as { sessions: Record<"checked-review", { lines: string[] }> };
+  return { ...loadReviewRecording().sessions, ...refine.sessions, ...checked.sessions };
 };
 
 export interface ReviewReplay extends Driver {

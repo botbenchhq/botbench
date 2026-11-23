@@ -243,10 +243,14 @@ ${tools ? "You are read-only: you cannot create, change or delete any file, and 
 
 Reply in exactly this form, and keep it short:
 Verdict: looks right
+Checked:
+- what you examined, such as a file, a function or a criterion, and how
+- another thing you examined
+Not checked: what you did not examine, or "nothing left out"
 Findings:
 - path/to/file:line: what is wrong or worth checking
 
-Write "Verdict: concerns" instead when anything should be fixed or checked before the work is accepted. Give one line per finding, with the file and line where you can; write "- none" when there is no finding. Write nothing before the verdict line.
+Write "Verdict: concerns" instead when anything should be fixed or checked before the work is accepted. Always write the "Checked:" heading with two to five lines naming what you examined, then the one line "Not checked:", even when there is no finding. Give one line per finding, with the file and line where you can; write "- none" when there is no finding. Write nothing before the verdict line.
 
 The task:
 <task>
@@ -346,9 +350,10 @@ const fromWords = (entry: ChatEntry): string => (entry.from === "owner" ? "From 
  * What an agent that keeps no conversation of its own (Codex, Grok, Antigravity here; Claude Code when another agent
  * answered since its last reply) is sent for one chat message: the conversation so far, oldest first, each message set
  * apart between marked lines as data, then the owner's new message. A message longer than the cap is cut; over the cap,
- * the oldest messages are left out and a plain note says how many. `left` is that number.
+ * the oldest messages are left out and a plain note says how many. `left` is that number. `tools`: the agent keeps
+ * its own tools in the chat (Claude Code), so it is not told it can only answer from the conversation.
  */
-export function chatPrompt(o: { history: readonly ChatEntry[]; message: string }): { prompt: string; left: number } {
+export function chatPrompt(o: { history: readonly ChatEntry[]; message: string; tools?: boolean }): { prompt: string; left: number } {
   const entries = o.history.map((entry) => ({ ...entry, text: passedOn(entry.text) }));
   let size = 0;
   let from = entries.length;
@@ -367,7 +372,7 @@ ${kept.map((entry) => `${fromWords(entry)}:\n${dataBlock("message", entry.text)}
 `;
   return {
     left,
-    prompt: `[From Botbench] You are answering the owner in a chat. You have only this message: there are no files of the owner's here for you, and you cannot change anything. Answer from the conversation alone.
+    prompt: `${o.tools === true ? "[From Botbench] You are answering the owner in a chat, working in a folder of your own with none of the owner's files in it." : "[From Botbench] You are answering the owner in a chat. You have only this message: there are no files of the owner's here for you, and you cannot change anything. Answer from the conversation alone."}
 
 ${before}The owner's new message, which you answer:
 ${dataBlock("message", o.message)}`,

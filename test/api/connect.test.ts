@@ -8,6 +8,7 @@ import type { SignInDefinition } from "../../src/drivers/sign-in.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { randomState, replayedClaude, CLAUDE_RECORDING } from "../support/replay-sign-in.ts";
 import { tempDir } from "../support/repo.ts";
+import { NO_PROCESS_LIST } from "../support/confined.ts";
 
 // The connect routes over real HTTP and a real store. The sign-in is Claude Code's real output replayed as a child
 // process (test/support/replay-sign-in.ts); the probe is the real Claude Code, pointed at an empty configuration
@@ -62,7 +63,7 @@ const ROUTES: ["GET" | "POST", string][] = [
   ["POST", "/api/agents/claude-code/disconnect"],
 ];
 
-test("every connect route needs a session, and a refused request starts nothing", async (t) => {
+test("every connect route needs a session, and a refused request starts nothing", { skip: NO_PROCESS_LIST }, async (t) => {
   const state = randomState();
   const { base } = await start(t, replayedClaude("wait", state));
   for (const [method, route] of ROUTES) {

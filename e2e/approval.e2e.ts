@@ -128,7 +128,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   // Nothing has run while the card waited. The full path and, while the task is worked on, its branch are in Details.
   const details = await openDetails(page);
   await expect(details.getByTestId("task-repo")).toHaveText(repo);
-  const branch = await details.getByTestId("branch").inputValue();
+  const branch = (await details.getByTestId("branch").textContent())!;
   const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
   expect(git(worktree, "status", "--porcelain")).toBe("");
 
@@ -148,7 +148,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   // One sentence, and what Claude Code may do here one tap away, every word of it kept.
   await expect(page.getByTestId("not-merged")).toHaveText("Nothing has been merged or pushed.");
-  await expect(page.getByTestId("branch")).toHaveValue(branch);
+  await expect(page.getByTestId("branch")).toHaveText(branch);
   if (SHOTS) await tallShot(page, path.join(SHOTS, "task-ready-for-review.png"));
   await expect((await openCanDo(page)).getByTestId("can-do-text")).toHaveText(
     "Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
@@ -191,7 +191,7 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   const refused = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator(".ds-tool-call");
   await expect(refused).toHaveAttribute("data-state", "declined");
   await expect(refused.locator(".ds-tool-call__title")).toHaveText(/^Denied\s*Did not run\s*sh make-marker\.sh$/);
-  await expect(refused.locator(".ds-tool-call__note")).toHaveText("You denied it. It was not run.");
+  await expect(refused.locator(".ds-tool-call__note")).toHaveText("You denied this.");
   expect(await refused.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el, "::before").maskImage), "a denied call's icon").toContain("ban");
   await expect(resolved).toContainText(`Your note: ${note}`);
   await expect(resolved.locator("b")).toHaveCount(0);
@@ -201,7 +201,7 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
   await checkDesign(page, "task, finished after a decline");
 
-  const branch = await page.getByTestId("branch").inputValue();
+  const branch = (await page.getByTestId("branch").textContent())!;
   expect(git(repo, "ls-tree", "-r", "--name-only", branch).split("\n").filter(Boolean).sort()).toEqual(["README.md", "make-marker.sh"]);
   expect(git(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1"), "status", "--porcelain")).toBe("");
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);

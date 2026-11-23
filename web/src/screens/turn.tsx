@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ApiError, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
+import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
+import { ApprovalsContext } from "../app/approvals.tsx";
+import { ApprovalCard } from "../components/approval-card.tsx";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
 import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
@@ -42,10 +45,27 @@ function saveConversation(ids: number[]): void {
 }
 
 /** What is wrong with the agent, or null: while it is being checked and when all is well, the header says nothing. */
-function driverProblem(driver: DriverState | null, failed: boolean): string | null {
-  if (failed) return "Claude Code: could not be checked";
-  if (driver === null || driver.problem === null) return null;
-  return !driver.installed ? "Claude Code: not installed" : !driver.supported ? "Claude Code: unsupported version" : !driver.signedIn ? "Claude Code: signed out" : "Claude Code: unavailable";
+const HEADER_PROBLEM: Record<AgentStatus, string | null> = {
+  checking: null,
+  ready: null,
+  "not-checked": "Claude Code: could not be checked",
+  "not-installed": "Claude Code: not installed",
+  unsupported: "Claude Code: unsupported version",
+  "signed-out": "Claude Code: signed out",
+  unavailable: "Claude Code: unavailable",
+};
+
+/** The one link to connect an agent, at the end of a sentence that says the agent cannot be used. */
+function ConnectAgent({ first = false }: { first?: boolean }) {
+  return (
+    <>
+      {`${first ? "" : " "}${CONNECT.before}`}
+      <a href={AGENTS_ADDRESS} className="ds-link">
+        {CONNECT.link}
+      </a>
+      {CONNECT.after}
+    </>
+  );
 }
 
 /** What the composer remembers on this device: the repository, what to do, mode, review and delivery. */
@@ -130,6 +150,21 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   useEffect(() => {
     if (start !== null) window.history.replaceState(null, "", "#/turn");
   }, [start]);
+  /** Whether this installation has never stored a chat, task or run; null until the server has said, and then nothing is shown. */
+  const [firstRun, setFirstRun] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    getFirstRun().then(
+      (found) => live && setFirstRun(found),
+      (err: unknown) => {
+        // Not known: the lines are not shown, and the home screen is as it always was.
+        if (live && err instanceof ApiError && err.status === 401) onSignedOut();
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [onSignedOut]);
   useEffect(() => {
     let live = true;
     getDefaultMode().then(
@@ -266,6 +301,19 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   }, [refresh, onSignedOut]);
 
   const shown = useMemo(() => events.filter((e) => conversation.includes(e.attemptId)), [events, conversation]);
+  // What this chat's Claude Code waits for you to answer: each card stands in the transcript where it was asked.
+  const { pending } = useContext(ApprovalsContext);
+  // A chat's request from another device's chat (or one this device put away) is shown here too, after the transcript.
+  const waitingHere = useMemo(() => (pending ?? []).filter((approval) => approval.chat), [pending]);
+  const askedAt = useMemo(() => new Set(shown.flatMap((e) => (e.payload.type === "permission_request" ? [`${e.attemptId}:${e.payload.toolCallId}`] : []))), [shown]);
+  const cardOf = (approval: (typeof waitingHere)[number]) => <ApprovalCard key={approval.id} approval={approval} more={0} on="chat" onSignedOut={onSignedOut} />;
+  const asking = useCallback(
+    (attemptId: number, toolCallId: string) => {
+      const approval = waitingHere.find((a) => a.attemptId === attemptId && a.toolCallId === toolCallId);
+      return approval === undefined ? null : cardOf(approval);
+    },
+    [waitingHere, onSignedOut],
+  );
   const chat = useMemo(() => chatView(shown, infos, conversation), [shown, infos, conversation]);
   const endedOf = (a: { attemptId: number; turn: number }): boolean => events.some((e) => e.attemptId === a.attemptId && e.turn === a.turn && e.type === "turn_ended");
   const working = active.filter((a) => !endedOf(a));
@@ -318,7 +366,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   };
   const chatting = !inRepository(repo);
   const peerWarnings = chatting ? [] : issueWarnings(peers, { attached: kind === "run" ? (issue.attached?.number ?? null) : null, message: prompt });
-  const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null } : null);
+  // A chat whose agent cannot answer is blocked like one whose Claude Code cannot: the reason ends with the link to connect one.
+  const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null, connect: true as const } : null);
   const askedCount = chatting && targets.ok ? targets.targets.length : 1;
   /** While a chat reply runs and the composer would send a chat, the button is Stop. */
   const showStop = chatting && running;
@@ -346,6 +395,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
         saveConversation(next);
         setAsked((have) => ({ ...have, ...Object.fromEntries(replies.map((r) => [r.attemptId, r.model])) }));
         setActive(replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
+        // The chat is stored now, and the first run is over for good: New chat does not bring the lines back.
+        setFirstRun(false);
         setStarting(false);
         if (compare === undefined) setPrompt("");
         // Events stored before the attempts were known here may have been missed by a stream that was reconnecting.
@@ -439,7 +490,12 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   };
 
   const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
-  const problem = driverProblem(driver, driverFailed);
+  const claudeStatus = agentStatus(driver, driverFailed);
+  const problem = HEADER_PROBLEM[claudeStatus];
+  // On a first run, an empty chat shows what to do first and, when the chat asks Claude Code (as it does until another
+  // agent is chosen), a line on it: signed in, or, under the header's line that names what is wrong, where to connect
+  // one. Three short lines at most above the box.
+  const welcome = firstRun === true && chatting && shown.length === 0 ? { agent: asksClaude ? agentLine(claudeStatus) : null } : null;
   /** The model each chat attempt was asked for, as this screen sent it; an attempt from before a reload has none recorded. */
   const [asked, setAsked] = useState<Record<number, string | null | undefined>>({});
   /** The name of the model asked for when the one that answered is a different one; null when it is the same or the ask is not known. */
@@ -481,6 +537,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     <Frame
       current="turn"
       fill
+      showing={waitingHere.map((approval) => approval.id)}
       banner={connected ? undefined : <StreamBanner />}
       actions={
         conversation.length > 0 && (
@@ -506,12 +563,17 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             {shown.length > 0 ? (
               <Transcript
                 events={chat.events}
-                working={running && working.length <= 1 ? (stopping ? `Stopping ${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)}.` : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? (askedCount === 1 && targets.ok ? targets.targets[0]!.agent : CLAUDE))} is working.`) : null}
+                asking={asking}
+                working={running && working.length <= 1 ? (waitingHere.some((a) => working.some((w) => w.attemptId === a.attemptId)) && !stopping ? `${agentName(CLAUDE)} is waiting for your answer.` : stopping ? `Stopping ${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)}.` : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? (askedCount === 1 && targets.ok ? targets.targets[0]!.agent : CLAUDE))} is working.`) : null}
                 modelName={nameOf}
                 modelDiffers={differs}
                 who={chat.who}
                 after={
                   <>
+                    {/* A request whose place in the transcript has not arrived yet still shows its card. */}
+                    {waitingHere.filter((a) => !askedAt.has(`${a.attemptId}:${a.toolCallId}`)).map((a) => (
+                      <li key={`asked-${a.id}`}>{cardOf(a)}</li>
+                    ))}
                     {working.length > 1 &&
                       working.map(({ attemptId }) => (
                         <li key={`working-${attemptId}`} className="ds-split">
@@ -527,9 +589,25 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   </>
                 }
               />
+            ) : welcome !== null ? (
+              // A first run: at most two plain lines, no tour and nothing over the screen. Gone once a chat, task or run is stored.
+              <div data-testid="first-run" className="ds-stack ds-gap-xs pt-md">
+                <p className="ds-composer__reason">{FIRST_STEP}</p>
+                {welcome.agent !== null && (
+                  <p data-testid="first-run-agent" className="ds-composer__reason">
+                    {welcome.agent.connect ? <ConnectAgent first /> : welcome.agent.words}
+                  </p>
+                )}
+              </div>
             ) : (
-              // An empty chat shows nothing above the box. Work in a repository says, in one muted line, where and what follows.
-              !chatting && (
+              // An empty chat shows nothing above the box but a chat's request still waiting. Work in a repository says, in one muted line, where and what follows.
+              waitingHere.length > 0 ? (
+                <ol className="ds-stack ds-gap-sm pt-md">
+                  {waitingHere.map((a) => (
+                    <li key={`asked-${a.id}`}>{cardOf(a)}</li>
+                  ))}
+                </ol>
+              ) : !chatting && (
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
                     ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
@@ -607,6 +685,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             stopReason !== null && (
               <p id="composer-reason" data-testid={builderDown ? "driver-problem" : "composer-reason"} className="ds-composer__reason">
                 {stopReason.reason}
+                {stopReason.connect && <ConnectAgent />}
               </p>
             )
           )}

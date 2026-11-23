@@ -13,6 +13,7 @@ import { firstLine } from "../shorten.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
 import { asRefusalKind, refusalBlocksAccept, refusalKind, type RefusalKind } from "./refusals.ts";
 import { splitPlain } from "./shell.ts";
+import { chatWebAccess, publicWebAddress, WEB_ACCESS_WORDS, WEB_OFF, WEB_TOOLS } from "./web-access.ts";
 
 /*
  * The permission broker. Everything an agent wants to do that is not an edit
@@ -50,6 +51,11 @@ import { splitPlain } from "./shell.ts";
  * from the approvals and the log each time it is asked; nothing else holds the number. Only the owner's answer,
  * through the signed-in API, turns an offer into a grant, and only the owner takes one back.
  *
+ * A chat's Claude Code is admitted too (`chat`), in the chat's own folder: it is asked about like a semi-autonomous
+ * run's builder (a confined command the floor does not name runs, logged as `chat_confined`), with no grant of any kind, and its web tools follow the owner's setting "Web access in chat" (web-access.ts).
+ * A chat's approval has no task and no run; nothing re-drives a chat, so one left pending by a Botbench that stopped is
+ * ended, unanswered, when the next one starts.
+ *
  * Across a restart: an approval that was pending when Botbench stopped stays pending and is marked parked. Nothing
  * waits for it in this process, so the owner's answer cannot be handed to anyone: it is stored on the approval.
  * The engine then re-drives the task, and the stored answer goes, once, to the first request of the resuming
@@ -58,9 +64,34 @@ import { splitPlain } from "./shell.ts";
  */
 
 export const SOCKET_FILE = "broker.sock";
+/** The role a chat's Claude Code asks as. */
+export const CHAT_ROLE = "chat";
+/**
+ * Claude Code's own bookkeeping tools, which reach nothing outside the CLI: loading a tool's description before its
+ * first use (seen on 2.1.322: a chat's first fetch is a ToolSearch for WebFetch) and its to-do list. In a chat the hook
+ * lets them pass, so the CLI's own rules decide, as they do when it is used directly; should the CLI still ask, the
+ * owner is asked.
+ */
+const CHAT_QUIET_TOOLS: ReadonlySet<string> = new Set(["ToolSearch", "TodoWrite"]);
+/** Why a chat's approval left pending by a Botbench that stopped was ended, in the log. */
+export const CHAT_RESTARTED = "Botbench restarted before you answered, so this request of a chat ended without an answer. It was not run.";
 
-/** Whether a live broker answers on the socket at `socketPath`: then its data directory belongs to a running process. */
-export function socketAnswers(socketPath: string): Promise<boolean> {
+/** How long after a first answer the socket is asked again, to tell a live broker from one that is dying. */
+const RECHECK_MS = 250;
+
+/**
+ * Whether a live broker answers on the socket at `socketPath`: then its data directory belongs to a running process.
+ * It must answer twice, a moment apart. A Botbench that was killed just after it started a process (a CLI, a setup
+ * command) can leave its socket taking connections for a few milliseconds, until that process has replaced itself
+ * with the program it runs; asked once, that socket looks like a running Botbench, and the next start refused to run.
+ */
+export async function socketAnswers(socketPath: string): Promise<boolean> {
+  if (!(await answersOnce(socketPath))) return false;
+  await new Promise((resolve) => setTimeout(resolve, RECHECK_MS));
+  return answersOnce(socketPath);
+}
+
+function answersOnce(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (!fs.existsSync(socketPath)) return resolve(false);
     const probe = net.connect(socketPath);
@@ -114,7 +145,11 @@ export type LogRule =
   /** A fully autonomous run accepted a task without the owner. The entry names the task's branch and why it qualified. */
   | "mode_accepted"
   /** A step of delivering an accepted task: pushing its branch and opening its pull request, or why that failed. */
-  | "delivery";
+  | "delivery"
+  /** A web tool of a chat, allowed or refused by the owner's setting "Web access in chat". */
+  | "chat_web_access"
+  /** A confined command of a chat, which the floor does not name, ran without asking. */
+  | "chat_confined";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -133,8 +168,10 @@ export interface StandingOffer {
 
 export interface Approval {
   id: number;
-  /** The task whose agent asks. Null when a run's planner asks: then `runId` names the run. */
+  /** The task whose agent asks. Null when a run's planner or a chat asks. */
   taskId: number | null;
+  /** True when a chat's Claude Code asks: then neither a task nor a run is named, and the chat's screen shows the card. */
+  chat: boolean;
   /** The run whose planner asks, when no task does. */
   runId: number | null;
   /** The first line of the task's prompt, or of what the run was given, so a card can say who is asking. */
@@ -193,6 +230,8 @@ export interface ApprovalRequest {
   taskId: number | null;
   /** The run whose planner asks. Left out for a task's request. */
   runId?: number | null;
+  /** True when a chat's Claude Code asks; then `taskId` is null and no run is named. */
+  chat?: boolean;
   attemptId: number;
   role: string;
   tool: string;
@@ -220,6 +259,10 @@ export interface Answer {
   byMode?: RunMode;
   /** Set when a file tool's request was allowed without asking, in any mode: a read or an edit inside the worktree, or a read of the CLI's own saved output of this attempt. */
   files?: true;
+  /** Set when a chat's web tool was allowed by the owner's setting "Web access in chat", without asking. */
+  web?: true;
+  /** Set when a chat's command ran without asking: confined, and not named by the floor. */
+  chat?: true;
 }
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
@@ -259,7 +302,7 @@ export interface Broker {
    * `confined`: the attempt's driver runs every shell command it asks for in its sandbox (`confinedCommands`). Only then
    * can a semi-autonomous or fully autonomous run let a command run without asking.
    */
-  admit(o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean; confined?: boolean }): Admission;
+  admit(o: { taskId?: number; runId?: number; chat?: boolean; role: string; worktree: string; resumes?: number; readOnly?: boolean; confined?: boolean }): Admission;
   /** Record a pending approval and wait for the owner. Never rejects: any failure is a decline. */
   request(request: ApprovalRequest): Promise<Answer>;
   /**
@@ -303,6 +346,7 @@ function toApproval(row: Record<string, unknown>): Approval {
   return {
     id: Number(row.id),
     taskId: int(row.task_id),
+    chat: row.chat === 1,
     runId: int(row.run_id),
     taskTitle: firstLine(String(row.prompt ?? "")),
     attemptId: Number(row.attempt_id),
@@ -325,7 +369,7 @@ function toApproval(row: Record<string, unknown>): Approval {
 }
 
 /** An approval with what its card is titled by: its task's prompt, or what its run was given (the prompt, or the spec file's path). */
-const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path, (SELECT 'Issue #' || f.number || ': ' || f.title FROM issue_fetches f WHERE f.id = r.issue_fetch_id)) AS prompt, COALESCE(tr.outside_text, r.outside_text, 1) AS outside_text FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs tr ON tr.id = t.run_id LEFT JOIN runs r ON r.id = a.run_id";
+const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path, (SELECT 'Issue #' || f.number || ': ' || f.title FROM issue_fetches f WHERE f.id = r.issue_fetch_id)) AS prompt, CASE WHEN a.chat = 1 THEN 0 ELSE COALESCE(tr.outside_text, r.outside_text, 1) END AS outside_text FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs tr ON tr.id = t.run_id LEFT JOIN runs r ON r.id = a.run_id";
 
 /** Approvals, oldest first; all of them or those with one status. */
 export function listApprovals(db: DatabaseSync, status?: ApprovalStatus): Approval[] {
@@ -408,6 +452,8 @@ export function appendLog(db: DatabaseSync, e: LogWrite): void {
 
 interface Ticket {
   taskId: number | null;
+  /** A chat's Claude Code, in the chat's own folder. */
+  chat: boolean;
   runId: number | null;
   /** The attempt changes nothing: every edit is refused and no grant applies. */
   readOnly: boolean;
@@ -520,7 +566,9 @@ export function createBroker(options: {
     | { verdict: "refuse"; reason: string; floor?: string; why: AskWhy }
     | { verdict: "allow"; rule: "preapproved" | "standing"; grant: Grant }
     | { verdict: "allow"; rule: "mode"; mode: RunMode }
-    | { verdict: "allow"; rule: "files"; edit: boolean };
+    | { verdict: "allow"; rule: "files"; edit: boolean }
+    /** A chat's web tool, decided by the owner's setting: run without asking, or refused. */
+    | { verdict: "web"; allowed: boolean };
 
   /** Where the attempt's CLI keeps the saved output of its own session's calls, read from the attempt's row; undefined when it is not known. */
   const sessionOutputOf = (attemptId: number | null, worktree: string): string | undefined => {
@@ -538,6 +586,9 @@ export function createBroker(options: {
 
   /** The mode of the run a request belongs to, read from the store; manual for a task of no run. Throws when it cannot be read. */
   const modeOfRequest = (r: ApprovalRequest): RunMode => {
+    // A chat has no run. Its Claude Code is not made more tedious than when it is used directly: as in a semi-autonomous
+    // run, a command that runs confined (in the chat's folder, no network) and that the floor does not name runs.
+    if (r.chat === true) return "semi";
     const row = r.taskId !== null ? db.prepare("SELECT r.mode FROM tasks t LEFT JOIN runs r ON r.id = t.run_id WHERE t.id = ?").get(r.taskId) : db.prepare("SELECT mode FROM runs WHERE id = ?").get(r.runId ?? null);
     if (row === undefined) throw new Error("its task or run is not in the store");
     if (row.mode === null) return "manual";
@@ -562,7 +613,20 @@ export function createBroker(options: {
     }
     // In a manual run every command asks whatever else is so, and the card says that.
     const nobody = (reason: string, why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason, why } : { verdict: "ask", why: mode === "manual" && r.tool === "Bash" ? "manual" : why });
-    if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.", "unknown");
+    if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.chat !== (r.chat === true) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.", "unknown");
+    if (ticket.chat && WEB_TOOLS.has(r.tool)) {
+      try {
+        const setting = chatWebAccess(db);
+        if (setting === "off") return { verdict: "web", allowed: false };
+        // Allow is for the public web: a fetch of this Mac or the local network is put to the owner.
+        if (setting === "allow" && r.tool === "WebFetch" && !publicWebAddress(isObject(r.input) ? r.input.url : undefined)) return { verdict: "ask", why: "local_address" };
+        if (setting === "allow") return { verdict: "web", allowed: true };
+      } catch (err) {
+        // Not known to be anything but Ask: the owner decides.
+        console.error(`The setting Web access in chat could not be read: ${words(err)}`);
+      }
+      return { verdict: "ask", why: "other_tool" };
+    }
     if (r.tool !== "Bash") return fileRequestVerdict(r, ticket, cwd, mode);
     try {
       // The input the CLI would run is the one its card would show, and the directory is the one its hook reported:
@@ -633,7 +697,7 @@ export function createBroker(options: {
       return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: detail });
     };
     if (closed) return deny("Botbench is shutting down, so nothing more is allowed.");
-    if ((r.taskId === null) === (r.runId === undefined || r.runId === null)) return deny("The request names neither a task nor a run, or both.");
+    if ((r.taskId !== null ? 1 : 0) + (r.runId === undefined || r.runId === null ? 0 : 1) + (r.chat === true ? 1 : 0) !== 1) return deny("The request names none of a task, a run and a chat, or more than one.");
     if (typeof r.tool !== "string" || r.tool === "" || typeof r.toolCallId !== "string" || r.toolCallId === "" || typeof r.command !== "string" || r.command === "" || typeof r.role !== "string" || r.role === "") {
       return deny("The request does not say what it is for.");
     }
@@ -671,6 +735,16 @@ export function createBroker(options: {
     // What Botbench itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
+    if (verdict.verdict === "web") {
+      const detail = verdict.allowed ? `Ran without asking you: Web access in chat is set to ${WEB_ACCESS_WORDS.allow} in Settings.` : WEB_OFF;
+      try {
+        // What cannot be logged does not run.
+        appendLog(db, { taskId: null, attemptId: r.attemptId, rule: "chat_web_access", tool: r.tool, command: r.command, cwd, detail });
+      } catch (err) {
+        return deny(`This could not be recorded, so it was not let through: ${words(err)}`);
+      }
+      return Promise.resolve(verdict.allowed ? { decision: "allow", note: null, approvalId: null, refused: null, web: true } : { decision: "decline", note: null, approvalId: null, refused: WEB_OFF });
+    }
     if (verdict.verdict === "refuse") {
       let refusal: RefusalKind = "unconfined";
       try {
@@ -697,7 +771,7 @@ export function createBroker(options: {
       if (verdict.edit) {
         try {
           // What cannot be logged does not run. A read is not logged, as a read inside the worktree never is.
-          appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "auto_worktree_edit", tool: r.tool, command: requestTarget(r.tool, r.input, ticket!.worktree, cwd === "" ? null : path.resolve(ticket!.worktree, cwd)) ?? r.command, cwd, detail: "Claude Code asked about this change; it is inside the task's copy, so it ran without asking you." });
+          appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "auto_worktree_edit", tool: r.tool, command: requestTarget(r.tool, r.input, ticket!.worktree, cwd === "" ? null : path.resolve(ticket!.worktree, cwd)) ?? r.command, cwd, detail: ticket!.chat ? "Claude Code asked about this change; it is inside the chat's own folder, so it ran without asking you." : "Claude Code asked about this change; it is inside the task's copy, so it ran without asking you." });
         } catch (err) {
           return deny(`Botbench could not record this edit, so it was not let through: ${words(err)}`);
         }
@@ -707,11 +781,12 @@ export function createBroker(options: {
     if (verdict.verdict === "allow" && verdict.rule === "mode") {
       try {
         // What cannot be logged does not run.
-        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "mode_allowed", tool: r.tool, command: r.command, cwd, detail: `Ran without asking you: this run is ${MODE_WORDS[verdict.mode]}, and the command ran kept away from your sign-ins and the network.` });
+        const chat = ticket?.chat === true;
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: chat ? "chat_confined" : "mode_allowed", tool: r.tool, command: r.command, cwd, detail: chat ? "Ran without asking you: in a chat a command runs when it is kept in the chat's folder, away from your sign-ins and the network." : `Ran without asking you: this run is ${MODE_WORDS[verdict.mode]}, and the command ran kept away from your sign-ins and the network.` });
       } catch (err) {
         return deny(`This command could not be recorded, so it was not let through: ${words(err)}`);
       }
-      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, byMode: verdict.mode });
+      return Promise.resolve(ticket?.chat === true ? { decision: "allow", note: null, approvalId: null, refused: null, chat: true } : { decision: "allow", note: null, approvalId: null, refused: null, byMode: verdict.mode });
     }
     if (verdict.verdict === "allow") {
       const grant = verdict.grant;
@@ -726,7 +801,7 @@ export function createBroker(options: {
       return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, ...(standing ? { standing: { grantId: grant.id } } : { preapproved: { grantId: grant.id } }) });
     }
     const always = verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null;
-    const asksBecause = askWords(verdict.why, { tool: r.tool, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) });
+    const asksBecause = askWords(verdict.why, { tool: r.tool, chat: ticket?.chat === true, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) });
     let target: string | null = null;
     try {
       target = ticket === undefined ? null : requestTarget(r.tool, r.input, ticket.worktree, cwd === "" ? null : path.resolve(ticket.worktree, cwd));
@@ -738,8 +813,8 @@ export function createBroker(options: {
     try {
       id = transaction(db, () => {
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, run_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
-          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target);
+          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target);
         const approvalId = Number(inserted.lastInsertRowid);
         appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
@@ -921,6 +996,7 @@ export function createBroker(options: {
     // pass (an edit after the agent moved into a sub-folder), and its card then says the folder of this call, not of another.
     if (ticket.seen.size >= MAX_SEEN && !ticket.seen.has(toolCallId)) ticket.seen.delete(ticket.seen.keys().next().value!);
     ticket.seen.set(toolCallId, from);
+    if (ticket.chat && CHAT_QUIET_TOOLS.has(tool)) return { verdict: "pass", reason: "" };
     if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing" || verdict.rule === "mode_confined") {
       return { verdict: "ask", reason: "Botbench asks the owner before this runs." };
     }
@@ -983,6 +1059,8 @@ export function createBroker(options: {
           // What a Botbench that stopped left pending stays pending, marked as asked before this start. Nothing waits for it
           // in this process; the engine decides whether its task can be resumed. A store that cannot be written is no start.
           try {
+            // Nothing re-drives a chat: its requests from before this start end here, unanswered, and say why.
+            supersedeWhere(CHAT_RESTARTED, "chat = 1");
             db.prepare("UPDATE approvals SET parked_at = ? WHERE status = 'pending' AND parked_at IS NULL").run(now());
           } catch (err) {
             return reject(new Error(`The approvals left pending by the last run could not be marked: ${words(err)}`));
@@ -1013,8 +1091,8 @@ export function createBroker(options: {
     });
   };
 
-  const admit = (o: { taskId?: number; runId?: number; role: string; worktree: string; resumes?: number; readOnly?: boolean; confined?: boolean }): Admission => {
-    if ((o.taskId === undefined) === (o.runId === undefined)) throw new Error("A permission ticket is for a task or for a run's planner, one of the two.");
+  const admit = (o: { taskId?: number; runId?: number; chat?: boolean; role: string; worktree: string; resumes?: number; readOnly?: boolean; confined?: boolean }): Admission => {
+    if ((o.taskId === undefined ? 0 : 1) + (o.runId === undefined ? 0 : 1) + (o.chat === true ? 1 : 0) !== 1) throw new Error("A permission ticket is for a task, a run's planner or a chat, one of the three.");
     const secret = randomBytes(32).toString("hex");
     const key = hashOf(secret);
     // The CLI reports directories with links followed, so the worktree is kept the same way.
@@ -1024,7 +1102,7 @@ export function createBroker(options: {
     } catch {
       // A worktree that is not there yet is compared as written.
     }
-    const ticket: Ticket = { taskId: o.taskId ?? null, runId: o.runId ?? null, readOnly: o.readOnly === true, confined: o.confined === true, role: o.role, worktree, attemptId: null, resumes: o.resumes ?? null, seen: new Map() };
+    const ticket: Ticket = { taskId: o.taskId ?? null, chat: o.chat === true, runId: o.runId ?? null, readOnly: o.readOnly === true, confined: o.confined === true, role: o.role, worktree, attemptId: null, resumes: o.resumes ?? null, seen: new Map() };
     tickets.set(key, ticket);
     const supersede = (toolCallId?: string): void => {
       if (ticket.attemptId === null) return;

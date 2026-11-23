@@ -7,10 +7,11 @@ import { test } from "node:test";
 import { SANDBOX_EXEC } from "../../src/confinement.ts";
 import { makeReviewFolder, neutralizeMentions, removeLeftoverReviewFolders, wholeCliProfile } from "../../src/drivers/cli-sandbox.ts";
 import { tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // Real sandbox-exec, real files; no CLI of a vendor is started here.
 
-test("the whole-CLI profile denies reading every listed place but the CLI's own folders and the review folder, and writing anywhere but those and the temporary folder", (t) => {
+test("the whole-CLI profile denies reading every listed place but the CLI's own folders and the review folder, and writing anywhere but those and the temporary folder", { skip: NO_SANDBOX }, (t) => {
   const dir = fs.realpathSync(tempDir("botbench-cli-sandbox-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const data = path.join(dir, "data");

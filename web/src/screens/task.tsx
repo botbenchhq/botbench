@@ -6,8 +6,8 @@ import { DiffLine } from "../components/diff.tsx";
 import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
-import { CopyField, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
-import { MODE_SENTENCE } from "../components/mode-choice.tsx";
+import { BranchCopy, DecisionControls, DecisionOutcome } from "../components/decision.tsx";
+import { modeSentence } from "../app/run-words.ts";
 import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
@@ -21,7 +21,27 @@ import { mergeEvents, Transcript } from "../components/transcript.tsx";
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
 
-/** A unified diff as text, in a block that scrolls sideways on its own so the page never does. */
+/** The task's number and repository, and its run's mode for a task of a plan: in the header, or after a waiting card. */
+function TaskLines({ task, id, className }: { task: TaskDetail; id: number; className?: string }) {
+  return (
+    <>
+      <p data-testid="task-name" className={className}>
+        {`Task ${id} · `}
+        <span data-ds-content="">{folderName(task.repo)}</span>
+      </p>
+      {task.ofPlan !== null && (
+        <p data-testid="task-mode" className={className}>
+          {modeSentence(task.mode, task.issueHosts)}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The files whose diff wraps: prose, by their extension. */
+const PROSE = /\.(md|txt)$/i;
+
+/** A unified diff as text, in a block that scrolls sideways on its own so the page never does; prose wraps instead. */
 function Diff({ path, state }: { path: string; state: DiffState }) {
   if (state.kind === "loading") {
     return (
@@ -40,8 +60,9 @@ function Diff({ path, state }: { path: string; state: DiffState }) {
     );
   }
   const lines = state.diff.replace(/\n$/, "").split("\n");
+  // Prose wraps to the screen's width; code keeps its lines whole, scrolling sideways inside the diff (index.css).
   return (
-    <figure className="ds-diff">
+    <figure className={PROSE.test(path) ? "ds-diff bb-diff-prose" : "ds-diff"}>
       <pre data-testid="diff-scroll" tabIndex={0} role="group" data-ds-content-label="" aria-label={`Changes in ${path}`} className="ds-diff__body">
         <code data-testid="diff" data-ds-content="" className="ds-diff__lines">
           {lines.map((line, i) => (
@@ -168,24 +189,23 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
       <Page>
         {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be: the task's own words, once read. */}
         <PageHeader title={taskTitle(id, task?.prompt ?? null)} theirs={task !== null}>
-          {task !== null && (
-            <p data-testid="task-name" className="ds-page-header__description">
-              {`Task ${id} · `}
-              <span data-ds-content="">{folderName(task.repo)}</span>
-            </p>
-          )}
-          {/* While its card is shown, the card says what the task waits for. */}
+          {/* While a card waits, the header holds the title alone and the card comes next; these lines follow the card. */}
           {task !== null && asking === undefined && (
-            <p data-testid="task-status" role="status" className="ds-page-header__description">
-              {statusSentence(task)}
-            </p>
-          )}
-          {task !== null && task.ofPlan !== null && (
-            <p data-testid="task-mode" className="ds-page-header__description">
-              {MODE_SENTENCE[task.mode]}
-            </p>
+            <>
+              <TaskLines task={task} id={id} className="ds-page-header__description" />
+              <p data-testid="task-status" role="status" className="ds-page-header__description">
+                {statusSentence(task)}
+              </p>
+            </>
           )}
         </PageHeader>
+        {/* A request that waits for the owner comes first after the title: nothing else on the screen is as urgent. The card says what the task waits for. */}
+        {task !== null && asking !== undefined && (
+          <>
+            <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />
+            <TaskLines task={task} id={id} />
+          </>
+        )}
         {task !== null && task.outsideText && <OutsideText issue={task.issue} what="task" />}
         {problem !== null && (
           <Alert tone="error" role="alert">
@@ -228,8 +248,6 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <p>You listed these when you started the task. They run without asking, with further arguments too, unless Botbench's safety rules catch them (git push, sudo, deleting outside the task's copy and the like) or they are chained, piped or redirected: those still ask.</p>
               </section>
             )}
-
-            {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />}
 
             {task.evidence.some((row) => row.kind === "setup") && (
               <section aria-labelledby="setup-heading" className="ds-stack ds-gap-sm">
@@ -346,7 +364,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             ) : (
               task.branch !== null && task.remains?.discardedAt == null && (
                 <section className="ds-stack ds-gap-sm">
-                  {task.status === "awaiting_decision" && <CopyField label="Branch" value={task.branch} testId="branch" buttonName="Copy branch name" />}
+                  {task.status === "awaiting_decision" && <BranchCopy branch={task.branch} />}
                   <p data-testid="not-merged">{notMergedLine(task)}</p>
                   <details data-testid="can-do" className="ds-disclosure">
                     <summary className="ds-disclosure__summary">What Claude Code can do here</summary>
@@ -396,7 +414,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                     </dd>
                   </div>
                 </dl>
-                {branchInDetails && <CopyField label="Branch" value={task.branch!} testId="branch" buttonName="Copy branch name" />}
+                {branchInDetails && <BranchCopy branch={task.branch!} />}
               </div>
             </details>
           </>

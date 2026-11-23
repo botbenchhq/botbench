@@ -40,6 +40,13 @@ test("the agent is told it has nothing but the message: no files, nothing to cha
   assert.deepEqual(blocks(prompt), [{ from: "The owner's new message, which you answer", text: "Hi" }]);
 });
 
+test("Claude Code, which keeps its tools in a chat, is not told it has nothing but the message", () => {
+  const { prompt } = chatPrompt({ history: [{ from: "Codex (gpt-6-luna)", text: "Blue." }], message: "Check https://example.com", tools: true });
+  assert.doesNotMatch(prompt, /conversation alone|cannot change anything/);
+  assert.match(prompt, /^\[From Botbench\] You are answering the owner in a chat, working in a folder of your own with none of the owner's files in it\./);
+  assert.deepEqual(blocks(prompt).at(-1), { from: "The owner's new message, which you answer", text: "Check https://example.com" });
+});
+
 test("over the cap, the oldest messages are left out first, and a plain note says how many", () => {
   const long = "x".repeat(MAX_CHAT_HISTORY / 4);
   const big: ChatEntry[] = ["one", "two", "three", "four", "five"].map((n, at) => ({ from: at % 2 === 0 ? "owner" : "Grok (grok-4.7-build-fast)", text: `${n} ${long}` }));

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { trayShows } from "../web/src/components/approval-tray.ts";
-import { runSentence } from "../web/src/components/run-status.ts";
+import { runSentence, runTaskNote } from "../web/src/components/run-status.ts";
+import { bannedIn } from "../e2e/voice.ts";
+import { plannerSilenceReason, silenceReason } from "../src/engine/silence.ts";
 import { answeredOther, notMergedLine, offersMerge, statusSentence, taskTitle } from "../web/src/components/task-status.ts";
 import type { PullRequestView, RunDetail, RunTask, TaskSummary } from "../web/src/api/client.ts";
 
@@ -57,6 +59,39 @@ test("a task is titled by its own words, cut at a word boundary, and by its numb
   assert.equal(taskTitle(3, "   \n  "), "Task 3");
 });
 
+test("a task's title is never cut to one word: from 40 characters on it is cut at the first word boundary at or after the 40th, and a shorter one is whole", () => {
+  // A long word right after the first: cutting before the 40th character would leave one word.
+  const long = "Implement src/engine/very-long-module-name/with-a-long-file.ts so that it reads the config";
+  const cut = taskTitle(3, long);
+  assert.equal(cut, "Implement src/engine/very-long-module-name/with-a-long-file.ts…");
+  assert.ok(cut.length - 1 >= 40 && long.startsWith(cut.slice(0, -1)));
+  // Under 40 characters, whole, and so is a 40-character one with nothing after it.
+  assert.equal(taskTitle(3, "Fix the login page on small screens"), "Fix the login page on small screens");
+  assert.equal(taskTitle(3, "x".repeat(39)), "x".repeat(39));
+  assert.equal(taskTitle(3, `${"a".repeat(20)} ${"b".repeat(19)}`), `${"a".repeat(20)} ${"b".repeat(19)}`);
+  // Never shorter than 40 characters once cut, whatever punctuation is at the boundary.
+  for (const prompt of ["Add a line to the README saying hello there, and then commit it", "one two three four five six seven eight nine ten eleven twelve", `${"word ".repeat(30)}end`]) {
+    const title = taskTitle(3, prompt);
+    assert.ok(title.endsWith("…"), prompt);
+    assert.ok(title.length - 1 >= 40, `${title} (${title.length - 1})`);
+    assert.ok(prompt.startsWith(title.slice(0, -1)), prompt);
+    assert.ok(/\s/.test(prompt[title.length - 1] ?? " "), `cut at a word boundary: ${title}`);
+  }
+  // A first word of 40 characters or more is never the whole title: the cut comes after the second word.
+  const word = "src/engine/a-very-long-module-path/file-name.ts";
+  assert.ok(word.length >= 40);
+  assert.equal(taskTitle(3, `${word} must read the settings file`), `${word} must…`);
+  assert.equal(taskTitle(3, `${word}   must read`), `${word}   must…`);
+  assert.equal(taskTitle(3, word), word);
+  assert.equal(taskTitle(3, `${word} must`), `${word} must`);
+  // A first line of one word is not the title on its own when more words follow on the next lines: they are joined.
+  assert.equal(taskTitle(3, "Fix\n the login page"), "Fix the login page");
+  assert.equal(taskTitle(3, "Refactor:\n\nmove the session code into its own module, then test it"), "Refactor: move the session code into its…");
+  assert.equal(taskTitle(3, "Fix\n"), "Fix");
+  // One long line with no later word boundary is shown whole rather than cut inside a word.
+  assert.equal(taskTitle(3, `Rename ${"x".repeat(60)}`), `Rename ${"x".repeat(60)}`);
+});
+
 const task = (status: RunTask["status"]): Pick<RunTask, "status"> => ({ status });
 const run = (tasks: Pick<RunTask, "status">[]): Pick<RunDetail, "status" | "reason" | "waitingOnApproval" | "tasks" | "attemptId" | "mode"> => ({ status: "running", reason: null, waitingOnApproval: false, tasks: tasks as RunTask[], attemptId: 1, mode: "manual" });
 
@@ -76,6 +111,22 @@ test("the header's tray is not shown on the screen that already shows every appr
   assert.equal(trayShows({ pending: [], showing: [1], problem: null }), "nothing");
   assert.equal(trayShows({ pending: null, showing: [], problem: "Approvals could not be read." }), "tray");
   assert.equal(trayShows({ pending: null, showing: [], problem: null }), "nothing");
+});
+
+test("a task stopped because its agent went silent says so in words on the task screen and on the run screen, naming the limit", () => {
+  // The reason as the engine stores it, with the shipped limit of 600 seconds.
+  const reason = silenceReason("Claude Code", 600_000);
+  const stopped = { status: "interrupted" as const, reason, baseCommit: "a", headCommit: "a", attemptId: 1, waitingOnApproval: false, parked: false, resuming: false, ofPlan: 3, decision: null, pullRequest: { state: "none" as const, number: null } };
+  const words =
+    "Claude Code went silent: it sent nothing for 10 minutes while it was working, which is the silence limit in Botbench's settings, so Botbench stopped it and everything it had started. The work done up to then is committed. Resume starts Claude Code again where it left off.";
+  assert.equal(statusSentence(stopped), `Stopped. ${words}`);
+  assert.equal(runTaskNote(stopped), words);
+  assert.equal(silenceReason("Claude Code", 60_000).includes("for 1 minute while"), true);
+  assert.equal(silenceReason("Claude Code", 90_000).includes("for 90 seconds while"), true);
+  // A planner that went silent fails its run, which says so.
+  const planner = plannerSilenceReason("Claude Code", 600_000);
+  assert.equal(runSentence({ status: "failed", reason: planner, waitingOnApproval: false, tasks: [], attemptId: 1, mode: "manual" }), "Failed. The planner went silent: Claude Code sent nothing for 10 minutes while it was planning, which is the silence limit in Botbench's settings, so Botbench stopped it and everything it had started.");
+  for (const text of [statusSentence(stopped), planner]) assert.deepEqual(bannedIn(text), [], text);
 });
 
 test("a task's model is mentioned only when the model that answered is not the one asked for", () => {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { createChat } from "../src/api/chat.ts";
+import { createBroker } from "../src/approvals/broker.ts";
 import { createTurns } from "../src/api/turns.ts";
 import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { openStore } from "../src/store/db.ts";
@@ -33,7 +34,9 @@ const test = base.extend<{ dir: string; seeded: { home: string; conversation: nu
     const home = path.join(dir, "home");
     const db = openStore(home);
     const claude = new ClaudeCodeDriver();
-    const turns = createTurns({ db, home, driver: claude, onEvent: () => {} });
+    const broker = createBroker({ db, home, onChange: () => {} });
+    await broker.listen();
+    const turns = createTurns({ db, home, driver: claude, broker, onEvent: () => {} });
     const chat = createChat({ db, home, turns, claude, agents: { codex: chatReplayDriver("codex", ["chat", "compare"]), grok: chatReplayDriver("grok"), antigravity: chatReplayDriver("antigravity") }, onEvent: () => {} });
     const asked = await chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: "gpt-6-luna" }, { agent: "grok", model: "grok-4.7-build-fast" }, { agent: "antigravity", model: "gemini-3.8-flash-low" }] });
     const wait = async (ids: number[]) => {
@@ -44,6 +47,7 @@ const test = base.extend<{ dir: string; seeded: { home: string; conversation: nu
     await wait(compared.map((r) => r.attemptId));
     await chat.close();
     await turns.close();
+    await broker.close();
     db.close();
     await use({ home, conversation: [...asked, ...compared].map((r) => r.attemptId) });
   },

@@ -174,11 +174,14 @@ test("repeated wrong tokens are slowed down, and a correct sign-in resets the de
   assert.ok(b.ms >= delay - slack, `second wrong attempt waited ${b.ms}ms`);
   assert.ok(c.ms >= 2 * delay - slack, `third wrong attempt waited ${c.ms}ms`);
 
-  // Sending guesses side by side does not get around the wait: they are answered one after another.
+  // Sending guesses side by side does not get around the wait: they are answered one after another. The fifth waits
+  // its own 8 delays after the fourth is checked; checked side by side, both would be answered within the 4 delays the
+  // third set off. (The fourth's wait is counted from when the third was checked, which is before `began`: a loaded
+  // machine takes some of it to deliver the third's answer, so it is not counted here.)
   const began = performance.now();
   const parallel = await Promise.all([timed("wrong-4"), timed("wrong-5")]);
   assert.deepEqual(parallel.map((p) => p.status), [401, 401]);
-  assert.ok(performance.now() - began >= (4 + 8) * delay - slack, `two parallel guesses took ${performance.now() - began}ms`);
+  assert.ok(performance.now() - began >= 8 * delay - slack, `two parallel guesses took ${performance.now() - began}ms`);
 
   // The owner's correct token still works, after the wait, and clears the count.
   const right = await timed(token);

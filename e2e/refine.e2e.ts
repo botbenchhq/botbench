@@ -102,7 +102,7 @@ test("LIVE the refine loop: Codex raises a defect in Claude Code's first build, 
   // The records: one review per round, a round of fixes after each review with concerns while rounds were left.
   expect(task.reviewRounds).toBe(task.reviews.length);
   expect(task.refineRounds).toBe(task.refinements.length);
-  expect(["satisfied", "unresolved", "failed"]).toContain(task.reviewOutcome);
+  expect(["satisfied", "unaccounted", "unresolved", "failed"]).toContain(task.reviewOutcome);
   expect(task.reviews.length).toBeGreaterThanOrEqual(1);
   expect(task.reviews.length).toBeLessThanOrEqual(3);
   if (task.reviews[0]!.outcome === "reviewed" && task.reviews[0]!.verdict !== "looks_right") {

@@ -1174,6 +1174,149 @@ BEGIN SELECT RAISE(ABORT, 'why an approval asks and what it is aimed at cannot b
 `,
   },
   {
+    // The first run of an installation (src/api/settings.ts, `firstRun`): the home screen's first-run lines show until
+    // the first chat, task or run is stored. One row, written by the store itself the moment the first attempt, task or
+    // run is inserted, whatever code path inserts it, and kept for good: deleting that chat, task or run later, or a
+    // restart, never brings the lines back. An installation that already holds any of them is marked as it migrates.
+    name: "first_use",
+    sql: `
+CREATE TABLE first_use (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  at TEXT NOT NULL
+);
+INSERT INTO first_use (id, at) SELECT 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE EXISTS (SELECT 1 FROM attempts) OR EXISTS (SELECT 1 FROM tasks) OR EXISTS (SELECT 1 FROM runs);
+CREATE TRIGGER first_use_by_attempt AFTER INSERT ON attempts WHEN NOT EXISTS (SELECT 1 FROM first_use)
+BEGIN INSERT INTO first_use (id, at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')); END;
+CREATE TRIGGER first_use_by_task AFTER INSERT ON tasks WHEN NOT EXISTS (SELECT 1 FROM first_use)
+BEGIN INSERT INTO first_use (id, at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')); END;
+CREATE TRIGGER first_use_by_run AFTER INSERT ON runs WHEN NOT EXISTS (SELECT 1 FROM first_use)
+BEGIN INSERT INTO first_use (id, at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')); END;
+CREATE TRIGGER first_use_no_update BEFORE UPDATE ON first_use
+BEGIN SELECT RAISE(ABORT, 'first use is kept: it is never changed'); END;
+CREATE TRIGGER first_use_no_delete BEFORE DELETE ON first_use
+BEGIN SELECT RAISE(ABORT, 'first use is kept: it is never deleted'); END;
+`,
+  },
+  {
+    // A chat's Claude Code asks through the same broker as a task's builder (src/api/turns.ts). An approval belongs to
+    // a task, a run's planner or a chat (`chat` = 1), exactly one of the three. The action log gains the rules for a web
+    // tool of a chat decided by the owner's setting "Web access in chat" (`chat_web_access`) and for a chat's confined
+    // command that ran without asking (`chat_confined`); the setting `owner_settings` now
+    // keeps beside the default mode. A check cannot be altered in place, so the three tables are made again with every
+    // row kept, ids included, and their indexes and triggers put back.
+    name: "chat approvals",
+    sql: `
+ALTER TABLE approvals RENAME TO approvals_before_chat;
+CREATE TABLE approvals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER NOT NULL REFERENCES attempts (id),
+  role TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  reason TEXT,
+  tool_call_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'allowed', 'declined', 'superseded')),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  parked_at TEXT,
+  stored_decision TEXT CHECK (stored_decision IN ('allow', 'decline')),
+  stored_at TEXT,
+  run_id INTEGER REFERENCES runs (id),
+  asks_because TEXT,
+  target TEXT,
+  chat INTEGER NOT NULL DEFAULT 0 CHECK (chat IN (0, 1)),
+  CHECK ((task_id IS NOT NULL) + (run_id IS NOT NULL) + chat = 1)
+);
+INSERT INTO approvals (id, task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, note, created_at, resolved_at, parked_at, stored_decision, stored_at, run_id, asks_because, target)
+  SELECT id, task_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, note, created_at, resolved_at, parked_at, stored_decision, stored_at, run_id, asks_because, target FROM approvals_before_chat ORDER BY id;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_chat;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id FROM action_log_before_chat ORDER BY id;
+DROP TABLE action_log_before_chat;
+DROP TABLE approvals_before_chat;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+
+CREATE INDEX approvals_status ON approvals (status, id);
+CREATE INDEX approvals_task ON approvals (task_id, status);
+CREATE INDEX approvals_run ON approvals (run_id, status);
+CREATE TRIGGER approvals_answered_once BEFORE UPDATE ON approvals WHEN OLD.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'this approval is already answered'); END;
+CREATE TRIGGER approvals_request_fixed BEFORE UPDATE OF id, task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, created_at ON approvals
+BEGIN SELECT RAISE(ABORT, 'what an approval asks for cannot be changed'); END;
+CREATE TRIGGER approvals_no_delete BEFORE DELETE ON approvals
+BEGIN SELECT RAISE(ABORT, 'approvals are never deleted'); END;
+CREATE TRIGGER approvals_parked_once BEFORE UPDATE OF parked_at ON approvals WHEN OLD.parked_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'an approval is parked once'); END;
+CREATE TRIGGER approvals_stored_once BEFORE UPDATE OF stored_decision, stored_at ON approvals
+WHEN OLD.stored_decision IS NOT NULL OR OLD.parked_at IS NULL OR NEW.stored_decision IS NULL OR NEW.stored_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'an answer is stored once, and only for an approval asked before a restart'); END;
+CREATE TRIGGER approvals_parked_outcome BEFORE UPDATE OF status ON approvals
+WHEN OLD.parked_at IS NOT NULL AND NEW.status <> 'superseded'
+  AND NEW.status IS NOT (CASE OLD.stored_decision WHEN 'allow' THEN 'allowed' WHEN 'decline' THEN 'declined' END)
+BEGIN SELECT RAISE(ABORT, 'a parked approval ends as its stored answer or as superseded'); END;
+CREATE TRIGGER approvals_asked_plain BEFORE INSERT ON approvals
+WHEN NEW.parked_at IS NOT NULL OR NEW.stored_decision IS NOT NULL OR NEW.stored_at IS NOT NULL OR NEW.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'an approval is first written as pending, neither parked nor answered'); END;
+CREATE TRIGGER approvals_stored_note_fixed BEFORE UPDATE OF note ON approvals WHEN OLD.stored_decision IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'the note of a stored answer cannot be changed'); END;
+CREATE TRIGGER approvals_reason_fixed BEFORE UPDATE OF asks_because, target ON approvals
+BEGIN SELECT RAISE(ABORT, 'why an approval asks and what it is aimed at cannot be changed'); END;
+CREATE TRIGGER approvals_chat_not_stored BEFORE UPDATE OF stored_decision ON approvals WHEN OLD.chat = 1
+BEGIN SELECT RAISE(ABORT, 'a chat''s approval is never answered for a later start'); END;
+
+ALTER TABLE owner_settings RENAME TO owner_settings_before_chat;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
+  CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off'))
+);
+INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_chat;
+DROP TABLE owner_settings_before_chat;
+`,
+  },
+  {
+    // How an issue's author relates to its repository, as GitHub's author_association said when it was read; null when
+    // it did not say, and for an issue read before this. Kept with the rest of the issue as read, never changed (the
+    // table's triggers), and shown to the owner only: a run from the issue is marked as outside text whatever it says.
+    name: "issue_author_relation",
+    sql: `
+ALTER TABLE issue_fetches ADD COLUMN author_relation TEXT CHECK (author_relation IN ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE'));
+`,
+  },
+  {
     // What kind of request a fully autonomous run refused (`refusal`, src/approvals/refusals.ts), written with its
     // `mode_refused` entry and on no other: whether it blocks the accept is read from it. An entry from before this has
     // none and blocks, as every refusal did. And a run may be kept to one task (`one_task`), chosen when it starts and

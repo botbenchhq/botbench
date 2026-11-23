@@ -33,6 +33,8 @@ interface Story {
   asked: Set<string>;
   /** How each request ended, by its call. */
   answers: Map<string, Of<"permission_resolved">["decision"]>;
+  /** Why Botbench refused a request without asking, by its call. */
+  refusals: Map<string, string>;
   /** The calls refused with nobody to ask. */
   refused: Set<string>;
   /** The calls Claude Code's rule on reads refused, outside the folder the agent works in (U27). */
@@ -50,7 +52,7 @@ interface Story {
 const exchangeOf = (event: StoredEvent): string => `${event.attemptId}:${event.turn}`;
 
 function readStory(events: readonly StoredEvent[], live: boolean): Story {
-  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), allowedAt: new Map(), asked: new Set(), answers: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), calledIn: new Set(), completedAt: new Map(), exchanges: new Map() };
+  const story: Story = { live, calls: new Map(), results: new Map(), calledAt: new Map(), returnedAt: new Map(), allowedAt: new Map(), asked: new Set(), answers: new Map(), refusals: new Map(), refused: new Set(), outside: new Set(), ended: new Set(), calledIn: new Set(), completedAt: new Map(), exchanges: new Map() };
   for (const event of events) {
     const e = event.payload;
     const key = exchangeOf(event);
@@ -60,7 +62,8 @@ function readStory(events: readonly StoredEvent[], live: boolean): Story {
     else if (e.type === "permission_request") story.asked.add(e.toolCallId);
     else if (e.type === "permission_resolved") {
       story.answers.set(e.toolCallId, e.decision);
-      if (e.decision === "allowed" || e.decision === "preapproved" || e.decision === "standing") story.allowedAt.set(e.toolCallId, event.ts);
+      if (e.decision === "denied" && e.note !== null) story.refusals.set(e.toolCallId, e.note);
+      if (e.decision === "allowed" || e.decision === "preapproved" || e.decision === "standing" || e.decision === "web" || e.decision === "chat") story.allowedAt.set(e.toolCallId, event.ts);
     }
     else if (e.type === "permission_denied") {
       story.refused.add(e.id);
@@ -182,8 +185,9 @@ function shownOf(story: Story, id: string, state: CallState): Shown {
     case "refused": {
       const answer = story.answers.get(id);
       if (answer === "cancelled") return { state: "cancelled", word: "Not answered", note: "The request ended without an answer. It was not run." };
-      if (answer === "declined") return { state: "declined", word: "Denied", note: "You denied it. It was not run." };
-      if (answer === "denied") return { state: "declined", word: "Denied", note: "Botbench denied it without asking you. It was not run." };
+      if (answer === "declined") return { state: "declined", word: "Denied", note: "You denied this." };
+      // Botbench's own reason, one plain sentence (the safety rules in a fully autonomous run, web access in chat turned off).
+      if (answer === "denied") return { state: "declined", word: "Denied", note: story.refusals.get(id) ?? "Botbench refused this without asking you." };
       if (story.outside.has(id)) return { state: "declined", word: "Denied", note: OUTSIDE };
       return { state: "declined", word: "Denied", note: "It needed your approval, and there was no way to ask you here." };
     }
@@ -251,8 +255,16 @@ function Returned({ text, label }: { text: string; label: string }) {
  * then follow the rest, under their own words, with no further fold.
  */
 function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: Story; state: CallState; folded: boolean }) {
+  const result = story.results.get(call.id);
+  // What a call that was not run returned is what the agent was told: a technical detail, one level down, not output.
+  const told = state === "refused" && result !== undefined;
   const technical = (
     <>
+      {told && (
+        <div data-event="tool_result" className="ds-stack ds-gap-xs">
+          <Returned text={result.output} label="What Claude Code was told" />
+        </div>
+      )}
       <p>
         {"Tool: "}
         <Theirs>{call.name}</Theirs>
@@ -262,7 +274,6 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
       </pre>
     </>
   );
-  const result = story.results.get(call.id);
   // What the sandbox kept a call that ran from, as its result reports it (U27): a failed row, open, its note in plain words.
   const kept = state === "done" || state === "failed" ? confinedWords(result?.confined) : null;
   const shown: Shown = kept === null ? shownOf(story, call.id, state) : { state: "failed", word: "Failed", note: `${kept.note[0]!.toUpperCase()}${kept.note.slice(1)}. ${kept.sentences.join(" ")}` };
@@ -337,10 +348,9 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
             )}
             {written !== null && <p className="ds-tool-call__label">{state === "done" ? "The text it wrote" : "The text it asked to write"}</p>}
             {written !== null && <Cut text={written.text} what="The text" />}
-            {result !== undefined && (
+            {result !== undefined && !told && (
               <div data-event="tool_result" className="ds-stack ds-gap-xs">
-                {/* What came back from a call that was not run is what the agent was told, not output of the command. */}
-                <Returned text={result.output} label={state === "refused" ? "What Claude Code was told" : result.isError ? "Error output" : "Output"} />
+                <Returned text={result.output} label={result.isError ? "Error output" : "Output"} />
               </div>
             )}
             {folded ? (
@@ -365,7 +375,7 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
 const Tokens = ({ exchange }: { exchange: { tokensIn: number; tokensOut: number } }) => <p data-event="usage" className="ds-message__body">{`Tokens: ${exchange.tokensIn} in, ${exchange.tokensOut} out`}</p>;
 
 /** Every piece of transcript text is rendered as a React child, so it is always text and never markup. */
-function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: { event: StoredEvent; story: Story; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy: string; folded: boolean; who: (attemptId: number) => string | null }) {
+function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, asking }: { event: StoredEvent; story: Story; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy: string; folded: boolean; who: (attemptId: number) => string | null; asking?: (attemptId: number, toolCallId: string) => ReactNode }) {
   const e = event.payload;
   const by = who(event.attemptId);
   switch (e.type) {
@@ -429,11 +439,17 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: {
           <Body>{e.code === "outside_reads_blocked" ? OUTSIDE : "It was not run. It needed your approval, and there was no way to ask you here."}</Body>
         </Line>
       );
-    case "permission_request":
+    case "permission_request": {
       // The call's own line says it waits ("Needs input", "Wants to run …"), and the answer's row says what became of
-      // it: a row for the asking itself would say it a third time.
-      return null;
+      // it: a row for the asking itself would say it a third time. Where the screen answers requests in its transcript
+      // (a chat), the card of one still waiting stands here, where it was asked.
+      const card = asking?.(event.attemptId, e.toolCallId) ?? null;
+      return card === null ? null : <li data-event={e.type}>{card}</li>;
+    }
     case "permission_resolved": {
+      // A web fetch or search the owner's setting lets run in a chat is an ordinary step: its call's own line says it.
+      // So is a confined command that runs without asking in a chat, as it would when Claude Code is used directly.
+      if (e.decision === "web" || e.decision === "chat") return null;
       const said = {
         allowed: "You allowed it once.",
         preapproved: "It was allowed without asking you: you listed this command when you started the task.",
@@ -585,13 +601,13 @@ function StepGroup({ steps, live, worked, children }: { steps: { call: Of<"tool_
  * transcript that sits behind a disclosure of its own, so its rows fold one level and not two, and its tool calls are
  * not grouped (a step group inside a disclosure would be a third level).
  */
-export function Transcript({ events, working, modelName, modelDiffers, promptBy = "You", folded = false, who = NOBODY, after }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean; who?: (attemptId: number) => string | null; after?: ReactNode }) {
+export function Transcript({ events, working, modelName, modelDiffers, promptBy = "You", folded = false, who = NOBODY, after, asking }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean; who?: (attemptId: number) => string | null; after?: ReactNode; asking?: (attemptId: number, toolCallId: string) => ReactNode }) {
   const story = useMemo(() => readStory(events, working !== null), [events, working]);
   const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
   const set = useCallback((id: string, open: boolean) => setOpened((have) => new Map(have).set(id, open)), []);
   const openedValue = useMemo(() => ({ opened, set }), [opened, set]);
   // The rows the transcript shows, in order: an event that is told by another row (a result with its call, a usage count) has none.
-  const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, modelDiffers, promptBy, folded, who }) })).filter(({ row }) => row !== null);
+  const shown = events.map((event) => ({ event, row: Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ...(asking === undefined ? {} : { asking }) }) })).filter(({ row }) => row !== null);
   // The rows in order, with runs of tool calls long enough to group taken together.
   const parts: ({ one: (typeof shown)[number] } | { group: typeof shown })[] = [];
   for (let at = 0; at < shown.length; ) {

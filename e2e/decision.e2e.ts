@@ -94,7 +94,7 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   await page.getByRole("alertdialog").getByRole("button", { name: "Accept and remove them" }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Accepted\. /);
   await expect(page.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
-  await expect(page.getByTestId("branch")).toHaveValue(task.branch);
+  await expect(page.getByTestId("branch")).toHaveText(task.branch);
   await expect(page.getByTestId("merge-command")).toHaveValue(`git merge ${task.branch}`);
   await expect(page.getByTestId("decision-repo")).toHaveText(repos.checked);
   await expect(page.getByTestId("not-merged")).toContainText("Nothing has been merged or pushed.");

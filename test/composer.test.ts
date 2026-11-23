@@ -78,7 +78,8 @@ test("Send is disabled, with the reason in words, while something it needs is mi
   assert.equal(blocked(ready), null);
   assert.equal(blocked(inRepo()), null);
   assert.deepEqual(blocked({ ...ready, builder: { state: "checking" } }), { reason: "Checking that Claude Code is ready.", required: null });
-  assert.deepEqual(blocked({ ...ready, builder: { state: "problem", words: "Claude Code is signed out." } }), { reason: "Claude Code is signed out. Nothing can be sent until this is fixed.", required: null });
+  // The agent cannot be used: the reason names the problem and is followed by the one link to connect an agent.
+  assert.deepEqual(blocked({ ...ready, builder: { state: "problem", words: "Claude Code is signed out." } }), { reason: "Claude Code is signed out. Nothing can be sent until this is fixed.", required: null, connect: true });
   // A repository is needed and none is chosen: the required chip stands in for the model chip.
   // Only New task and New run make a repository needed (see arrive): the reason is short, and the chip opens the view.
   assert.deepEqual(blocked({ ...ready, repo: { kind: "needed" } }), { reason: "Choose a repository", required: "repository" });

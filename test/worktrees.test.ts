@@ -6,6 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { commitWork, createWorktree, describeWork, fileDiff, removeWorktree, sourceHead } from "../src/worktrees.ts";
 import { gitProcesses, releaseStalled, stalledRepo } from "./support/repo.ts";
+import { NO_PROCESS_LIST } from "./support/confined.ts";
 
 // The tests' own git calls must not be steered by variables a test sets on purpose, or by the caller's shell.
 const CLEAN_ENV: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
@@ -494,7 +495,7 @@ test("a worktree whose git folder was repointed from inside is refused, so nothi
   await removeWorktree({ repo: s.repo, path: wt.path, deleteBranch: true });
 });
 
-test("a git process that does not answer is stopped at its time limit, and the error says the folder could not be read in time", { timeout: 20_000 }, async (t) => {
+test("a git process that does not answer is stopped at its time limit, and the error says the folder could not be read in time", { skip: NO_PROCESS_LIST, timeout: 20_000 }, async (t) => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-stall-"));
   const repo = path.join(dir, "source");
   t.after(() => {

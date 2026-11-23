@@ -250,7 +250,8 @@ export function createChat(o: ChatOptions): Chat {
       }
     }
 
-    let prompt: string;
+    /** What each agent is sent: Claude Code keeps its tools in a chat, the others answer from the conversation alone. */
+    let prompt: (agent: string) => string;
     let round: { kind: "ask" | "compare"; message: string; compares: number | null };
     if (compare !== undefined) {
       const compared = roundOf(db, compare);
@@ -265,10 +266,12 @@ export function createChat(o: ChatOptions): Chat {
           return text.trim() === "" ? [] : [{ from: replyFrom(info.agent, answeredModel(events, info.model)), text }];
         });
       if (answers.length < 2) throw new TurnError(409, "There are fewer than two answers to compare.");
-      prompt = comparePrompt({ question: compared.message, answers });
+      const comparison = comparePrompt({ question: compared.message, answers });
+      prompt = () => comparison;
       round = { kind: "compare", message: compared.message, compares: compare };
     } else {
-      prompt = chatPrompt({ history: chatHistory(db, conversation), message }).prompt;
+      const history = chatHistory(db, conversation);
+      prompt = (agent) => chatPrompt({ history, message, tools: agent === CLAUDE_CODE }).prompt;
       round = { kind: "ask", message, compares: null };
     }
 
@@ -279,7 +282,7 @@ export function createChat(o: ChatOptions): Chat {
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
 
     const roundId = Number(db.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES (?, ?, ?, ?)").run(round.kind, round.message, round.compares, now()).lastInsertRowid);
-    return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt) : askOne(driverOf(agent)!, model ?? null, roundId, prompt))));
+    return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt(agent)) : askOne(driverOf(agent)!, model ?? null, roundId, prompt(agent)))));
   };
 
   const interrupt = async (attemptId: number): Promise<boolean> => {

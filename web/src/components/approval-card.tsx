@@ -43,7 +43,7 @@ export function ApprovalTray({ here }: { here: boolean }) {
       ) : oldest === undefined ? (
         pending === null && problem !== null && <span className="ds-pending-tray__text">{problem}</span>
       ) : (
-        <a href={oldest.taskId === null ? `#/runs/${oldest.runId}` : `#/tasks/${oldest.taskId}`} onClick={open} className="ds-pending-tray__link">
+        <a href={oldest.chat ? "#/turn" : oldest.taskId === null ? `#/runs/${oldest.runId}` : `#/tasks/${oldest.taskId}`} onClick={open} className="ds-pending-tray__link">
           <span className="ds-pending-tray__count">{pending!.length}</span>
           {pending!.length === 1 ? " approval is waiting. Open it." : " approvals are waiting. Open the oldest."}
         </a>
@@ -75,7 +75,7 @@ function Fact({ term, testId, theirs = false, children }: { term: string; testId
  * enough, the card also offers standing permission, last: a secondary step that
  * states the grant's scope in a dialog and does nothing until it is confirmed.
  */
-export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Approval; more: number; on: "task" | "run"; onSignedOut: () => void }) {
+export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Approval; more: number; on: "task" | "run" | "chat"; onSignedOut: () => void }) {
   const { refresh, opened } = useContext(ApprovalsContext);
   const [note, setNote] = useState("");
   /** The answer being sent, while it is. */
@@ -133,6 +133,7 @@ export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Ap
   /** A tool that is not a shell command is said in words; what an allow lets run is one tap away. */
   const said = approvalWords(approval.tool, approval.command);
   const place = placeWords(approval);
+  const of = approval.chat ? "chat" : "task";
 
   return (
     <article ref={card} tabIndex={-1} data-testid="approval-card" data-approval-id={approval.id} aria-labelledby={heading} className="ds-approval">
@@ -155,9 +156,11 @@ export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Ap
         </>
       )}
       <ul className="ds-approval__facts">
-        <Fact term={place.term} testId="approval-directory">
-          {visible(place.words)}
-        </Fact>
+        {place !== null && (
+          <Fact term={place.term} testId="approval-directory">
+            {visible(place.words)}
+          </Fact>
+        )}
         {approval.asksBecause !== null && (
           <Fact term="Why it asks" testId="approval-why">
             {approval.asksBecause}
@@ -181,14 +184,15 @@ export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Ap
       </ul>
       {approval.outsideText && <p data-testid="approval-outside">This request comes from a run that read a GitHub issue, which people outside this project wrote. Check the command for anything the issue might have led to.</p>}
       {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
-      {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
+      {more > 0 && <p>{more === 1 ? `1 more request of this ${of} waits behind this one.` : `${more} more requests of this ${of} wait behind this one.`}</p>}
       {problem !== null && (
         <p role="alert" className="ds-approval__error">
           {problem}
         </p>
       )}
       <div className="ds-approval__actions">
-        <button type="button" data-ds-critical="" disabled={waiting} aria-busy={sending === "allow"} onClick={() => send("allow", false)} className="ds-button ds-button--primary">
+        {/* In a chat the card is an item of the transcript, beside the composer's Send: Allow has secondary emphasis there, as in a list. */}
+        <button type="button" data-ds-critical="" disabled={waiting} aria-busy={sending === "allow"} onClick={() => send("allow", false)} className={on === "chat" ? "ds-button" : "ds-button ds-button--primary"}>
           {sending === "allow" ? "Allowing" : "Allow once"}
         </button>
         <button type="button" data-ds-critical="" disabled={waiting} aria-busy={sending === "decline"} onClick={() => send("decline", note.trim() !== "")} className="ds-button">

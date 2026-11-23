@@ -110,7 +110,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(page.getByRole("log")).not.toContainText("needs your answer");
   const files = page.getByTestId("changed-files");
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added/);
-  const branch = await page.getByTestId("branch").inputValue();
+  const branch = (await page.getByTestId("branch").textContent())!;
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   await expect((await openCanDo(page)).getByTestId("can-do-text")).toContainText("The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first");
   await expect(page.getByRole("button", { name: /always|standing|every time|remember/i })).toHaveCount(0);

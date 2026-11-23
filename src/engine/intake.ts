@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { realRepo } from "../approvals/grants.ts";
 import { repositoryDelivery, repositoryHosts, type Config } from "../config.ts";
-import { githubRepoOf, MAX_ISSUE_NUMBER, redact, repoName, type GitHub, type IssueView, type RepoRef } from "../github.ts";
+import { AUTHOR_RELATIONS, githubRepoOf, MAX_ISSUE_NUMBER, redact, repoName, type AuthorRelation, type GitHub, type IssueView, type RepoRef } from "../github.ts";
 import { now, transaction } from "../store/db.ts";
 import { remoteAddress } from "../worktrees.ts";
 import { dataBlock } from "./roles.ts";
@@ -14,7 +14,9 @@ import { checkRepository, TaskError, words } from "./task.ts";
  * fetch, so what the planner is given is exactly what the owner was shown, whatever the issue says by then.
  *
  * Everything in an issue but its number and address was written by people outside the project: its title, text,
- * labels, author and comments are data. They reach a model only between marked lines that say so (`outsideTextPrompt`),
+ * labels, author and comments are data. That holds whoever opened it: the author's relation to the repository as GitHub
+ * reports it (`author_association`, read with `gh api`) is kept and shown to the owner, and changes none of what follows,
+ * since a member's account can be taken over, anyone can comment, and the text can be edited after it was read. They reach a model only between marked lines that say so (`outsideTextPrompt`),
  * and the screen only as plain text. A run that read an issue is marked (`runs.outside_text`, which its tasks inherit):
  * the gate gives its commands no pre-approved or standing permission (approvals/gate.ts), its commands get no allowed
  * network hosts unless the owner chose to allow them for that run, nothing it asks can become always allowed, and it
@@ -33,6 +35,8 @@ export interface IssueText {
   url: string;
   title: string;
   author: string | null;
+  /** How the author relates to the repository, as GitHub said when the issue was read; null when it did not say. It changes nothing of how the issue is treated. */
+  authorRelation: AuthorRelation | null;
   state: string;
   labels: string[];
   body: string;
@@ -117,6 +121,7 @@ export function capIssue(view: IssueView, repository: string): IssueText {
     url: view.url,
     title: cutTo(view.title, L.title),
     author: view.author,
+    authorRelation: view.authorRelation,
     state: view.state,
     labels: view.labels.slice(0, L.labels).map((label) => cutTo(label, L.label)),
     body: cutTo(view.body, L.body),
@@ -175,6 +180,7 @@ function toStored(row: Record<string, unknown>): StoredIssue {
     url: String(row.url),
     title: String(row.title),
     author: text(row.author),
+    authorRelation: (AUTHOR_RELATIONS as readonly unknown[]).includes(row.author_relation) ? (row.author_relation as AuthorRelation) : null,
     state: String(row.state),
     labels: parsed<string[]>(row.labels, []),
     body: String(row.body),
@@ -190,8 +196,8 @@ export function storeIssue(db: DatabaseSync, repoPath: string, issue: IssueText)
   return transaction(db, () => {
     const id = Number(
       db
-        .prepare("INSERT INTO issue_fetches (repo_path, repository, number, url, title, author, state, labels, body, comments, comment_count, cut, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repoPath, issue.repository, issue.number, issue.url, issue.title, issue.author, issue.state, JSON.stringify(issue.labels), issue.body, JSON.stringify(issue.comments), issue.commentCount, JSON.stringify(issue.cut), now()).lastInsertRowid,
+        .prepare("INSERT INTO issue_fetches (repo_path, repository, number, url, title, author, author_relation, state, labels, body, comments, comment_count, cut, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repoPath, issue.repository, issue.number, issue.url, issue.title, issue.author, issue.authorRelation, issue.state, JSON.stringify(issue.labels), issue.body, JSON.stringify(issue.comments), issue.commentCount, JSON.stringify(issue.cut), now()).lastInsertRowid,
     );
     return issueFetch(db, id)!;
   });
@@ -224,6 +230,12 @@ export function runOutside(db: DatabaseSync, runId: number | null): { text: bool
 export function allowedHostsFor(db: DatabaseSync, runId: number | null, configured: readonly string[]): string[] {
   const outside = runOutside(db, runId);
   return outside.text && !outside.hosts ? [] : [...configured];
+}
+
+/** The network hosts the owner allowed all the same for a marked run, which its screens name; none for any other run. */
+export function issueHostsFor(db: DatabaseSync, runId: number | null, configured: readonly string[]): string[] {
+  const outside = runOutside(db, runId);
+  return outside.text && outside.hosts ? [...configured] : [];
 }
 
 /** The GitHub repository a repository's remote names (its delivery remote, `origin` unless the settings say), or why there is none. */

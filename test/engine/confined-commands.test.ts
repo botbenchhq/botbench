@@ -5,11 +5,13 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { SOCKET_FILE } from "../../src/approvals/broker.ts";
 import type { Config } from "../../src/config.ts";
-import { runCommand } from "../../src/engine/stations.ts";
+import { SANDBOX_EXEC, seatbeltProfile, unreadablePaths } from "../../src/confinement.ts";
+import { confinedStart, runCommand } from "../../src/engine/stations.ts";
 import { startServer } from "../../src/server.ts";
 import { DB_FILE, openStore } from "../../src/store/db.ts";
 import { createWorktree } from "../../src/worktrees.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // The setup and check commands Botbench runs itself in a task's copy run confined (U27), on the real sandbox-exec of
 // this Mac: they read and write their copy, cannot read Botbench's own data folder or the owner's sign-ins, cannot
@@ -43,7 +45,7 @@ async function layout(t: TestContext): Promise<Layout> {
 
 const run = (l: Layout, command: string, allowedHosts: string[] = []) => runCommand({ command, cwd: l.worktree, limitMs: 30_000, confinement: { dataDir: l.dataDir, allowedHosts } });
 
-test("a setup or check command reads and writes its own copy, and git works there, but it cannot read Botbench's data folder, also from a child process", { timeout: 60_000 }, async (t) => {
+test("a setup or check command reads and writes its own copy, and git works there, but it cannot read Botbench's data folder, also from a child process", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   const inside = await run(l, "cat inside.txt && echo made > made.txt && cat made.txt && git status --porcelain=v1 --untracked-files=all");
   assert.equal(inside.outcome, "passed", inside.output);
@@ -67,7 +69,7 @@ test("a setup or check command reads and writes its own copy, and git works ther
   }
 });
 
-test("a setup or check command cannot write outside its copy, but may write its own temporary folder", { timeout: 60_000 }, async (t) => {
+test("a setup or check command cannot write outside its copy, but may write its own temporary folder", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   const target = path.join(l.outside, "escaped.txt");
   const escaped = await run(l, `echo out > '${target}'`);
@@ -86,7 +88,7 @@ test("a setup or check command cannot write outside its copy, but may write its 
   assert.equal(fs.existsSync(folder!), false, "the temporary folder goes when the command ends");
 });
 
-test("a setup or check command gets no provider key or gate secret from Botbench's environment", { timeout: 60_000 }, async (t) => {
+test("a setup or check command gets no provider key or gate secret from Botbench's environment", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   const names = ["ANTHROPIC_API_KEY", "BOTBENCH_TEST_ACCESS_TOKEN", "BOTBENCH_BROKER_SECRET"];
   for (const name of names) {
@@ -100,6 +102,25 @@ test("a setup or check command gets no provider key or gate secret from Botbench
   assert.match(env.output, /^PATH=/m, "the ordinary variables are there");
 });
 
+test("a setup or check command, and npm run test:confined, start as sh under sandbox-exec with the copy's profile, TMPDIR as their own folder, and Botbench's proxy or none", (t) => {
+  for (const name of ["HTTPS_PROXY", "NO_PROXY", "GIT_DIR"]) {
+    const before = process.env[name];
+    process.env[name] = "from-the-owner's-shell";
+    t.after(() => (before === undefined ? delete process.env[name] : (process.env[name] = before)));
+  }
+  const o = { command: "npm test", worktree: "/work/copy", dataDir: "/data", tmp: "/tmp/own" };
+  const alone = confinedStart({ ...o, proxyPort: null });
+  assert.deepEqual([alone.argv[0], alone.argv[1], ...alone.argv.slice(3)], [SANDBOX_EXEC, "-p", "/bin/sh", "-c", "npm test"]);
+  assert.equal(alone.argv[2], seatbeltProfile({ worktree: "/work/copy", unreadable: unreadablePaths({ dataDir: "/data" }), writable: ["/tmp/own"] }));
+  assert.equal(alone.env.TMPDIR, "/tmp/own");
+  assert.equal(alone.env.GIT_TERMINAL_PROMPT, "0");
+  assert.deepEqual([alone.env.HTTPS_PROXY, alone.env.NO_PROXY, alone.env.GIT_DIR], [undefined, undefined, undefined], "the owner's proxy and git variables are not passed on");
+  const proxied = confinedStart({ ...o, proxyPort: 4321 });
+  assert.equal(proxied.env.HTTPS_PROXY, "http://127.0.0.1:4321");
+  assert.equal(proxied.env.http_proxy, "http://127.0.0.1:4321");
+  assert.equal(proxied.env.NO_PROXY, undefined);
+});
+
 /** A probe written into the copy, as a project's own test file would be: each line is `name=ok` or `name=<error code>`. */
 const PROBE = fs.readFileSync(path.join(import.meta.dirname, "..", "support", "net-probe.cjs"), "utf8");
 
@@ -110,7 +131,7 @@ const probe = async (l: Layout, args: string[] = [], allowedHosts: string[] = []
   return Object.fromEntries([...result.output.matchAll(/^(\w+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
 };
 
-test("a setup or check command can start a server on the loopback address and reach it, and use a Unix socket in its copy or its temporary folder, as a project's own tests do", { timeout: 60_000 }, async (t) => {
+test("a setup or check command can start a server on the loopback address and reach it, and use a Unix socket in its copy or its temporary folder, as a project's own tests do", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   const seen = await probe(l);
   assert.equal(seen.http4, "ok", "a server on 127.0.0.1 and a client in the same command");
@@ -119,7 +140,7 @@ test("a setup or check command can start a server on the loopback address and re
   assert.equal(seen.unixCopy, "ok", "a Unix socket in the task's copy");
 });
 
-test("a setup or check command still has no route to an address that is not this Mac's, with or without allowed hosts, and still cannot read a denied place", { timeout: 60_000 }, async (t) => {
+test("a setup or check command still has no route to an address that is not this Mac's, with or without allowed hosts, and still cannot read a denied place", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   for (const hosts of [[], ["example.com"]]) {
     const seen = await probe(l, [], hosts);
@@ -130,7 +151,7 @@ test("a setup or check command still has no route to an address that is not this
   assert.equal(denied.output.includes(DECOY), false);
 });
 
-test("a setup or check command cannot reach Botbench's permission socket, nor a Unix socket outside its copy and temporary folder, and Botbench's own port answers it only with a refusal", { timeout: 60_000 }, async (t) => {
+test("a setup or check command cannot reach Botbench's permission socket, nor a Unix socket outside its copy and temporary folder, and Botbench's own port answers it only with a refusal", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   // The real server, with the command's denied data folder as its home: its permission socket is there.
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
@@ -150,7 +171,7 @@ test("a setup or check command cannot reach Botbench's permission socket, nor a 
   assert.equal(outside.unixOutside, "EPERM", "a Unix socket elsewhere on the Mac");
 });
 
-test("a setup or check command reaches a service on this Mac's loopback address, and Botbench's proxy when hosts are allowed", { timeout: 60_000 }, async (t) => {
+test("a setup or check command reaches a service on this Mac's loopback address, and Botbench's proxy when hosts are allowed", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   const service = net.createServer((socket) => socket.on("error", () => {}).end("local service\n"));
   await new Promise<void>((resolve) => service.listen(0, "127.0.0.1", resolve));
@@ -165,7 +186,7 @@ test("a setup or check command reaches a service on this Mac's loopback address,
   assert.match(allowed.output, /proxy=http:\/\/127\.0\.0\.1:\d+/, "commands are pointed at Botbench's proxy");
 });
 
-test("a setup or check command cannot start a program outside its sandbox by opening an app it wrote", { timeout: 60_000 }, async (t) => {
+test("a setup or check command cannot start a program outside its sandbox by opening an app it wrote", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const l = await layout(t);
   // A real app bundle, written into the copy as agent-written code could write one, whose program writes outside the copy.
   const target = path.join(l.outside, "escaped.txt");

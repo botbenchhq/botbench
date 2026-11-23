@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { CHAT_ROLE, type Admission, type Broker } from "../approvals/broker.ts";
+import { summarize } from "../approvals/gate.ts";
 import type { Driver, DriverProbe, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 
@@ -38,6 +40,8 @@ export interface Turns {
 
 interface Open {
   session: DriverSession;
+  /** The attempt's right to ask through the permission broker. */
+  admission: Admission;
   /** The model the session was started with; undefined for the CLI's own default. */
   model: string | undefined;
   busy: boolean;
@@ -45,10 +49,12 @@ interface Open {
 }
 
 /**
- * Turns outside any repository, which is all there is until tasks exist: every
- * attempt works in one empty directory inside Botbench's own data directory.
+ * Turns outside any repository: Claude Code in a chat. Every attempt works in one folder inside Botbench's own data
+ * directory, the chat's folder, confined, its commands with no network. What the CLI would ask a person goes through
+ * the permission broker as a chat's request (approvals/broker.ts): the owner answers it on the chat's screen, and the
+ * turn waits until then. A chat has no grant; its web tools follow the owner's setting "Web access in chat".
  */
-export function createTurns(options: { db: DatabaseSync; home: string; driver: Driver; model?: string; onEvent: () => void; idleCloseMs?: number }): Turns {
+export function createTurns(options: { db: DatabaseSync; home: string; driver: Driver; broker: Broker; model?: string; onEvent: () => void; idleCloseMs?: number }): Turns {
   const { db, driver } = options;
   const idleCloseMs = options.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS;
   const scratch = path.join(options.home, SCRATCH_DIR);
@@ -71,7 +77,8 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
     if (!entry) return closingById.get(id);
     open.delete(id);
     clearTimeout(entry.idle);
-    const done = entry.session.close();
+    // Once the process is gone, nothing of the attempt is left waiting for the owner.
+    const done = entry.session.close().finally(() => entry.admission.release());
     closing.add(done);
     closingById.set(id, done);
     try {
@@ -109,18 +116,45 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
   // Attempts being started. Shutdown waits for them, so none comes up after the database has closed.
   const starting = new Set<Promise<unknown>>();
   const begin = async (prompt: string, model: string | undefined, resumeCursor?: string, onAttempt?: (attemptId: number) => void): Promise<{ attemptId: number; turn: number }> => {
-    // A chat works in no repository: its commands reach no network.
-    const launching = driver.startAttempt({ db, cwd, confinement: { dataDir: options.home, allowedHosts: [] }, ...(model ? { model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
+    const admission = options.broker.admit({ chat: true, role: CHAT_ROLE, worktree: cwd, confined: driver.capabilities.confinedCommands === true });
+    // A chat works in no repository: its commands reach no network. What the CLI would ask goes through the gate.
+    const launching = driver.startAttempt({ db, cwd, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { dataDir: options.home, allowedHosts: [] }, ...(model ? { model } : {}), ...(resumeCursor ? { resumeCursor } : {}) });
     starting.add(launching);
-    const session = await launching.finally(() => starting.delete(launching));
+    let session: DriverSession;
+    try {
+      session = await launching.finally(() => starting.delete(launching));
+    } catch (err) {
+      admission.release();
+      throw err;
+    }
+    admission.bind(session.attemptId);
     if (closed) {
-      const done = session.close();
+      const done = session.close().finally(() => admission.release());
       closing.add(done);
       await done.finally(() => closing.delete(done));
       throw new TurnError(503, "Botbench is shutting down.");
     }
+    /** Permission requests the CLI is still waiting on, by request id. */
+    const asking = new Set<string>();
+    const attemptId = session.attemptId;
+    session.onEvent((event) => {
+      if (event.type === "permission_request") {
+        asking.add(event.id);
+        // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
+        void options.broker
+          .request({ taskId: null, chat: true, attemptId, role: CHAT_ROLE, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
+          // A request the CLI has stopped waiting for has no one to tell.
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, files: answer.files !== undefined, web: answer.web !== undefined, chat: answer.chat !== undefined }) : undefined))
+          .catch((err: unknown) => console.error(`Answering a permission request of chat attempt ${attemptId} failed: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      if (event.type === "permission_resolved") {
+        asking.delete(event.id);
+        // The CLI gave up on the request (the turn was stopped): its card must not stay answerable.
+        if (event.decision === "cancelled") admission.supersede(event.toolCallId);
+      }
+    });
     session.onEvent(options.onEvent);
-    const entry: Open = { session, model, busy: false };
+    const entry: Open = { session, admission, model, busy: false };
     open.set(session.attemptId, entry);
     onAttempt?.(session.attemptId);
     return send(session.attemptId, entry, prompt);

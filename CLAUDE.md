@@ -5,6 +5,7 @@ Local software factory. Drives owner's Claude Code / Codex / Gemini CLI / Grok. 
 ## Commands
 - typecheck: `npm run typecheck`
 - test: `npm test`
+- confined: `npm run test:confined` (`npm test` inside the sandbox Botbench gives a check; start it outside any sandbox)
 - live: `npm run test:live` (real CLIs, owner machine)
 - e2e: `npm run e2e`
 - client: `npm run build --prefix web`
@@ -29,7 +30,8 @@ Done = tests pass. Owner checks batched per milestone.
 - Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract, for scenarios a live model cannot produce on demand and for routine screen and engine tests, so that live model turns are kept to the few tests that prove something about the real CLI.
 - Drive existing CLIs. Never store or read credentials/API keys. Never force metered billing on a subscription session. Connecting a subscription from the client means running the vendor CLI's own sign-in and relaying its link or code; the credentials stay with the CLI.
 - One git worktree per task. Never modify owner's checkout or current branch. Botbench commits.
-- Approvals required before anything leaves the machine. Dangerous actions always ask; in a fully autonomous run they are refused, never run. Broker failure = deny.
+- Never less capable than the CLI used directly. Botbench puts control around a tool (confinement, an approval, the log); it does not take the tool away. The only tools switched off are the ones that outlive a turn (background helpers, scheduled wake-ups).
+- What leaves the machine, and when it asks: a push or a pull request only when the owner chose it for that run; web search and fetch in a chat follow the owner's "Web access in chat" setting (Allow by default, Ask, Off), and a fetch aimed at this Mac or the local network always asks; anything else that would leave asks first. Dangerous actions always ask; in a fully autonomous run they are refused, never run. Broker failure = deny.
 - Three modes per run: manual, semi-autonomous, fully autonomous. A mode only loosens what runs inside the confinement and who makes the final decision; it never loosens the safety floor.
 - Local by default. Nothing leaves the owner's machine except what each vendor CLI sends its provider, and a push or pull request the owner chose: Botbench pushes only a task's own branch, never the default branch, never by force, and never merges. Git and GitHub credentials stay with `git` and `gh`; Botbench and the agents never read them.
 - Test-first. Real temp git repo, real SQLite, real HTTP, real CLIs (live).

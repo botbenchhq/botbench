@@ -8,7 +8,8 @@ import { BodyError, builderOnly, json, modelChoice, readJsonBody, type RouteCont
 import { resumeNote } from "../engine/task.ts";
 import { decisionOf, leftoversOf } from "./tasks.ts";
 import { deliveryOf } from "../engine/delivery.ts";
-import { runIssue } from "../engine/intake.ts";
+import { issueHostsFor, runIssue } from "../engine/intake.ts";
+import { repositoryHosts } from "../config.ts";
 import { issueLink } from "./issues.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -40,7 +41,8 @@ export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
  * and the commands its builders may use without asking, read from the run's grants. Everything a planner wrote
  * (titles, criteria) is text, to be shown as text.
  */
-async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknown>> {
+async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unknown>> {
+  const { db } = ctx;
   const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds, outsideText, outsideHosts, oneTask, createdAt, updatedAt } = run;
   const plan = planTasks(db, id);
   const issue = runIssue(db, id);
@@ -48,7 +50,8 @@ async function detail(db: DatabaseSync, run: Run): Promise<Record<string, unknow
   return {
     id, repo, prompt, specPath, specText, title: title(db, run), status, reason, requestedModel, plannerModel, ...(buildModel === undefined ? {} : { buildModel }), baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds,
     // The issue the run was started from, and whether it is marked as having read outside text (engine/intake.ts).
-    issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask,
+    // `issueHosts`: for a marked run whose owner allowed them, the network hosts its commands may reach, as the settings name them now.
+    issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
@@ -97,7 +100,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       if (method === "GET" && action === "") {
         const run = getRun(ctx.db, id);
         if (!run) throw new RunError(404, "No such run.");
-        json(res, 200, await detail(ctx.db, run));
+        json(res, 200, await detail(ctx, run));
       } else if ((method === "PATCH" && action === "/plan") || (method === "POST" && action !== "" && action !== "/plan")) {
         // Every decision is a whole JSON request, and each names the plan it was made on.
         const body = await readJsonBody(req);
@@ -106,7 +109,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
         else if (action === "/plan/approve") ctx.runs.approve(id, body.planVersion);
         else if (action === "/plan/request-changes") ctx.runs.requestChanges(id, body.feedback, body.planVersion);
         else ctx.runs.cancel(id);
-        json(res, 200, await detail(ctx.db, getRun(ctx.db, id)!));
+        json(res, 200, await detail(ctx, getRun(ctx.db, id)!));
       } else {
         return false;
       }

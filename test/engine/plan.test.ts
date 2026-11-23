@@ -15,21 +15,43 @@ import { MIGRATIONS } from "../../src/store/schema.ts";
 import { EMPTY_TASK, loadPlanRecording, NO_TASKS, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 import { V8_SCHEMA } from "../support/schema-v8.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // No test in this file starts a CLI. Where a planner session is needed, turns recorded from a real one are replayed
 // (test/support/replay-plan.ts); a planner on the real Claude Code is in test/live/plan.live.test.ts.
 
 type T = { after(fn: () => unknown): void };
 
-function store(t: T): { db: DatabaseSync; dir: string; home: string; repo: string; base: string } {
+/**
+ * A temp folder with a store and a repository. `cleanup` adds a teardown step; the steps run in reverse order of setup,
+ * each even when one before it failed. `t.after` hooks run in the order they were added and stop at the first that
+ * throws, so with them the folder went before an engine still at work in it had stopped, and a folder that could not be
+ * removed (a build line writing a worktree into it) skipped the hooks after it: the broker kept listening and the test
+ * file never ended.
+ */
+function store(t: T): { db: DatabaseSync; dir: string; home: string; repo: string; base: string; cleanup: (fn: () => unknown) => void } {
+  const steps: (() => unknown)[] = [];
+  t.after(async () => {
+    const errors: unknown[] = [];
+    for (const step of steps.reverse()) {
+      try {
+        await step();
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "Several teardown steps failed");
+  });
+  const cleanup = (fn: () => unknown): void => void steps.push(fn);
   const dir = tempDir("botbench-plan-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  cleanup(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
-  t.after(() => db.close());
+  cleanup(() => db.close());
   const repo = path.join(dir, "repo");
   const base = initRepo(repo);
-  return { db, dir, home, repo, base };
+  return { db, dir, home, repo, base, cleanup };
 }
 
 const THREE: PlanTask[] = [
@@ -363,23 +385,22 @@ function noBuilder(db: DatabaseSync, home: string, driver: PlanReplay, broker: B
   return createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: [{ command: "exit 1", limitMs: 10_000 }], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
 }
 
-async function engine(t: T, order: number[], hold?: () => Promise<void>): Promise<{ db: DatabaseSync; home: string; repo: string; base: string; driver: PlanReplay; runs: Runs; broker: Broker; line: Tasks; changes: string[] }> {
+async function engine(t: T, order: number[], hold?: () => Promise<void>): Promise<{ db: DatabaseSync; home: string; repo: string; base: string; driver: PlanReplay; runs: Runs; broker: Broker; line: Tasks; changes: string[]; cleanup: (fn: () => unknown) => void }> {
   const s = store(t);
   const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
   await broker.listen();
+  s.cleanup(() => broker.close());
   const driver = planReplayDriver(loadPlanRecording(), order, hold);
   const changes: string[] = [];
+  // Stopped before the broker, the store and the folder: an approved plan's tasks may still be being built when a test ends.
   const line = noBuilder(s.db, s.home, driver, broker);
+  s.cleanup(() => line.close());
   const runs = createRuns({ db: s.db, home: s.home, driver, broker, model: "haiku", line, onEvent: () => {}, onRunChange: (run) => changes.push(`${run.id}:${run.status}`), onTaskChange: () => {} });
-  t.after(async () => {
-    await runs.close();
-    await line.close();
-    await broker.close();
-  });
+  s.cleanup(() => runs.close());
   return { ...s, driver, runs, broker, line, changes };
 }
 
-test("a run stores a planning model and a build model: the planner works on the first, the plan's tasks are queued on the second, and a run given only a planning model builds on that one too", async (t) => {
+test("a run stores a planning model and a build model: the planner works on the first, the plan's tasks are queued on the second, and a run given only a planning model builds on that one too", { skip: NO_SANDBOX }, async (t) => {
   const e = await engine(t, [THREE_TASKS, THREE_TASKS, THREE_TASKS]);
   const both = await e.runs.start({ repo: e.repo, prompt: "Add two files", model: "opus", buildModel: "sonnet" });
   assert.deepEqual([both.requestedModel, both.buildModel], ["opus", "sonnet"]);
@@ -484,7 +505,7 @@ test("replayed planner: cancelling while the planner works stops it, the run is 
   assert.deepEqual(runEvents(e.db, run.id).map((r) => r.status), ["planning", "planning", "cancelled"]);
 });
 
-test("replayed planner: requesting changes sends the plan and the feedback to a new planner turn and returns to awaiting approval; a planner that fails then leaves the plan as it was", async (t) => {
+test("replayed planner: requesting changes sends the plan and the feedback to a new planner turn and returns to awaiting approval; a planner that fails then leaves the plan as it was", { skip: NO_SANDBOX }, async (t) => {
   const e = await engine(t, [THREE_TASKS, THREE_TASKS, NO_TASKS, EMPTY_TASK]);
   const run = await e.runs.start({ repo: e.repo, prompt: "Add two files" });
   await e.runs.idle();
@@ -523,10 +544,10 @@ test("replayed planner: requesting changes sends the plan and the feedback to a 
 });
 
 test("the planner's admission to the gate is read-only: an edit in its worktree is denied, a shell command asks under the planner role, and no grant of the run lets it through", async (t) => {
-  const { db, home, repo, base } = store(t);
+  const { db, home, repo, base, cleanup } = store(t);
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
-  t.after(() => broker.close());
+  cleanup(() => broker.close());
   const run = createRun(db, { repo, prompt: "plan", baseCommit: base, preapproved: ["ls"] });
   const worktree = path.join(home, "worktrees", "somewhere");
   fs.mkdirSync(worktree, { recursive: true });
@@ -558,7 +579,7 @@ test("the planner's admission to the gate is read-only: an edit in its worktree 
   assert.equal((await hook("Read", { file_path: "README.md" }, "toolu_late")).verdict, "deny");
 });
 
-test("after a restart: a run left planning has its worktree removed and is planned again once, from the start; an approved run's queued tasks are taken up by its build line", async (t) => {
+test("after a restart: a run left planning has its worktree removed and is planned again once, from the start; an approved run's queued tasks are taken up by its build line", { skip: NO_SANDBOX }, async (t) => {
   const e = await engine(t, []);
   const queuedRun = planned(e.db, e.repo, e.base);
   const tasks = approvePlan(e.db, queuedRun.id, queuedRun.planVersion).tasks;
@@ -571,7 +592,7 @@ test("after a restart: a run left planning has its worktree removed and is plann
 
   const again = planReplayDriver(loadPlanRecording(), [THREE_TASKS]);
   const runs = createRuns({ db: e.db, home: e.home, driver: again, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
-  t.after(() => runs.close());
+  e.cleanup(() => runs.close());
   await runs.idle();
   const replanned = getRun(e.db, left.id)!;
   assert.equal(replanned.status, "awaiting_plan_approval");
@@ -770,7 +791,7 @@ test("critique: a run cancelled while start-up recovery is still at work stays c
   e.db.prepare("UPDATE runs SET status = 'planning' WHERE id = ?").run(left.id);
   const first = createRun(e.db, { repo: e.repo, prompt: "never planned", baseCommit: e.base });
   const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
-  t.after(() => runs.close());
+  e.cleanup(() => runs.close());
   assert.equal(runs.cancel(left.id).status, "cancelled");
   assert.equal(runs.cancel(first.id).status, "cancelled");
   await runs.idle();
@@ -790,7 +811,7 @@ test("critique: a planning worktree left by a cancel that Botbench did not live 
   cancelRun(e.db, run.id);
   assert.equal(worktreeCount(e.repo), 2);
   const runs = createRuns({ db: e.db, home: e.home, driver: e.driver, broker: e.broker, line: e.line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
-  t.after(() => runs.close());
+  e.cleanup(() => runs.close());
   await runs.idle();
   assert.equal(worktreeCount(e.repo), 1);
   assert.deepEqual(worktreeDirs(e.home), []);
@@ -809,10 +830,10 @@ test("critique: a title or criterion that holds a line break, a control characte
 });
 
 test("critique: a read-only attempt's own request for a tool that is not reading or the shell is refused, never put to the owner", { timeout: 15000 }, async (t) => {
-  const { db, home, repo, base } = store(t);
+  const { db, home, repo, base, cleanup } = store(t);
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
-  t.after(() => broker.close());
+  cleanup(() => broker.close());
   const run = createRun(db, { repo, prompt: "plan", baseCommit: base });
   const worktree = path.join(home, "worktrees", "somewhere");
   fs.mkdirSync(worktree, { recursive: true });
@@ -850,4 +871,33 @@ test("critique: a spec file that is another name for a file elsewhere (a hard li
     assert.equal(run.reason, null);
   }
   assert.deepEqual(worktreeDirs(h.home), []);
+});
+
+test("critique: Botbench stopping while a planner is still being started sends that planner no turn; the run is left planning for the next start", { timeout: 15000 }, async (t) => {
+  const s = store(t);
+  const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
+  await broker.listen();
+  s.cleanup(() => broker.close());
+  const replay = planReplayDriver(loadPlanRecording(), [THREE_TASKS]);
+  let reached!: () => void;
+  let release!: () => void;
+  const starting = new Promise<void>((resolve) => (reached = resolve));
+  const held = new Promise<void>((resolve) => (release = resolve));
+  // The CLI's start-up is slow (a loaded machine): `close` comes while it is under way and there is no session to stop yet.
+  const driver: PlanReplay = { ...replay, startAttempt: async (o) => (reached(), await held, replay.startAttempt(o)) };
+  const line = noBuilder(s.db, s.home, driver, broker);
+  s.cleanup(() => line.close());
+  const runs = createRuns({ db: s.db, home: s.home, driver, broker, line, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  s.cleanup(() => runs.close());
+  const run = await runs.start({ repo: s.repo, prompt: "Add two files" });
+  await starting;
+  const closing = runs.close();
+  release();
+  await closing;
+  assert.deepEqual(replay.prompts, [], "the planner was sent no turn");
+  assert.equal(replay.closed(), 1, "its session was closed");
+  const left = getRun(s.db, run.id)!;
+  assert.deepEqual([left.status, left.reason], ["planning", null]);
+  assert.deepEqual(planTasks(s.db, run.id), []);
+  assert.deepEqual(worktreeDirs(s.home), []);
 });

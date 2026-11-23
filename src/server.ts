@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, silenceLimitMs, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -85,6 +85,8 @@ export interface StartOptions {
   dictation?: Omit<DictationOptions, "home"> & { maxBytes?: number };
   /** What Botbench asks of GitHub (pull requests, and reading an issue). The owner's own gh unless a test replays output captured from it. */
   github?: GitHub;
+  /** Claude Code for chat turns only. The real one unless a test replays a chat turn captured from it. */
+  chatClaude?: Driver;
 }
 
 
@@ -130,17 +132,18 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db.close();
     throw err;
   }
-  const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
+  const chatClaude = options.chatClaude ?? driver;
+  const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
-  const chat = createChat({ db, home, turns, claude: driver, agents: reviewers, onEvent: stream.notify });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: (task) => {
+  const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
       stream.announceRun(run);
       push.runChanged(run);
     } });
-  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
+  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), silenceLimitMs: silenceLimitMs(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
   // Each agent Botbench drives, listed in this order, checked by its own program and kept for a short time.
   const agentChecks = createAgentChecks([driver, ...Object.values(reviewers)]);
   // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.

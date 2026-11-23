@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, botbenchHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, botbenchHome, silenceLimitMs } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -185,7 +185,7 @@ test("a repository's settings are keyed by its full path: lists of plain command
 
 test("the number of approvals after which a card offers standing permission is 3 as shipped, can be set by the owner, and must be a whole number of at least 1", (t) => {
   // Changed with the refine loop: the shipped settings name its cap too.
-  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual", maxRefineRounds: 2 });
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual", maxRefineRounds: 2, silenceLimitSeconds: 600 });
   assert.equal(offerStandingAfter(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 3);
   // A config that says nothing of it still means 3.
   const silent = loadConfig(configFiles(t, BASE));
@@ -282,6 +282,20 @@ test("the cap on rounds of fixes after a review is 2 as shipped and when unset, 
   for (const good of [0, 1, 5]) assert.equal(maxRefineRounds(loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: good } }))), good);
   for (const bad of [-1, 6, 1.5, "2", null]) {
     assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: bad } })), /"autonomy\.maxRefineRounds" must be a whole number from 0 to 5/, String(bad));
+  }
+});
+
+test("the silence limit is 600 seconds as shipped and when unset, 0 turns it off, and anything but a whole number of seconds from 0 to 86,400 is refused at start", (t) => {
+  assert.equal(silenceLimitMs(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 600_000);
+  assert.equal(silenceLimitMs(loadConfig(configFiles(t, BASE))), 600_000);
+  assert.equal(silenceLimitMs(loadConfig(configFiles(t, { ...BASE, autonomy: {} }))), 600_000);
+  for (const good of [0, 1, 90, 86_400]) assert.equal(silenceLimitMs(loadConfig(configFiles(t, { ...BASE, autonomy: { silenceLimitSeconds: good } }))), good * 1000, String(good));
+  // The owner's local file sets it and keeps the rest of the shipped autonomy settings.
+  const local = loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: 1 } }, { autonomy: { silenceLimitSeconds: 0 } }));
+  assert.equal(silenceLimitMs(local), 0);
+  assert.equal(local.autonomy?.maxRefineRounds, 1);
+  for (const bad of [-1, -600, 1.5, 0.1, "600", null, true, [600], { seconds: 600 }, 86_401, Number.NaN, 1e21]) {
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { silenceLimitSeconds: bad } })), /"autonomy\.silenceLimitSeconds" must be a whole number of seconds from 0 to 86400: how long a builder or planner may send nothing while it works before Botbench stops it\. 0 turns the limit off\./, String(bad));
   }
 });
 

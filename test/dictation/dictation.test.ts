@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { audioFormat, createDictation, DictationError } from "../../src/dictation/dictation.ts";
+import { NO_PROCESS_LIST } from "../support/confined.ts";
 import { tempDir } from "../support/repo.ts";
 import { NO_SPEECH, SENTENCES, speak, words } from "../support/speech.ts";
 
@@ -56,7 +57,7 @@ test("a file that is not audio is refused in words, and nothing is left behind",
   assert.deepEqual(leftovers(), []);
 });
 
-test("a recording that never finishes arriving is given up on at the time limit, the converter is stopped and nothing is left behind", { skip }, async (t) => {
+test("a recording that never finishes arriving is given up on at the time limit, the converter is stopped and nothing is left behind", { skip: skip || NO_PROCESS_LIST }, async (t) => {
   const { dir, dictation, leftovers } = setUp(t, { timeLimitMs: 1500 });
   // A named pipe nobody writes to: the converter waits on it for ever, as on a stalled read.
   const pipe = path.join(dir, "stalled.webm");
