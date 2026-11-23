@@ -18,7 +18,9 @@ const TIMEOUT = 600_000;
 const CODEX_MODEL = process.env.CODEX_LIVE_MODEL ?? "gpt-6-luna";
 const CLAUDE_MODEL = process.env.CLAUDE_LIVE_MODEL ?? "haiku";
 const JSON_TYPE = { "content-type": "application/json" };
-const PROMPT = "Work in this order. First create the file one.txt containing the word one. Then run the shell command `sleep 45` and wait for it. Then create the file two.txt containing the word two. Change nothing else.";
+// The wait is a node one-liner, not `sleep`: Claude Code's own harness refuses a foreground `sleep` and the model then
+// waits for a background job, which ends its turn in print mode before two.txt is written (seen live, Codex to Claude Code).
+const PROMPT = "Work in this order. First create the file one.txt containing the word one. Then run the shell command `node -e 'setTimeout(() => {}, 45000)'` in the foreground and wait for it to finish. Then create the file two.txt containing the word two. Change nothing else.";
 
 interface Live {
   server: BotbenchServer;
