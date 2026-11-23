@@ -33,7 +33,8 @@ export function tempDir(prefix: string): string {
 async function launchServer(home: string, port: number, settings: string, env: Record<string, string>, entry = path.join(ROOT, "src", "server.ts")): Promise<{ child: ChildProcess; port: number }> {
   const child: ChildProcess = spawn(process.execPath, [entry], {
     cwd: ROOT,
-    env: { ...process.env, BOTBENCH_HOME: home, BOTBENCH_PORT: String(port), BOTBENCH_CONFIG: settings, ...env },
+    // No test looks for Botbench's releases on GitHub (src/update.ts); one that is about updating starts its own entry.
+    env: { ...process.env, BOTBENCH_HOME: home, BOTBENCH_PORT: String(port), BOTBENCH_CONFIG: settings, BOTBENCH_UPDATES: "off", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";

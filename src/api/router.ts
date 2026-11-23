@@ -34,6 +34,8 @@ import type { Chat } from "./chat.ts";
 import type { AgentChecks } from "./agents.ts";
 import type { Watch } from "../engine/watch.ts";
 import { watchRoutes } from "./watch.ts";
+import { updateRoutes } from "./update.ts";
+import type { Updates } from "../update.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
@@ -74,6 +76,8 @@ export interface RouteContext {
   claims: Claims;
   /** The issue watch: each watched repository's state, and the issues proposed as runs on Work. */
   watch: Watch;
+  /** Updating Botbench to a published release (src/update.ts). */
+  updates: Updates;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -176,5 +180,6 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await connectRoutes(req, res, ctx, url)) return;
   if (await voiceRoutes(req, res, ctx, url)) return;
   if (watchRoutes(req, res, ctx, url)) return;
+  if (await updateRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }

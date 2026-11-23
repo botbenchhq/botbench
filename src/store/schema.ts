@@ -1876,4 +1876,24 @@ CREATE TRIGGER approvals_escalation_fixed BEFORE UPDATE OF escalation ON approva
 BEGIN SELECT RAISE(ABORT, 'whether an approval is an escalation is fixed when it is asked'); END;
 `,
   },
+  {
+    // Updating Botbench to a published release (src/update.ts): the owner chooses in Settings whether it updates on a
+    // tap (`tap`, also when never chosen) or by itself (`auto`). A check cannot be altered in place, so the table is
+    // made again with every row kept.
+    name: "update mode",
+    sql: `
+ALTER TABLE owner_settings RENAME TO owner_settings_before_update;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'update_mode')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
+  CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off')),
+  CHECK (name <> 'ask_every_command' OR value IN ('on', 'off')),
+  CHECK (name <> 'update_mode' OR value IN ('tap', 'auto'))
+);
+INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_update;
+DROP TABLE owner_settings_before_update;
+`,
+  },
 ];

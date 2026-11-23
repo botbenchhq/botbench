@@ -1234,3 +1234,27 @@ export const signOutDevice = (id: number): Promise<unknown> => request("POST", `
 export const signOutOtherDevices = (): Promise<unknown> => request("POST", "/api/devices/sign-out-others", {}, 10_000);
 /** A new one-time code for adding a device, which replaces the last one; 8 symbols, and when it stops working. */
 export const newPairingCode = (): Promise<{ code: string; expiresAt: string }> => request("POST", "/api/devices/pairing", {}, 10_000);
+
+/** When Botbench updates to a new release: on the owner's tap, or by itself. */
+export type UpdateMode = "tap" | "auto";
+/** How updating to a release is going (src/update.ts). */
+export interface UpdateState {
+  kind: "idle" | "waiting" | "updating" | "failed" | "restart_needed" | "restarting" | "updated";
+  version: string | null;
+  message: string | null;
+  at: string;
+}
+/** The running version, the latest release the last check found, and how an update is going. */
+export interface UpdateStatus {
+  version: string;
+  checking: boolean;
+  checkedAt: string | null;
+  checkProblem: string | null;
+  latest: { version: string; tag: string; summary: string; url: string | null } | null;
+  available: boolean;
+  mode: UpdateMode;
+  state: UpdateState;
+}
+export const getUpdate = (): Promise<UpdateStatus> => request("GET", "/api/update", undefined, 30_000);
+export const startUpdate = (): Promise<UpdateStatus> => request("POST", "/api/update", {}, 30_000);
+export const setUpdateMode = (mode: UpdateMode): Promise<UpdateStatus> => request("PUT", "/api/update", { mode }, 30_000);

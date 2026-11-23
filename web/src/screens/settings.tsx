@@ -5,6 +5,7 @@ import { chooseAppearance, useAppearance, type Appearance } from "../app/appeara
 import { DeviceSettings } from "../app/device-settings.tsx";
 import { MemorySettings } from "../app/memory-settings.tsx";
 import { WatchSettings } from "../app/watch-settings.tsx";
+import { UpdateSettings } from "../app/update-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
@@ -432,6 +433,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
           <WatchSettings onSignedOut={onSignedOut} />
           <WorkbenchName onSignedOut={onSignedOut} />
           <MemorySettings onSignedOut={onSignedOut} />
+          <UpdateSettings onSignedOut={onSignedOut} />
         </>
       ),
       permissions: <Permissions onSignedOut={onSignedOut} />,
@@ -497,6 +499,8 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
           <WorkbenchName onSignedOut={onSignedOut} />
 
           <MemorySettings onSignedOut={onSignedOut} />
+
+          <UpdateSettings onSignedOut={onSignedOut} />
 
           {appearanceGroup}
 
