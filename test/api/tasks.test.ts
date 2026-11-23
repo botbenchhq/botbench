@@ -200,6 +200,8 @@ test("a committed task is described with its changed files, each marked as the p
   assert.deepEqual({ ...described.body, createdAt: null, updatedAt: null }, {
     id: task.id, repo, prompt: "change three files", requestedModel: null, status: "awaiting_decision", reason: null,
     branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, retryAt: null, waitingOnApproval: false, parked: false, resuming: false, ofPlan: null, preapproved: [], outsideText: false, issue: null, givenMessage: null, resumeNote: null, restartLine: null, waitingFor: null, onNoteRound: false, noteRoundLine: null, waitingNote: null, undeliveredNote: null, mode: "manual", reviewOutcome: "none", reviewRounds: 0, refineRounds: 0, createdAt: null, updatedAt: null, issueHosts: [],
+    // No run was made from it ("Make this a run").
+    runsMade: [],
     // "change three files" names none of them, and src/ is protected in this server's settings.
     files: [
       { path: "hello.txt", status: "added", added: 1, removed: 0, binary: false, expected: false, protected: false },

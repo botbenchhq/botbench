@@ -16,9 +16,7 @@ import { ModePicker } from "../components/mode-choice.tsx";
 import { useWide } from "../app/wide.ts";
 import { Permissions } from "./trust.tsx";
 import { Usage } from "./usage.tsx";
-
-/** A section of the two-pane Settings, from 1024px. */
-export type SettingsSection = "agents" | "appearance" | "notifications" | "devices" | "workbench" | "paired" | "permissions" | "usage";
+import type { SettingsSection } from "../app/route.ts";
 
 /**
  * Every section of Settings, in the order the two-pane Settings lists them, with the address that opens each.

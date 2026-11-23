@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type RunSourceRef, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, builderName, chipModel, type Builder, commandsWords, issueWords, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
@@ -20,6 +20,8 @@ import { agoWords, claimNotice, issueWarnings, oldClaims } from "../app/peers.ts
 import { ConfirmAction } from "../components/confirm.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
+import { MakeRunDialog } from "../components/make-run.tsx";
+import { composerOpening, MAKE_RUN, takeHandOff } from "../app/run-source.ts";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { useTranscript } from "../../vendor/design-system/react/use-transcript.ts";
 
@@ -144,7 +146,7 @@ const inRepository = (repo: RepoPick): repo is { kind: "known" | "other"; path: 
  * a chat prompt; with a repository it starts a task or plans a run, and opens its screen. `start` comes from New task
  * and New run, which arrive with that kind chosen.
  */
-export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kind | null; proposal?: number | null; onSignedOut: () => void }) {
+export function TurnScreen({ start, proposal = null, from = null, onSignedOut }: { start: Kind | null; proposal?: number | null; from?: RunSourceRef | null; onSignedOut: () => void }) {
   const [driver, setDriver] = useState<DriverState | null>(null);
   const [driverFailed, setDriverFailed] = useState(false);
   const [conversation, setConversation] = useState<number[]>(loadConversation);
@@ -157,7 +159,13 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const [stopping, setStopping] = useState(false);
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState("");
+  // Come from Make this a run on a finished task or a chat: Plan a run, the owner's note as the prompt, in the task's
+  // repository (from a chat, the one it read here), with one line saying where it came from (app/run-source.ts). The
+  // hand-off is taken once, here; with none, the composer is a plain one. Nothing is stored, and nothing sent, until Send,
+  // where the server checks the source again.
+  const [opening] = useState(() => (from === null ? null : composerOpening(from, takeHandOff())));
+  const source = opening?.source ?? null;
+  const [prompt, setPrompt] = useState(opening?.prompt ?? "");
   /** Other workbenches' old claims the owner confirmed taking over for the run about to start, by branch. */
   const [takenOver, setTakenOver] = useState<string[]>([]);
   const startRef = useRef<Promise<{ attemptId: number; turn: number }[]> | null>(null);
@@ -167,10 +175,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
 
   // What the composer holds, starting from what this device remembers.
   const [remembered] = useState(() => readRemembered(loadComposer()));
-  // Come from Start on a proposed issue, the repository is the issue's: the repository view is not opened for it.
-  const arrived = useMemo(() => (proposal === null ? arrive(remembered, start) : { ...arrive(remembered, start), opens: null }), [remembered, start, proposal]);
+  // Come from Start on a proposed issue, the repository is the issue's: the repository view is not opened for it. Nor is
+  // it for a run made from a task, or a chat that read one, which opens on that repository.
+  const arrived = useMemo(() => (opening?.repo != null ? { repo: { kind: "other" as const, path: opening.repo }, kind: opening.kind, opens: null } : proposal === null ? arrive(remembered, start) : { ...arrive(remembered, start), opens: null }), [remembered, start, proposal, opening]);
   const [repo, setRepo] = useState<RepoPick>(arrived.repo);
-  const [otherPath, setOtherPath] = useState(remembered.repo.kind === "other" ? remembered.repo.path : "");
+  const [otherPath, setOtherPath] = useState(opening?.repo ?? (remembered.repo.kind === "other" ? remembered.repo.path : ""));
   const [kind, setKind] = useState<Kind>(arrived.kind);
   /** The mode the owner chose here, for the repository it was chosen for; otherwise the default from Settings. */
   const [chosenMode, setChosenMode] = useState<ChosenMode | null>(remembered.mode);
@@ -280,6 +289,9 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
       live = false;
     };
   }, [proposal, onSignedOut]);
+  /** Whether the chat's Make this a run dialog is open. */
+  const [makingRun, setMakingRun] = useState(false);
+
   const issueOffered = issue.source.state === "offered";
   const presetOpened = useRef(false);
   useEffect(() => {
@@ -464,7 +476,9 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     buildModel: sameBuild ? null : buildModels.request(),
     commandTyped: repository.listed !== null && repository.adding.trim() !== "",
     hasChecks: repository.listed?.hasChecks ?? null,
-    issue: kind === "run" ? issue.attached : null,
+    // A run made from a task or a chat takes the owner's note alone: no issue goes with it.
+    issue: kind === "run" && source === null ? issue.attached : null,
+    source,
     read: { pick: readPick, status: reading.status },
     agentsChecking: agents.offer.checking,
     // Claude Code is never given a repository in a chat; another agent reads one as the server said (src/api/chat.ts).
@@ -642,7 +656,9 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     models: chatting ? agentRowValue(agents.choice.pick) : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
   };
-  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered", builderOffered: codexBuilds });
+  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered", builderOffered: codexBuilds, sourced: source !== null });
+  /** The line under the box for a run made from a task or a chat, while it is one (a repository may still be to choose): "From task 12". */
+  const sourceLine = source !== null && kind === "run" && repo.kind !== "none" ? source.label : null;
   // Come to start a task or a run, the box is named for it while the repository is still to be chosen.
   const label = repo.kind === "none" ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
@@ -702,6 +718,15 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
                         </li>
                       ))}
                     {chat.compare !== null && !running && <CompareAction agents={agents} claude={models} onCompare={(to) => sendChat("", [to], chat.compare!.roundId)} busy={starting} />}
+                    {/* The owner's feedback in this chat, made into a run: a note of their own, or one of their messages.
+                        Offered while a reply still runs too: only the owner's words go with it, and those are stored. */}
+                    {chatting && conversation.length > 0 && (
+                      <li data-testid="make-run-chat" className="ds-cluster">
+                        <button type="button" className="ds-button ds-button--quiet ds-button--small" aria-haspopup="dialog" onClick={() => setMakingRun(true)}>
+                          {MAKE_RUN}
+                        </button>
+                      </li>
+                    )}
                   </>
                 }
               />
@@ -815,6 +840,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
               {sendWords(askedCount).line}
             </p>
           )}
+          {sourceLine !== null && (
+            <p data-testid="run-source-line" className="ds-composer__reason">
+              {sourceLine}
+            </p>
+          )}
           {!showStop && readAttached && (
             <p data-testid="read-line" className="ds-composer__reason">
               {`For the chat to read: ${readName(readPick, known)}. ${READ_ABOUT}`}
@@ -874,6 +904,9 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
             </p>
           )}
         </form>
+
+        {/* The repository the chat reads here, if any, is the one the composer opens on; the owner can choose another. */}
+        {makingRun && conversation.length > 0 && <MakeRunDialog attemptId={conversation[0]!} {...(readPick.kind !== "none" && reading.status.state === "usable" ? { repo: readPick.path.trim() } : {})} onClose={() => setMakingRun(false)} onSignedOut={onSignedOut} />}
 
         <ContextSheet
           sheetRef={sheetRef}

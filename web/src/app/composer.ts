@@ -1,4 +1,5 @@
-import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode } from "../api/client.ts";
+import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode, RunSourceRef } from "../api/client.ts";
+import { noteProblem, sourceRepoProblem, type ComposerSource } from "./run-source.ts";
 import { MODE_NAMES } from "./run-words.ts";
 
 /*
@@ -47,7 +48,12 @@ export interface Facts {
   asked?: readonly Reader[];
   /** Whether the agents are being checked now, so an agent's `reads` not yet known may still be learned. */
   agentsChecking?: boolean;
+  /** The finished task or chat this run is made from ("Make this a run"); it applies only to a run in a repository. Left out for none. */
+  source?: ComposerSource | null;
 }
+
+/** The source a run is made from, when the composer holds one and is planning a run in a repository; else null. */
+const sourceOf = (f: Pick<Facts, "source" | "repo" | "kind">): ComposerSource | null => (f.source != null && inRepository(f.repo) && f.kind === "run" ? f.source : null);
 
 /**
  * A repository a chat lets its agents read, never change: none, one Botbench knows of, or a folder the owner typed. It is
@@ -95,7 +101,7 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; source?: RunSourceRef } & ({ prompt: string } | { specPath: string } | {}));
 
 /** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
 export type Builder = "codex";
@@ -135,6 +141,14 @@ export function blocked(f: Facts): Blocked | null {
     if (run && f.text.trim() !== "" && f.specPath.trim() !== "") return say("Give a message or a spec file, not both.");
     if (run && f.issue && f.specPath.trim() !== "") return say("A run from an issue takes your message, not a spec file. Clear the spec file, or remove the issue.");
     if (run && f.issue && f.mode === "full") return say(ISSUE_NOT_FULL);
+    // A run made from a task or a chat: the note is checked as the server checks it, and a task's run stays in its repository.
+    const source = sourceOf(f);
+    if (source !== null) {
+      const wrong = sourceRepoProblem(source, f.repo.path.trim());
+      if (wrong !== null) return say(wrong, "repository");
+      const note = noteProblem(f.text);
+      if (note !== null) return say(note);
+    }
   }
   const read = readStop(f);
   if (read !== null) return say(read);
@@ -167,6 +181,9 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   // Codex builds on its own default model: the models chosen here are Claude Code's, which still plans a run.
   const codex = extras.builder === "codex";
   if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
+  // A run made from a task or a chat sends the note alone: no spec file and no issue (blocked() has checked the note).
+  const source = sourceOf(f);
+  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, source: source.ref };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
@@ -185,10 +202,12 @@ export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" 
  * do, mode and commands; a run adds its own settings. Come to start a task or a run (a repository needed), there is
  * nothing to read.
  */
-export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean }): Row[] {
+export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean; sourced?: boolean }): Row[] {
   if (f.repo.kind === "none") return ["repository", "read", "models"];
   if (!inRepository(f.repo)) return ["repository", "models"];
   const run = f.kind === "run";
+  // A run made from a task or a chat takes the owner's note alone: it offers no issue and no spec file.
+  if (run && f.sourced === true) return rowsFor({ ...f, sourced: false, issueOffered: false }).filter((row) => row !== "spec");
   return [
     "repository",
     "kind",

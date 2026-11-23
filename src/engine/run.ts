@@ -24,6 +24,7 @@ import { learningsSection } from "./learnings.ts";
 import { memorySection } from "./memory.ts";
 import { messageIssue, takeOverGiven, type ClaimName } from "./claim-branch.ts";
 import { ownWorkbenches } from "../workbench.ts";
+import { checkSource, noteProblem, sourceGiven, sourcePrompt, type RunSource } from "./run-source.ts";
 
 /*
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
@@ -92,6 +93,8 @@ export interface Run {
    * several is sent back once, and one that still holds several is merged by Botbench (`mergePlan`).
    */
   oneTask: boolean;
+  /** The finished task or the chat the owner made this run from ("Make this a run", engine/run-source.ts); null for a run started any other way. Never changed. */
+  source: RunSource | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -149,6 +152,7 @@ function toRun(row: Record<string, unknown>): Run {
     outsideText: row.outside_text === 1,
     outsideHosts: row.outside_hosts === 1,
     oneTask: row.one_task === 1,
+    source: row.source_task_id != null ? { kind: "task", id: Number(row.source_task_id) } : row.source_chat_id != null ? { kind: "chat", id: Number(row.source_chat_id) } : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -197,7 +201,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[]; source?: RunSource }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -206,8 +210,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; builder?: string 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, source_task_id, source_chat_id, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, o.source?.kind === "task" ? o.source.id : null, o.source?.kind === "chat" ? o.source.id : null, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
@@ -501,6 +505,8 @@ export interface StartRun {
   oneTask?: unknown;
   /** Other workbenches' old claims on the run's issue the owner chose to take over, by branch (engine/claim-branch.ts); left out for none. */
   takeOver?: unknown;
+  /** The finished task or the chat the run is made from, `{ task }` or `{ chat }` by id (engine/run-source.ts); left out or null for none. The prompt is then the owner's note. */
+  source?: unknown;
 }
 
 export interface Runs {
@@ -664,8 +670,10 @@ export function createRuns(options: RunsOptions): Runs {
       const issue = runIssue(db, run.id);
       const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
       const oneTask = { oneTask: run.oneTask };
+      // A run made from a task or a chat: what Botbench itself recorded of where it came from, after the owner's note.
+      const follows = run.source === null ? {} : { follows: sourcePrompt(db, run.source) };
       // `close` stops only a session it can see: one still being started when Botbench began stopping is sent no turn.
-      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), learnings: learningsSection(run.repo), memory: memorySection(home), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
+      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...follows, ...(change ? { current: change.current, feedback: change.feedback } : {}), learnings: learningsSection(run.repo), memory: memorySection(home), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
       if (first === null && !gone()) outcome = { problem: STOPPED };
       else if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };
@@ -851,6 +859,13 @@ export function createRuns(options: RunsOptions): Runs {
     const hasPrompt = input.prompt !== undefined && input.prompt !== null;
     const hasSpec = input.specPath !== undefined && input.specPath !== null;
     const issueChoice = issueGiven(input.issue);
+    const sourceChoice = sourceGiven(input.source);
+    if (sourceChoice !== null) {
+      // The owner's note is the whole message: nothing else, and nothing anyone outside the project wrote, comes with it.
+      if (hasSpec || issueChoice !== null) throw new RunError(400, "A run made from a task or a chat takes your note as its message, not a spec file or an issue.");
+      const problem = noteProblem(input.prompt);
+      if (problem !== null) throw new RunError(400, problem);
+    }
     if (hasPrompt && hasSpec) throw new RunError(400, "Give a prompt or a spec file, not both.");
     if (issueChoice !== null && hasSpec) throw new RunError(400, "Give a message or nothing with an issue, not a spec file.");
     if (!hasPrompt && !hasSpec && issueChoice === null) throw new RunError(400, "Give one of a prompt and a spec file path.");
@@ -891,6 +906,8 @@ export function createRuns(options: RunsOptions): Runs {
     if (issueChoice !== null && issue === null) throw new RunError(400, "There is no issue read with that number. Look the issue up again.");
     if (issue !== null && issue.repoPath !== realRepo(repo)) throw new RunError(400, `That issue was read for another repository (${issue.repoPath}), not ${repo}. Look it up again for this one.`);
     if (issue !== null && mode === "full") throw new RunError(400, OUTSIDE_NOT_FULL);
+    // A task made into a run is one that is finished, in this same repository; a chat is one Botbench recorded.
+    const source = sourceChoice === null ? undefined : checkSource(db, sourceChoice, realRepo(repo));
     // A claim taken over is another workbench's, on this run's issue, and old enough by its name (engine/claims.ts).
     let takeOver: ClaimName[];
     try {
@@ -901,7 +918,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (mode === "full") fullyAutonomousUsable(repo, builder);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel, builder.name);
     stopping();
-    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(source === undefined ? {} : { source: { kind: source.kind, id: source.id } }), ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;

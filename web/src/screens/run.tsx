@@ -344,6 +344,17 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   {run.repo}
                 </dd>
               </div>
+              {run.source !== null && (
+                // The finished task or the chat this run was made from, with the owner's note as its message.
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Made from</dt>
+                  <dd data-testid="run-source" className="ds-key-value__value">
+                    <a href={run.source.kind === "task" ? `#/tasks/${run.source.id}` : `#/chats/${run.source.id}`} className="ds-link">
+                      {run.source.label}
+                    </a>
+                  </dd>
+                </div>
+              )}
               {run.claim !== null && (
                 <div className="ds-key-value__item">
                   <dt className="ds-key-value__label">Other workbenches</dt>
