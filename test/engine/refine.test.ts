@@ -367,3 +367,20 @@ test("a resumed round with no reply and no change whose new session is empty too
   assert.deepEqual([fix!.outcome, fix!.changed, fix!.reply, fix!.attemptId], ["finished", false, "", task.attemptId]);
   assert.deepEqual(outcome(e.db, taskId), { outcome: "unresolved", line: "Codex raised 1 concern. Claude Code did not answer. Needs your judgment." });
 });
+
+test("the one retry in a new session is counted per round: a restart that takes the retry up again in its own session, and ends empty, starts no further session", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done", EMPTY, EMPTY, EMPTY, "refine"], ["review", "second-review"], { hold: [2], holdAt: "session" });
+  const { taskId } = approved(e);
+  await e.builder.held(2);
+  // Botbench is started again while the retry's session is under way: the round is taken up again in that session.
+  const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
+  e.engines.push(after);
+  await until("ready for review", () => getTask(e.db, taskId)!.status === "awaiting_decision");
+  assert.equal(e.builder.started.length, 4, "the build, the resumed round, its retry, and the retry taken up after the restart");
+  assert.ok(e.builder.started[3]!.resumeCursor !== undefined, "the restart took up the retry's own session");
+  assert.equal(notes(e.db, taskId).filter((note) => note.endsWith("the round runs once more in a new session")).length, 1, "retried once");
+  const [fix, ...more] = taskRefinements(e.db, taskId);
+  assert.deepEqual(more, []);
+  assert.deepEqual([fix!.outcome, fix!.changed, fix!.reply], ["finished", false, ""]);
+  assert.equal(outcome(e.db, taskId).line, "Codex raised 1 concern. Claude Code did not answer. Needs your judgment.");
+});

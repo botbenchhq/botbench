@@ -650,14 +650,18 @@ export function createTasks(options: TasksOptions): Tasks {
    * once more in a new session, with the whole task (detect, log and retry fresh, as issue #111 cites paperclip's claude-local adapter doing).
    * That new session's round is recorded however it ends; one with no reply and no change is a round with no answer.
    */
+  /** How the note on a round's one retry in a new session ends; the round's retry is found by it. */
+  const FRESH_RETRY = "the round runs once more in a new session";
   const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal, resumed = false): Promise<void> => {
     const from = taskReviews(db, task.id).at(-1)?.headCommit ?? task.headCommit!;
     const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
     const headCommit = (await commit(task))?.headCommit ?? null;
     const reviewer = reviewAssignment(db, task.id)?.agent ?? null;
-    if (resumed && end === "completed" && reply.trim() === "" && headCommit === from && reviewer !== null && !closed && stopped?.aborted !== true && !cancelled(task)) {
+    // Once per round, read from the task's history: a retry that a restart takes up again in its own session is still the retry.
+    const retried = db.prepare("SELECT 1 FROM task_events WHERE task_id = ? AND detail LIKE ? LIMIT 1").get(task.id, `round ${round} of fixes: %${FRESH_RETRY}`) !== undefined;
+    if (resumed && !retried && end === "completed" && reply.trim() === "" && headCommit === from && reviewer !== null && !closed && stopped?.aborted !== true && !cancelled(task)) {
       // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
-      const at = moveFrom(task.id, "building", "building", { note: `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; the round runs once more in a new session` });
+      const at = moveFrom(task.id, "building", "building", { note: `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; ${FRESH_RETRY}` });
       if (at !== null) return startRound(at, reviewer, true, stopped);
     }
     const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
