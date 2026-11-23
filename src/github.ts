@@ -15,6 +15,10 @@ import { gitEnv } from "./worktrees.ts";
  *   gh api --method=GET --hostname=<host> repos/<owner>/<name>/issues/<number>   the same issue as GitHub's REST API
  *                                                                  gives it, read only, for how its author relates to the repository
  *   gh pr list --repo=... --state=all --json=... --limit=100       the latest pull requests in any state, read only (engine/peers.ts)
+ *   gh issue list --repo=<host/owner/name> --label=<label> --state=open --json=number,title,author,url,labels --limit=1000
+ *                                                                  a watched repository's open issues carrying its label, read only (engine/watch.ts)
+ *   gh api -i --method=GET --hostname=<host> repos/<owner>/<name>  only after that list failed on GitHub's limits: the
+ *                                                                  answer's status and headers say how long to wait (engine/watch.ts)
  *
  * The one write besides a pull request goes through git, not gh, and only for a run that opens pull requests: an issue
  * claim (its lock and named branch) pushed and deleted (engine/claims.ts).
@@ -127,7 +131,148 @@ export const ghArgs = {
     if (!Number.isSafeInteger(number) || number < 1 || number > MAX_ISSUE_NUMBER) throw new Error(`${String(number)} is not an issue number.`);
     return ["api", "--method=GET", `--hostname=${repo.host}`, `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/issues/${number}`];
   },
+  /**
+   * A watched repository's OPEN issues that carry `label`, read only (engine/watch.ts). The label is checked first
+   * (`labelProblem`): gh splits a --label value at commas and reads quotes in it, so a label with either is refused.
+   */
+  watchIssues: (repo: RepoRef, label: string): string[] => {
+    const problem = labelProblem(label);
+    if (problem !== null) throw new Error(problem);
+    return ["issue", "list", `--repo=${repoName(repo)}`, `--label=${label}`, "--state=open", `--json=${WATCH_FIELDS}`, `--limit=${WATCH_LIMIT}`];
+  },
+  /**
+   * The repository read from GitHub's REST API with the answer's status line and headers printed first (`-i`), read only
+   * (GET, no field sent). Asked only after a watch's list failed on GitHub's limits: its status and its retry-after and
+   * x-ratelimit headers say how long to wait (`parseApiHead`, `githubRetryDelay`). Only the head of the answer is read.
+   */
+  watchHead: (repo: RepoRef): string[] => ["api", "-i", "--method=GET", `--hostname=${repo.host}`, `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`],
 };
+
+const WATCH_FIELDS = "number,title,author,url,labels";
+/**
+ * The most open labelled issues one poll asks for. gh pages through GitHub's answers of 100 itself up to this, so an
+ * older labelled issue is not left out while the newest 100 stay open.
+ */
+export const WATCH_LIMIT = 1000;
+/** GitHub's own longest label name. */
+const LABEL_MAX = 50;
+
+/**
+ * Why `label` cannot be a watched label, as a sentence for the settings file's owner, or null. GitHub's labels are at
+ * most 50 characters; gh reads a --label value as a comma-separated list with quotes, so a comma or a double quote would
+ * make it another filter than the one written. Spaces inside are fine ("good first issue"), not at either end.
+ */
+export function labelProblem(label: unknown): string | null {
+  const rule = `A label is the name of one of the repository's labels, such as "botbench": 1 to ${LABEL_MAX} characters, with no comma, no double quote, no line break, and no space at either end.`;
+  if (typeof label !== "string" || label === "") return `It needs a label. ${rule}`;
+  if (label.length > LABEL_MAX || /[,"\u0000-\u001f\u007f]/.test(label) || label.trim() !== label) return `${JSON.stringify(label.slice(0, 60))} cannot be used. ${rule}`;
+  return null;
+}
+
+/** One open issue a watched repository's list gave: its number, its address, and two texts written outside the project. */
+export interface WatchedIssue {
+  number: number;
+  /** Made by Botbench from the repository and the number, never taken from the answer. */
+  url: string;
+  /** Outside text: shown as plain text only. */
+  title: string;
+  /** Outside text: the author's login; null for an account GitHub no longer has. */
+  author: string | null;
+}
+
+/**
+ * The open issues of `repo` carrying `label`, from what `gh issue list --json=number,title,author,url,labels` printed
+ * (approach from paperclip's chat-channels/github/chat-github-events.ts: an event is kept only when it is about the one
+ * repository and the one kind asked for; no code was copied). Kept only when the entry is an issue of this same
+ * repository at the address GitHub gives it (a pull request's /pull/ address, another repository's and a fork's are left
+ * out), carries the label (GitHub compares label names without case), and is not said to be anything but OPEN. Every
+ * text field is outside text: titles are one plain line, and nothing in an entry is ever passed on as an argument.
+ */
+export function parseWatchedIssues(stdout: string, repo: RepoRef, label: string): WatchedIssue[] {
+  const parsed = parseJson(stdout, "which issues carry the label");
+  if (!Array.isArray(parsed)) throw new Error("The gh tool's list of issues could not be read.");
+  const base = `https://${repo.host}/${repo.owner}/${repo.name}`;
+  const wanted = label.toLowerCase();
+  const found = new Map<number, WatchedIssue>();
+  for (const entry of parsed) {
+    if (!isObject(entry) || typeof entry.title !== "string" || typeof entry.url !== "string") continue;
+    const number = entry.number;
+    if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1 || number > MAX_ISSUE_NUMBER) continue;
+    const url = `${base}/issues/${number}`;
+    if (entry.url.toLowerCase() !== url.toLowerCase()) continue;
+    // The list asks for open issues only; an entry that says it is in another state is not trusted to be one.
+    if (entry.state !== undefined && entry.state !== "OPEN") continue;
+    const labels = Array.isArray(entry.labels) ? entry.labels.flatMap((l) => (isObject(l) && typeof l.name === "string" ? [l.name.toLowerCase()] : [])) : [];
+    if (!labels.includes(wanted)) continue;
+    const title = entry.title.replace(/[\u0000-\u001f\u007f\s]+/g, " ").trim();
+    found.set(number, { number, url, title: title.length > TITLE_LIMIT ? `${title.slice(0, TITLE_LIMIT - 1)}…` : title, author: loginOf(entry.author) });
+  }
+  return [...found.values()];
+}
+
+/** The status and headers at the top of what `gh api -i` printed. Header names are lower case. */
+export interface ApiHead {
+  status: number;
+  headers: Record<string, string>;
+}
+
+/** The status line and headers `gh api -i` prints before the answer's body; null when it printed none. */
+export function parseApiHead(stdout: string): ApiHead | null {
+  const lines = stdout.split(/\r?\n/);
+  const first = /^HTTP\/[\d.]+ (\d{3})\b/.exec(lines[0] ?? "");
+  if (first === null) return null;
+  const headers: Record<string, string> = {};
+  for (const line of lines.slice(1)) {
+    if (line.trim() === "") break;
+    const at = line.indexOf(":");
+    if (at > 0) headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
+  }
+  return { status: Number(first[1]), headers };
+}
+
+/**
+ * Whether a failed gh command says GitHub refused it for asking too often: a REST answer of 429, or of 403 about a rate
+ * limit, or GraphQL's own words for one (`gh issue list` asks through GraphQL, whose failures carry no status).
+ */
+export function ghSaysLimited(result: GhResult): boolean {
+  if (!result.started || result.code === 0) return false;
+  const said = `${result.stderr}\n${result.stdout}`;
+  return /\bHTTP 429\b/.test(said) || /rate limit|abuse detection/i.test(said);
+}
+
+/**
+ * How long to wait before asking GitHub again, in milliseconds, after an answer with `head`; null when the answer is not
+ * GitHub's limit. A 429, or a 403 with retry-after or with x-ratelimit-remaining 0, is a limit: wait until retry-after
+ * (seconds, or a date) when given, else until x-ratelimit-reset (seconds since 1970), else a backoff that doubles with
+ * each `attempt` from `baseMs` and is capped at `capMs`. Rewritten in Botbench's terms, with no dependency, from the
+ * approach of paperclip's chat-channels/github/retry.ts (githubProviderRetry, githubRetryDelay); no code was copied.
+ */
+export function githubRetryDelay(head: ApiHead, o: { attempt: number; now: number; baseMs: number; capMs: number }): number | null {
+  const retryAfter = head.headers["retry-after"];
+  const remaining = head.headers["x-ratelimit-remaining"];
+  const limited = head.status === 429 || (head.status === 403 && (retryAfter !== undefined || remaining === "0"));
+  if (!limited) return null;
+  // A wait GitHub names is kept to, up to a day: a header saying more than that is not believed, and the backoff applies.
+  const named = (ms: number): number | null => (Number.isFinite(ms) && ms <= MAX_NAMED_WAIT_MS ? Math.max(ms, 0) : null);
+  if (retryAfter !== undefined) {
+    const wait = named(/^\d{1,9}$/.test(retryAfter.trim()) ? Number(retryAfter.trim()) * 1000 : Date.parse(retryAfter) - o.now);
+    if (wait !== null) return wait;
+  }
+  const reset = head.headers["x-ratelimit-reset"];
+  // A 429 that names a reset is waited out too, whether or not it says how many requests remain.
+  if ((remaining === "0" || head.status === 429) && reset !== undefined && /^\d{1,12}$/.test(reset.trim())) {
+    const wait = named(Number(reset.trim()) * 1000 - o.now);
+    if (wait !== null) return wait;
+  }
+  return backoffMs(o);
+}
+
+const MAX_NAMED_WAIT_MS = 24 * 3600_000;
+
+/** A wait that doubles with each attempt from `baseMs` (attempt 1 waits `baseMs`), never longer than `capMs`. */
+export function backoffMs(o: { attempt: number; baseMs: number; capMs: number }): number {
+  return Math.min(o.baseMs * 2 ** Math.max(0, Math.min(o.attempt - 1, 30)), o.capMs);
+}
 
 const PR_FIELDS = "number,title,url,state,headRefName,isCrossRepository,closingIssuesReferences,files";
 /** The most open pull requests asked for at once. */
@@ -315,8 +460,13 @@ export function parsePrCreate(stdout: string): PullRequest {
 /** What a failed `gh` said, on one line, with any credentials in an address taken out. */
 export function ghFailure(result: GhResult): string {
   if (!result.started) return "The gh tool is not installed, or is not on the PATH Botbench runs with. Install it, sign in with gh auth login in a terminal, then try again.";
-  const said = redact((result.stderr.trim() || result.stdout.trim()).replace(/\s+/g, " ")).slice(0, 600);
+  const said = ghSaid(result);
   return said === "" ? `The gh tool stopped with exit code ${result.code ?? "none"}.` : `The gh tool said: ${said}`;
+}
+
+/** What gh printed, on one line, at most 600 characters, with any credentials in an address taken out; "" for nothing. */
+export function ghSaid(result: GhResult): string {
+  return redact((result.stderr.trim() || result.stdout.trim()).replace(/\s+/g, " ")).slice(0, 600);
 }
 
 /** How long one `gh` command may take: it talks to GitHub. Then it is stopped with everything it started. */

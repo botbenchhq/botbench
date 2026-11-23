@@ -13,6 +13,7 @@ import { ConfirmDialog } from "../components/confirm.tsx";
 import { copyWords } from "../components/decision.tsx";
 import { MenuRow } from "../components/row-menu.tsx";
 import { RenameChatDialog } from "../components/rename-chat.tsx";
+import { Proposals } from "../components/proposals.tsx";
 
 type Groups = BoardGroup[];
 
@@ -135,9 +136,12 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
     );
   }, [onSignedOut, viewingHidden]);
 
+  /** Counts the live updates that may change the issues to start, so that section reads them again. */
+  const [watchRefresh, setWatchRefresh] = useState(0);
   useEffect(() => {
     load();
-    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && load(), onSignedOut, onRun: load, onTask: load, onApproval: load });
+    const again = (): void => setWatchRefresh((n) => n + 1);
+    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && (load(), again()), onSignedOut, onRun: () => (load(), again()), onTask: load, onApproval: load, onWatch: again });
   }, [load, onSignedOut]);
 
   const failedWith = (what: string) => (err: unknown) => {
@@ -197,6 +201,7 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
             {failed}
           </Alert>
         )}
+        <Proposals refresh={watchRefresh} onSignedOut={onSignedOut} />
         {groups === null ? (
           failed === null && (
             <p role="status" className="ds-spinner">

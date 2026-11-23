@@ -24,7 +24,8 @@ import { defaultMode } from "./engine/modes.ts";
 import { createDictation, type DictationOptions } from "./dictation/dictation.ts";
 import { createDeliveries } from "./engine/delivery.ts";
 import { createRuns, getRun } from "./engine/run.ts";
-import { createGitHub, type GitHub } from "./github.ts";
+import { createGitHub, runGh, type GitHub, type RunGh } from "./github.ts";
+import { startWatch } from "./engine/watch.ts";
 import { createPeers } from "./engine/peers.ts";
 import { createCheckTogether } from "./engine/combined.ts";
 import { clearCombinedCopies } from "./worktrees.ts";
@@ -74,6 +75,8 @@ export interface StartOptions {
   config: Config;
   home: string;
   signInDelayMs?: number;
+  /** How long a code from Add a device signs in; 5 minutes when left out. */
+  pairingLifetimeMs?: number;
   /** The built client; `web/dist` in this checkout when left out. */
   clientDir?: string;
   /** How often an idle event stream is sent a comment to keep it open. */
@@ -92,6 +95,8 @@ export interface StartOptions {
   chatClaude?: Driver;
   /** Claude Code for everything it does here: tasks, runs and chat. The real one unless a test replays turns captured from it. */
   claudeCode?: Driver;
+  /** The gh the issue watch lists labelled issues with. The owner's own unless a test replays output captured from it. */
+  watchGh?: RunGh;
 }
 
 
@@ -204,10 +209,13 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     }, claims });
   // Claims a stopped Botbench left on the remote for runs that ended without a pull request are released now.
   claims.recover();
-  const ctx = { db, home, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  // The issue watch (engine/watch.ts): each watched repository's labelled open issues, listed with the owner's gh at its
+  // interval and proposed on Work. It reads only; a run starts only when the owner presses Start and submits the composer.
+  const watch = startWatch({ db, config, run: options.watchGh ?? runGh, onProposed: () => push.issueProposed(), onChange: stream.announceWatch });
+  const ctx = { db, home, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
-  const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
+  const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs, pairingLifetimeMs: options.pairingLifetimeMs });
 
   const handler: http.RequestListener = (req, res) => {
     // The gate answers sign-in and every refusal itself; only a request with a session reaches the routes.
@@ -228,6 +236,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     closed = true;
     stream.close();
     await Promise.all(servers.map(stop));
+    // A poll under way writes its issues to the store when it ends: its timers stop and it is waited for first.
+    await watch.close();
     // Sessions write to the database as they stop, so they are closed before it.
     // A check together ending now may still ask the tasks to look at its task again, so it stops first.
     await checkTogether.close();

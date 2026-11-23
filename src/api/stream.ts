@@ -48,6 +48,8 @@ export interface EventStream {
   announceRun(run: { id: number; status: string }): void;
   /** Tell every client that an agent's sign-in moved on, or it was signed out. Carries no link and no code: clients read those from their route. */
   announceAgent(driver: string, state: string): void;
+  /** Tell every client that the issue watch's proposals or a watched repository's state changed. Carries nothing: clients read them from their route. */
+  announceWatch(): void;
   clients(): number;
   /** End every open stream. */
   close(): void;
@@ -61,7 +63,7 @@ export interface EventStream {
  * a browser cannot set the header) is sent every row after that id from the
  * database and then stays live, so it sees no gap and no repeat. Stored events
  * are unnamed SSE messages. The named events are `heartbeat`, `task`, `run`,
- * `approval` and `agent`: an announcement says which task or approval changed and carries
+ * `approval`, `agent` and `watch`: an announcement says which task or approval changed and carries
  * no id, so it never moves a client's place. A client that was away reads the
  * task or the pending approvals from their routes.
  */
@@ -130,10 +132,14 @@ export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTB
     for (const res of cursors.keys()) res.write(frame);
   };
 
+  const announceWatch = (): void => {
+    for (const res of cursors.keys()) res.write("event: watch\ndata: {}\n\n");
+  };
+
   const close = (): void => {
     for (const res of [...cursors.keys()]) res.destroy();
     cursors.clear();
   };
 
-  return { handle, notify, announceTask, announceRun, announceApproval, announceAgent, clients: () => cursors.size, close };
+  return { handle, notify, announceTask, announceRun, announceApproval, announceAgent, announceWatch, clients: () => cursors.size, close };
 }

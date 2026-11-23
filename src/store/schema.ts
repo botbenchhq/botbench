@@ -1699,6 +1699,61 @@ CREATE TABLE hidden_rows (
 `,
   },
   {
+    // Adding a device with a one-time code (src/api/pairing.ts): at most one pairing, the one Settings made last. It holds
+    // the SHA-256 of the code, never the code. `used_at` is set by the one sign-in it opened, so a second try is told the
+    // code was used; `replaced_hash` is the code this one cancelled, so that code is told it was replaced. The row goes
+    // once it has expired, and with the session that made it: signing that device out deletes its pairing, so a code
+    // made by a session the owner has since ended (a stolen one, say) no longer signs in.
+    name: "device_pairing",
+    sql: `
+CREATE TABLE device_pairing (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  session_id INTEGER NOT NULL REFERENCES browser_sessions(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL CHECK (length(code_hash) = 64),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  replaced_hash TEXT CHECK (replaced_hash IS NULL OR length(replaced_hash) = 64)
+);
+`,
+  },
+  {
+    // The seen table of the issue watch (src/engine/watch.ts, ADR 0008): one row per issue a watched repository's poll
+    // has seen, by its GitHub repository (host/owner/name, compared without case, as GitHub compares them) and number,
+    // written the first time it is seen, so that an
+    // issue already here is never proposed again, after a restart too. `state` is `proposed` until the owner dismisses
+    // it, and a dismissed one stays dismissed: the row is never deleted, its key and when it was first seen never
+    // change, and it leaves `proposed` once. `repo_path` is the watched repository on this Mac it was seen for; `title`
+    // and `author` are outside text as gh listed them when first seen, shown as plain text only. `author_relation` is how
+    // GitHub said the author relates to the repository (author_association) when the issue was first seen, or null when
+    // that read failed.
+    name: "watched_issues",
+    sql: `
+CREATE TABLE watched_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository TEXT NOT NULL COLLATE NOCASE,
+  number INTEGER NOT NULL CHECK (number BETWEEN 1 AND 2147483647),
+  repo_path TEXT NOT NULL,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  author TEXT,
+  author_relation TEXT CHECK (author_relation IS NULL OR author_relation IN ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE')),
+  state TEXT NOT NULL CHECK (state IN ('proposed', 'dismissed')),
+  first_seen_at TEXT NOT NULL,
+  dismissed_at TEXT,
+  UNIQUE (repository, number),
+  CHECK ((state = 'dismissed') = (dismissed_at IS NOT NULL))
+);
+CREATE TRIGGER watched_issues_first_proposed BEFORE INSERT ON watched_issues WHEN NEW.state <> 'proposed'
+BEGIN SELECT RAISE(ABORT, 'a watched issue is first written as proposed'); END;
+CREATE TRIGGER watched_issues_fixed BEFORE UPDATE OF id, repository, number, repo_path, url, title, author, author_relation, first_seen_at ON watched_issues
+BEGIN SELECT RAISE(ABORT, 'a watched issue is kept as it was first seen'); END;
+CREATE TRIGGER watched_issues_dismissed_once BEFORE UPDATE OF state, dismissed_at ON watched_issues WHEN OLD.state <> 'proposed' OR NEW.state <> 'dismissed'
+BEGIN SELECT RAISE(ABORT, 'a watched issue is dismissed once, and never proposed again'); END;
+CREATE TRIGGER watched_issues_no_delete BEFORE DELETE ON watched_issues
+BEGIN SELECT RAISE(ABORT, 'watched issues are never deleted'); END;
+`,
+  },
+  {
     // `check_fixes`: one row per round of fixes for a failing check that ended (engine/check-fix.ts), kept apart from the
     // rounds of fixes a review asks for (`refinements`): the round of check evidence it was sent, how many rounds of
     // fixes for a review the task had then, the builder's attempt, how its turn ended, whether it changed the work, its

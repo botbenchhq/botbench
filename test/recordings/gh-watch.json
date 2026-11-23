@@ -1,0 +1,70 @@
+{
+  "command": "gh issue list --repo=github.com/jon-lange/botbench --label=botbench --state=open --json=number,title,author,url,labels --limit=1000",
+  "gh": "gh version 2.103.3 (2026-10-26)",
+  "captured": "2026-11-23",
+  "repository": "github.com/jon-lange/botbench",
+  "label": "botbench",
+  "outputs": {
+    "labelled": {
+      "args": [
+        "issue",
+        "list",
+        "--repo=github.com/jon-lange/botbench",
+        "--label=botbench",
+        "--state=open",
+        "--json=number,title,author,url,labels",
+        "--limit=1000"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "[{\"author\":{\"id\":\"MDQ6VXNlcjMxMjk5NTI4\",\"is_bot\":false,\"login\":\"jon-lange\",\"name\":\"Jon Lange\"},\"labels\":[{\"id\":\"LA_kwDOV3QDEM8AAAADEhIvmA\",\"name\":\"botbench\",\"description\":\"Offered to Botbench: a watching workbench may propose a run for it\",\"color\":\"5319e7\"}],\"number\":73,\"title\":\"Watch a repository for issues and propose runs\",\"url\":\"https://github.com/jon-lange/botbench/issues/73\"}]\n",
+        "stderr": ""
+      }
+    },
+    "issue": {
+      "args": [
+        "issue",
+        "view",
+        "73",
+        "--repo=github.com/jon-lange/botbench",
+        "--json=number,title,body,author,state,url,labels,comments"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "{\"author\":{\"id\":\"MDQ6VXNlcjMxMjk5NTI4\",\"is_bot\":false,\"login\":\"jon-lange\",\"name\":\"Jon Lange\"},\"body\":\"Botbench can start a run from one GitHub issue the owner points at. It cannot notice new issues.\\n\\n**Watch a repository for issues and propose runs**; never start one by itself.\\n\\nAcceptance criteria:\\n- A repository can be set (in its settings) to be watched, with a required label name; only OPEN issues carrying that label are considered (a label only maintainers can apply; say so on screen).\\n- Botbench polls read-only through the owner's `gh` at a configured interval (default 10 minutes), with a time limit, honouring rate limits, and a plain failure state; a \\\"seen\\\" table keyed by repository and issue number means an issue is proposed once.\\n- Each new matching issue appears on the Work screen as a **proposed run** with the issue's title and author, and \\\"Start\\\" (opens the composer with the issue attached, Semi-autonomous at most, as today's intake rules require) and \\\"Dismiss\\\". Nothing is built until the owner starts it.\\n- One notification per proposed run (\\\"An issue is ready to start\\\"), with no title or text from the issue in it.\\n- Issue text is outside text everywhere, as in the existing intake. Nothing is written to GitHub.\\n- Tests: polling logic against output captured from the real `gh`; seen-once across a restart; label filter; failure states; the proposal on the Work screen (browser, no model turn).\\n\\n**How this will be checked.** Follow `CLAUDE.md`: tests first at the lowest layer that proves it (real SQLite, a real temporary git repository, real child processes; no mocks — a session recorded from a real CLI run may be replayed), zero new runtime dependencies, plain words on screen per `docs/product/voice.md`, the threat model updated when a rule or boundary changes. Change only files this issue needs; never touch `test/recordings/` except to add a new capture. Keep it as small as the acceptance criteria allow. One pull request. The team lead runs the full suite before merging.\\n\",\"comments\":[],\"labels\":[{\"id\":\"LA_kwDOV3QDEM8AAAADEhIvmA\",\"name\":\"botbench\",\"description\":\"Offered to Botbench: a watching workbench may propose a run for it\",\"color\":\"5319e7\"}],\"number\":73,\"state\":\"OPEN\",\"title\":\"Watch a repository for issues and propose runs\",\"url\":\"https://github.com/jon-lange/botbench/issues/73\"}\n",
+        "stderr": ""
+      }
+    },
+    "issueApi": {
+      "args": [
+        "api",
+        "--method=GET",
+        "--hostname=github.com",
+        "repos/jon-lange/botbench/issues/73"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "{\"url\":\"https://api.github.com/repos/jon-lange/botbench/issues/73\",\"repository_url\":\"https://api.github.com/repos/jon-lange/botbench\",\"labels_url\":\"https://api.github.com/repos/jon-lange/botbench/issues/73/labels{/name}\",\"comments_url\":\"https://api.github.com/repos/jon-lange/botbench/issues/73/comments\",\"events_url\":\"https://api.github.com/repos/jon-lange/botbench/issues/73/events\",\"html_url\":\"https://github.com/jon-lange/botbench/issues/73\",\"id\":6550769480,\"node_id\":\"I_kwDOV3QDEM8AAAABhnTPSA\",\"number\":73,\"title\":\"Watch a repository for issues and propose runs\",\"user\":{\"login\":\"jon-lange\",\"id\":31299528,\"node_id\":\"MDQ6VXNlcjMxMjk5NTI4\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/31299528?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/jon-lange\",\"html_url\":\"https://github.com/jon-lange\",\"followers_url\":\"https://api.github.com/users/jon-lange/followers\",\"following_url\":\"https://api.github.com/users/jon-lange/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/jon-lange/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/jon-lange/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/jon-lange/subscriptions\",\"organizations_url\":\"https://api.github.com/users/jon-lange/orgs\",\"repos_url\":\"https://api.github.com/users/jon-lange/repos\",\"events_url\":\"https://api.github.com/users/jon-lange/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/jon-lange/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false},\"labels\":[{\"id\":13188083608,\"node_id\":\"LA_kwDOV3QDEM8AAAADEhIvmA\",\"url\":\"https://api.github.com/repos/jon-lange/botbench/labels/botbench\",\"name\":\"botbench\",\"color\":\"5319e7\",\"default\":false,\"description\":\"Offered to Botbench: a watching workbench may propose a run for it\",\"archived_at\":null,\"archived_by\":null}],\"state\":\"open\",\"locked\":false,\"assignees\":[],\"milestone\":null,\"comments\":0,\"created_at\":\"2026-11-23T02:04:37Z\",\"updated_at\":\"2026-11-23T07:34:34Z\",\"closed_at\":null,\"assignee\":null,\"author_association\":\"OWNER\",\"issue_field_values\":[],\"type\":null,\"active_lock_reason\":null,\"sub_issues_summary\":{\"total\":0,\"completed\":0,\"percent_completed\":0},\"issue_dependencies_summary\":{\"blocked_by\":0,\"total_blocked_by\":0,\"blocking\":0,\"total_blocking\":0},\"body\":\"Botbench can start a run from one GitHub issue the owner points at. It cannot notice new issues.\\n\\n**Watch a repository for issues and propose runs**; never start one by itself.\\n\\nAcceptance criteria:\\n- A repository can be set (in its settings) to be watched, with a required label name; only OPEN issues carrying that label are considered (a label only maintainers can apply; say so on screen).\\n- Botbench polls read-only through the owner's `gh` at a configured interval (default 10 minutes), with a time limit, honouring rate limits, and a plain failure state; a \\\"seen\\\" table keyed by repository and issue number means an issue is proposed once.\\n- Each new matching issue appears on the Work screen as a **proposed run** with the issue's title and author, and \\\"Start\\\" (opens the composer with the issue attached, Semi-autonomous at most, as today's intake rules require) and \\\"Dismiss\\\". Nothing is built until the owner starts it.\\n- One notification per proposed run (\\\"An issue is ready to start\\\"), with no title or text from the issue in it.\\n- Issue text is outside text everywhere, as in the existing intake. Nothing is written to GitHub.\\n- Tests: polling logic against output captured from the real `gh`; seen-once across a restart; label filter; failure states; the proposal on the Work screen (browser, no model turn).\\n\\n**How this will be checked.** Follow `CLAUDE.md`: tests first at the lowest layer that proves it (real SQLite, a real temporary git repository, real child processes; no mocks — a session recorded from a real CLI run may be replayed), zero new runtime dependencies, plain words on screen per `docs/product/voice.md`, the threat model updated when a rule or boundary changes. Change only files this issue needs; never touch `test/recordings/` except to add a new capture. Keep it as small as the acceptance criteria allow. One pull request. The team lead runs the full suite before merging.\\n\",\"closed_by\":null,\"reactions\":{\"url\":\"https://api.github.com/repos/jon-lange/botbench/issues/73/reactions\",\"total_count\":0,\"+1\":0,\"-1\":0,\"laugh\":0,\"hooray\":0,\"confused\":0,\"heart\":0,\"rocket\":0,\"eyes\":0},\"timeline_url\":\"https://api.github.com/repos/jon-lange/botbench/issues/73/timeline\",\"performed_via_github_app\":null,\"state_reason\":null,\"pinned_comment\":null}",
+        "stderr": ""
+      }
+    },
+    "head": {
+      "args": [
+        "api",
+        "-i",
+        "--method=GET",
+        "--hostname=github.com",
+        "repos/jon-lange/botbench"
+      ],
+      "result": {
+        "started": true,
+        "code": 0,
+        "stdout": "HTTP/2.0 200 OK\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Expose-Headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning\r\nCache-Control: private, max-age=60, s-maxage=60\r\nContent-Security-Policy: default-src 'none'\r\nContent-Type: application/json; charset=utf-8\r\nDate: Mon, 23 Nov 2026 07:36:25 GMT\r\nEtag: W/\"2f3159db65d377be355b574420304ca5467020d1c5a9c1b43a72cdc0ba87d0c6\"\r\nLast-Modified: Sun, 22 Nov 2026 16:47:02 GMT\r\nReferrer-Policy: origin-when-cross-origin, strict-origin-when-cross-origin\r\nServer: github.com\r\nStrict-Transport-Security: max-age=31536000; includeSubdomains; preload\r\nVary: Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With\r\nX-Accepted-Oauth-Scopes: repo\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: deny\r\nX-Github-Api-Version-Selected: 2022-11-28\r\nX-Github-Edge-Region: iad\r\nX-Github-Media-Type: github.v3; format=json\r\nX-Github-Request-Id: E97A:39B369:24108AB:72B710F:6B03ECF9\r\nX-Oauth-Client-Id: 178c6fc778ccc68e1d6a\r\nX-Oauth-Scopes: gist, read:org, repo\r\nX-Ratelimit-Limit: 5000\r\nX-Ratelimit-Remaining: 4987\r\nX-Ratelimit-Reset: 1795422707\r\nX-Ratelimit-Resource: core\r\nX-Ratelimit-Used: 13\r\nX-Xss-Protection: 0\r\n\r\n",
+        "stderr": ""
+      }
+    }
+  }
+}

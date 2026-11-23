@@ -17,6 +17,7 @@ import { roleProblem } from "./engine/roles.ts";
 import { BRANCH_PREFIX, remoteNameProblem } from "./worktrees.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 import { workbenchProblem } from "./workbench.ts";
+import { labelProblem } from "./github.ts";
 import { USAGE_LIMIT_WAIT_MS } from "./engine/usage-limit.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -119,7 +120,23 @@ export interface RepositoryConfig {
    * run ends without a pull request. A run that keeps its work on this Mac pushes nothing either way. Off when absent.
    */
   claimIssues?: boolean;
+  /**
+   * Watch this repository's open issues for a label (engine/watch.ts, ADR 0008): every `intervalMinutes` (10 when
+   * absent), Botbench lists with the owner's gh the open issues carrying `label` and proposes each new one on Work, for
+   * the owner to start or dismiss. It never starts a run by itself. Only people who can apply labels to the repository
+   * should be able to apply this one: the label is what makes an issue a proposal. Not watched when absent.
+   */
+  watch?: WatchConfig;
 }
+/** What a repository's watch is set to. */
+export interface WatchConfig {
+  label: string;
+  intervalMinutes?: number;
+}
+/** How often a watched repository is read when its settings say nothing, in minutes. */
+export const WATCH_INTERVAL_MINUTES = 10;
+const MAX_WATCH_INTERVAL_MINUTES = 1440;
+const WATCH_SETTINGS = ["label", "intervalMinutes"] as const;
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
 const MAX_TIMEOUT_SECONDS = 86_400;
@@ -305,6 +322,11 @@ function validate(c: Json, where: string): Config {
           if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue, set to open pull requests, first pushes a claim that tells other workbenches you started on it.`);
           continue;
         }
+        if (setting === "watch") {
+          const problem = watchProblem(list);
+          if (problem !== null) fail(`repository "${repo}": ${problem}`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -348,7 +370,31 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
+
+/** What is wrong with a repository's "watch", as a sentence that names the setting, or null. */
+function watchProblem(watch: unknown): string | null {
+  if (!isObject(watch)) return `"watch" must be an object with a "label", such as { "label": "botbench", "intervalMinutes": ${WATCH_INTERVAL_MINUTES} }: the label that makes an open issue a proposed run on Work, and how many minutes apart Botbench looks.`;
+  const unknown = Object.keys(watch).find((key) => !(WATCH_SETTINGS as readonly string[]).includes(key));
+  if (unknown !== undefined) return `"watch" has unknown setting "${unknown}". Known settings: ${WATCH_SETTINGS.join(", ")}.`;
+  if (typeof watch.label !== "string" || watch.label === "") return `"watch" needs a "label": the name of the label that makes an open issue a proposed run on Work. ${labelProblem(undefined)}`;
+  const label = labelProblem(watch.label);
+  if (label !== null) return `"watch.label" ${label}`;
+  const minutes = watch.intervalMinutes;
+  if (minutes !== undefined && !(typeof minutes === "number" && Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= MAX_WATCH_INTERVAL_MINUTES)) return `"watch.intervalMinutes" must be a whole number of minutes from 1 to ${MAX_WATCH_INTERVAL_MINUTES}: how long Botbench waits between two looks at the repository's labelled issues. ${WATCH_INTERVAL_MINUTES} when left out.`;
+  return null;
+}
+
+/** A repository's watch with its interval filled in, or null when it is not watched. */
+export function repositoryWatch(config: Config, repo: string): Required<WatchConfig> | null {
+  const watch = repositorySettings(config, repo).watch;
+  return watch === undefined ? null : { label: watch.label, intervalMinutes: watch.intervalMinutes ?? WATCH_INTERVAL_MINUTES };
+}
+
+/** Every watched repository, by the path its settings are keyed by, in the settings file's order. */
+export function watchedRepositories(config: Config): ({ path: string } & Required<WatchConfig>)[] {
+  return Object.entries(config.repositories ?? {}).flatMap(([repo, settings]) => (settings.watch === undefined ? [] : [{ path: repo, label: settings.watch.label, intervalMinutes: settings.watch.intervalMinutes ?? WATCH_INTERVAL_MINUTES }]));
+}
 
 const PROTECTED_RULE = 'must be a list of paths inside the repository, such as ["test/recordings/", "package-lock.json"]: relative to its top folder, without "..", "*" or a leading "/".';
 

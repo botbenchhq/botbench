@@ -14,8 +14,8 @@ function place(url: string): string {
   return pathname.length > 1 && pathname.length <= 24 ? `${hostname}${pathname}` : hostname;
 }
 
-/** The code as issued, for a screen reader, and in its groups for the eye. */
-function DeviceCode({ code }: { code: string }) {
+/** The code as issued, for a screen reader, and in its groups for the eye, with Copy code. */
+export function DeviceCode({ code, testId = "connect-code" }: { code: string; testId?: string }) {
   const [copied, setCopied] = useState("");
   const copy = (): void => {
     // The clipboard is only there on a secure page (HTTPS, or this Mac itself) and may still refuse.
@@ -28,7 +28,7 @@ function DeviceCode({ code }: { code: string }) {
   const groups = code.split("-");
   return (
     <div className="ds-device-code__entry">
-      <p className="ds-device-code__code" data-testid="connect-code">
+      <p className="ds-device-code__code" data-testid={testId}>
         <span className="ds-visually-hidden">Code: {code}</span>
         <span aria-hidden="true">
           {groups.map((group, i) => (
