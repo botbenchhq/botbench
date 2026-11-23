@@ -1,3 +1,10 @@
 {
-  "gaps": []
+  "gaps": [
+    {
+      "name": "diff-prose",
+      "reason": "The diff component has no wrapping variant: its lines always scroll sideways. A diff of prose (.md, .txt) is one long line per paragraph, unreadable at phone width unless it wraps; code keeps the component's own scrolling lines.",
+      "classes": ["bb-diff-prose"],
+      "files": ["src/index.css"]
+    }
+  ]
 }

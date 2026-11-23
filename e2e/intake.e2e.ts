@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base } from "@playwright/test";
 import { ISSUE_NOT_FULL, issueWords } from "../web/src/app/composer.ts";
+import { authorWords, hostsHint } from "../web/src/app/run-words.ts";
 import { ISSUE_ADDRESS, ISSUE_NUMBER, loadIssueCapture } from "../test/support/replay-issue.ts";
 import { parseIssueView } from "../src/github.ts";
 import { git, initRepo } from "../test/support/repo.ts";
@@ -55,8 +56,20 @@ test("an issue is looked up and shown as plain text, attached as the row's value
   await expect(sheet.getByTestId("issue-body")).toBeVisible();
   await expect(sheet.getByTestId("issue-body")).toContainText("### Describe the bug");
   expect(await preview.locator("img, a, h1, h2, h4").count()).toBe(0);
-  await expect(sheet.getByTestId("issue-outside")).toContainText("People outside this project wrote this issue.");
-  await expect(sheet.getByLabel("Allow this repository's network hosts for this run")).not.toBeChecked();
+  // Who wrote it, by name; the replayed gh answer is gh issue view's, which does not say how the author relates to the
+  // repository, so the sheet says GitHub did not say. The rules are said to be the same whoever wrote it.
+  const written = authorWords(issue.author, null);
+  await expect(sheet.getByTestId("issue-outside")).toHaveText(`${written.author}${written.text}`);
+  await expect(sheet.getByTestId("issue-outside").locator("[data-ds-content]")).toHaveText(issue.author!);
+  const hosts = sheet.getByLabel("Allow this repository's network hosts for this run");
+  await expect(hosts).not.toBeChecked();
+  await expect(sheet.locator("#issue-hosts-about")).toHaveText(hostsHint(["registry.npmjs.org"], false));
+  await hosts.check();
+  await expect(sheet.locator("#issue-hosts-about")).toHaveText(hostsHint(["registry.npmjs.org"], true));
+  await expect(sheet.locator("#issue-hosts-about")).not.toContainText("no network");
+  await checkDesign(page, "the issue as read, with its network hosts allowed");
+  await hosts.uncheck();
+  await expect(sheet.locator("#issue-hosts-about")).toHaveText(hostsHint(["registry.npmjs.org"], false));
   await checkDesign(page, "the issue as read, before it is attached");
 
   await sheet.getByRole("button", { name: "Attach this issue" }).click();

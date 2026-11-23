@@ -57,6 +57,28 @@ test("a task is titled by its own words, cut at a word boundary, and by its numb
   assert.equal(taskTitle(3, "   \n  "), "Task 3");
 });
 
+test("a task's title is never cut to one word: from 40 characters on it is cut at the first word boundary at or after the 40th, and a shorter one is whole", () => {
+  // A long word right after the first: cutting before the 40th character would leave one word.
+  const long = "Implement src/engine/very-long-module-name/with-a-long-file.ts so that it reads the config";
+  const cut = taskTitle(3, long);
+  assert.equal(cut, "Implement src/engine/very-long-module-name/with-a-long-file.ts…");
+  assert.ok(cut.length - 1 >= 40 && long.startsWith(cut.slice(0, -1)));
+  // Under 40 characters, whole, and so is a 40-character one with nothing after it.
+  assert.equal(taskTitle(3, "Fix the login page on small screens"), "Fix the login page on small screens");
+  assert.equal(taskTitle(3, "x".repeat(39)), "x".repeat(39));
+  assert.equal(taskTitle(3, `${"a".repeat(20)} ${"b".repeat(19)}`), `${"a".repeat(20)} ${"b".repeat(19)}`);
+  // Never shorter than 40 characters once cut, whatever punctuation is at the boundary.
+  for (const prompt of ["Add a line to the README saying hello there, and then commit it", "one two three four five six seven eight nine ten eleven twelve", `${"word ".repeat(30)}end`]) {
+    const title = taskTitle(3, prompt);
+    assert.ok(title.endsWith("…"), prompt);
+    assert.ok(title.length - 1 >= 40, `${title} (${title.length - 1})`);
+    assert.ok(prompt.startsWith(title.slice(0, -1)), prompt);
+    assert.ok(/\s/.test(prompt[title.length - 1] ?? " "), `cut at a word boundary: ${title}`);
+  }
+  // One long line with no later word boundary is shown whole rather than cut inside a word.
+  assert.equal(taskTitle(3, `Rename ${"x".repeat(60)}`), `Rename ${"x".repeat(60)}`);
+});
+
 const task = (status: RunTask["status"]): Pick<RunTask, "status"> => ({ status });
 const run = (tasks: Pick<RunTask, "status">[]): Pick<RunDetail, "status" | "reason" | "waitingOnApproval" | "tasks" | "attemptId" | "mode"> => ({ status: "running", reason: null, waitingOnApproval: false, tasks: tasks as RunTask[], attemptId: 1, mode: "manual" });
 

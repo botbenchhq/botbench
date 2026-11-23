@@ -157,7 +157,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(page.locator('[data-event="permission_request"]')).toHaveCount(0);
   await expect(await openCanDo(page)).toContainText("Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)");
   expect((await api<{ approvals: { status: string }[] }>(page, botbench, "/api/approvals")).approvals.map((a) => a.status)).toEqual(["allowed", "allowed"]);
-  const branch = await page.getByTestId("branch").inputValue();
+  const branch = (await page.getByTestId("branch").textContent())!;
   expect(fs.readFileSync(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1", "marker.txt"), "utf8")).toBe("ran\nran\nran\n");
   await checkDesign(page, "task, finished on a standing permission");
 

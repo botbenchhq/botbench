@@ -83,7 +83,16 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
  * A task's title on its own screen: the first line of its prompt, cut at a word boundary to about two lines of the
  * title size on a phone (the whole prompt is the first row of the transcript); its number until the prompt is read.
  */
-export const taskTitle = (id: number, prompt: string | null): string => (prompt === null || prompt.trim() === "" ? `Task ${id}` : firstLine(prompt, 40));
+export function taskTitle(id: number, prompt: string | null): string {
+  if (prompt === null || prompt.trim() === "") return `Task ${id}`;
+  // The first line, whole up to 40 characters. A longer one is cut at the first word boundary at or after the 40th
+  // character, so a long word early on never leaves the title one word long; with no boundary after it, it is whole.
+  const line = firstLine(prompt, Number.POSITIVE_INFINITY);
+  const boundary = line.slice(TITLE_LEAST).search(/\s/);
+  return boundary < 0 ? line : `${line.slice(0, TITLE_LEAST + boundary)}…`;
+}
+/** The fewest characters a task's title is cut to. */
+const TITLE_LEAST = 40;
 
 /** Whether an accepted task offers the command that merges its branch on this Mac: not when its run opens pull requests, where the pull request is how the work comes in. */
 export const offersMerge = (task: { pullRequest: Pick<PullRequestView, "choice"> }): boolean => task.pullRequest.choice !== "pull_request";

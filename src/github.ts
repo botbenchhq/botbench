@@ -4,7 +4,7 @@ import { gitEnv } from "./worktrees.ts";
 /*
  * The gh tool (`gh`), as Botbench uses it to open a pull request for an accepted task. Botbench runs the owner's own
  * `gh` on this Mac, with the owner's own sign-in, which `gh` keeps and reads itself: Botbench never reads a token, never
- * puts one on a command line or in the environment, and reads nothing from `gh`'s files. Four commands are used, each
+ * puts one on a command line or in the environment, and reads nothing from `gh`'s files. These commands are used, each
  * built here as an exact list of arguments (no shell), and each answer read here from what the real `gh` prints:
  *
  *   gh auth status --hostname=<host> --active --json=hosts       who is signed in on that host (the JSON holds no token)
@@ -12,6 +12,8 @@ import { gitEnv } from "./worktrees.ts";
  *   gh pr list --repo=... --head=<branch> --state=all --json=...   a pull request already open (or closed) for the branch
  *   gh pr create --repo=... --base=... --head=... --title=... --body-file=-   the body on standard input, never an argument
  *   gh issue view <number> --repo=<host/owner/name> --json=...     one issue, read only (engine/intake.ts)
+ *   gh api --method=GET --hostname=<host> repos/<owner>/<name>/issues/<number>   the same issue as GitHub's REST API
+ *                                                                  gives it, read only, for how its author relates to the repository
  *   gh pr list --repo=... --state=open --json=... --limit=100      the open pull requests, read only (engine/peers.ts)
  *
  * Never `gh pr merge`, never `gh repo delete`, never anything that changes a branch, and nothing that writes to an
@@ -115,6 +117,14 @@ export const ghArgs = {
     if (!Number.isSafeInteger(number) || number < 1 || number > MAX_ISSUE_NUMBER) throw new Error(`${String(number)} is not an issue number.`);
     return ["issue", "view", String(number), `--repo=${repoName(repo)}`, "--json=number,title,body,author,state,url,labels,comments"];
   },
+  /**
+   * The same issue from GitHub's REST API, read only (GET, no field sent), for its `author_association`, which `gh issue
+   * view` does not give for the issue itself. The owner and the name are each one encoded segment of the path.
+   */
+  issueApi: (repo: RepoRef, number: number): string[] => {
+    if (!Number.isSafeInteger(number) || number < 1 || number > MAX_ISSUE_NUMBER) throw new Error(`${String(number)} is not an issue number.`);
+    return ["api", "--method=GET", `--hostname=${repo.host}`, `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/issues/${number}`];
+  },
 };
 
 const PR_FIELDS = "number,title,url,state,headRefName,isCrossRepository,closingIssuesReferences,files";
@@ -172,6 +182,14 @@ export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullR
 /** The largest issue number Botbench asks for: GitHub's numbers are 32-bit. */
 export const MAX_ISSUE_NUMBER = 2_147_483_647;
 
+/**
+ * How an issue's author relates to its repository, in GitHub's own words (`author_association`): the repository's owner,
+ * a member of the organization that owns it, a collaborator, someone who contributed before, someone contributing for
+ * the first time (to the repository, or to GitHub at all), a placeholder for an imported account, or none of these.
+ */
+export const AUTHOR_RELATIONS = ["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE"] as const;
+export type AuthorRelation = (typeof AUTHOR_RELATIONS)[number];
+
 /** One issue as `gh issue view --json=...` gives it: every field written by whoever wrote the issue, so all of it is data. */
 export interface IssueView {
   number: number;
@@ -180,6 +198,11 @@ export interface IssueView {
   body: string;
   /** The author's login; null for an account GitHub no longer has. */
   author: string | null;
+  /**
+   * How the author relates to the repository, read with `gh api` (parseIssueRelation); null when GitHub did not say.
+   * It changes only what the owner is told: an issue is outside text whoever wrote it.
+   */
+  authorRelation: AuthorRelation | null;
   /** OPEN or CLOSED. */
   state: string;
   labels: string[];
@@ -203,7 +226,24 @@ export function parseIssueView(stdout: string, repo: RepoRef, number: number): I
   if (typeof parsed.title !== "string" || typeof parsed.state !== "string") throw new Error("The gh tool's answer about the issue has no title or state.");
   const labels = Array.isArray(parsed.labels) ? parsed.labels.flatMap((l) => (isObject(l) && typeof l.name === "string" ? [l.name] : [])) : [];
   const comments = Array.isArray(parsed.comments) ? parsed.comments.flatMap((c) => (isObject(c) && typeof c.body === "string" ? [{ author: loginOf(c.author), body: c.body }] : [])) : [];
-  return { number, url, title: parsed.title, body: typeof parsed.body === "string" ? parsed.body : "", author: loginOf(parsed.author), state: parsed.state, labels, comments };
+  // `gh issue view` does not say how the issue's own author relates to the repository: that is read with `gh api`.
+  return { number, url, title: parsed.title, body: typeof parsed.body === "string" ? parsed.body : "", author: loginOf(parsed.author), authorRelation: null, state: parsed.state, labels, comments };
+}
+
+/**
+ * How the author of issue `number` of `repo` relates to the repository, from what `gh api repos/<owner>/<name>/issues/<number>`
+ * printed: its top-level `author_association`. Null for a value GitHub does not document, or none. Refused when the
+ * answer is about anything else: a pull request (which that address also answers for), another number or repository.
+ */
+export function parseIssueRelation(stdout: string, repo: RepoRef, number: number): AuthorRelation | null {
+  const parsed = parseJson(stdout, "who wrote the issue");
+  if (!isObject(parsed)) throw new Error("The gh tool's answer about who wrote the issue could not be read.");
+  const address = `https://${repo.host}/${repo.owner}/${repo.name}`.toLowerCase();
+  const url = typeof parsed.html_url === "string" ? parsed.html_url.toLowerCase() : "";
+  if (parsed.pull_request !== undefined || url === `${address}/pull/${number}`) throw new Error(`#${number} in ${repoName(repo)} is a pull request, not an issue. Give the number of an issue.`);
+  if (parsed.number !== number || url !== `${address}/issues/${number}`) throw new Error(`The gh tool's answer is not about issue #${number} of ${repoName(repo)}.`);
+  const relation = parsed.author_association;
+  return (AUTHOR_RELATIONS as readonly unknown[]).includes(relation) ? (relation as AuthorRelation) : null;
 }
 
 function parseJson(stdout: string, what: string): unknown {
@@ -314,7 +354,7 @@ export interface GitHub {
   findPullRequest(repo: RepoRef, branch: string): Promise<PullRequest | null>;
   /** Open a pull request; `body` goes to `gh` on its standard input. */
   openPullRequest(repo: RepoRef, o: { base: string; head: string; title: string; body: string; cwd: string }): Promise<PullRequest>;
-  /** Read one issue; nothing is written to it. */
+  /** Read one issue, and how its author relates to the repository; nothing is written to it. */
   issue(repo: RepoRef, number: number): Promise<IssueView>;
   /** The repository's open pull requests, read only (engine/peers.ts). */
   openPullRequests(repo: RepoRef): Promise<ListedPullRequest[]>;
@@ -336,7 +376,10 @@ export function createGitHub(run: RunGh = runGh, cwd = process.cwd()): GitHub {
     defaultBranch: async (repo) => parseRepoView(await ok(ghArgs.repoView(repo))).defaultBranch,
     findPullRequest: async (repo, branch) => parsePrList(await ok(ghArgs.prList(repo, branch)), branch, repo),
     openPullRequest: async (repo, o) => parsePrCreate(await ok(ghArgs.prCreate(repo, o), o.body, o.cwd)),
-    issue: async (repo, number) => parseIssueView(await ok(ghArgs.issueView(repo, number)), repo, number),
+    issue: async (repo, number) => {
+      const view = parseIssueView(await ok(ghArgs.issueView(repo, number)), repo, number);
+      return { ...view, authorRelation: parseIssueRelation(await ok(ghArgs.issueApi(repo, number)), repo, number) };
+    },
     openPullRequests: async (repo) => parsePullRequestList(await ok(ghArgs.prListOpen(repo)), repo).filter((pr) => pr.state === "OPEN"),
   };
 }
