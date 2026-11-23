@@ -98,7 +98,7 @@ export function PullRequestSection({ taskId, view, target, onChanged, onSignedOu
         </Alert>
       )}
       {target !== null && (
-        <ConfirmAction label={busy ? "Opening" : view.state === "failed" ? "Try again" : "Open a pull request"} title="Open a pull request?" confirmLabel="Push and open" cancelLabel="Cancel" disabled={busy} testId="open-pull-request" onConfirm={() => send(target)}>
+        <ConfirmAction label={view.state === "failed" ? "Try again" : "Open a pull request"} title="Open a pull request?" confirmLabel="Push and open" cancelLabel="Cancel" disabled={false} busy={busy} busyLabel="Opening" testId="open-pull-request" onConfirm={() => send(target)}>
           <p>
             {"Botbench pushes the branch "}
             <code data-ds-content="">{target.branch}</code>

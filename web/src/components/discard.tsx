@@ -54,7 +54,7 @@ export function DiscardSection({ task, startOpen = false, onDiscarded, onSignedO
         </Alert>
       )}
       <div className="ds-cluster">
-        <ConfirmAction label={busy ? "Discarding" : "Discard"} title="Discard what this task left?" confirmLabel="Discard" cancelLabel="Keep them" disabled={busy} losing testId="discard" startOpen={startOpen} onConfirm={send}>
+        <ConfirmAction label="Discard" title="Discard what this task left?" confirmLabel="Discard" cancelLabel="Keep them" disabled={false} busy={busy} busyLabel="Discarding" losing testId="discard" startOpen={startOpen} onConfirm={send}>
           <p>{`This removes ${left.join(" and ")}. The work on ${remains.branch ? "the branch" : "it"} is gone for good. Nothing is merged or pushed.`}</p>
           {remains.files.length > 0 && (
             <>

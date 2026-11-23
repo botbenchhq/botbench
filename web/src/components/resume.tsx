@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, resumeTask } from "../api/client.ts";
 import { Alert } from "./header.tsx";
 
@@ -26,7 +27,6 @@ export function ResumeControl({ taskId, note, name, primary, onResumed, onSigned
       },
     );
   };
-  const label = busy ? "Resuming" : "Resume";
   return (
     <div className="ds-stack ds-gap-sm">
       {problem !== null && (
@@ -35,10 +35,11 @@ export function ResumeControl({ taskId, note, name, primary, onResumed, onSigned
         </Alert>
       )}
       <p data-testid="resume-note">{note}</p>
-      <div className="ds-cluster">
-        <button type="button" aria-busy={busy} disabled={busy} aria-label={name === undefined ? undefined : `${label} ${name}`} onClick={resume} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
-          {label}
-        </button>
+      {/* What is resumed names the group, so the button that is busy, and reads "Resuming", still says which task. */}
+      <div className="ds-cluster" role={name === undefined ? undefined : "group"} aria-label={name}>
+        <BusyButton variant={primary ? "primary" : "secondary"} busy={busy} busyLabel="Resuming" aria-label={name === undefined ? undefined : `Resume ${name}`} onClick={resume}>
+          Resume
+        </BusyButton>
       </div>
     </div>
   );

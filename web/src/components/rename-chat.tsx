@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, renameChat, type ChatItem } from "../api/client.ts";
 
 /** The longest name a chat can be given; the server holds the same limit (src/engine/chats.ts). */
@@ -27,6 +28,7 @@ export function RenameChatDialog({ chat, onClose, onSignedOut }: { chat: ChatIte
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     if ((event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "cancel") return dialog.current?.close();
+    if (busy) return;
     setBusy(true);
     setProblem(null);
     renameChat(chat.id, value).then(
@@ -75,9 +77,9 @@ export function RenameChatDialog({ chat, onClose, onSignedOut }: { chat: ChatIte
           </div>
         </div>
         <div className="ds-dialog__footer">
-          <button type="submit" value="save" disabled={busy} aria-busy={busy || undefined} className="ds-button ds-button--primary">
-            {busy ? "Saving" : "Save name"}
-          </button>
+          <BusyButton type="submit" value="save" variant="primary" busy={busy} busyLabel="Saving">
+            Save name
+          </BusyButton>
           <button type="submit" value="cancel" className="ds-button">
             Cancel
           </button>

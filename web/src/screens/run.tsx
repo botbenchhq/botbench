@@ -305,7 +305,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
     <Transcript events={shown} working={working} modelName={nameOf} promptBy="Botbench, to Claude Code" folded={!planning} />
   );
   const cancel = run !== null && (planning || gate || building) && (
-    <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null} losing testId="cancel-run" onConfirm={() => decide("cancel")}>
+    <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null && busy !== "cancel"} busy={busy === "cancel"} busyLabel="Cancelling" losing testId="cancel-run" onConfirm={() => decide("cancel")}>
       <p>{cancelStatement(run.status, run.plan.length)}</p>
     </ConfirmAction>
   );

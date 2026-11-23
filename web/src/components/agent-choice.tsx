@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, getAgentModels, getAgentsAndCap, timedOut, type AgentsAnswer, type ChatTarget, type ModelList } from "../api/client.ts";
 import { agentAbout, agentList, agentName, CLAUDE, chatOffer, chipWords, defaultFirst, readChatAgents, readKnownAgents, type AgentPick, type AgentRow, type ChatAgents, type Offered } from "../app/chat.ts";
 import { choiceName, idUnder, ModelOptions, ModelRadio, MoreModels, type ModelChoiceState } from "./model-picker.tsx";
@@ -289,11 +290,18 @@ function OtherModels({ state, row, list }: { state: ChatAgentsState; row: AgentR
 
 /**
  * Under a round several agents answered: one plain action that asks one agent, chosen here, to compare the answers.
- * Nothing is sent until an agent is pressed.
+ * Nothing is sent until an agent is pressed. While it is sent (`busy`), the pressed agent's button is busy and keeps
+ * the focus, and the others wait.
  */
 export function CompareAction({ agents, claude, onCompare, busy }: { agents: ChatAgentsState; claude: ModelChoiceState; onCompare: (to: ChatTarget) => void; busy: boolean }) {
   const offered = (agents.offer.known ?? []).filter((a) => a.problem === null);
   const request = claude.request();
+  const [pressed, setPressed] = useState<string | null>(null);
+  const asking = busy ? pressed : null;
+  // A send that ended leaves no button pressed: the next one may be the composer's.
+  useEffect(() => {
+    if (!busy) setPressed(null);
+  }, [busy]);
   return (
     <li data-testid="compare-action">
       <details className="ds-disclosure">
@@ -302,15 +310,19 @@ export function CompareAction({ agents, claude, onCompare, busy }: { agents: Cha
           <p className="ds-option-picker__hint">It is sent the question and each answer, and asked where they agree, where they differ and which it would act on.</p>
           <div className="ds-cluster ds-gap-xs">
             {offered.map((a) => (
-              <button
+              <BusyButton
                 key={a.agent}
-                type="button"
-                className="ds-button ds-button--small"
-                disabled={busy || (a.agent === CLAUDE && !request.ok)}
-                onClick={() => onCompare(a.agent === CLAUDE ? { agent: a.agent, ...(request.ok && request.model !== undefined ? { model: request.model } : {}) } : { agent: a.agent, model: agents.choice.models[a.agent] ?? null })}
+                size="small"
+                busy={asking === a.agent}
+                busyLabel="Sending"
+                disabled={(busy && asking !== a.agent) || (a.agent === CLAUDE && !request.ok)}
+                onClick={() => {
+                  setPressed(a.agent);
+                  onCompare(a.agent === CLAUDE ? { agent: a.agent, ...(request.ok && request.model !== undefined ? { model: request.model } : {}) } : { agent: a.agent, model: agents.choice.models[a.agent] ?? null });
+                }}
               >
                 {`Ask ${a.name}`}
-              </button>
+              </BusyButton>
             ))}
           </div>
         </div>

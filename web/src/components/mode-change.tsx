@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, changeRunMode, type RunDetail, type RunMode } from "../api/client.ts";
 import { MODE_NAMES, STRICTER_HINT } from "../app/run-words.ts";
 import { Alert } from "./header.tsx";
@@ -69,9 +70,9 @@ export function StricterMode({ run, onChanged, onSignedOut }: { run: Pick<RunDet
         </Alert>
       )}
       <div className="ds-cluster">
-        <button type="button" aria-busy={busy} disabled={choice === null || busy} onClick={change} className="ds-button">
-          {busy ? "Changing the mode" : choice === null ? "Change mode" : `Change to ${MODE_NAMES[choice]}`}
-        </button>
+        <BusyButton busy={busy} busyLabel="Changing the mode" disabled={choice === null} onClick={change}>
+          {choice === null ? "Change mode" : `Change to ${MODE_NAMES[choice]}`}
+        </BusyButton>
       </div>
     </section>
   );
