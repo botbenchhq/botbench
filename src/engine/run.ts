@@ -558,7 +558,7 @@ export function createRuns(options: RunsOptions): Runs {
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
           .request({ taskId: null, runId: run.id, attemptId: session.attemptId, role: PLANNER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined, files: answer.files !== undefined }) : undefined))
           .catch(report(`Answering a permission request of run ${run.id}'s planner`));
       }
       if (event.type === "permission_resolved") {

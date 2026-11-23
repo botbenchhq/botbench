@@ -14,6 +14,8 @@ const WORKTREE = "/nonexistent-botbench/worktrees/run-1/task-1";
 const HOME = "/nonexistent-botbench-home";
 const REPO = "/nonexistent-botbench/repo";
 const scope = { role: "implementer", repo: REPO, runId: 1 };
+/** Where the CLI saves this attempt's long tool output (src/drivers/claude-code.ts). */
+const SESSION_OUTPUT = path.join(HOME, ".claude", "projects", "-nonexistent-botbench-worktrees-run-1-task-1", "4c1d8a52-7d0e-4a8b-9f43-2a51d3b1c6e0", "tool-results");
 const grant = (words: string[]): Grant => ({ id: 7, kind: "preapproved", role: "implementer", repo: REPO, cwd: ".", words, runId: 1, taskId: 1, createdAt: "2026-11-22T10:00:00.000Z" });
 
 /** The kinds of request, each with its input and what it is. */
@@ -37,26 +39,52 @@ const KINDS = {
   "chained command that reads a guarded place": { tool: "Bash", input: { command: "for f in ~/.ssh/*; do cat $f; done" }, shell: true, floor: true },
   "subagent": { tool: "Agent", input: { description: "audit", prompt: "Audit the code", run_in_background: true }, shell: false, floor: false },
   "wakeup": { tool: "ScheduleWakeup", input: { delaySeconds: 1200, reason: "fallback", prompt: "continue" }, shell: false, floor: false },
-} as const satisfies Record<string, { tool: string; input: Record<string, unknown>; shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean }>;
+  // Shapes the owner saw asked about in a Semi-autonomous run that read an issue, each read-only and confined.
+  "grep with \\| alternation": { tool: "Bash", input: { command: `grep -n "startServer\\|createBroker" src/server.ts`, description: "Find" }, shell: true, floor: false },
+  "grep with a quoted ( and a glob": { tool: "Bash", input: { command: `grep -n "admit(" src/engine/*.ts` }, shell: true, floor: false },
+  "command ending in 2>/dev/null": { tool: "Bash", input: { command: "ls src 2>/dev/null" }, shell: true, floor: false },
+  "for loop testing that paths exist": { tool: "Bash", input: { command: `for f in src/a.ts docs/b.md; do test -e "$f" && echo "$f yes" || echo "$f no"; done` }, shell: true, floor: false },
+  "sed -n": { tool: "Bash", input: { command: "sed -n '1,40p' src/approvals/gate.ts" }, shell: true, floor: false },
+  // One plain command that begins with a word the matrix allows in advance (`ls`): a grant covers it.
+  "ls of a folder named security": { tool: "Bash", input: { command: "ls docs/security" }, shell: true, floor: false, granted: true },
+  "the keychain tool by its name": { tool: "Bash", input: { command: "security find-generic-password -s x" }, shell: true, floor: true },
+  "a program named by a quoted variable": { tool: "Bash", input: { command: `ls; "$PROGRAM" src` }, shell: true, floor: true },
+  "a substitution inside double quotes": { tool: "Bash", input: { command: `echo "$(sudo ls)" | wc -l` }, shell: true, floor: true },
+  "edit inside the copy from a sub-folder": { tool: "Edit", input: { file_path: "deeper/a.ts", old_string: "a", new_string: "b" }, cwd: path.join(WORKTREE, "sub"), shell: false, floor: false, inside: true },
+  "edit outside the copy from a sub-folder": { tool: "Write", input: { file_path: "../../elsewhere.txt", content: "x" }, cwd: path.join(WORKTREE, "sub"), shell: false, floor: false },
+  "read of this session's saved output": { tool: "Read", input: { file_path: path.join(SESSION_OUTPUT, "toolu_01.txt") }, shell: false, floor: false, savedOutput: true },
+  "read of another session's saved output": { tool: "Read", input: { file_path: path.join(SESSION_OUTPUT, "..", "..", "other-session", "tool-results", "toolu_01.txt") }, shell: false, floor: false },
+  "search with no path from inside the copy": { tool: "Grep", input: { pattern: "x" }, cwd: path.join(WORKTREE, "sub"), shell: false, floor: false, read: true },
+  "search with no path from outside the copy": { tool: "Glob", input: { pattern: "**/*.pem" }, cwd: path.dirname(WORKTREE), shell: false, floor: false },
+  "read elsewhere in the CLI's folder": { tool: "Read", input: { file_path: path.join(HOME, ".claude", "settings.json") }, shell: false, floor: false },
+} as const satisfies Record<string, { tool: string; input: Record<string, unknown>; shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; cwd?: string; savedOutput?: boolean; granted?: boolean; read?: boolean }>;
 type Kind = keyof typeof KINDS;
 
 const ask = (request: GateRequest, grants: Grant[] = []): GateVerdict => gate(request, grants, { home: HOME });
 
 /** The rule the owner gave, written out once, independent of the gate's own code. */
-function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean): GateVerdict["verdict"] | "preapproved" | "mode" | "edit" {
-  const k: { shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean } = KINDS[kind];
+function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean): GateVerdict["verdict"] | "preapproved" | "mode" | "edit" | "saved output" | "worktree_read" {
+  const k: { shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; savedOutput?: boolean; granted?: boolean; read?: boolean } = KINDS[kind];
+  if (k.read) return "worktree_read";
   const nobody = mode === "full" ? "refuse" : "ask";
+  // An edit inside the copy and a read of the session's own saved output run in every mode, confined or not.
   if (k.inside) return "edit";
+  if (k.savedOutput) return "saved output";
   if (!k.shell) return nobody;
   // The floor does not loosen: it asks in manual and semi-autonomous, and refuses in fully autonomous.
   if (k.floor) return nobody;
   // A grant matches only a plain command with nothing beside it.
-  if (preapproved && kind === "plain command") return "preapproved";
+  if (preapproved && (kind === "plain command" || k.granted === true)) return "preapproved";
   if (mode !== "manual" && confined && !k.unconfinable) return "mode";
   return nobody;
 }
 
-const outcome = (v: GateVerdict): string => (v.verdict === "allow" ? (v.rule === "preapproved" ? "preapproved" : v.rule === "mode_confined" ? "mode" : v.rule === "auto_worktree_edit" ? "edit" : v.rule) : v.verdict);
+const outcome = (v: GateVerdict): string => (v.verdict === "allow" ? (v.rule === "preapproved" ? "preapproved" : v.rule === "mode_confined" ? "mode" : v.rule === "auto_worktree_edit" ? "edit" : v.rule === "session_output_read" ? "saved output" : v.rule) : v.verdict);
+/** The request of a kind, as the matrix puts it: from the folder the kind names, with the session's saved-output folder known. */
+const requestOf = (kind: Kind) => {
+  const k: { tool: string; input: Record<string, unknown>; cwd?: string } = KINDS[kind];
+  return { tool: k.tool, input: k.input, worktree: WORKTREE, cwd: k.cwd ?? WORKTREE, sessionOutput: SESSION_OUTPUT };
+};
 
 test("the matrix: every mode, kind of request, confinement, floor and pre-approval gets the verdict the modes promise", () => {
   let cases = 0;
@@ -64,9 +92,8 @@ test("the matrix: every mode, kind of request, confinement, floor and pre-approv
     for (const kind of Object.keys(KINDS) as Kind[]) {
       for (const confined of [true, false]) {
         for (const preapproved of [true, false]) {
-          const { tool, input } = KINDS[kind];
           const grants = preapproved ? [grant(["npm", "test"]), grant(["git", "push", "origin", "main"]), grant(["ls"]), grant(["rm"])] : [];
-          const verdict = ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode, confined }, grants);
+          const verdict = ask({ ...requestOf(kind), scope, mode, confined }, grants);
           assert.equal(outcome(verdict), expected(mode, kind, confined, preapproved), `${mode}, ${kind}, ${confined ? "confined" : "not confined"}, ${preapproved ? "allowed in advance" : "not allowed in advance"}: ${JSON.stringify(verdict)}`);
           cases++;
         }
@@ -86,7 +113,7 @@ test("without a mode the gate is the manual one: confinement alone lets nothing 
 
 test("on the floor, semi-autonomous still names the rule it asks for, and fully autonomous refuses with a plain reason that names it", () => {
   const request = { tool: "Bash", input: { command: "git push origin main" }, worktree: WORKTREE, cwd: WORKTREE, scope, confined: true };
-  assert.deepEqual(ask({ ...request, mode: "semi" }), { verdict: "ask", floor: "git-push" });
+  assert.deepEqual(ask({ ...request, mode: "semi" }), { verdict: "ask", floor: "git-push", why: "floor" });
   const refused = ask({ ...request, mode: "full" });
   assert.equal(refused.verdict, "refuse");
   assert.ok(refused.verdict === "refuse" && refused.floor === "git-push");
@@ -136,8 +163,7 @@ test("the matrix for a run that read outside text: no grant of either kind appli
     for (const kind of Object.keys(KINDS) as Kind[]) {
       for (const confined of [true, false]) {
         for (const grants of [[], [grant(["npm", "test"]), grant(["ls"])], [standing(["npm", "test"]), standing(["ls"])]] as Grant[][]) {
-          const { tool, input } = KINDS[kind];
-          const request = { tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode, confined };
+          const request = { ...requestOf(kind), scope, mode, confined };
           const verdict = ask({ ...request, outsideText: true }, grants);
           assert.equal(outcome(verdict), expectedOutside(mode, kind, confined), `outside text, ${mode}, ${kind}, ${confined ? "confined" : "not confined"}, ${grants[0]?.kind ?? "no grant"}: ${JSON.stringify(verdict)}`);
           cases++;

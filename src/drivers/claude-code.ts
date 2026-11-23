@@ -254,6 +254,24 @@ export function parseModelList(output: string): { models: ModelChoice[]; cliDefa
   return null;
 }
 
+/** A session id as Claude Code reports it: letters, digits and dashes only, so it can name one folder and nothing else. */
+const SESSION_ID = /^[A-Za-z0-9-]{1,100}$/;
+
+/**
+ * The folder where Claude Code saves the output of a session's tool calls that is too long to hand the model whole,
+ * telling the model to Read the file instead: `<config>/projects/<folder>/<session>/tool-results`, where `<folder>` is
+ * the path the CLI started in with every character but a letter or digit written as `-` (seen in the CLI's own folders
+ * on 2026-11-22: `/Users/me/.botbench/worktrees/run-2/task-4` is `-Users-me--botbench-worktrees-run-2-task-4`). The
+ * config folder is `configDir`, else `CLAUDE_CONFIG_DIR` as the CLI is given it, else `~/.claude`. Null for a session id
+ * that could name anything but one folder. Should a CLI version keep it elsewhere, such a Read simply asks, as before.
+ */
+export function toolResultsFolder(o: { cwd: string; session: string; configDir?: string; env?: NodeJS.ProcessEnv; home?: string }): string | null {
+  if (!SESSION_ID.test(o.session)) return null;
+  const moved = (o.env ?? process.env).CLAUDE_CONFIG_DIR;
+  const config = o.configDir ?? (typeof moved === "string" && path.isAbsolute(moved) ? moved : path.join(o.home ?? os.homedir(), ".claude"));
+  return path.join(config, "projects", o.cwd.replace(/[^A-Za-z0-9]/g, "-"), o.session, "tool-results");
+}
+
 const INSTRUCTIONS_FILE = "CLAUDE.md";
 const MAX_INSTRUCTIONS = 64 * 1024;
 
@@ -577,7 +595,7 @@ class ClaudeCodeSession implements DriverSession {
     if (given.decision === "allow") {
       // An allow runs the input the owner was shown, unchanged.
       this.answerControl(requestId, { behavior: "allow", updatedInput: request.input });
-      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : "allowed", note: null });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
       this.answerControl(requestId, { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` });

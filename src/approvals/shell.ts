@@ -62,6 +62,92 @@ export function roughSegments(command: string, home: string): string[][] {
     .filter((words) => words.length > 0);
 }
 
+/** One word of a command read with its quotes: `text` is the word as the program gets it, `live` the part of it a shell still expands (what stood outside quotes or inside double quotes). */
+export interface QuotedWord {
+  text: string;
+  live: string;
+}
+
+/** What separates the pieces of a command when it stands outside quotes. */
+const OPERATORS = new Set([";", "&", "|", "\n", "\r", "(", ")", "{", "}"]);
+
+/**
+ * The pieces of a command between its operators, read with its quotes: an operator inside quotes does not split
+ * (`grep "a\|b"`, `grep -n "admit("`), and a word's `live` part says what of it a shell may still turn into other
+ * text. A substitution (`$(…)` or backquotes) stays in the word it stands in, live, so a program it produces is seen
+ * as one the shell builds; outside quotes the command inside it is read as a piece of its own, and `substitutes` says
+ * one stood inside double quotes, where this reading does not follow it. Null whenever this reading is not sure of
+ * itself: an open quote, a backslash outside quotes, or a character that is neither printable ASCII nor a tab or line
+ * break. It is used only to find which program each piece starts, and never lets anything through on its own.
+ */
+export function quotedPieces(command: string): { pieces: QuotedWord[][]; substitutes: boolean } | null {
+  let substitutes = false;
+  /** Inside a backquoted command outside double quotes: the next backquote ends it. They do not nest unescaped. */
+  let inBackquotes = false;
+  const pieces: QuotedWord[][] = [];
+  let piece: QuotedWord[] = [];
+  let word: QuotedWord | null = null;
+  const add = (text: string, live: string): void => void (word = { text: (word?.text ?? "") + text, live: (word?.live ?? "") + live });
+  const endWord = (): void => {
+    if (word !== null) piece.push(word);
+    word = null;
+  };
+  const endPiece = (): void => {
+    endWord();
+    if (piece.length > 0) pieces.push(piece);
+    piece = [];
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (c === "'") {
+      const end = command.indexOf("'", i + 1);
+      if (end === -1) return null;
+      add(command.slice(i + 1, end), "");
+      i = end;
+    } else if (c === '"') {
+      let text = "";
+      let j = i + 1;
+      for (; j < command.length && command[j] !== '"'; j++) {
+        const q = command[j]!;
+        // A substitution inside double quotes runs a command of its own: it stays live in the word, and the caller reads the rest as before.
+        if (q === "`" || (q === "$" && command[j + 1] === "(")) substitutes = true;
+        // Inside double quotes a backslash only takes away the meaning of $, `, ", \ and a line break.
+        if (q === "\\" && j + 1 < command.length && '$`"\\\n'.includes(command[j + 1]!)) j++;
+        text += command[j]!;
+      }
+      if (j >= command.length) return null;
+      add(text, text);
+      i = j;
+    } else if (c === "\\") {
+      return null;
+    } else if (c === "`" && inBackquotes) {
+      // The end of a backquoted command: what it prints already stands, live, in the word it was opened in.
+      inBackquotes = false;
+      endPiece();
+    } else if ((c === "$" && command[i + 1] === "(") || c === "`") {
+      // What the substitution prints becomes (part of) this word: live. The command inside it is a piece of its own.
+      const opening = c === "`" ? "`" : "$(";
+      add(opening, opening);
+      endPiece();
+      if (c === "$") i++;
+      else inBackquotes = true;
+    } else if ((c === "<" || c === ">") && command[i + 1] === "(") {
+      endPiece();
+      i++;
+    } else if (OPERATORS.has(c)) {
+      endPiece();
+    } else if (c === " " || c === "\t" || c === "<" || c === ">") {
+      endWord();
+    } else if (PRINTABLE.test(c)) {
+      add(c, c);
+    } else {
+      return null;
+    }
+  }
+  endPiece();
+  return { pieces, substitutes };
+}
+
 /** A list of words as one line a person can read and a shell would split the same way. */
 export function showWords(words: readonly string[]): string {
   const bare = (word: string): boolean => word !== "" && !word.startsWith("=") && [...word].every((c) => BARE.test(c));
