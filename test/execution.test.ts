@@ -211,9 +211,10 @@ test("a container is refused for a mount that is, holds or lies inside the home 
 test("Docker not answering is refused in plain words: a failure, no answer within the limit (the program is killed), and no program at all", async () => {
   const failed = await dockerProblem("/usr/bin/false");
   assert.match(failed!, /^Docker did not answer \(docker info: it ended with exit code 1\), so Botbench did not start this task's container\. Start Docker and start the task again, or set this repository's "execution" to "host"\. Nothing ran on this Mac instead\.$/);
-  // `yes` never ends by itself: a real program that does not answer in time.
+  // `yes` never ends by itself: a real program that does not answer in time. It writes as fast as it can, so it is
+  // given a short limit: the suite's timing-sensitive tests run beside this one.
   const began = Date.now();
-  const late = await dockerProblem("/usr/bin/yes", 300);
+  const late = await dockerProblem("/usr/bin/yes", 100);
   assert.match(late!, /^Docker did not answer within 0 seconds \(docker info\)/);
   assert.ok(Date.now() - began < 5000, "it was stopped at its limit");
   assert.match((await dockerProblem("/nonexistent/docker"))!, /^Docker did not answer \(docker info: it said: spawn \/nonexistent\/docker ENOENT\)/);
