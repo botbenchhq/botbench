@@ -75,6 +75,10 @@ for (const vendor of vendors) {
     const made = path.join(fs.realpathSync(path.join(home, SCRATCH_DIR)), "made.txt");
     assert.equal(fs.existsSync(made) ? fs.readFileSync(made, "utf8").trim() : null, "hello", `the file in its own folder: ${seen}`);
     assert.ok(events.some((e) => e.type === "tool_call" && vendor.searched(e)), `a search step: ${seen}`);
+    // Each forbidden thing was tried, so its absence below is a refusal, not a model that declined to try.
+    const calls = events.filter((e): e is Extract<DriverEvent, { type: "tool_call" }> => e.type === "tool_call").map((e) => JSON.stringify(e.input));
+    assert.ok(calls.some((input) => input.includes(path.basename(decoy))), `a call that tried to read the decoy: ${seen}`);
+    assert.ok(calls.some((input) => input.includes(path.join(repo, "README.md")) || input.includes("README.md")), `a call that tried to change the repository: ${seen}`);
     assert.equal(seen.includes(DECOY), false, "nothing of the decoy reached the agent or the transcript");
     assert.equal(fs.readFileSync(path.join(repo, "README.md"), "utf8"), "# Attached\n", "the attached repository is unchanged");
   });
