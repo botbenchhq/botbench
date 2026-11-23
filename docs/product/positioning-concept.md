@@ -2,6 +2,46 @@
 
 **Working positioning, 21 November 2026**
 
+## Direction (owner, 23 November 2026)
+
+This section is the current statement. Where the sections below differ, this one stands.
+
+**Botbench — Put your agents to work. Together.**
+
+One workbench for your agents. One coordination layer for your team.
+
+- **Solo:** Walk away. Come back to the branch.
+- **Team:** Your agents. Their agents. One coordinated workflow.
+- **Value:** Less agent babysitting. Less coordination overhead. More dependable work delivered.
+
+### Two capabilities, one product
+
+| | What it is | Who it must win |
+|---|---|---|
+| **The Workbench** | Bring your own agents, subscriptions, models, tools, environments, context and memory together, and operate them within your own policies. | An individual or solopreneur, with nobody else involved. |
+| **The Coordination Plane** | Connect independently owned workbenches so their agents can communicate, delegate, negotiate responsibilities, share scoped context, manage dependencies and accomplish work together. | A team whose members each bring their own agents. |
+
+Neither is a feature of the other. The workbench must be worth using alone; the coordination plane must make it worth more when a colleague joins.
+
+### North Star
+
+A developer with a fleet of agents working alongside a coworker with their own fleet. Both keep their environments, models, tools, memory and policies. Their agents coordinate meaningful work across the ownership boundary, while the people observe and steer and do not relay every interaction by hand.
+
+### The wedge and the platform
+
+The engineering workflow is the first market, not a permanent limit. Prove the workflow there first, and keep the core concepts reusable for product, research, operations and other shared work: agents, environments, tools, context, work, policies, dependencies, hand-offs and outcomes. Avoid tying those concepts to git where a general form costs little.
+
+### How progress is measured
+
+By how much useful work the agents accomplish together, not by messages exchanged or features built.
+
+### What holds, and what is open
+
+- A message never expands an agent's permissions and never authorizes execution.
+- Routine communication that the owners' policies permit should not need a person each time. The tradeoff is in `docs/product/peers-autonomy-tradeoff.md`; the policy has not changed.
+- Independent ownership is the goal. The absence of a shared service is not an absolute rule: the best networking model is still to be validated.
+- Competitive claims say "not demonstrated in the projects and source reviewed" (`docs/competitive/`). Botbench does not claim a capability nobody else has.
+
 ## Where it is heading (owner, 22 November 2026)
 
 **Botbench — Put your coding agents to work. Together.**
