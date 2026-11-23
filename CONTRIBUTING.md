@@ -65,7 +65,7 @@ An agent is a driver: one adapter that runs a vendor's CLI as a child process ov
 
 ## Reporting a security problem
 
-Please do not open an issue. While the repository is private, GitHub's private vulnerability reporting is not available on it, so write to the maintainer, jon-lange on GitHub, directly: say what you found and how to reproduce it. Once the repository is public, use private vulnerability reporting instead (the Security tab, then Report a vulnerability).
+Please do not open an issue. Use GitHub's private vulnerability reporting: the Security tab, then Report a vulnerability. Say what you found and how to reproduce it. [`SECURITY.md`](SECURITY.md) says what is in scope.
 
 ## Built with itself
 

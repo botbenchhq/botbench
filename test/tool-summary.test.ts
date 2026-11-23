@@ -29,6 +29,14 @@ test("a known tool is said with a plain verb that is true of its state, and its 
   assert.equal(line("WebSearch", { query: "node sqlite" }, "running"), "Searching the web for node sqlite");
 });
 
+test("Claude Code's question is said by its own text: 'Asks you' while it waits, 'Asked you' once answered; one that holds no single question is shown by the tool's name", () => {
+  const asked = { questions: [{ question: "Which greeting should I use?\nPick one.", header: "Greeting", options: [{ label: "Hello" }, { label: "Hi" }] }] };
+  assert.equal(line("AskUserQuestion", asked, "waiting"), "Asks you Which greeting should I use?");
+  assert.equal(line("AskUserQuestion", asked, "done"), "Asked you Which greeting should I use?");
+  assert.equal(line("AskUserQuestion", asked, "refused"), "Did not ask you Which greeting should I use?");
+  assert.equal(line("AskUserQuestion", { questions: [asked.questions[0], asked.questions[0]] }, "refused"), "[AskUserQuestion] · not run");
+});
+
 test("the line holds one line of a long command, cut with an ellipsis, and the whole of it stays available", () => {
   const command = `echo ${"x".repeat(200)}\nrm second-line`;
   const l = callLine("Bash", { command }, "done");

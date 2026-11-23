@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import type { DatabaseSync } from "node:sqlite";
 import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../approvals/permission-proxy.ts";
+import { QUESTION_TOOL } from "../approvals/question.ts";
 import { confinementProblem, hostProblem, unreadablePaths, type Confinement } from "../confinement.ts";
 import { containerShellInput, type TaskContainer } from "../execution.ts";
 import { now, transaction } from "../store/db.ts";
@@ -26,6 +27,8 @@ import { claudeCodeSignIn, type SignInDefinition } from "./sign-in.ts";
  *              {"type":"control_request","request_id":"...","request":{"subtype":"can_use_tool",
  *                "tool_name":"Bash","input":{...},"tool_use_id":"toolu_..."}}
  *           The CLI was seen to wait seven minutes for that answer and then carry on; no limit was found.
+ *           The agent's question to its user, the AskUserQuestion tool, arrives the same way, with "tool_name":"AskUserQuestion",
+ *           and is answered by an allow whose updatedInput adds the answers (`controlAnswer`, approvals/question.ts).
  * The process stays up between turns and exits when stdin closes.
  *
  * Models (seen on 2.1.322): there is no `claude models` command, and `claude --help` names only the aliases
@@ -48,8 +51,13 @@ export type AttemptStatus = "running" | "interrupted" | "failed" | "ended";
 /** The permission rule for the file-editing tools on every path below the working directory. */
 const EDITS_BELOW_CWD = "Edit(./**)";
 
-/** The only tools a read-only attempt has: reading and searching files, and the shell, each command of which goes through the gate. */
+/**
+ * The only tools a read-only attempt has: reading and searching files, and the shell, each command of which goes through
+ * the gate. A gated one (a run's planner) also has the question tool, which changes nothing and goes to the owner as a
+ * question (approvals/question.ts): with `--tools` the CLI offers only the tools it names, AskUserQuestion included.
+ */
 const READ_ONLY_TOOLS = "Read,Glob,Grep,Bash";
+const GATED_READ_ONLY_TOOLS = `${READ_ONLY_TOOLS},${QUESTION_TOOL}`;
 /** Named as denied as well, should a CLI version hand a tool out in spite of the list above. */
 const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
 /**
@@ -220,7 +228,7 @@ export function claudeArgs(options: { confinement: AttemptPlace; model?: string;
   if (gated) args.push("--permission-prompt-tool", "stdio");
   else args.push("--permission-prompts", "none");
   if (allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
-  if (readOnly) args.push("--tools", READ_ONLY_TOOLS);
+  if (readOnly) args.push("--tools", gated ? GATED_READ_ONLY_TOOLS : READ_ONLY_TOOLS);
   args.push("--disallowedTools", [...(readOnly ? [WRITING_TOOLS] : []), ...OUTLIVING_TOOLS].join(","));
   if (gated && options.instructionsFile) args.push("--append-system-prompt-file", options.instructionsFile);
   if (options.model !== undefined) {
@@ -426,35 +434,45 @@ function declineMessage(note: string | null): string {
   return note === null ? base : `${base} The owner's note: ${note}`;
 }
 
+type PermissionRequestEvent = Extract<DriverEvent, { type: "permission_request" }>;
 type Resolved = Extract<DriverEvent, { type: "permission_resolved" }>["decision"];
 
 /**
- * The control response that answers one permission request, and how the transcript records it. Pure. Only the exact
- * word allows; anything else, a malformed answer included, declines. An allow runs the input the owner was shown,
- * unchanged, unless `container` is set: then an allowed shell call runs as `containerShellInput` rewrote it, in the
- * task's container, and one that cannot be rewritten is refused. The rewrite comes after the decision, which the safety
- * rules and the permission check made on the command as the agent asked it; a refused or declined call is never
- * rewritten.
+ * What goes back to the CLI for one of its permission prompts, given Botbench's answer, and how the transcript records
+ * it. Pure. Only the exact word allows; anything else, a malformed answer included, declines.
+ * - An allow runs the input the owner was shown, unchanged. For the question tool (approvals/question.ts) it is that
+ *   input with the owner's `answers` added, keyed by the question's text, as the CLI takes an answer; an allow of a
+ *   question with no answer to give is a refusal, as the agent would otherwise go on as if it had been answered. A
+ *   question is answered the same way whether or not the task's commands run in a container: it runs nothing.
+ * - With `container` (a repository whose commands run in a task's container, src/execution.ts) an allowed shell call
+ *   runs as `containerShellInput` rewrote it, in the task's container, and one that cannot be rewritten is refused. The
+ *   rewrite comes after the decision, which the safety rules and the permission check made on the command as the agent
+ *   asked it; a refused or declined call is never rewritten. Any other tool's allowed call that carries the CLI's
+ *   sandbox escape (`dangerouslyDisableSandbox`, open in this kind for Botbench's own rewritten call only) is refused.
+ * - A refusal of Botbench's own says so. For a question the agent is told the reason alone: nothing was going to run.
  */
-export function permissionAnswer(request: { name: string; input: unknown }, response: unknown, container: TaskContainer | null = null): { answer: Record<string, unknown>; decision: Resolved; note: string | null } {
+export function controlAnswer(request: Pick<PermissionRequestEvent, "name" | "input">, response: unknown, container: TaskContainer | null = null): { reply: Record<string, unknown>; decision: Resolved; note: string | null } {
   const given: Partial<PermissionResponse> = isObject(response) ? response : {};
   const words = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+  const question = request.name === QUESTION_TOOL;
+  if (given.decision === "allow" && question) {
+    const answers = isObject(given.answers) ? Object.entries(given.answers).filter((entry): entry is [string, string] => typeof entry[1] === "string") : [];
+    if (answers.length === 0) return controlAnswer(request, { decision: "decline", refused: "Botbench had no answer from the owner to give." });
+    return { reply: { behavior: "allow", updatedInput: { ...(request.input as Record<string, unknown>), answers: Object.fromEntries(answers) } }, decision: "answered", note: answers.map(([, answer]) => answer).join("\n") };
+  }
   if (given.decision === "allow") {
     const decision: Resolved = given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : given.web === true ? "web" : given.chat === true ? "chat" : given.bookkeeping === true ? "bookkeeping" : "allowed";
-    if (container === null) return { answer: { behavior: "allow", updatedInput: request.input }, decision, note: null };
-    // The CLI's sandbox escape is open in the container kind for Botbench's own rewritten call only: any other tool's
-    // call that carries it is refused, whatever tool the CLI may one day give that field to.
     const escapes = isObject(request.input) && "dangerouslyDisableSandbox" in request.input;
-    if (request.name !== "Bash" && !escapes) return { answer: { behavior: "allow", updatedInput: request.input }, decision, note: null };
+    if (container === null || (request.name !== "Bash" && !escapes)) return { reply: { behavior: "allow", updatedInput: request.input }, decision, note: null };
     const rewritten = request.name === "Bash" ? containerShellInput(container, request.input) : null;
-    if (rewritten !== null) return { answer: { behavior: "allow", updatedInput: rewritten }, decision, note: null };
+    if (rewritten !== null) return { reply: { behavior: "allow", updatedInput: rewritten }, decision, note: null };
     const why = request.name === "Bash" ? "This task's commands run in its container, and this call holds no command Botbench could run there." : "This task's commands run in its container, and this call asks to run outside Claude Code's sandbox, which only Botbench's own command into the container may.";
-    return { answer: { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
+    return { reply: { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
   }
   const why = words(given.refused);
-  if (why !== null) return { answer: { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
+  if (why !== null) return { reply: { behavior: "deny", message: question ? why : `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
   const note = words(given.note);
-  return { answer: { behavior: "deny", message: declineMessage(note) }, decision: "declined", note };
+  return { reply: { behavior: "deny", message: declineMessage(note) }, decision: "declined", note };
 }
 
 /**
@@ -662,8 +680,8 @@ class ClaudeCodeSession implements DriverSession {
     // An answer that cannot reach the CLI is not recorded as given.
     if (this.hasExited || !this.child.stdin.writable) return Promise.reject(new Error(`The answer to permission request ${requestId} could not be delivered: Claude Code is no longer running. Nothing was run.`));
     this.asking.delete(requestId);
-    const { answer, decision, note } = permissionAnswer(request, response, this.container);
-    this.answerControl(requestId, answer);
+    const { reply, decision, note } = controlAnswer(request, response, this.container);
+    this.answerControl(requestId, reply);
     this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision, note });
     return Promise.resolve();
   }

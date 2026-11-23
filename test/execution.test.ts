@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { gate } from "../src/approvals/gate.ts";
+import { QUESTION_TOOL } from "../src/approvals/question.ts";
 import { loadConfig, repositoryExecution } from "../src/config.ts";
-import { claudeArgs, permissionAnswer } from "../src/drivers/claude-code.ts";
+import { claudeArgs, controlAnswer } from "../src/drivers/claude-code.ts";
 import { containerCommand, containerExecArgv, containerName, containerRunArgs, containerShellInput, CONTAINER_PATH, dockerProblem, hardeningProblem, mountedFrom, mountProblem, onlyLoopback, startTaskContainer, type TaskContainer } from "../src/execution.ts";
 import { launchFingerprint } from "./support/launch-fingerprint.ts";
 import { bannedIn } from "../e2e/voice.ts";
@@ -55,8 +56,8 @@ test("execution: host when absent, host or container with an image when set; an 
 });
 
 test("with the host kind, the agent's launch settings and the setup and check argv are byte for byte what they were before the container kind", async (t) => {
-  // The digest was taken with this same function from the code before this change (git archive of ad9e8c3).
-  const BEFORE = "dfccff83b21aed3f1f1e3600b99c1b04eadf7aa7d67bb0470b47d38641debe9f";
+  // The digest was taken with this same function from the code before this change (git archive of origin/main at 0d4b131).
+  const BEFORE = "bb63ed7d2e689e4b5dcf50aee77c9264c19fa0721428f29a6cc0afca3c147e90";
   const saved = Object.fromEntries(["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"].map((name) => [name, process.env[name]]));
   t.after(() => {
     for (const [name, value] of Object.entries(saved)) value === undefined ? delete process.env[name] : (process.env[name] = value);
@@ -131,32 +132,42 @@ test("the permission answer rewrites only an allowed Bash call; a refused or dec
   // The safety rules judge the command as the agent asked it: here they ask, and a fully autonomous run refuses it.
   const verdict = gate({ tool: "Bash", input: request.input, worktree: C.workdir, cwd: C.workdir, mode: "full", confined: true });
   assert.equal(verdict.verdict, "refuse");
-  const refused = permissionAnswer(request, { decision: "decline", refused: "On the always-ask list." }, C);
-  assert.deepEqual(refused.answer, { behavior: "deny", message: "Botbench's permission check denied this request without asking the owner: On the always-ask list. Nothing was run." });
+  const refused = controlAnswer(request, { decision: "decline", refused: "On the always-ask list." }, C);
+  assert.deepEqual(refused.reply, { behavior: "deny", message: "Botbench's permission check denied this request without asking the owner: On the always-ask list. Nothing was run." });
   assert.equal(refused.decision, "denied");
   assert.equal(JSON.stringify(refused).includes("docker"), false, "nothing of a refusal is rewritten");
-  const declined = permissionAnswer(request, { decision: "decline", note: "not now" }, C);
-  assert.equal(declined.answer.behavior, "deny");
+  const declined = controlAnswer(request, { decision: "decline", note: "not now" }, C);
+  assert.equal(declined.reply.behavior, "deny");
   assert.equal(JSON.stringify(declined).includes("docker"), false);
-  assert.equal(permissionAnswer(request, { decision: "allowed" }, C).answer.behavior, "deny", "only the exact word allows");
+  assert.equal(controlAnswer(request, { decision: "allowed" }, C).reply.behavior, "deny", "only the exact word allows");
 
-  const allowed = permissionAnswer({ name: "Bash", input: { command: "npm test" } }, { decision: "allow", mode: true }, C);
-  assert.deepEqual(allowed, { answer: { behavior: "allow", updatedInput: { command: containerCommand(C, "npm test"), dangerouslyDisableSandbox: true } }, decision: "mode", note: null });
+  const allowed = controlAnswer({ name: "Bash", input: { command: "npm test" } }, { decision: "allow", mode: true }, C);
+  assert.deepEqual(allowed, { reply: { behavior: "allow", updatedInput: { command: containerCommand(C, "npm test"), dangerouslyDisableSandbox: true } }, decision: "mode", note: null });
   const edit = { name: "Edit", input: { file_path: "a.ts", old_string: "a", new_string: "b" } };
-  assert.deepEqual(permissionAnswer(edit, { decision: "allow", files: true }, C).answer, { behavior: "allow", updatedInput: edit.input }, "a file tool runs on this Mac, in the same copy");
+  assert.deepEqual(controlAnswer(edit, { decision: "allow", files: true }, C).reply, { behavior: "allow", updatedInput: edit.input }, "a file tool runs on this Mac, in the same copy");
   // The sandbox escape is open in the container kind for Botbench's own rewritten call only: any other tool carrying
   // it is refused, even when allowed, and on the host kind the CLI ignores it (allowUnsandboxedCommands is false).
   for (const name of ["Monitor", "PowerShell", "bash", "Skill"]) {
-    const escaped = permissionAnswer({ name, input: { command: "id", dangerouslyDisableSandbox: true } }, { decision: "allow" }, C);
-    assert.equal(escaped.answer.behavior, "deny", name);
+    const escaped = controlAnswer({ name, input: { command: "id", dangerouslyDisableSandbox: true } }, { decision: "allow" }, C);
+    assert.equal(escaped.reply.behavior, "deny", name);
     assert.equal(escaped.decision, "denied", name);
     assert.match(escaped.note!, /asks to run outside Claude Code's sandbox/);
   }
-  const empty = permissionAnswer({ name: "Bash", input: {} }, { decision: "allow" }, C);
-  assert.equal(empty.answer.behavior, "deny");
+  // A question (the CLI's AskUserQuestion) runs nothing: in the container kind it reaches the owner and the owner's answer
+  // goes back as on the host, never refused by the container's guards, even if it carried the sandbox escape.
+  const ask = { name: QUESTION_TOOL, input: { questions: [{ question: "Which file?", options: [{ label: "a.ts" }, { label: "b.ts" }] }] } };
+  for (const input of [ask.input, { ...ask.input, dangerouslyDisableSandbox: true }]) {
+    const answered = controlAnswer({ name: QUESTION_TOOL, input }, { decision: "allow", answers: { "Which file?": "b.ts" } }, C);
+    assert.equal(answered.decision, "answered");
+    assert.deepEqual(answered.reply, { behavior: "allow", updatedInput: { ...input, answers: { "Which file?": "b.ts" } } });
+    assert.deepEqual(controlAnswer({ name: QUESTION_TOOL, input }, { decision: "allow", answers: { "Which file?": "b.ts" } }), answered, "the same as on the host");
+  }
+  assert.equal(gate({ tool: QUESTION_TOOL, input: ask.input, worktree: C.workdir, cwd: C.workdir, mode: "manual", confined: true }).verdict === "refuse", false, "the gate does not refuse a question");
+  const empty = controlAnswer({ name: "Bash", input: {} }, { decision: "allow" }, C);
+  assert.equal(empty.reply.behavior, "deny");
   assert.equal(empty.decision, "denied");
-  const host = permissionAnswer({ name: "Bash", input: { command: "npm test", timeout: 5 } }, { decision: "allow" });
-  assert.deepEqual(host.answer, { behavior: "allow", updatedInput: { command: "npm test", timeout: 5 } });
+  const host = controlAnswer({ name: "Bash", input: { command: "npm test", timeout: 5 } }, { decision: "allow" });
+  assert.deepEqual(host.reply, { behavior: "allow", updatedInput: { command: "npm test", timeout: 5 } });
 });
 
 test("docker run: detached, never pulling, named and labelled, hardened, no network, the owner's ids, one bind mount of the copy at the same path as its working folder, HOME and PATH only, sleep infinity", () => {
