@@ -107,7 +107,8 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect.poll(() => primaries(page), { message: "one primary action on the screen" }).toEqual(["Allow"]);
   await expect(page.getByRole("button", { name: /always|standing|every time|remember|pre-?approve/i })).toHaveCount(0);
   await expect(card.getByRole("checkbox")).toHaveCount(0);
-  const allow = card.getByRole("button", { name: "Allow", exact: true });
+  // Allow is named Allowing while its answer is sent, and stays the same button.
+  const allow = card.getByRole("button", { name: /^Allow(ing)?$/ });
   const decline = card.getByRole("button", { name: "Decline", exact: true });
   // What would run is marked as somebody else's words, so the screen's own wording rules do not read it.
   await expect(card.getByTestId("approval-command")).toHaveAttribute("data-ds-content", "");
