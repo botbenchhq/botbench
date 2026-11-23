@@ -21,6 +21,7 @@ import { buildReplayDriver, type BuildReplay } from "../support/replay-build.ts"
 import { ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../support/replay-issue.ts";
 import { reviewReplayDriver, type ReviewReplay, type ReviewSession } from "../support/replay-review.ts";
 import { initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
+import { sentParts as partsOf } from "../support/review-parts.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
 
 // The review station (U20, in part): after the checks, a run's reviewer reads the task's diff and its critique is stored
@@ -210,8 +211,8 @@ async function reviewLong(t: T, session: ReviewSession, lines: number, o: { limi
   const review = await runReview({ db, driver: reviewer, model: "gpt-6-luna", taskId, task: ONE[0]!, worktree: repo, baseCommit: base, headCommit: head, confinement: { dataDir: path.join(dir, "home"), allowedHosts: ["example.com"] }, ...o });
   return { db, review, reviewer, diff: await commitsDiff({ path: repo, baseCommit: base, headCommit: head }) };
 }
-/** The parts of a diff as the reviewer's prompt holds them, in order. */
-const sentParts = (prompt: string): string[] => [...prompt.matchAll(/<diff part="\d+ of \d+">\n([\s\S]*?)\n<\/diff>/g)].map((m) => m[1]!);
+/** The parts of a diff as the reviewer's prompt holds them, in order: their text only. */
+const sentParts = (prompt: string): string[] => partsOf(prompt).map((part) => part.text);
 
 test("a diff longer than the old cut of 60,000 characters is sent whole, in parts in order after the file list with sizes, and stored as not cut with the verdict of the reply", async (t) => {
   const { db, review, reviewer, diff } = await reviewLong(t, "review", 4_000);

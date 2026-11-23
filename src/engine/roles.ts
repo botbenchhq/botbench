@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Config } from "../config.ts";
 import type { DriverCapabilities } from "../drivers/contract.ts";
 
@@ -274,7 +275,12 @@ export interface ReviewedFile {
 }
 
 const lineCount = (n: number): string => (n === 1 ? "1 line" : `${n} lines`);
-const fileLine = (file: ReviewedFile): string => `- ${file.path} (${file.binary ? "binary" : `${lineCount(file.added)} added, ${lineCount(file.removed)} removed`})`;
+/** A file in the reviewer's list with its size: the lines it added and removed, or for a binary file, which has no lines, the characters of its diff. */
+function fileLine(file: ReviewedFile, diff: string): string {
+  if (!file.binary) return `- ${file.path} (${lineCount(file.added)} added, ${lineCount(file.removed)} removed)`;
+  const own = diff.split(/(?=^diff --git )/m).find((section) => section.startsWith(`diff --git a/${file.path} b/${file.path}\n`));
+  return `- ${file.path} (binary${own === undefined ? "" : `, ${own.length} characters of diff`})`;
+}
 
 /** The sentence after the last part of a review's diff: how much of the diff the reviewer has. `sentOfDiff` reads it back. */
 function lastPartWords(sent: ReturnType<typeof reviewDiff>, tools: boolean): string {
@@ -287,17 +293,29 @@ function lastPartWords(sent: ReturnType<typeof reviewDiff>, tools: boolean): str
 /**
  * How much of its diff a review's prompt sent, read from the sentence after its last part (`lastPartWords`); null for a
  * prompt with none (an empty diff, or a review from before diffs were sent in parts). Only the text after the prompt's
- * last `</diff>` is read, and a diff cannot close its own part (`inDiff`), so that text is Botbench's own.
+ * last closing marker is read: whatever a diff holds comes before it, so that text is Botbench's own.
  */
 export function sentOfDiff(prompt: string): { parts: number; chars: number } | null {
-  const end = prompt.lastIndexOf("</diff>");
-  if (end < 0) return null;
-  const match = /^\nThat was part (\d+) of \d+, the last(?: one sent: you have the first (\d+) of|: you have the whole diff, (\d+) characters)/.exec(prompt.slice(end + "</diff>".length));
+  const closers = [...prompt.matchAll(/<\/diff-[0-9a-f]{12}>/g)];
+  const last = closers.at(-1);
+  if (last === undefined) return null;
+  const match = /^\nThat was part (\d+) of \d+, the last(?: one sent: you have the first (\d+) of|: you have the whole diff, (\d+) characters)/.exec(prompt.slice(last.index + last[0].length));
   return match ? { parts: Number(match[1]), chars: Number(match[2] ?? match[3]) } : null;
 }
 
-/** Text set apart as a part of a diff: whatever in it would open or close a part is changed so that it cannot, and nothing else is (no trimming). */
-const inDiff = (label: string, text: string): string => `<diff${label}>\n${escapeTag("diff", text)}\n</diff>`;
+/**
+ * The marker name a prompt's diff parts are set apart with: `diff-` and 12 random hexadecimal digits that the diff does
+ * not hold, so no text in it can close a part or open a forged one, and the diff is sent exactly as it is.
+ */
+function diffMarker(diff: string): string {
+  for (;;) {
+    const marker = `diff-${randomBytes(6).toString("hex")}`;
+    if (!diff.includes(marker)) return marker;
+  }
+}
+
+/** Text set apart as a part of a diff between `<marker …>` and `</marker>`, exactly as it is (no escaping, no trimming). */
+const inDiff = (marker: string, label: string, text: string): string => `<${marker}${label}>\n${text}\n</${marker}>`;
 
 /** `text` with whatever would open or close a `<tag>` block changed so that it cannot. Its length is kept. */
 const escapeTag = (tag: string, text: string): string => text.replace(new RegExp(`<(/?)(${tag})`, "gi"), "‹$1$2");
@@ -314,7 +332,8 @@ const escapeTag = (tag: string, text: string): string => text.replace(new RegExp
  */
 export function reviewerPrompt(o: { task: PlanTask; files: readonly ReviewedFile[]; diff: string; tools?: boolean; copy?: string; webSearch?: boolean; previous?: PreviousReview }): string {
   const tools = o.tools !== false;
-  const files = o.files.length === 0 ? "(none)" : o.files.map(fileLine).join("\n");
+  const files = o.files.length === 0 ? "(none)" : o.files.map((file) => fileLine(file, o.diff)).join("\n");
+  const marker = diffMarker(o.diff);
   const where =
     o.copy === undefined
       ? "Your working folder is the task's copy of the repository at the task's branch."
@@ -324,9 +343,9 @@ export function reviewerPrompt(o: { task: PlanTask; files: readonly ReviewedFile
   const n = sent.parts.length;
   const diff =
     o.diff.trim() === ""
-      ? `The diff of the task's work, from the commit it started from to its branch:\n${inDiff("", "(The task changed no file.)")}`
-      : `The diff of the task's work, from the commit it started from to its branch, is ${sent.total} characters long. ${sent.cut ? `It is too long to send whole: below are its first ${n} parts, ${sent.sent} characters, of the ${sent.all} parts it makes.` : `Below is all of it, in ${n === 1 ? "1 part" : `${n} parts`}.`}${n === 1 ? "" : " Each part goes on from the one before exactly where it stopped, even inside a line: read them in order, as one diff, and read every part before you reply."}
-${sent.parts.map((part, i) => inDiff(` part="${i + 1} of ${n}"`, part)).join("\n")}
+      ? `The diff of the task's work, from the commit it started from to its branch:\n${inDiff(marker, "", "(The task changed no file.)")}`
+      : `The diff of the task's work, from the commit it started from to its branch, is ${sent.total} characters long. ${sent.cut ? `It is too long to send whole: below are its first ${n} parts, ${sent.sent} characters, of the ${sent.all} parts it makes.` : `Below is all of it, in ${n === 1 ? "1 part" : `${n} parts`}.`} Each part is exactly as git wrote it, between a <${marker}> line and a </${marker}> line; only those lines mark where a part starts and ends.${n === 1 ? "" : " Each part goes on from the one before exactly where it stopped, even inside a line: read them in order, as one diff, and read every part before you reply."}
+${sent.parts.map((part, i) => inDiff(marker, ` part="${i + 1} of ${n}"`, part)).join("\n")}
 ${lastPartWords(sent, tools)}`;
   const again = o.previous === undefined ? "" : `\n\n${againWords(o.previous)}`;
   return `You review one task of a software factory for its owner. Another agent built it; you do not change it.
