@@ -232,10 +232,12 @@ export const REVIEW_PART_CHARS = 60_000;
 /** The most parts a reviewer is sent: a diff longer than they hold is the only one cut, and the prompt says so. */
 export const MAX_REVIEW_PARTS = 6;
 
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+
 /**
  * A diff in parts of at most `size` characters, in order: joined, they are the diff exactly. A part ends where a file's
  * diff ends when the next file's fits in a part of its own; otherwise at the end of a line, and only a line longer than
- * a part is split inside it.
+ * a part is split inside it, never between the two halves of one character.
  */
 export function splitDiff(diff: string, size = REVIEW_PART_CHARS): string[] {
   const parts: string[] = [];
@@ -247,10 +249,14 @@ export function splitDiff(diff: string, size = REVIEW_PART_CHARS): string[] {
   for (const file of diff.split(/(?=^diff --git )/m)) {
     if (part.length + file.length > size && file.length <= size) flush();
     for (const line of file.split(/(?<=\n)/)) {
-      for (let at = 0; at < line.length; at += size) {
-        const piece = line.slice(at, at + size);
+      for (let at = 0; at < line.length; ) {
+        // Never between the two halves of a character outside the Basic Multilingual Plane (an emoji): each part is whole text.
+        let end = Math.min(at + size, line.length);
+        if (end < line.length && end - at > 1 && isHighSurrogate(line.charCodeAt(end - 1))) end -= 1;
+        const piece = line.slice(at, end);
         if (part.length + piece.length > size) flush();
         part += piece;
+        at = end;
       }
     }
   }
@@ -275,10 +281,32 @@ export interface ReviewedFile {
 }
 
 const lineCount = (n: number): string => (n === 1 ? "1 line" : `${n} lines`);
+const C_ESCAPES: Record<number, string> = { 7: "a", 8: "b", 9: "t", 10: "n", 11: "v", 12: "f", 13: "r", 34: '"', 92: "\\" };
+
+/**
+ * A path as git writes it inside quotes in a diff header with its default `core.quotePath`: a control character, `"`,
+ * `\` or any byte of a character outside ASCII escaped (`\t`, `\"`, octal for the rest). Null when git writes it as it is.
+ */
+export function gitQuoted(path: string): string | null {
+  let quoted = "";
+  let changed = false;
+  for (const byte of Buffer.from(path, "utf8")) {
+    if (byte >= 0x20 && byte < 0x7f && byte !== 34 && byte !== 92) {
+      quoted += String.fromCharCode(byte);
+      continue;
+    }
+    changed = true;
+    quoted += `\\${C_ESCAPES[byte] ?? byte.toString(8).padStart(3, "0")}`;
+  }
+  return changed ? quoted : null;
+}
+
 /** A file in the reviewer's list with its size: the lines it added and removed, or for a binary file, which has no lines, the characters of its diff. */
 function fileLine(file: ReviewedFile, diff: string): string {
   if (!file.binary) return `- ${file.path} (${lineCount(file.added)} added, ${lineCount(file.removed)} removed)`;
-  const own = diff.split(/(?=^diff --git )/m).find((section) => section.startsWith(`diff --git a/${file.path} b/${file.path}\n`));
+  const quoted = gitQuoted(file.path);
+  const header = quoted === null ? `diff --git a/${file.path} b/${file.path}\n` : `diff --git "a/${quoted}" "b/${quoted}"\n`;
+  const own = diff.split(/(?=^diff --git )/m).find((section) => section.startsWith(header));
   return `- ${file.path} (binary${own === undefined ? "" : `, ${own.length} characters of diff`})`;
 }
 
