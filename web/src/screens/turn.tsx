@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, builderName, chipModel, type Builder, commandsWords, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
-import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
+import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type StoredEvent } from "../api/client.ts";
+import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
@@ -178,6 +178,9 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const repoPath = repo.kind === "known" || repo.kind === "other" ? repo.path.trim() : "";
   const mode = modeFor(chosenMode, repoPath, defaultMode);
   const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
+  // What a builder's usage limit does in the run: Wait unless the owner chooses Switch for this run. Not remembered on
+  // the device: each run starts at Wait, and the run keeps what it was started with.
+  const [onLimit, setOnLimit] = useState<OnLimit>("wait");
   /** Who the owner chose to build; Claude Code unless Codex was chosen here. Not remembered: each start chooses again. */
   const [builderPick, setBuilderPick] = useState<Builder | null>(null);
   /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
@@ -538,7 +541,7 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const send = (): void => {
     if (starting || showStop) return;
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver, builder: chosenBuilder });
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, onLimit, takeOver, builder: chosenBuilder });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
     if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets, undefined, action.repository) : undefined;
@@ -622,7 +625,10 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   useEffect(() => {
     if (run) setRunWanted(true);
   }, [run]);
-  const chip = chatting ? chatChip(agents, models) : chipWords(chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }), "Claude Code");
+  // In a repository, the chip names the agent that builds and its model: Codex's own default when Codex is chosen.
+  const codexList = agents.offer.models.codex;
+  const codexModel = codexList === undefined || "problem" in codexList ? null : codexList.cliDefault;
+  const chip = chatting ? chatChip(agents, models) : builderChip({ run, builder: chosenBuilder, sameBuild, plan: choiceName(models), build: choiceName(buildModels), codexModel });
   const values: Record<Row, string> = {
     repository: repoName(repo, known),
     read: readName(readPick, known),
@@ -633,6 +639,7 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     tasks: oneTask ? "One task" : "Several",
     review: review.offer.state === "checking" ? "Checking" : review.words,
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
+    limit: LIMIT_WORDS[onLimit].value,
     commands: commandsWords(repository.listed?.commands.length ?? 0),
     models: chatting ? agentRowValue(agents.choice.pick) : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
@@ -904,6 +911,8 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
             review,
             delivery,
             setDelivery,
+            onLimit,
+            setOnLimit,
             oneTask,
             setOneTask: setChosenOneTask,
             issue,

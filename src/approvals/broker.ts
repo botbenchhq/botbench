@@ -178,7 +178,9 @@ export type LogRule =
   /** The owner answered an agent's question; `detail` holds the answer as given. */
   | "owner_answered"
   /** A fully autonomous run's agent asked a question nobody was asked: the question in `command`, what the agent was told in `detail`. */
-  | "question_unasked";
+  | "question_unasked"
+  /** A task was handed to another agent (engine/handoff.ts): `command` names the agents, `detail` the line the owner reads. */
+  | "handoff";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
 import { chatOffer, readKnownAgents } from "../web/src/app/chat.ts";
-import { arrive, blocked, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { arrive, blocked, builderChip, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, LIMIT_WORDS, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { fallbackOrders, moveAbout, moveButton, moveRefused, orderWords, sessionsLine } from "../web/src/app/handoff-words.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -58,6 +59,7 @@ test("with a repository and Plan a run, Send starts a run with its mode, reviewe
     mode: "semi",
     delivery: "pull_request",
     oneTask: true,
+    onLimit: "wait",
   });
   // A build model of its own is sent only when the owner chose one.
   const run = sendFor(inRepo({ kind: "run", buildModel: { ok: true, model: "opus" } }), extras);
@@ -113,9 +115,9 @@ test("the sheet shows only the rows that apply: a chat has a repository, one to 
   assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "run", ...known }), ["repository", "read", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "needed" }, kind: "task", ...known }), ["repository", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
   // No reviewer is set up at all: no Review row. The commands are not known until the repository is usable.
-  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "tasks", "delivery", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "tasks", "delivery", "limit", "models"]);
 });
 
 test("Keep it to one task is offered for a run in every mode, is on by default in Fully autonomous only, and is sent as the owner chose it", () => {
@@ -179,9 +181,9 @@ const issue = { fetchId: 4, allowHosts: false, number: 123, title: "Crash when t
 
 test("From an issue is a row of a run in a repository with a GitHub remote only, after What to do", () => {
   const known = { reviewOffered: true, commandsKnown: true };
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known, issueOffered: true }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
 });
 
 test("the row's value is the issue's number and the start of its title, or None", () => {
@@ -353,4 +355,47 @@ test("the agents' check says which agent other than Claude Code can build, and a
   ]);
   assert.deepEqual(offered.map((a) => [a.agent, a.builds ?? false]), [["claude-code", false], ["codex", true], ["grok", false]]);
   assert.equal(readKnownAgents(JSON.stringify(offered))!.some((a) => a.builds === true), false);
+});
+
+test("the chip next to the box names the builder and its model: Claude Code's model with Claude Code building, and Codex with its model, not Claude Code's, once Codex is chosen", () => {
+  const claude = { sameBuild: true, plan: "Haiku 5.5", build: "Opus 5.5" };
+  assert.deepEqual(builderChip({ run: false, builder: null, ...claude, codexModel: "gpt-6-luna" }), { value: "Haiku 5.5", qualifier: "Claude Code" });
+  assert.deepEqual(builderChip({ run: true, builder: null, ...claude, sameBuild: false, codexModel: null }), { value: "Haiku 5.5, then Opus 5.5", qualifier: "Claude Code" });
+  // A task Codex builds: Codex and the model it reports as its default, never "Haiku 5.5 Claude Code".
+  assert.deepEqual(builderChip({ run: false, builder: "codex", ...claude, codexModel: "gpt-6-luna" }), { value: "gpt-6-luna", qualifier: "Codex" });
+  assert.deepEqual(builderChip({ run: false, builder: "codex", ...claude, codexModel: null }), { value: "Codex", qualifier: null });
+  // A run Codex builds is planned by Claude Code first.
+  assert.deepEqual(builderChip({ run: true, builder: "codex", ...claude, codexModel: "gpt-6-luna" }), { value: "Haiku 5.5 Claude Code, then gpt-6-luna", qualifier: "Codex" });
+  assert.deepEqual(builderChip({ run: true, builder: "codex", ...claude, plan: "Claude Code's default", codexModel: null }), { value: "Claude Code, then Codex", qualifier: "Codex" });
+});
+
+test("a run's Add context has the choice for its builder's usage limit, Wait unless Switch is chosen, and Send carries it; a task has no such row", () => {
+  const known = { reviewOffered: false, commandsKnown: false };
+  assert.ok(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }).includes("limit"));
+  assert.equal(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }).includes("limit"), false);
+  const wait = sendFor(inRepo({ kind: "run" }), extras);
+  assert.equal(wait.do === "run" && wait.onLimit, "wait");
+  const sw = sendFor(inRepo({ kind: "run" }), { ...extras, onLimit: "switch" });
+  assert.equal(sw.do === "run" && sw.onLimit, "switch");
+  assert.equal(LIMIT_WORDS.title, "When the builder reaches its usage limit");
+  assert.deepEqual([LIMIT_WORDS.wait.name, LIMIT_WORDS.switch.name], ["Wait for it to reset", "Switch to the next agent"]);
+  assert.equal(returnsToList({ view: "limit", value: "switch", run: true }), true);
+});
+
+test("the fallback list in Settings is offered as every order of the agents that can build, all of them first, and each reads in plain words", () => {
+  assert.deepEqual(fallbackOrders(["claude-code", "codex"]), [["claude-code", "codex"], ["codex", "claude-code"], ["claude-code"], ["codex"]]);
+  assert.deepEqual(fallbackOrders(["claude-code"]), [["claude-code"]]);
+  assert.equal(orderWords(["claude-code", "codex"]), "Claude Code, then Codex");
+  assert.equal(orderWords(["codex"]), "Codex only");
+});
+
+test("the task screen's words for a move: one button per agent, what a move does, a refusal with the server's reason, and the line over a transcript of several sessions", () => {
+  assert.equal(moveButton("codex", false), "Move to Codex");
+  assert.equal(moveButton("claude-code", true), "Moving to Claude Code");
+  assert.match(moveAbout("claude-code"), /^Claude Code stops now, and what it wrote is committed\. The agent you choose takes the task over in a new session, in the same copy and on the same branch/);
+  assert.equal(moveRefused("Codex reviews this run."), "The task was not moved. Codex reviews this run.");
+  assert.equal(moveRefused(null), "The task was not moved. Botbench could not be reached.");
+  assert.equal(sessionsLine("codex", 0, true), null);
+  assert.equal(sessionsLine("codex", 1, false), "This is Codex's latest session on this task. Its 1 earlier session is kept in Botbench's records, not shown here.");
+  assert.equal(sessionsLine("codex", 2, true), "These are the sessions before and after each move to another agent. Its 2 earlier sessions are kept in Botbench's records, not shown here.");
 });

@@ -414,6 +414,8 @@ export interface TaskSummary {
   undeliveredNote: { id: number; text: string; sentAt: string; reason: string } | null;
   /** The mode of its run; manual for a task started on its own. */
   mode: RunMode;
+  /** The agent building it now ("claude-code", "codex"): the one a hand-off moved it to, else the one it started with. */
+  builder: string;
   /** What the refine loop came to, and how many reviews and rounds of fixes there were. */
   reviewOutcome: ReviewOutcome;
   reviewRounds: number;
@@ -447,6 +449,20 @@ export interface CheckFix {
   endedAt: string;
 }
 
+/** A task moved from one agent to another: by the owner, or on a usage limit in a run that switches. */
+export interface Handoff {
+  from: string;
+  to: string;
+  reason: "owner" | "usage_limit";
+  at: string;
+  /** The session of the agent it left, whose transcript is shown before the new agent's. */
+  fromAttemptId: number | null;
+  line: string;
+}
+
+/** What a builder's usage limit does in a run: wait for the reset, or switch to the next agent on the list in Settings. */
+export type OnLimit = "wait" | "switch";
+
 export interface TaskDetail extends TaskSummary {
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
@@ -469,8 +485,12 @@ export interface TaskDetail extends TaskSummary {
   review: Review | null;
   /** Every review, one per round, in order. */
   reviews: Review[];
-  /** How many of the builder's sessions on this task came before the one its transcript shows; they are kept. */
+  /** How many of the builder's sessions on this task came before the ones its transcript shows; they are kept. */
   earlierAttempts: number;
+  /** Each time the task was moved to another agent, oldest first, with the one line that says so. */
+  handoffs: Handoff[];
+  /** The agents the task can be moved to now; empty unless its builder is at work on it. */
+  moveTo: string[];
   /** Every round of fixes, in order; round n follows review n. */
   refinements: Refinement[];
   /** The run's cap on rounds of fixes. */
@@ -553,6 +573,8 @@ export interface TaskNote {
   state: "waiting" | "delivered" | "replaced" | "not_delivered";
 }
 /** The owner's note for a building task's builder; the answer says which waiting note it replaced, if one waited. */
+/** Move a task that is being built to another agent: its turn is stopped, its work committed, and the agent takes it over. */
+export const moveTask = (id: number, agent: string): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/move`, { agent }, 30_000);
 export const sendTaskNote = (id: number, text: string): Promise<{ note: TaskNote; replaced: TaskNote | null }> => request("POST", `/api/tasks/${id}/notes`, { text }, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
@@ -663,8 +685,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[]; agent?: string }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; takeOver?: string[]; agent?: string }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.onLimit === undefined ? {} : { onLimit: o.onLimit }), ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -709,6 +731,19 @@ export const getChatWebAccess = async (): Promise<WebAccess> => (await request<{
 export const setChatWebAccess = async (value: WebAccess): Promise<WebAccess> => (await request<{ chatWebAccess: WebAccess }>("PUT", "/api/settings", { chatWebAccess: value }, 30_000)).chatWebAccess;
 export const getAskEveryCommand = async (): Promise<boolean> => (await request<{ askEveryCommand: boolean }>("GET", "/api/settings", undefined, 30_000)).askEveryCommand;
 export const setAskEveryCommand = async (on: boolean): Promise<boolean> => (await request<{ askEveryCommand: boolean }>("PUT", "/api/settings", { askEveryCommand: on }, 30_000)).askEveryCommand;
+/** The agents a builder switches to, in order, when a run says Switch on a usage limit; and the agents the list may name. */
+export interface FallbackSetting {
+  list: string[];
+  agents: string[];
+}
+export const getFallbacks = async (): Promise<FallbackSetting> => {
+  const answer = await request<{ fallbacks: { builder: string[] }; fallbackAgents: string[] }>("GET", "/api/settings", undefined, 30_000);
+  return { list: answer.fallbacks.builder, agents: answer.fallbackAgents };
+};
+export const setFallbacks = async (list: string[]): Promise<FallbackSetting> => {
+  const answer = await request<{ fallbacks: { builder: string[] }; fallbackAgents: string[] }>("PUT", "/api/settings", { fallbacks: { builder: list } }, 30_000);
+  return { list: answer.fallbacks.builder, agents: answer.fallbackAgents };
+};
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 /** This installation's workbench name, and whether the settings file sets it (then it is changed there, not here). */
 export interface WorkbenchSetting {
@@ -1010,7 +1045,9 @@ export type LogRule =
   | "question_unasked"
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
-  | "memory";
+  | "memory"
+  /** A task was moved to another agent; the entry's detail is the line its screen shows. */
+  | "handoff";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

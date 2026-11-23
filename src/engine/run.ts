@@ -20,6 +20,7 @@ import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
 import { LIMIT_CANCELLED } from "./usage-limit.ts";
+import { isOnLimit, type OnLimit } from "./handoff.ts";
 import { learningsSection } from "./learnings.ts";
 import { memorySection } from "./memory.ts";
 import { messageIssue, takeOverGiven, type ClaimName } from "./claim-branch.ts";
@@ -92,6 +93,8 @@ export interface Run {
    * several is sent back once, and one that still holds several is merged by Botbench (`mergePlan`).
    */
   oneTask: boolean;
+  /** What a builder's usage limit does in this run, chosen when it started and never changed: wait for the reset, or switch to the next agent (engine/handoff.ts). */
+  onLimit: OnLimit;
   createdAt: string;
   updatedAt: string;
 }
@@ -149,6 +152,7 @@ function toRun(row: Record<string, unknown>): Run {
     outsideText: row.outside_text === 1,
     outsideHosts: row.outside_hosts === 1,
     oneTask: row.one_task === 1,
+    onLimit: isOnLimit(row.on_limit) ? row.on_limit : "wait",
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -197,7 +201,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; onLimit?: OnLimit; takeOver?: readonly ClaimName[] }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -206,8 +210,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; builder?: string 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, on_limit, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, o.onLimit ?? "wait", at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
@@ -476,6 +480,8 @@ export interface StartRun {
   issue?: unknown;
   /** Keep the run to one task: true or false; left out, on in a fully autonomous run and off in any other. */
   oneTask?: unknown;
+  /** What a builder's usage limit does: "wait" (the default) for it to reset, or "switch" to the next agent on the fallback list in Settings. */
+  onLimit?: unknown;
   /** Other workbenches' old claims on the run's issue the owner chose to take over, by branch (engine/claim-branch.ts); left out for none. */
   takeOver?: unknown;
 }
@@ -847,6 +853,7 @@ export function createRuns(options: RunsOptions): Runs {
     const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : builderName !== null ? null : input.model !== undefined ? input.model : (options.implementerModel ?? null);
     const delivery = deliveryChoice(input.delivery);
     const oneTask = oneTaskChoice(input.oneTask, mode);
+    const onLimit = onLimitChoice(input.onLimit);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -876,7 +883,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (mode === "full") fullyAutonomousUsable(repo, builder);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel, builder.name);
     stopping();
-    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, onLimit, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -973,6 +980,14 @@ export function oneTaskChoice(given: unknown, mode: RunMode): boolean {
   if (typeof given === "boolean") return given;
   // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
   throw new RunError(400, '"oneTask" must be true (keep the run to one task) or false.');
+}
+
+/** What a request says a builder's usage limit does: "wait" when it says nothing. Anything else is refused with the reason, before anything exists. */
+export function onLimitChoice(given: unknown): OnLimit {
+  if (given === undefined || given === null) return "wait";
+  if (isOnLimit(given)) return given;
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  throw new RunError(400, '"onLimit" must be "wait" (wait for the usage limit to reset) or "switch" (switch to the next agent).');
 }
 
 /** The mode a request names. Anything else is refused with the reason, before anything exists. */

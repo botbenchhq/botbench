@@ -40,7 +40,7 @@ export interface ProcessDriver extends Driver {
 }
 
 /** A driver whose `n`th attempt runs `scripts[n]`, or the last script once they run out. */
-export function processDriver(scripts: readonly string[], o: { resume?: boolean } = {}): ProcessDriver {
+export function processDriver(scripts: readonly string[], o: { resume?: boolean; name?: string } = {}): ProcessDriver {
   const groups: number[] = [];
   const prompts: string[] = [];
   const starts: { resumeCursor: string | null; model: string | null }[] = [];
@@ -158,8 +158,11 @@ export function processDriver(scripts: readonly string[], o: { resume?: boolean 
     };
   };
 
+  // `name`: the agent the driver stands in for in the engine's own bookkeeping (a hand-off between two of these, whose
+  // engine logic is under test); its events are still this driver's, never what that agent's CLI does.
+  const name = o.name ?? "claude-code";
   return {
-    name: "claude-code",
+    name,
     capabilities,
     groups,
     prompts,
@@ -169,7 +172,7 @@ export function processDriver(scripts: readonly string[], o: { resume?: boolean 
     startAttempt: (options) => {
       starts.push({ resumeCursor: options.resumeCursor ?? null, model: options.model ?? null });
       const at = now();
-      const attemptId = Number(options.db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', ?, NULL, 'running', NULL, ?, ?)").run(options.model ?? null, at, at).lastInsertRowid);
+      const attemptId = Number(options.db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (?, ?, NULL, 'running', NULL, ?, ?)").run(name, options.model ?? null, at, at).lastInsertRowid);
       return Promise.resolve(session(options.db, attemptId, scripts[Math.min(groups.length, scripts.length - 1)]!, options));
     },
   };

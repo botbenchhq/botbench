@@ -1,4 +1,5 @@
-import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode } from "../api/client.ts";
+import type { Delivery, IssueChoice, KnownRepository, ModelList, OnLimit, ReviewerChoice, RunMode } from "../api/client.ts";
+import { chipWords } from "./chat.ts";
 
 /*
  * The composer on the home screen: one box that sends a chat prompt, starts a task or plans a run, depending on what
@@ -94,7 +95,14 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit: OnLimit; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+
+/** The usage-limit view's question and its two choices (docs/product/voice.md); Wait is the default. */
+export const LIMIT_WORDS = {
+  title: "When the builder reaches its usage limit",
+  wait: { name: "Wait for it to reset", value: "Wait", description: "The task waits, its work kept, and Botbench tries the same agent once more by itself when the limit resets." },
+  switch: { name: "Switch to the next agent", value: "Switch", description: "The task moves at once to the next agent on the list in Settings, in the same copy and on the same branch, with a note of what was done so far. With no agent left to take it, it waits." },
+} as const;
 
 /** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
 export type Builder = "codex";
@@ -150,7 +158,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; takeOver?: string[]; builder?: Builder | null }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -173,11 +181,11 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
-  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, ...takeOver };
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...takeOver };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "limit" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
@@ -201,6 +209,8 @@ export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean;
     ...(run ? (["tasks"] as const) : []),
     ...(run && f.reviewOffered ? (["review"] as const) : []),
     ...(run ? (["delivery"] as const) : []),
+    // What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent.
+    ...(run ? (["limit"] as const) : []),
     ...(f.commandsKnown ? (["commands"] as const) : []),
     "models",
   ];
@@ -265,6 +275,21 @@ export function modeFor(chosen: ChosenMode | null, repoPath: string, settingsDef
 /** The model chip under the box: the model Send uses first, and for a run that builds on a model of its own, that one after it. */
 export function chipModel(o: { run: boolean; sameBuild: boolean; plan: string; build: string }): string {
   return o.run && !o.sameBuild ? `${o.plan}, then ${o.build}` : o.plan;
+}
+
+/**
+ * The chip next to the box when the composer starts work in a repository: the model and, as its qualifier, the agent
+ * that uses it. With Claude Code building, its model (and for a run, its build model after it). With Codex chosen as
+ * the builder, Codex and the model it builds on (its own default, `codexModel`, as Codex names it, or "Codex's default"
+ * when it has not said): a task is Codex's alone, and a run is planned by Claude Code first.
+ */
+export function builderChip(o: { run: boolean; builder: Builder | null; sameBuild: boolean; plan: string; build: string; codexModel: string | null }): { value: string; qualifier: string | null } {
+  const claude = chipWords(chipModel(o), "Claude Code");
+  if (o.builder !== "codex") return claude;
+  const codex = chipWords(o.codexModel ?? "Codex's default", "Codex");
+  if (!o.run) return codex;
+  const plan = chipWords(o.plan, "Claude Code");
+  return { value: `${plan.value}${plan.qualifier === null ? "" : ` ${plan.qualifier}`}, then ${codex.value}`, qualifier: codex.qualifier ?? "Codex" };
 }
 
 /**

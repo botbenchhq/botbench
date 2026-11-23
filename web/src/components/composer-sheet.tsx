@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
-import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { BUILDER_WORDS, ISSUE_NOT_FULL, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import type { Delivery, KnownRepository, OnLimit, RunMode } from "../api/client.ts";
+import { BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -25,6 +25,7 @@ const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   tasks: { label: "Tasks", title: "How many tasks", icon: "circle-dashed" },
   review: { label: "Review", title: "Review", icon: "eye" },
   delivery: { label: "When accepted", title: "When you accept a task", icon: "circle-check" },
+  limit: { label: "Usage limit", title: LIMIT_WORDS.title, icon: "clock" },
   commands: { label: "Allowed commands", title: "Allowed commands", icon: "terminal" },
   models: { label: "Model", title: "Model", icon: "cpu" },
 };
@@ -55,6 +56,9 @@ export interface SheetState {
   review: ReviewChoiceState;
   delivery: Delivery;
   setDelivery(delivery: Delivery): void;
+  /** What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent. */
+  onLimit: OnLimit;
+  setOnLimit(onLimit: OnLimit): void;
   /** Whether the run is kept to one task, as it would start now. */
   oneTask: boolean;
   setOneTask(oneTask: boolean): void;
@@ -212,6 +216,17 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
           name="Open a pull request"
           description="Botbench pushes the task's branch with your own git and gh, and opens a pull request. It never merges, never pushes by force, and never pushes to your main branch."
         />
+      </fieldset>
+    );
+  if (row === "limit")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="limit-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">{LIMIT_WORDS.title}</legend>
+        <p id="limit-hint" className="ds-option-picker__hint">
+          It cannot be changed once the run starts.
+        </p>
+        <Option group="limit" id="limit-wait" value="wait" checked={state.onLimit === "wait"} onChange={() => state.setOnLimit("wait")} name={LIMIT_WORDS.wait.name} description={LIMIT_WORDS.wait.description} />
+        <Option group="limit" id="limit-switch" value="switch" checked={state.onLimit === "switch"} onChange={() => state.setOnLimit("switch")} name={LIMIT_WORDS.switch.name} description={LIMIT_WORDS.switch.description} />
       </fieldset>
     );
   if (row === "commands") return <PreapprovedEditor choice={state.repository} scope={state.kind} />;

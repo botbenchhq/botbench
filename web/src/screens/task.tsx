@@ -14,6 +14,17 @@ import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { TaskNote } from "../components/task-note.tsx";
+import { MoveTask } from "../components/move-task.tsx";
+import { sessionsLine } from "../app/handoff-words.ts";
+
+/** The sessions a task's transcript shows: the one it names now, after the session each move to another agent left. */
+/** The agent of one of the sessions the transcript shows, by name: the one a move left, or the one building it now. */
+const sessionAgent = (task: Pick<TaskDetail, "attemptId" | "handoffs" | "builder">, attempt: number): string | null => {
+  if (attempt === task.attemptId) return agentName(task.builder);
+  const left = task.handoffs.find((h) => h.fromAttemptId === attempt);
+  return left === undefined ? null : agentName(left.from);
+};
+const shownAttempts = (task: Pick<TaskDetail, "attemptId" | "handoffs">): number[] => [...new Set([...task.handoffs.flatMap((h) => (h.fromAttemptId === null ? [] : [h.fromAttemptId])), ...(task.attemptId === null ? [] : [task.attemptId])])];
 import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
@@ -127,8 +138,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
       if (read !== reads.current) return;
       setTask(next);
       setProblem(null);
-      // Stored events only ever add up, so a transcript is folded in whichever read fetched it.
-      if (next.attemptId !== null) getTranscript(next.attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), failed("The transcript"));
+      // Stored events only ever add up, so a transcript is folded in whichever read fetched it. After a move to another
+      // agent, the session each move left is read too, so the transcript shows both agents.
+      for (const attempt of shownAttempts(next)) getTranscript(attempt).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), failed("The transcript"));
     }, (err: unknown) => {
       if (err instanceof ApiError && err.status === 404) {
         missing.current = true;
@@ -163,10 +175,16 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   useEffect(() => load(), [load, asking?.id]);
 
   const attemptId = task?.attemptId ?? null;
-  const shown = useMemo(() => events.filter((e) => e.attemptId === attemptId), [events, attemptId]);
+  const shownIds = useMemo(() => (task === null ? [] : shownAttempts(task)).join(","), [task]);
+  const shown = useMemo(() => {
+    const ids = new Set(shownIds.split(",").filter((id) => id !== "").map(Number));
+    return events.filter((e) => ids.has(e.attemptId));
+  }, [events, shownIds]);
+  // The session the task names now: what is said of the model and of the agent at work is read from it alone.
+  const current = useMemo(() => shown.filter((e) => e.attemptId === attemptId), [shown, attemptId]);
 
   // The model that answered is the one the driver's own session event names; what was asked for is on the task.
-  const session = useMemo(() => sessionModel(shown), [shown]);
+  const session = useMemo(() => sessionModel(current), [current]);
 
   /** Follows a file's disclosure as the browser opens and closes it; the diff is read the first time it opens. */
   const toggled = (file: string, isOpen: boolean): void => {
@@ -186,8 +204,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
   // While a request waits, its card says so: the transcript is still live, with no line of its own ("").
   // Its last message's turn has not ended: with the owner's note sent as the next message, that is the note's.
-  const lastSent = shown.findLastIndex((e) => e.type === "user_prompt");
-  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
+  const lastSent = current.findLastIndex((e) => e.type === "user_prompt");
+  const working = task?.status === "building" && !task.resuming && attemptId !== null && !current.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended") ? (asking === undefined ? `${agentName(task.builder)} is working.` : "") : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
@@ -269,15 +287,20 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
 
             {shown.length > 0 || working !== null ? (
               <section aria-label="Transcript">
-                {task.earlierAttempts > 0 && (
-                  <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
-                )}
+                {sessionsLine(task.builder, task.earlierAttempts, task.handoffs.length > 0) !== null && <p data-testid="earlier-sessions">{sessionsLine(task.builder, task.earlierAttempts, task.handoffs.length > 0)}</p>}
+                {/* One line for each move to another agent, in order. */}
+                {task.handoffs.map((h) => (
+                  <p key={h.at} data-testid="handoff-line" role="note">
+                    {h.line}
+                  </p>
+                ))}
                 {/* The model is named above when it is not the one asked for; the transcript adds no row of its own for it. */}
                 <Transcript
                   events={shown}
                   working={working}
                   modelName={nameOf}
                   modelDiffers={() => null}
+                  who={(attempt) => sessionAgent(task, attempt)}
                   after={
                     task.status === "waiting_for_limit" && (
                       <li data-testid="usage-limit-wait" className="ds-message">
@@ -303,6 +326,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             )}
 
             <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />
+            <MoveTask task={task} onMoved={load} onSignedOut={onSignedOut} />
 
             {task.filesProblem !== null && (
               <Alert tone="error" role="alert">

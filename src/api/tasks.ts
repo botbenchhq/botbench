@@ -18,6 +18,8 @@ import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, ta
 import { deliveryOf } from "../engine/delivery.ts";
 import { MAX_NOTE, replacedOne, undeliveredNote, waitingNote } from "../engine/notes.ts";
 import { commitsFileDiff, describeCommits, describeWork, type FileChange } from "../worktrees.ts";
+import { CLAUDE_CODE } from "../drivers/claude-code.ts";
+import { currentBuilder, handoffLine, taskAttempts, taskHandoffs } from "../engine/handoff.ts";
 import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -63,6 +65,8 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     ...notesOf(db, task.id),
     // The mode of its run (manual for a task started on its own), which says who decides on it.
     mode: runModeOf(db, task.runId),
+    // The agent building it now: the one its last hand-off moved it to, else the one it started with (engine/handoff.ts).
+    builder: currentBuilder(db, task, CLAUDE_CODE).agent,
     // What the refine loop came to, for the decision point: "none", "satisfied", "unaccounted", "unresolved" or "failed", and how many
     // reviews and rounds of fixes there were. Read from the records; once the task is ready for review it is final.
     ...loopCounts(db, task.id),
@@ -208,12 +212,28 @@ async function pullRequestTarget(ctx: RouteContext, task: Task): Promise<Record<
  * session before a restart). Read from the task's own history, where each session it worked in is recorded by number.
  */
 function earlierAttempts(db: DatabaseSync, task: Task): number {
-  const ids = new Set<number>();
-  for (const row of db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND detail LIKE '%attempt %'").all(task.id)) {
-    for (const match of String(row.detail).matchAll(/\battempt (\d+)\b/g)) ids.add(Number(match[1]));
-  }
-  if (task.attemptId !== null) ids.delete(task.attemptId);
-  return ids.size;
+  // The session each hand-off left is shown with the one the task names now, so it is not counted among the earlier ones.
+  const shown = new Set(taskHandoffs(db, task.id).map((h) => h.fromAttemptId));
+  return taskAttempts(db, task.id).filter((id) => id !== task.attemptId && !shown.has(id)).length;
+}
+
+/**
+ * Each time the task was handed to another agent (engine/handoff.ts), oldest first: the agents, why, when, the session
+ * it left (whose transcript the task's screen shows before the new agent's), and the one line the owner reads.
+ */
+function handoffsOf(db: DatabaseSync, taskId: number): Record<string, unknown>[] {
+  return taskHandoffs(db, taskId).map((h) => ({ from: h.from, to: h.to, reason: h.reason, at: h.at, fromAttemptId: h.fromAttemptId, line: handoffLine(h) }));
+}
+
+/** POST /api/tasks/:id/move: the owner's move of a building task to another agent, `{ "agent": "codex", "model"?: string | null }`. */
+async function moveTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, id: number): Promise<void> {
+  const body = await readJsonBody(req);
+  // voice: not on screen. It names the API's own fields for a caller whose request was malformed; the client never sends one.
+  if (!isObject(body) || typeof body.agent !== "string") throw new TaskError(400, 'expected { "agent": "claude-code" | "codex", "model"?: string | null }');
+  const model = modelChoice(body);
+  // A discard at work on the task may be removing its copy: nothing is started in it meanwhile.
+  if (beingDecided(id)) throw new TaskError(409, "This task is being discarded, so it cannot be moved.");
+  json(res, 200, await detail(ctx, await ctx.tasks.handOff(id, body.agent, model)));
 }
 
 /**
@@ -229,7 +249,11 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   const { db } = ctx;
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
+  const offer = ctx.tasks.moveOffer(task.id);
+  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), handoffs: handoffsOf(db, task.id),
+    // The agents the owner can move this task to now: only while its builder is at work, never its run's reviewer, and
+    // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
+    moveTo: offer.now ? offer.agents : [], ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
     // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
     refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
@@ -289,6 +313,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const resume = /^\/api\/tasks\/([1-9]\d{0,14})\/resume$/.exec(pathname);
   const pullRequest = /^\/api\/tasks\/([1-9]\d{0,14})\/pull-request$/.exec(pathname);
   const note = /^\/api\/tasks\/([1-9]\d{0,14})\/notes$/.exec(pathname);
+  const move = /^\/api\/tasks\/([1-9]\d{0,14})\/move$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -350,6 +375,8 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       json(res, 200, await detail(ctx, getTask(ctx.db, id)!));
     } else if (method === "POST" && note) {
       await sendNote(req, res, ctx, Number(note[1]));
+    } else if (method === "POST" && move) {
+      await moveTask(req, res, ctx, Number(move[1]));
     } else {
       return false;
     }
