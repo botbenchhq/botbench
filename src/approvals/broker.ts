@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { DriverSession } from "../drivers/contract.ts";
+import type { PermissionResponse } from "../drivers/events.ts";
 import { askEveryCommand, isRunMode, type RunMode } from "../engine/modes.ts";
 import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
@@ -12,6 +13,7 @@ import type { FloorEntry } from "./floor.ts";
 import { askWords, fullAutonomyRefusal, gate, namesAFile, READ_ONLY_TOOLS, real, requestTarget, summarize, type AskWhy, type FloorSettings } from "./gate.ts";
 import { firstLine } from "../shorten.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
+import { answerProblem, AUTONOMOUS_ANSWER, parseStoredQuestion, QUESTION_TOOL, readQuestion, storedQuestion, type Question } from "./question.ts";
 import { asRefusalKind, refusalBlocksAccept, refusalKind, type RefusalKind } from "./refusals.ts";
 import { splitPlain } from "./shell.ts";
 import { chatWebAccess, publicWebAddress, WEB_ACCESS_WORDS, WEB_OFF, WEB_TOOLS } from "./web-access.ts";
@@ -59,6 +61,12 @@ import { chatWebAccess, publicWebAddress, WEB_ACCESS_WORDS, WEB_OFF, WEB_TOOLS }
  * run's builder (a confined command the floor does not name runs, logged as `chat_confined`), with no grant of any kind, and its web tools follow the owner's setting Web access (web-access.ts).
  * A chat's approval has no task and no run; nothing re-drives a chat, so one left pending by a Botbench that stopped is
  * ended, unanswered, when the next one starts.
+ *
+ * A question the agent puts to the owner (Claude Code's AskUserQuestion, approvals/question.ts), of a task or a run's
+ * planner, is an approval of its own kind: one Botbench cannot show as a card is refused with the reason for the agent; in
+ * a fully autonomous run nobody is asked, and the agent is told to decide itself, in one log entry (`question_unasked`);
+ * otherwise it waits for `answerQuestion`, whose answer goes back keyed by the question's text. It is never answered
+ * with Allow or Deny. After a restart its stored answer goes to the first request that asks the same question.
  *
  * Across a restart: an approval that was pending when Botbench stopped stays pending and is marked parked. Nothing
  * waits for it in this process, so the owner's answer cannot be handed to anyone: it is stored on the approval.
@@ -166,7 +174,11 @@ export type LogRule =
   /** One of the CLI's own bookkeeping tools (its to-do list, loading a tool) ran without asking, in any mode. */
   | "bookkeeping"
   /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
-  | "issue_claim";
+  | "issue_claim"
+  /** The owner answered an agent's question; `detail` holds the answer as given. */
+  | "owner_answered"
+  /** A fully autonomous run's agent asked a question nobody was asked: the question in `command`, what the agent was told in `detail`. */
+  | "question_unasked";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -221,6 +233,10 @@ export interface Approval {
    * shell command, a tool that names no path, or a relative path whose starting folder was not reported.
    */
   target: string | null;
+  /** Set when this is an agent's question to the owner (approvals/question.ts), not a request to run something: what its card shows. */
+  question: Question | null;
+  /** The owner's answer to a question, as given; null until there is one. */
+  answer: string | null;
 }
 
 export interface LogEntry {
@@ -282,6 +298,25 @@ export interface Answer {
   bookkeeping?: true;
   /** Set when a chat's command ran without asking: confined, and not named by the floor. */
   chat?: true;
+  /** Set when the owner answered an agent's question: the answer, keyed by the question's text, as the CLI takes it. */
+  answers?: Record<string, string>;
+}
+
+/** The answer as a driver's `respondToRequest` takes it. */
+export function permissionResponse(answer: Answer): PermissionResponse {
+  return {
+    decision: answer.decision,
+    note: answer.note,
+    refused: answer.refused,
+    preapproved: answer.preapproved !== undefined,
+    standing: answer.standing !== undefined,
+    mode: answer.byMode !== undefined,
+    files: answer.files !== undefined,
+    web: answer.web !== undefined,
+    bookkeeping: answer.bookkeeping !== undefined,
+    chat: answer.chat !== undefined,
+    ...(answer.answers === undefined ? {} : { answers: answer.answers }),
+  };
 }
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
@@ -329,6 +364,13 @@ export interface Broker {
    * For a parked approval the answer is stored, the approval stays pending, and the listeners of `onStoredAnswer` are told.
    */
   answer(id: number, decision: Decision, note?: string | null): Approval;
+  /**
+   * The owner's answer to an agent's question: one of its choices or the owner's own words, at most `MAX_ANSWER`
+   * characters, stored as given. Throws `ApprovalError`: 400 for an answer that cannot be sent, 404 for an unknown
+   * approval, 409 for one that is not a question or already has an answer. For a parked question the answer is stored
+   * and the listeners of `onStoredAnswer` are told, as for any parked approval.
+   */
+  answerQuestion(id: number, answer: string): Approval;
   /** How many approvals of the same command earn the offer of standing permission. */
   readonly offerStandingAfter: number;
   /**
@@ -384,6 +426,8 @@ function toApproval(row: Record<string, unknown>): Approval {
     outsideText: row.outside_text !== 0,
     asksBecause: text(row.asks_because),
     target: text(row.target),
+    question: parseStoredQuestion(row.question),
+    answer: text(row.answer),
   };
 }
 
@@ -741,6 +785,46 @@ export function createBroker(options: {
     }
   };
 
+  /**
+   * An agent's question, already read as one Botbench can show. In a fully autonomous run nobody is asked: the question
+   * and what the agent is told are one log entry, and the agent is told to decide itself and say what it chose. In any
+   * other mode it is a pending approval of its own kind, with no command on it, and waits for the owner's answer
+   * (`answerQuestion`). A mode that cannot be read counts as one with an owner to ask, as for any request.
+   */
+  const askQuestion = (r: ApprovalRequest, question: Question, ticket: Ticket | undefined, cwd: string, deny: (detail: string) => Promise<Answer>): Promise<Answer> => {
+    let mode: RunMode | null = null;
+    try {
+      mode = modeOfRequest(r);
+    } catch (err) {
+      console.error(`The mode of the run of a question could not be read: ${words(err)}`);
+    }
+    if (mode === "full") {
+      try {
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "question_unasked", tool: r.tool, command: question.text, cwd, detail: AUTONOMOUS_ANSWER });
+      } catch (err) {
+        return deny(`This question could not be recorded, so it was refused: ${words(err)}`);
+      }
+      if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was a question nobody is asked in a fully autonomous run, so the owner's stored answer was not used.", "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL", ticket.taskId, ticket.resumes);
+      return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: AUTONOMOUS_ANSWER });
+    }
+    let id: number;
+    try {
+      id = transaction(db, () => {
+        const inserted = db
+          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, question) VALUES (?, ?, 0, ?, ?, ?, ?, ?, NULL, ?, 'pending', ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, question.text, cwd, r.toolCallId, now(), storedQuestion(question));
+        const approvalId = Number(inserted.lastInsertRowid);
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: question.text, cwd, detail: null });
+        return approvalId;
+      });
+    } catch (err) {
+      return deny(`The question could not be recorded: ${words(err)}`);
+    }
+    const waiting = new Promise<Answer>((resolve) => waiters.set(id, resolve));
+    announce(id);
+    return waiting;
+  };
+
   const request = (r: ApprovalRequest): Promise<Answer> => {
     const ticket = [...tickets.values()].find((t) => t.attemptId === r.attemptId);
     const stillCarried = "task_id = ? AND attempt_id = ? AND stored_decision IS NOT NULL";
@@ -760,32 +844,46 @@ export function createBroker(options: {
     if (ticket?.readOnly && !READ_ONLY_TOOLS.has(r.tool)) return deny(`The ${stepWords(ticket.role)} only reads and may not use ${shorten(r.tool, 100)}.`);
     const cwd = r.cwd ?? ticket?.seen.get(r.toolCallId) ?? "";
     ticket?.seen.delete(r.toolCallId);
+    // An agent's question to the owner (approvals/question.ts), of a task or a planner: one Botbench cannot show as a card
+    // is refused here, with the reason for the agent, and makes no card. A chat's is asked about as any other tool is.
+    const asked = r.tool === QUESTION_TOOL && r.chat !== true ? readQuestion(r.input) : null;
+    if (asked !== null && "problem" in asked) return deny(asked.problem);
+    const question = asked as Question | null;
     // An attempt that resumes one from before a restart: the owner's stored answers to that attempt's requests are its to use.
     if (ticket && ticket.resumes !== null && ticket.taskId !== null && ticket.taskId === r.taskId) {
       const carried = db.prepare(`SELECT ${APPROVAL_COLUMNS} WHERE a.task_id = ? AND a.attempt_id = ? AND a.status = 'pending' AND a.stored_decision IS NOT NULL ORDER BY a.id`).all(ticket.taskId, ticket.resumes).map(toApproval);
       // The same thing asked again: same role, tool, command and directory. A directory nobody reported is not known to be the same.
-      const match = cwd === "" ? undefined : carried.find((a) => a.role === r.role && a.tool === r.tool && a.command === r.command && a.cwd === cwd);
+      // A question is the same when its text is: where the agent stood says nothing about it.
+      const match =
+        question !== null
+          ? carried.find((a) => a.role === r.role && a.tool === r.tool && a.question !== null && a.question.text === question.text && a.answer !== null)
+          : cwd === ""
+            ? undefined
+            : carried.find((a) => a.role === r.role && a.tool === r.tool && a.question === null && a.command === r.command && a.cwd === cwd);
       if (match) {
         const decision = match.storedDecision!;
+        const ownerRule = match.question !== null ? "owner_answered" : decision === "allow" ? "owner_allowed" : "owner_declined";
         try {
           // Used up before it is handed over: whatever happens next, this answer is never given a second time.
           transaction(db, () => {
             const used = db.prepare("UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ? AND status = 'pending' AND stored_decision = ?").run(decision === "allow" ? "allowed" : "declined", now(), match.id, decision);
             if (Number(used.changes) !== 1) throw new Error("the stored answer was no longer there");
             // The owner's own decision is on record for this approval, or it is not applied.
-            if (!db.prepare("SELECT 1 FROM action_log WHERE approval_id = ? AND rule = ?").get(match.id, decision === "allow" ? "owner_allowed" : "owner_declined")) throw new Error("the log holds no decision of the owner's for it");
-            appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, approvalId: match.id, rule: "stored_answer_applied", tool: r.tool, command: r.command, cwd, detail: `The owner's answer from before the restart (${decision}) was given to tool call ${shorten(r.toolCallId, 200)}.` });
+            if (!db.prepare("SELECT 1 FROM action_log WHERE approval_id = ? AND rule = ?").get(match.id, ownerRule)) throw new Error("the log holds no decision of the owner's for it");
+            appendLog(db, { taskId: r.taskId, attemptId: r.attemptId, approvalId: match.id, rule: "stored_answer_applied", tool: r.tool, command: question?.text ?? r.command, cwd, detail: `The owner's answer from before the restart (${match.question !== null ? "an answer to the question" : decision}) was given to tool call ${shorten(r.toolCallId, 200)}.` });
           });
         } catch (err) {
           return deny(`The owner's stored answer could not be applied: ${words(err)}`);
         }
         announce(match.id);
-        return Promise.resolve({ decision, note: match.note, approvalId: match.id, refused: null });
+        // A question's answer goes back keyed by the text the agent asked this time, which is the stored one.
+        return Promise.resolve({ decision, note: match.note, approvalId: match.id, refused: null, ...(question !== null && match.answer !== null ? { answers: { [question.text]: match.answer } } : {}) });
       }
       if (carried.length > 0) {
         supersedeWhere(`After the restart the agent asked for something else first (${shorten(r.tool, 100)}: ${shorten(r.command, 300)}), so the owner's stored answer was not used.`, stillCarried, ticket.taskId, ticket.resumes);
       }
     }
+    if (question !== null) return askQuestion(r, question, ticket, cwd, deny);
     // What Botbench itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
@@ -902,6 +1000,7 @@ export function createBroker(options: {
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
       if (current.storedDecision !== null) throw new ApprovalError(409, `This approval already has your answer (${current.storedDecision}); Botbench is resuming its task.`);
+      if (current.question !== null) throw new ApprovalError(409, "This is a question from Claude Code: answer it with one of its choices or your own words.");
       const entry = { taskId: current.taskId, runId: current.runId, attemptId: current.attemptId, approvalId: id, rule: decision === "allow" ? "owner_allowed" : "owner_declined", tool: current.tool, command: current.command, cwd: current.cwd, detail: kept } as const;
       if (waiters.has(id)) {
         db.prepare("UPDATE approvals SET status = ?, note = ?, resolved_at = ? WHERE id = ? AND status = 'pending'").run(status, kept, now(), id);
@@ -921,17 +1020,51 @@ export function createBroker(options: {
     }
     announce(id);
     const approval = getApproval(db, id)!;
-    if (stored) {
-      for (const listener of storedListeners) {
-        try {
-          listener(approval);
-        } catch (err) {
-          // The answer is stored and stands; the next start says what became of it.
-          console.error(`A stored answer could not be passed on for its task to be resumed: ${words(err)}`);
-        }
+    if (stored) tellStored(approval);
+    return approval;
+  };
+
+  const answerQuestion = (id: number, given: string): Approval => {
+    const problem = answerProblem(given);
+    if (problem !== null) throw new ApprovalError(400, problem);
+    // The answer and its log entry are one write: neither exists without the other. It is stored as given, and is only ever text for the agent.
+    const { stored, question } = transaction(db, () => {
+      const current = getApproval(db, id);
+      if (!current) throw new ApprovalError(404, "No such approval.");
+      if (current.question === null) throw new ApprovalError(409, "This request is not a question. Answer it with Allow once or Deny.");
+      if (current.status !== "pending" || current.answer !== null || current.storedDecision !== null) throw new ApprovalError(409, current.status === "superseded" ? "This question is no longer waiting for an answer." : "This question already has your answer.");
+      const entry = { taskId: current.taskId, runId: current.runId, attemptId: current.attemptId, approvalId: id, rule: "owner_answered", tool: current.tool, command: current.command, cwd: current.cwd, detail: given } as const;
+      if (waiters.has(id)) {
+        db.prepare("UPDATE approvals SET status = 'allowed', answer = ?, resolved_at = ? WHERE id = ? AND status = 'pending'").run(given, now(), id);
+        appendLog(db, entry);
+        return { stored: false, question: current.question };
+      }
+      if (current.parkedAt === null) throw new ApprovalError(409, "This question is no longer waiting for an answer.");
+      // Asked before a restart: kept on the approval until the re-driven task asks it again.
+      db.prepare("UPDATE approvals SET stored_decision = 'allow', stored_at = ?, answer = ? WHERE id = ? AND status = 'pending' AND stored_decision IS NULL").run(now(), given, id);
+      appendLog(db, entry);
+      return { stored: true, question: current.question };
+    });
+    if (!stored) {
+      waiters.get(id)!({ decision: "allow", note: null, approvalId: id, refused: null, answers: { [question.text]: given } });
+      waiters.delete(id);
+    }
+    announce(id);
+    const approval = getApproval(db, id)!;
+    if (stored) tellStored(approval);
+    return approval;
+  };
+
+  /** Tell the listeners of `onStoredAnswer` that the owner's answer to a parked approval was stored. */
+  const tellStored = (approval: Approval): void => {
+    for (const listener of storedListeners) {
+      try {
+        listener(approval);
+      } catch (err) {
+        // The answer is stored and stands; the next start says what became of it.
+        console.error(`A stored answer could not be passed on for its task to be resumed: ${words(err)}`);
       }
     }
-    return approval;
   };
 
   const whereWords = (cwd: string): string => (cwd === "." ? "the top folder of the task's copy" : cwd);
@@ -1240,5 +1373,5 @@ export function createBroker(options: {
   const endParked = (taskId: number, why: string): void => supersedeWhere(why, "task_id = ?", taskId);
   const endRunApprovals = (runId: number, why: string): void => supersedeWhere(why, "run_id = ?", runId);
 
-  return { endRunApprovals, socketPath, offerStandingAfter, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
+  return { endRunApprovals, socketPath, offerStandingAfter, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, answerQuestion, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
 }

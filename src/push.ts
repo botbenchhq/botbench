@@ -95,9 +95,11 @@ export interface PushMessage {
   path: string;
 }
 
-export function approvalMessage(approval: Pick<Approval, "taskId" | "runId"> & { chat?: boolean }): PushMessage {
+export function approvalMessage(approval: Pick<Approval, "taskId" | "runId"> & { chat?: boolean; question?: unknown }): PushMessage {
   // A chat's request is shown in the chat, which is the home screen.
-  return { title: "An approval is waiting", path: approval.chat === true ? "/#/turn" : approval.taskId !== null ? `/#/tasks/${approval.taskId}` : `/#/runs/${approval.runId}` };
+  const path = approval.chat === true ? "/#/turn" : approval.taskId !== null ? `/#/tasks/${approval.taskId}` : `/#/runs/${approval.runId}`;
+  // An agent's question is not an approval to give: it says so, and, like every notification, holds none of its words.
+  return { title: approval.question !== undefined && approval.question !== null ? "A task has a question" : "An approval is waiting", path };
 }
 export function readyMessage(task: { id: number }): PushMessage {
   return { title: "A task is ready for review", path: `/#/tasks/${task.id}` };

@@ -37,10 +37,10 @@ export type DriverEvent =
    * run on the run's pre-approved list without asking the owner (`preapproved`) or on a standing permission the owner
    * gave earlier (`standing`), Botbench let a confined command run because of the run's mode (`mode`), Botbench let a
    * file tool run because it reads or changes a file inside the task's copy or reads the CLI's own saved output of this
-   * session (`files`), Botbench let a web tool run because the owner's setting Web access is Allow (`web`), Botbench let a chat's confined command run that the floor does not name (`chat`), Botbench let one of the CLI's own bookkeeping tools run (`bookkeeping`), Botbench refused it without asking the owner (`denied`, `note` says why), or the CLI stopped
+   * session (`files`), Botbench let a web tool run because the owner's setting Web access is Allow (`web`), Botbench let a chat's confined command run that the floor does not name (`chat`), Botbench let one of the CLI's own bookkeeping tools run (`bookkeeping`), the owner answered the agent's question (`answered`, `note` holds the answer as given), Botbench refused it without asking the owner (`denied`, `note` says why), or the CLI stopped
    * waiting (`cancelled`).
    */
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "answered" | "declined" | "denied" | "cancelled"; note: string | null }
   /** Tokens one turn used. No money: whether a turn costs dollars depends on the login, not on the CLI's printout. */
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   /** The CLI reported where the login stands against its limit. `limited` means the limit was hit. */
@@ -76,4 +76,6 @@ export interface PermissionResponse {
   bookkeeping?: boolean;
   /** True when an allow is for a chat's confined command that the floor does not name, and the owner was not asked. */
   chat?: boolean;
+  /** With an allow of an agent's question (AskUserQuestion): the owner's answer, keyed by the question's text. Ignored for any other tool. */
+  answers?: Record<string, string>;
 }

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
+import { pendingApprovals, permissionResponse, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import { insertPreapproved, realRepo } from "../approvals/grants.ts";
 import { chatWebAccess } from "../approvals/web-access.ts";
@@ -16,7 +16,7 @@ import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
-import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
+import { autoAccept, modeRefusals, reviewOutcome, runModeOf, unaskedQuestions } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
@@ -650,7 +650,7 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now and the marks of its changed files. */
   const qualifies = (id: number, checks: Task["checks"], scope: readonly FileScope[]): ReturnType<typeof autoAccept> =>
-    autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id), protectedFiles: scope.filter((f) => f.protected).map((f) => f.path), unexpectedFiles: scope.filter((f) => !f.expected && !f.protected).map((f) => f.path) });
+    autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id), questions: unaskedQuestions(db, id), protectedFiles: scope.filter((f) => f.protected).map((f) => f.path), unexpectedFiles: scope.filter((f) => !f.expected && !f.protected).map((f) => f.path) });
 
   /**
    * The task is ready for review. First the files it changed, from its start commit to its head commit, are read and
@@ -937,7 +937,7 @@ export function createTasks(options: TasksOptions): Tasks {
         void broker
           .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, permissionResponse(answer)) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));
       }
       if (event.type === "permission_resolved") {

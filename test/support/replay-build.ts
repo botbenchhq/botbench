@@ -164,10 +164,18 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
         }
         if (event.type === "permission_resolved") {
           const allowed = typeof given === "object" && given !== null && (given as PermissionResponse).decision === "allow";
-          if ((event.decision === "allowed") !== allowed) {
+          // An answered question went on after an allow that carried the answer, as an allowed request did, and only that.
+          const answers = allowed ? (given as PermissionResponse).answers : undefined;
+          const answered = answers !== undefined && Object.keys(answers).length > 0;
+          if ((event.decision === "allowed" || event.decision === "answered") !== allowed || (event.decision === "answered") !== answered) {
             const detail = `The recording continues only after this request was ${event.decision}; it has nothing for another answer.`;
             record({ type: "error", message: detail, raw: null });
             return end("error", detail);
+          }
+          // The transcript keeps the answer this replay was given, as the real driver records it, not the recorded one.
+          if (answered) {
+            record({ ...event, note: Object.values(answers!).join("\n") });
+            continue;
           }
         }
         record(event);

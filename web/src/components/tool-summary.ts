@@ -33,7 +33,15 @@ const VERBS: Record<string, Verbs> = {
   Glob: verbs("pattern", false, "look for files matching", "Looking for files matching", "Looked for files matching"),
   WebFetch: verbs("url", false, "fetch", "Fetching", "Fetched"),
   WebSearch: verbs("query", false, "search the web for", "Searching the web for", "Searched the web for"),
+  // Claude Code's question to the owner: its object is the one question's text (`questionText`), not a field of its own.
+  AskUserQuestion: { field: "", file: false, waiting: "Asks you", running: "Asking you", done: "Asked you", refused: "Did not ask you", failed: "Could not ask you" },
 };
+
+/** The one question an AskUserQuestion call asks, from its own arguments; empty when it holds no single question. */
+function questionText(input: unknown): string {
+  const questions = fields(input).questions;
+  return Array.isArray(questions) && questions.length === 1 ? text(fields(questions[0]).question) : "";
+}
 
 /** The fields that say what a call was aimed at, in the order they are looked for, when no verb names one. */
 const TARGET_FIELDS = ["command", "file_path", "notebook_path", "pattern", "url", "query", "path"] as const;
@@ -75,7 +83,7 @@ export interface CallLine {
 /** The one line for a call. */
 export function callLine(name: string, input: unknown, state: CallState): CallLine {
   const known = VERBS[name];
-  const whole = known === undefined ? "" : text(fields(input)[known.field]);
+  const whole = known === undefined ? "" : name === "AskUserQuestion" ? questionText(input) : text(fields(input)[known.field]);
   // No verb, or not the argument the verb is about, or a call that neither returned nor is still going: the real name and argument, and the state in words.
   if (known === undefined || whole === "" || state === "unfinished") {
     const target = callTarget(input);

@@ -1,5 +1,5 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { answerApproval, ApiError, grantStanding, type Approval } from "../api/client.ts";
+import { answerApproval, answerQuestion, ApiError, grantStanding, type Approval } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ConfirmAction } from "./confirm.tsx";
 import { approvalWords, directoryWords, placeWords } from "./tool-summary.ts";
@@ -75,7 +75,147 @@ function Fact({ term, testId, theirs = false, children }: { term: string; testId
  * enough, the card also offers standing permission, last: a secondary step that
  * states the grant's scope in a dialog and does nothing until it is confirmed.
  */
-export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Approval; more: number; on: "task" | "run" | "chat"; onSignedOut: () => void }) {
+export function ApprovalCard(props: { approval: Approval; more: number; on: "task" | "run" | "chat"; onSignedOut: () => void }) {
+  return props.approval.question !== null ? <QuestionCard {...props} question={props.approval.question} /> : <PermissionCard {...props} />;
+}
+
+/** The longest answer the owner may give, as for a note; the server refuses a longer one. */
+const MAX_ANSWER = 2000;
+
+/** The letter a choice is shown with: A, B, C, D. */
+const letter = (i: number): string => String.fromCharCode(65 + i);
+
+/**
+ * Claude Code's question to the owner: the question, one button per choice (lettered, with the agent's line about it
+ * under it), and Something else, which opens a field for the owner's own words. Every word but Botbench's own labels is
+ * the agent's and is shown as plain text, never as markdown or HTML. A choice is one of several, so none is the view's
+ * primary action; only sending the owner's own words is, once that field is open.
+ */
+function QuestionCard({ approval, question, more, on, onSignedOut }: { approval: Approval; question: NonNullable<Approval["question"]>; more: number; on: "task" | "run" | "chat"; onSignedOut: () => void }) {
+  const { refresh, opened } = useContext(ApprovalsContext);
+  const [own, setOwn] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  // As on a request's card: one that takes the place of one just answered must be read before it can be answered.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(true), 700);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const [problem, setProblem] = useState<string | null>(null);
+  const card = useRef<HTMLElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const heading = useId();
+  const ownField = useId();
+  const base = useId();
+
+  useEffect(() => {
+    if (opened <= focusedFor) return;
+    focusedFor = opened;
+    card.current?.focus();
+    card.current?.scrollIntoView({ block: "nearest" });
+  }, [opened]);
+  useEffect(() => {
+    if (own !== null) field.current?.focus();
+  }, [own !== null]);
+
+  const send = (answer: string): void => {
+    setSending(true);
+    setProblem(null);
+    answerQuestion(approval.id, answer).then(
+      // The card goes when the list no longer has the question.
+      () => refresh(),
+      (err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setSending(false);
+        setProblem(err instanceof ApiError ? `Your answer was not saved. ${err.message}` : "Your answer was not sent: Botbench could not be reached.");
+        refresh();
+      },
+    );
+  };
+  const waiting = sending || !settled;
+
+  return (
+    <article ref={card} tabIndex={-1} data-testid="question-card" data-approval-id={approval.id} aria-labelledby={heading} className="ds-approval">
+      <h2 id={heading} className="ds-approval__title">
+        Claude Code has a question
+      </h2>
+      {question.header !== "" && (
+        <p data-testid="question-header" data-ds-content="" className="ds-approval__term">
+          {visible(question.header)}
+        </p>
+      )}
+      <p data-testid="question-text" data-ds-content="">
+        {visible(question.text)}
+      </p>
+      {(on === "run" || approval.outsideText) && (
+        <ul className="ds-approval__facts">
+          {on === "run" && approval.taskId === null && (
+            <Fact term="Step" testId="approval-role">
+              {stepWord(approval.role)}
+            </Fact>
+          )}
+          {on === "run" && approval.taskId !== null && (
+            <Fact term="Task" testId="approval-task" theirs>{`Task ${approval.taskId} · ${approval.taskTitle}`}</Fact>
+          )}
+        </ul>
+      )}
+      {approval.outsideText && <p data-testid="approval-outside">This question comes from a run that read a GitHub issue, which people outside this project wrote. Answer it as you would answer them.</p>}
+      {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks this question again.</p>}
+      {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
+      {problem !== null && (
+        <p role="alert" className="ds-approval__error">
+          {problem}
+        </p>
+      )}
+      <ul className="ds-stack ds-gap-sm" aria-label="Choices">
+        {question.choices.map((choice, i) => (
+          <li key={choice.label} className="ds-stack ds-gap-xs">
+            <div className="ds-cluster">
+              <button type="button" data-testid="question-choice" disabled={waiting} aria-describedby={choice.description === "" ? undefined : `${base}-${i}`} onClick={() => send(choice.label)} className="ds-button">
+                {`${letter(i)}. `}
+                <span data-ds-content="">{visible(choice.label)}</span>
+              </button>
+            </div>
+            {choice.description !== "" && (
+              <p id={`${base}-${i}`} data-ds-content="">
+                {visible(choice.description)}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {own === null ? (
+        <div className="ds-cluster">
+          <button type="button" data-testid="question-other" disabled={waiting} aria-expanded={false} onClick={() => setOwn("")} className="ds-button">
+            Something else
+          </button>
+        </div>
+      ) : (
+        <form
+          className="ds-stack ds-gap-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (own.trim() !== "") send(own);
+          }}
+        >
+          <div className="ds-field">
+            <label htmlFor={ownField} className="ds-field__label">
+              Your answer
+            </label>
+            <input ref={field} id={ownField} type="text" name="answer" autoComplete="off" value={own} maxLength={MAX_ANSWER} onChange={(e) => setOwn(e.target.value)} className="ds-field__control" />
+          </div>
+          <div className="ds-cluster">
+            <button type="submit" disabled={waiting || own.trim() === ""} aria-busy={sending} className="ds-button ds-button--primary">
+              {sending ? "Sending" : "Send answer"}
+            </button>
+          </div>
+        </form>
+      )}
+    </article>
+  );
+}
+
+function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approval; more: number; on: "task" | "run" | "chat"; onSignedOut: () => void }) {
   const { refresh, opened } = useContext(ApprovalsContext);
   const [note, setNote] = useState("");
   /** The answer being sent, while it is. */
