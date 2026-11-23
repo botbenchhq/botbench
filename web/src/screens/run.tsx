@@ -12,7 +12,7 @@ import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { runSentence } from "../components/run-status.ts";
-import { statusLook, statusWord } from "../components/task-status.ts";
+import { offersMerge, statusLook, statusWord } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
@@ -481,7 +481,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                         <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
                         {task.resumeNote !== null && <ResumeControl taskId={task.id} note={task.resumeNote} name={`task ${task.id}`} primary={false} onResumed={load} onSignedOut={onSignedOut} />}
                         {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
-                        {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} compact />}
+                        {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} merge={offersMerge(task)} compact />}
                         {task.pullRequest.state !== "none" && (
                           <p data-testid="run-task-pull-request" data-ds-content="">
                             {pullRequestWords(task.pullRequest)}

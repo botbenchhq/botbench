@@ -2,10 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { trayShows } from "../web/src/components/approval-tray.ts";
 import { runSentence } from "../web/src/components/run-status.ts";
-import { answeredOther, notMergedLine, taskTitle } from "../web/src/components/task-status.ts";
-import type { RunDetail, RunTask } from "../web/src/api/client.ts";
+import { answeredOther, notMergedLine, offersMerge, statusSentence, taskTitle } from "../web/src/components/task-status.ts";
+import type { PullRequestView, RunDetail, RunTask, TaskSummary } from "../web/src/api/client.ts";
 
 // What the task, run and approval screens say in one line, decided without a browser.
+
+const accepted = (decidedBy: "owner" | "mode", pullRequest: Pick<PullRequestView, "state" | "number">): Parameters<typeof statusSentence>[0] => ({
+  status: "accepted",
+  reason: null,
+  baseCommit: "a",
+  headCommit: "b",
+  attemptId: 1,
+  waitingOnApproval: false,
+  parked: false,
+  resuming: false,
+  ofPlan: null,
+  decision: { decidedBy } as TaskSummary["decision"],
+  pullRequest,
+});
+
+test("an accepted task whose pull request is open says so, by its number, in either form of Accepted", () => {
+  assert.equal(statusSentence(accepted("owner", { state: "opened", number: 12 })), "Accepted. Pull request #12 opened.");
+  assert.equal(statusSentence(accepted("mode", { state: "opened", number: 12 })), "Accepted without you, as its run is fully autonomous. Pull request #12 opened.");
+});
+
+test("an accepted task with no pull request open still says the branch was kept", () => {
+  const kept = "Accepted. Botbench kept the branch and removed the task's copy of the project.";
+  assert.equal(statusSentence(accepted("owner", { state: "none", number: null })), kept);
+  // While the push is under way, or after it failed, no pull request is claimed.
+  assert.equal(statusSentence(accepted("owner", { state: "sending", number: null })), kept);
+  assert.equal(statusSentence(accepted("owner", { state: "failed", number: null })), kept);
+  assert.equal(statusSentence(accepted("mode", { state: "none", number: null })), "Accepted without you, as its run is fully autonomous. Botbench kept the branch and removed the task's copy of the project.");
+});
+
+test("the merge command is offered for a run that keeps branches, not for one that opens pull requests", () => {
+  assert.equal(offersMerge({ pullRequest: { choice: "branch" } }), true);
+  assert.equal(offersMerge({ pullRequest: { choice: "pull_request" } }), false);
+});
 
 test("the task screen's line on what left the machine is true before a decision, after one, and after a push", () => {
   assert.equal(notMergedLine({ decision: null, pullRequest: { pushed: false } }), "Nothing has been merged or pushed.");

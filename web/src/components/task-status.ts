@@ -39,7 +39,7 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision">): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & { pullRequest: Pick<PullRequestView, "state" | "number"> }): string {
   // A fully autonomous run that did not accept the task says why it needs the owner.
   const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
@@ -62,8 +62,12 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       return task.headCommit === task.baseCommit
         ? `Ready for review. No file was changed, so nothing was committed.${why}`
         : `Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.${why}`;
-    case "accepted":
-      return task.decision?.decidedBy === "mode" ? "Accepted without you, as its run is fully autonomous. Botbench kept the branch and removed the task's copy of the project." : "Accepted. Botbench kept the branch and removed the task's copy of the project.";
+    case "accepted": {
+      const accepted = task.decision?.decidedBy === "mode" ? "Accepted without you, as its run is fully autonomous." : "Accepted.";
+      // Once the pull request is open, that is what became of the work, not only that the branch was kept.
+      if (task.pullRequest.state === "opened" && task.pullRequest.number !== null) return `${accepted} Pull request #${task.pullRequest.number} opened.`;
+      return `${accepted} Botbench kept the branch and removed the task's copy of the project.`;
+    }
     case "rejected":
       return task.decision?.branch === "deleted" ? "Rejected. The branch was deleted, and the task's copy of the project was removed." : "Rejected. Botbench kept the branch and removed the task's copy of the project.";
     case "interrupted":
@@ -80,6 +84,9 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
  * title size on a phone (the whole prompt is the first row of the transcript); its number until the prompt is read.
  */
 export const taskTitle = (id: number, prompt: string | null): string => (prompt === null || prompt.trim() === "" ? `Task ${id}` : firstLine(prompt, 40));
+
+/** Whether an accepted task offers the command that merges its branch on this Mac: not when its run opens pull requests, where the pull request is how the work comes in. */
+export const offersMerge = (task: { pullRequest: Pick<PullRequestView, "choice"> }): boolean => task.pullRequest.choice !== "pull_request";
 
 /** What has left the machine, in one sentence that is true before a decision, after one, and after a push for a pull request. */
 export const notMergedLine = (task: { decision: Pick<TaskDecision, "decision"> | null; pullRequest: Pick<PullRequestView, "pushed"> }): string =>
