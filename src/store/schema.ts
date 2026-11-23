@@ -1129,4 +1129,16 @@ CREATE TRIGGER chat_attempts_no_delete BEFORE DELETE ON chat_attempts
 BEGIN SELECT RAISE(ABORT, 'chat attempts are append-only'); END;
 `,
   },
+  {
+    // A card says why its request asks (`asks_because`, one plain line) and, for a file tool, the file it is aimed at
+    // (`target`: relative to the task's copy when inside it, a full path when not). Both are written with the approval
+    // and never changed; an approval from before this has neither.
+    name: "approval_reasons",
+    sql: `
+ALTER TABLE approvals ADD COLUMN asks_because TEXT;
+ALTER TABLE approvals ADD COLUMN target TEXT;
+CREATE TRIGGER approvals_reason_fixed BEFORE UPDATE OF asks_because, target ON approvals
+BEGIN SELECT RAISE(ABORT, 'why an approval asks and what it is aimed at cannot be changed'); END;
+`,
+  },
 ];

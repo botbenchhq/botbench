@@ -238,8 +238,8 @@ test("a target that leaves the worktree through a link is outside, when the call
   const grant = (words: string[]): Grant => ({ id: 1, kind: "preapproved", role: "implementer", repo: "/repos/sample", cwd: ".", words, runId: 1, taskId: 1, createdAt: "t" });
   const ask = (command: string): unknown => gate({ tool: "Bash", input: { command }, worktree, cwd: worktree, scope }, [grant(["rm"])], { home: HOME });
   assert.deepEqual(ask("rm -rf real"), { verdict: "allow", rule: "preapproved", grantId: 1 });
-  assert.deepEqual(ask("rm -rf way-out/x"), { verdict: "ask", floor: "recursive-delete-outside-worktree" });
-  assert.deepEqual(ask("rm -rf way-out"), { verdict: "ask", floor: "recursive-delete-outside-worktree" });
+  assert.deepEqual(ask("rm -rf way-out/x"), { verdict: "ask", floor: "recursive-delete-outside-worktree", why: "floor" });
+  assert.deepEqual(ask("rm -rf way-out"), { verdict: "ask", floor: "recursive-delete-outside-worktree", why: "floor" });
 });
 
 test("the owner's config can add entries to the floor: the words of an entry, found anywhere in a command, make it ask", () => {
@@ -380,5 +380,46 @@ test("the ways round the floor that the critique found each ask", () => {
   // What stays ordinary: the task's own worktree lies inside Botbench's data directory and is not guarded for it.
   for (const command of ["cp a b", `cp ${WORKTREE}/a ${WORKTREE}/b`, "rm -rf sub -x", "find build -name x -delete", "rsync -a --delete a/ b/", "sh make-marker.sh", "cat /dev/null", "git status", "git log --oneline -3", "npm test -- path/to/file", "dd if=a of=b"]) {
     assert.equal(floor(command, ctx), null, command);
+  }
+});
+
+test("an operator inside quotes does not make a pattern or a file name read as a program, and what the shell does build still asks", () => {
+  // What a Semi-autonomous run asked about for no reason: the quoted `|` or `(` was taken for an operator, and the word after it for a program.
+  for (const command of [`grep -n "admit(" src/engine/*.ts`, `grep -n "a\\|[a-z]" src/x.ts`, `grep -rn "git\\|push" src`, `grep -n "{x}" src/*.ts | head`, `grep -c ")" *.md`, `echo "a;b" | wc -l`, `ls src 2>/dev/null`]) {
+    assert.equal(floor(command, at()), "not-a-plain-command", command);
+  }
+  assert.equal(floor(`grep -rn 'git\\|push' src`, at()), null, "in single quotes it is one plain command");
+  // Each of these the shell builds or hands a program, inside quotes or out: they still ask. Tried as an agent would to
+  // get past the quoted reading: a variable or a substitution in double quotes, a quote that is never closed, a backslash
+  // outside quotes, a substitution as git's subcommand, a program handed to xargs, and a command inside an argument.
+  const cases: [string, string][] = [
+    [`ls; "$PROGRAM" src`, "program-named-by-the-shell"],
+    [`ls | "$(echo rm)" -rf x`, "program-named-by-the-shell"],
+    [`ls; "\`echo rm\`" x`, "program-named-by-the-shell"],
+    [`ls; ${"`"}echo git${"`"} status`, "program-named-by-the-shell"],
+    // A program a substitution prints was not seen before the quoted reading, in any of these forms.
+    [`ls; $(echo rm) -rf x`, "program-named-by-the-shell"],
+    [`ls; FOO=1 $(echo rm) -rf x`, "program-named-by-the-shell"],
+    [`echo "$(git $X)"`, "program-named-by-the-shell"],
+    [`grep x "a|b; $X`, "program-named-by-the-shell"],
+    [`ls; \\$X y`, "program-named-by-the-shell"],
+    [`ls; git "$SUB" origin`, "program-named-by-the-shell"],
+    [`ls "a|b" | xargs git`, "program-named-by-the-shell"],
+    [`ls | xargs "sh"`, "shell-runs-text"],
+    [`ls; FOO=1 *.sh`, "program-named-by-the-shell"],
+    [`echo "a;sudo ls" | wc -l`, "sudo"],
+    [`echo 'x|git push' | wc -l`, "git-push"],
+  ];
+  for (const [command, rule] of cases) assert.equal(floor(command, at()), rule, command);
+});
+
+test("the keychain and key tools ask by their name or a full path, and a project's own file of that name does not", () => {
+  for (const command of ["security find-generic-password -s x", "/usr/bin/security dump-keychain", "env security list-keychains", "ls; security unlock-keychain", "~/bin/security x", "ssh-add -l", "/usr/bin/ssh-keygen -t ed25519", "ls docs | xargs security", "cd /usr/bin; ./security dump-keychain", "cd /usr/bin && bin/../security x", "../security x"]) {
+    assert.equal(floor(command, at()), "guarded-place", command);
+  }
+  // From a folder outside the worktree, a relative path is not the project's own file.
+  assert.equal(floor("./security dump-keychain", at("/usr/bin")), "guarded-place");
+  for (const command of ["ls docs/security", "cat docs/security/threat-model.md", "ls docs/security 2>/dev/null", "./tools/ssh-keygen-check.sh"]) {
+    assert.notEqual(floor(command, at()), "guarded-place", command);
   }
 });

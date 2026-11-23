@@ -94,14 +94,14 @@ test("a grant applies to its own run, repository, role and directory, and to not
     ["a kind this unit does not grant on", grant(["npm", "test"], { kind: "standing" })],
     ["no words", grant([])],
   ];
-  for (const [what, other] of others) assert.deepEqual(decide("npm test", [other]), { verdict: "ask" }, what);
+  for (const [what, other] of others) assert.deepEqual(decide("npm test", [other]), { verdict: "ask", why: "manual" }, what);
   // The request's own side of each: the same grant, asked from elsewhere.
-  assert.deepEqual(decide("npm test", [mine], { scope: { ...scope, runId: 2 } }), { verdict: "ask" });
-  assert.deepEqual(decide("npm test", [mine], { scope: { ...scope, repo: "/Users/owner/code/other" } }), { verdict: "ask" });
-  assert.deepEqual(decide("npm test", [mine], { scope: { ...scope, role: "reviewer" } }), { verdict: "ask" });
-  assert.deepEqual(decide("npm test", [mine], { cwd: path.join(WORKTREE, "packages", "web") }), { verdict: "ask" });
-  assert.deepEqual(decide("npm test", [mine], { cwd: path.dirname(WORKTREE) }), { verdict: "ask" });
-  assert.deepEqual(decide("npm test", [mine], { scope: undefined }), { verdict: "ask" }, "a request that says nothing of where it comes from");
+  assert.deepEqual(decide("npm test", [mine], { scope: { ...scope, runId: 2 } }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(decide("npm test", [mine], { scope: { ...scope, repo: "/Users/owner/code/other" } }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(decide("npm test", [mine], { scope: { ...scope, role: "reviewer" } }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(decide("npm test", [mine], { cwd: path.join(WORKTREE, "packages", "web") }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(decide("npm test", [mine], { cwd: path.dirname(WORKTREE) }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(decide("npm test", [mine], { scope: undefined }), { verdict: "ask", why: "manual" }, "a request that says nothing of where it comes from");
   // A grant for a directory below the top applies there and only there.
   const below = grant(["npm", "test"], { cwd: "packages/web" });
   assert.deepEqual(decide("npm test", [below], { cwd: path.join(WORKTREE, "packages", "web") }), ALLOWED);
@@ -130,7 +130,8 @@ test("every rule of the floor asks even when the very same command is pre-approv
   for (const [command, rule] of cases) {
     // The grant holds the command's own words where it has any, and its first word where it does not split.
     const words = command.split(" ");
-    assert.deepEqual(decide(command, [grant(words), grant([words[0]!])]), { verdict: "ask", floor: rule }, command);
+    // A command that is only not plain asks in a manual run because the run is manual: in another it may run confined.
+    assert.deepEqual(decide(command, [grant(words), grant([words[0]!])]), { verdict: "ask", floor: rule, why: rule === "not-a-plain-command" ? "manual" : "floor" }, command);
   }
   // Inside the worktree the same program is ordinary work.
   assert.deepEqual(decide("rm -rf build", [grant(["rm", "-rf", "build"])]), ALLOWED);

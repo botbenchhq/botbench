@@ -113,7 +113,7 @@ test("a request waits as a pending approval until the owner answers; the answer 
   assert.ok(pending);
   assert.deepEqual(
     { ...pending, id: 0, createdAt: "" },
-    { id: 0, taskId: r.taskId, runId: null, taskTitle: "run the marker script", attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: "sub", reason: "Run the marker script", toolCallId: "toolu_01", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false },
+    { id: 0, taskId: r.taskId, runId: null, taskTitle: "run the marker script", attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: "sub", reason: "Run the marker script", toolCallId: "toolu_01", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false, asksBecause: "In Manual mode every command asks you.", target: null },
   );
   assert.deepEqual(listApprovals(r.db, "pending"), [pending]);
   assert.deepEqual(rules(r.db), ["asked_owner"]);
@@ -203,31 +203,31 @@ test("the gate lets edits inside the worktree pass, lets reads there pass, and a
   assert.deepEqual(gate({ tool: "NotebookEdit", input: { notebook_path: "n.ipynb" }, worktree: r.worktree, cwd: path.join(r.worktree, "sub") }), { verdict: "allow", rule: "auto_worktree_edit" });
   // Edits that leave it, by name, by `..`, through a link, or with no path at all.
   for (const file of [path.join(r.dir, "escape.txt"), "../escape.txt", "sub/../../escape.txt", "way-out/escape.txt", "link.txt", "/etc/hosts", "", 7, undefined]) {
-    assert.deepEqual(gate({ tool: "Write", input: { file_path: file }, ...at }), { verdict: "ask" }, `Write ${String(file)}`);
+    assert.deepEqual(gate({ tool: "Write", input: { file_path: file }, ...at }), { verdict: "ask", why: "outside_copy" }, `Write ${String(file)}`);
   }
   // Git's own entry in the worktree and the CLI's settings folder are not ordinary files.
   fs.mkdirSync(path.join(r.worktree, ".claude"));
   fs.symlinkSync(".claude", path.join(r.worktree, "cfg"));
   fs.symlinkSync(".git", path.join(r.worktree, "g"));
   for (const file of [".git", ".git/config", ".claude/settings.json", "sub/../.claude/settings.local.json", ".CLAUDE/settings.json", "cfg/settings.json", "g", "g/config", "sub/.claude/settings.json"]) {
-    assert.deepEqual(gate({ tool: "Edit", input: { file_path: file }, ...at }), { verdict: "ask" }, `Edit ${file}`);
+    assert.deepEqual(gate({ tool: "Edit", input: { file_path: file }, ...at }), { verdict: "ask", why: "guarded_in_copy" }, `Edit ${file}`);
   }
   // Reads inside pass without a log entry; reads outside ask.
   assert.deepEqual(gate({ tool: "Read", input: { file_path: path.join(r.worktree, "README.md") }, ...at }), { verdict: "allow", rule: "worktree_read" });
   assert.deepEqual(gate({ tool: "Glob", input: { pattern: "**/*.ts" }, ...at }), { verdict: "allow", rule: "worktree_read" });
   assert.deepEqual(gate({ tool: "Grep", input: { pattern: "x", path: "sub" }, ...at }), { verdict: "allow", rule: "worktree_read" });
-  assert.deepEqual(gate({ tool: "Read", input: { file_path: "/etc/hosts" }, ...at }), { verdict: "ask" });
-  assert.deepEqual(gate({ tool: "Grep", input: { pattern: "x", path: "way-out" }, ...at }), { verdict: "ask" });
+  assert.deepEqual(gate({ tool: "Read", input: { file_path: "/etc/hosts" }, ...at }), { verdict: "ask", why: "outside_copy" });
+  assert.deepEqual(gate({ tool: "Grep", input: { pattern: "x", path: "way-out" }, ...at }), { verdict: "ask", why: "outside_copy" });
   // A search whose pattern itself reaches out of the worktree asks as well.
   for (const input of [{ pattern: "/etc/**" }, { pattern: "../../**/*.pem" }, { pattern: "~/.ssh/*" }, { pattern: "x", glob: "../*" }, { pattern: "sub/../../*" }]) {
-    assert.deepEqual(gate({ tool: input.glob ? "Grep" : "Glob", input, ...at }), { verdict: "ask" }, JSON.stringify(input));
+    assert.deepEqual(gate({ tool: input.glob ? "Grep" : "Glob", input, ...at }), { verdict: "ask", why: "outside_copy" }, JSON.stringify(input));
   }
   // Every shell command asks, the ones Claude Code runs unasked included, and so does any tool the gate does not know.
   for (const command of ["ls", "cat README.md", "git status", "printf hi > x.txt", "sh make-marker.sh"]) {
     assert.equal(gate({ tool: "Bash", input: { command }, ...at }).verdict, "ask", command);
   }
   for (const tool of ["WebFetch", "WebSearch", "Task", "CronCreate", "mcp__x__y", "", "SomethingNew"]) {
-    assert.deepEqual(gate({ tool, input: {}, ...at }), { verdict: "ask" }, tool);
+    assert.deepEqual(gate({ tool, input: {}, ...at }), { verdict: "ask", why: "other_tool" }, tool);
   }
 
   // What a card shows is all of what an allow lets run: a plain command as itself, anything with more to it in full.

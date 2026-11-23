@@ -35,10 +35,12 @@ export type DriverEvent =
   /**
    * A permission request ended: the owner allowed or declined it (`note` is the owner's, for the agent), Botbench let it
    * run on the run's pre-approved list without asking the owner (`preapproved`) or on a standing permission the owner
-   * gave earlier (`standing`), Botbench let a confined command run because of the run's mode (`mode`), Botbench refused
-   * it without asking the owner (`denied`, `note` says why), or the CLI stopped waiting (`cancelled`).
+   * gave earlier (`standing`), Botbench let a confined command run because of the run's mode (`mode`), Botbench let a
+   * file tool run because it reads or changes a file inside the task's copy or reads the CLI's own saved output of this
+   * session (`files`), Botbench refused it without asking the owner (`denied`, `note` says why), or the CLI stopped
+   * waiting (`cancelled`).
    */
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "declined" | "denied" | "cancelled"; note: string | null }
   /** Tokens one turn used. No money: whether a turn costs dollars depends on the login, not on the CLI's printout. */
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   /** The CLI reported where the login stands against its limit. `limited` means the limit was hit. */
@@ -63,4 +65,6 @@ export interface PermissionResponse {
   standing?: boolean;
   /** True when an allow comes from the run's mode: a confined command of a semi-autonomous or fully autonomous run, and the owner was not asked. */
   mode?: boolean;
+  /** True when an allow is for a file tool inside the task's copy, or a read of the CLI's own saved output, and the owner was not asked. */
+  files?: boolean;
 }

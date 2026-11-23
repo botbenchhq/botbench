@@ -8,7 +8,7 @@ import { isRunMode, MODE_WORDS, type RunMode } from "../engine/modes.ts";
 import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
-import { fullAutonomyRefusal, gate, READ_ONLY_TOOLS, real, summarize, type FloorSettings } from "./gate.ts";
+import { askWords, fullAutonomyRefusal, gate, namesAFile, READ_ONLY_TOOLS, real, requestTarget, summarize, type AskWhy, type FloorSettings } from "./gate.ts";
 import { firstLine } from "../shorten.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
@@ -32,6 +32,12 @@ import { splitPlain } from "./shell.ts";
  * logged under `mode_allowed`; in a fully autonomous run whatever would ask the owner is refused there and logged
  * under `mode_refused`, and the agent is told why. A command is taken as confined only when the attempt was admitted as
  * one whose driver runs every shell command in its sandbox, and the request is exactly the call its hook reported.
+ *
+ * A request for a file tool is put to the same gate in request() as on the socket, with the input an allow hands back:
+ * an edit or read inside the worktree, and a Read of the CLI's saved output of the attempt's own session, run without
+ * asking in every mode (the CLI asks about some itself, its own edit rule being narrower than the worktree). Every call
+ * the hook hears has its directory recorded, so a request is tied to the call that was checked whatever was said about it.
+ * An approval carries why it asks (`asks_because`) and, for a file tool, where it is aimed (`target`), for its card.
  *
  * Grants are read in request() only. A command on its run's pre-approved list, or one the owner gave standing
  * permission, is allowed there without an approval, after the safety floor had its say, and logged with the grant
@@ -153,6 +159,13 @@ export interface Approval {
   storedDecision: Decision | null;
   /** The request comes from a run that read text from outside the project (a GitHub issue): no grant applied to it. */
   outsideText: boolean;
+  /** Why it asks the owner, in one plain line for its card. Null for an approval asked before this was recorded. */
+  asksBecause: string | null;
+  /**
+   * Where a file tool's request is aimed: relative to the worktree when inside it, a full path when not. Null for a
+   * shell command, a tool that names no path, or a relative path whose starting folder was not reported.
+   */
+  target: string | null;
 }
 
 export interface LogEntry {
@@ -202,6 +215,8 @@ export interface Answer {
   standing?: { grantId: number };
   /** Set when the run's mode let the request run without asking: a confined command of a semi-autonomous or fully autonomous run. */
   byMode?: RunMode;
+  /** Set when a file tool's request was allowed without asking, in any mode: a read or an edit inside the worktree, or a read of the CLI's own saved output of this attempt. */
+  files?: true;
 }
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
@@ -301,6 +316,8 @@ function toApproval(row: Record<string, unknown>): Approval {
     parkedAt: text(row.parked_at),
     storedDecision: row.stored_decision === "allow" || row.stored_decision === "decline" ? row.stored_decision : null,
     outsideText: row.outside_text !== 0,
+    asksBecause: text(row.asks_because),
+    target: text(row.target),
   };
 }
 
@@ -416,6 +433,12 @@ export function createBroker(options: {
   floor?: readonly FloorEntry[];
   /** How many approvals of the same command earn the offer of standing permission: a whole number of at least 1. */
   offerStandingAfter?: number;
+  /**
+   * The folder where an attempt's CLI saves the long output of that session's own tool calls, given the attempt's driver,
+   * its session (the resume cursor the CLI reported) and the worktree it started in; null when it keeps none Botbench knows.
+   * A Read inside it is allowed without asking (gate.ts). Left out, there is none.
+   */
+  sessionOutput?: (o: { driver: string; session: string; worktree: string }) => string | null;
 }): Broker {
   const { db } = options;
   const offerStandingAfter = options.offerStandingAfter ?? OFFER_STANDING_AFTER;
@@ -480,11 +503,26 @@ export function createBroker(options: {
   };
 
   type RequestVerdict =
-    | { verdict: "ask"; floor?: string }
+    | { verdict: "ask"; floor?: string; why: AskWhy }
     | { verdict: "deny"; reason: string }
     | { verdict: "refuse"; reason: string; floor?: string }
     | { verdict: "allow"; rule: "preapproved" | "standing"; grant: Grant }
-    | { verdict: "allow"; rule: "mode"; mode: RunMode };
+    | { verdict: "allow"; rule: "mode"; mode: RunMode }
+    | { verdict: "allow"; rule: "files"; edit: boolean };
+
+  /** Where the attempt's CLI keeps the saved output of its own session's calls, read from the attempt's row; undefined when it is not known. */
+  const sessionOutputOf = (attemptId: number | null, worktree: string): string | undefined => {
+    if (attemptId === null || options.sessionOutput === undefined) return undefined;
+    try {
+      const row = db.prepare("SELECT driver, resume_cursor FROM attempts WHERE id = ?").get(attemptId);
+      if (row === undefined || typeof row.resume_cursor !== "string" || row.resume_cursor === "") return undefined;
+      return options.sessionOutput({ driver: String(row.driver), session: row.resume_cursor, worktree }) ?? undefined;
+    } catch (err) {
+      // Not known: such a read asks, as any read outside the worktree does.
+      console.error(`Where attempt ${attemptId} keeps its saved output could not be read: ${words(err)}`);
+      return undefined;
+    }
+  };
 
   /** The mode of the run a request belongs to, read from the store; manual for a task of no run. Throws when it cannot be read. */
   const modeOfRequest = (r: ApprovalRequest): RunMode => {
@@ -508,11 +546,12 @@ export function createBroker(options: {
     } catch (err) {
       // Not known to be anything but manual: the owner decides.
       console.error(`The mode of the run of a request could not be read: ${words(err)}`);
-      return { verdict: "ask" };
+      return { verdict: "ask", why: "unknown" };
     }
-    const nobody = (reason: string): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason } : { verdict: "ask" });
-    if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.");
-    if (r.tool !== "Bash") return nobody(fullAutonomyRefusal(r.tool));
+    // In a manual run every command asks whatever else is so, and the card says that.
+    const nobody = (reason: string, why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason } : { verdict: "ask", why: mode === "manual" && r.tool === "Bash" ? "manual" : why });
+    if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.", "unknown");
+    if (r.tool !== "Bash") return fileRequestVerdict(r, ticket, cwd, mode);
     try {
       // The input the CLI would run is the one its card would show, and the directory is the one its hook reported:
       // only then is the request exactly the call that was checked, and only then may a mode or a grant apply.
@@ -533,15 +572,42 @@ export function createBroker(options: {
       // A run that read outside text (engine/intake.ts) has no grant; one whose mark cannot be read counts as marked.
       const outsideText = task === undefined || task.outside_text !== 0;
       const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, mode, confined: ticket.confined && exact, outsideText, ...(scope === undefined ? {} : { scope }) }, grants, floorSettings);
+      // A confined attempt's command that only asks because it could not be tied to the call that was checked says so.
+      if (verdict.verdict === "ask" && verdict.why === "not_confined" && ticket.confined && !exact) return { ...verdict, why: "not_checked" };
       if (verdict.verdict === "ask" || verdict.verdict === "deny" || verdict.verdict === "refuse") return verdict;
       if (verdict.rule === "mode_confined") return { verdict: "allow", rule: "mode", mode };
-      if (verdict.rule !== "preapproved" && verdict.rule !== "standing") return nobody(fullAutonomyRefusal(r.tool));
+      if (verdict.rule !== "preapproved" && verdict.rule !== "standing") return nobody(fullAutonomyRefusal(r.tool), "unknown");
       const grant = grants.find((g) => g.id === verdict.grantId);
-      return grant ? { verdict: "allow", rule: verdict.rule, grant } : nobody(fullAutonomyRefusal(r.tool));
+      return grant ? { verdict: "allow", rule: verdict.rule, grant } : nobody(fullAutonomyRefusal(r.tool), "unknown");
     } catch (err) {
       // The gate could not be asked: nothing is allowed on it, and the owner decides, or nobody does.
       console.error(`The gate could not decide about a request of task ${r.taskId}: ${words(err)}`);
-      return nobody("This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run.");
+      return nobody("This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run.", "unknown");
+    }
+  };
+
+  /**
+   * The gate's word on a request of the CLI for any tool but the shell, the same in every mode: a read or an edit inside
+   * the worktree, and a Read of the CLI's own saved output of this attempt, run without asking (the CLI may ask about one
+   * when its own rule is narrower, as after the agent moved into a sub-folder); anything else asks, or is refused in a
+   * fully autonomous run. The path checked is the path that runs: an allow hands the CLI back this same input.
+   */
+  const fileRequestVerdict = (r: ApprovalRequest, ticket: Ticket, cwd: string, mode: RunMode): RequestVerdict => {
+    const asked = (why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason: fullAutonomyRefusal(r.tool) } : { verdict: "ask", why });
+    try {
+      const input = isObject(r.input) ? r.input : null;
+      if (input === null || !(namesAFile(r.tool) || r.tool === "Glob" || r.tool === "Grep")) return asked("other_tool");
+      // A path that is not a full one, or a search with none, starts at the folder the agent stands in: it must be known.
+      const where = input.file_path ?? input.notebook_path ?? input.path;
+      if (cwd === "" && !(typeof where === "string" && path.isAbsolute(where))) return asked("not_checked");
+      const at = path.resolve(ticket.worktree, cwd === "" ? "." : cwd);
+      const sessionOutput = sessionOutputOf(ticket.attemptId, ticket.worktree);
+      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: at, mode, ...(sessionOutput === undefined ? {} : { sessionOutput }) }, [], floorSettings);
+      if (verdict.verdict === "allow") return verdict.rule === "auto_worktree_edit" || verdict.rule === "worktree_read" || verdict.rule === "session_output_read" ? { verdict: "allow", rule: "files", edit: verdict.rule === "auto_worktree_edit" } : asked("unknown");
+      return verdict;
+    } catch (err) {
+      console.error(`The gate could not decide about a ${shorten(r.tool, 100)} request of task ${r.taskId}: ${words(err)}`);
+      return mode === "full" ? { verdict: "refuse", reason: "This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run." } : { verdict: "ask", why: "unknown" };
     }
   };
 
@@ -604,6 +670,17 @@ export function createBroker(options: {
       if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Botbench refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
       return Promise.resolve({ decision: "decline", note: null, approvalId: null, refused: verdict.reason });
     }
+    if (verdict.verdict === "allow" && verdict.rule === "files") {
+      if (verdict.edit) {
+        try {
+          // What cannot be logged does not run. A read is not logged, as a read inside the worktree never is.
+          appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "auto_worktree_edit", tool: r.tool, command: requestTarget(r.tool, r.input, ticket!.worktree, cwd === "" ? null : path.resolve(ticket!.worktree, cwd)) ?? r.command, cwd, detail: "Claude Code asked about this change; it is inside the task's copy, so it ran without asking you." });
+        } catch (err) {
+          return deny(`Botbench could not record this edit, so it was not let through: ${words(err)}`);
+        }
+      }
+      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, files: true });
+    }
     if (verdict.verdict === "allow" && verdict.rule === "mode") {
       try {
         // What cannot be logged does not run.
@@ -625,13 +702,21 @@ export function createBroker(options: {
       }
       return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, ...(standing ? { standing: { grantId: grant.id } } : { preapproved: { grantId: grant.id } }) });
     }
-    const always = verdict.verdict === "ask" && verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null;
+    const always = verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null;
+    const asksBecause = askWords(verdict.why, { tool: r.tool, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) });
+    let target: string | null = null;
+    try {
+      target = ticket === undefined ? null : requestTarget(r.tool, r.input, ticket.worktree, cwd === "" ? null : path.resolve(ticket.worktree, cwd));
+    } catch (err) {
+      // The card then says the file was not reported; the request still asks.
+      console.error(`Where a ${shorten(r.tool, 100)} request is aimed could not be worked out: ${words(err)}`);
+    }
     let id: number;
     try {
       id = transaction(db, () => {
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, run_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)")
-          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now());
+          .prepare("INSERT INTO approvals (task_id, run_id, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target);
         const approvalId = Number(inserted.lastInsertRowid);
         appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
@@ -800,7 +885,8 @@ export function createBroker(options: {
     }
     // Asked without grants: nothing a grant allows is ever said over the socket. A shell command hears "ask" here, and
     // the CLI's own request for it is then decided in request(), with the grants, inside this process.
-    const verdict = gate({ tool, input, worktree: ticket.worktree, cwd }, [], floorSettings);
+    const sessionOutput = tool === "Read" ? sessionOutputOf(ticket.attemptId, ticket.worktree) : undefined;
+    const verdict = gate({ tool, input, worktree: ticket.worktree, cwd, ...(sessionOutput === undefined ? {} : { sessionOutput }) }, [], floorSettings);
     // With links followed: a directory that is a link out of the worktree is recorded as where it leads.
     const relative = path.relative(ticket.worktree, real(cwd));
     const from = relative === "" ? "." : relative;
@@ -808,9 +894,11 @@ export function createBroker(options: {
     if (verdict.verdict === "deny" || verdict.verdict === "refuse") return denied(`Botbench's permission check refused this call: ${verdict.reason}`, { ...about, tool, cwd: from });
     // A read-only attempt has reading and the shell and nothing else: any other tool is refused, not asked about.
     if (ticket.readOnly && !READ_ONLY_TOOLS.has(tool)) return denied(`Botbench's permission check refused this call: the ${stepWords(ticket.role)} only reads and may not use ${shorten(tool, 100)}.`, { ...about, tool, command: String(input.file_path ?? input.notebook_path ?? ""), cwd: from });
+    // Where this very call was made from, whatever is said about it: the CLI may still ask about a call the check let
+    // pass (an edit after the agent moved into a sub-folder), and its card then says the folder of this call, not of another.
+    if (ticket.seen.size >= MAX_SEEN && !ticket.seen.has(toolCallId)) ticket.seen.delete(ticket.seen.keys().next().value!);
+    ticket.seen.set(toolCallId, from);
     if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing" || verdict.rule === "mode_confined") {
-      if (ticket.seen.size >= MAX_SEEN) ticket.seen.delete(ticket.seen.keys().next().value!);
-      ticket.seen.set(toolCallId, from);
       return { verdict: "ask", reason: "Botbench asks the owner before this runs." };
     }
     if (verdict.rule === "auto_worktree_edit") {

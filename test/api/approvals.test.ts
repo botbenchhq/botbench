@@ -142,7 +142,7 @@ test("a pending approval is listed with what the card shows, answering it resolv
   const approval = listed[0]!;
   assert.deepEqual(
     { ...approval, id: 0, createdAt: "" },
-    { id: 0, taskId: api.taskId, runId: null, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false },
+    { id: 0, taskId: api.taskId, runId: null, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false, asksBecause: "In Manual mode every command asks you.", target: null },
   );
   assert.deepEqual(announced[0], { approvalId: approval.id, taskId: api.taskId, runId: null, status: "pending" });
   // The task says it is waiting on the owner, in its own description and in the list.

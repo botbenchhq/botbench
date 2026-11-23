@@ -125,24 +125,24 @@ test("a standing grant allows the whole command it names, in any run of its repo
 
   // The whole command, not its leading words: a further argument asks.
   for (const command of ["npm test -- --coverage", "npm test x", "npm test ''", "npm", "npm tes", "npm testx", "NPM test", "./npm test", "env npm test", "FOO=1 npm test"]) {
-    assert.deepEqual(verdict(command, grants), { verdict: "ask" }, command);
+    assert.deepEqual(verdict(command, grants), { verdict: "ask", why: "manual" }, command);
   }
   // An operator, a substitution, a redirect, a glob or a line break makes it not one plain command, which the floor names.
   for (const command of ["npm test && ls", "npm test; ls", "npm test | cat", "npm test > out", "npm test &", "npm test $(id)", "npm test `id`", "npm test *", "npm test\nls", "npm test\n"]) {
-    assert.deepEqual(verdict(command, grants), { verdict: "ask", floor: "not-a-plain-command" }, JSON.stringify(command));
+    assert.deepEqual(verdict(command, grants), { verdict: "ask", floor: "not-a-plain-command", why: "manual" }, JSON.stringify(command));
   }
   // A call that carries more than its command asks.
-  for (const input of [{ command: "npm test", run_in_background: true }, { command: "npm test", timeout: 5 }]) assert.deepEqual(verdict("", grants, { input }), { verdict: "ask" });
+  for (const input of [{ command: "npm test", run_in_background: true }, { command: "npm test", timeout: 5 }]) assert.deepEqual(verdict("", grants, { input }), { verdict: "ask", why: "manual" });
 
   // Another repository, role or directory.
-  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: "/Users/owner/code/other" } }), { verdict: "ask" });
-  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: `${REPO}-2` } }), { verdict: "ask" });
-  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, role: "reviewer" } }), { verdict: "ask" });
-  assert.deepEqual(verdict("npm test", grants, { cwd: path.join(WORKTREE, "packages") }), { verdict: "ask" });
+  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: "/Users/owner/code/other" } }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: `${REPO}-2` } }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, role: "reviewer" } }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(verdict("npm test", grants, { cwd: path.join(WORKTREE, "packages") }), { verdict: "ask", why: "manual" });
   assert.deepEqual(verdict("npm test", [standing(["npm", "test"], { cwd: "packages" })], { cwd: path.join(WORKTREE, "packages") }), ALLOWED);
   // A standing grant that names a run, or no words, grants nothing.
-  assert.deepEqual(verdict("npm test", [standing(["npm", "test"], { runId: 5 })]), { verdict: "ask" });
-  assert.deepEqual(verdict("npm test", [standing([])]), { verdict: "ask" });
+  assert.deepEqual(verdict("npm test", [standing(["npm", "test"], { runId: 5 })]), { verdict: "ask", why: "manual" });
+  assert.deepEqual(verdict("npm test", [standing([])]), { verdict: "ask", why: "manual" });
   assert.equal(matchGrant({ ...scope, cwd: ".", words: [] }, [standing([])]), null);
 
   // A run's pre-approved grant for the same command is the one named when both exist.
@@ -163,7 +163,7 @@ test("AE6, the comparison: the floor is asked before a standing grant, for every
     ["chmod -R 777 /tmp/x", "recursive-permissions-outside-worktree"],
     ["dd if=x of=/dev/disk2", "disk-tool"],
   ];
-  for (const [command, rule] of cases) assert.deepEqual(verdict(command, [standing(command.split(" "))]), { verdict: "ask", floor: rule }, command);
+  for (const [command, rule] of cases) assert.deepEqual(verdict(command, [standing(command.split(" "))]), { verdict: "ask", floor: rule, why: "floor" }, command);
 });
 
 // ---- The ladder, in the real store and broker ----

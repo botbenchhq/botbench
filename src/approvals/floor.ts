@@ -1,5 +1,5 @@
 import path from "node:path";
-import { roughSegments, splitPlain } from "./shell.ts";
+import { quotedPieces, roughSegments, splitPlain, type QuotedWord } from "./shell.ts";
 
 /*
  * The safety floor: the commands that always ask the owner, whatever grants exist. It is a short table of
@@ -40,6 +40,10 @@ type Words = readonly string[];
 interface Reading {
   /** The command's pieces: its words when it is a plain command, one piece per stretch between operators when it is not, and one more for each argument that holds a command of its own. */
   segments: readonly Words[];
+  /** The pieces read for an argument that holds a command of its own (one with a space in it), also among `segments`. */
+  inner: readonly Words[];
+  /** The pieces between operators read with the command's quotes, or null when that reading is not sure of itself (shell.ts). */
+  quoted: { pieces: readonly (readonly QuotedWord[])[]; substitutes: boolean } | null;
   plain: boolean;
   raw: string;
   ctx: FloorContext;
@@ -221,6 +225,37 @@ const SHELL_BUILT = /[$`*?[\]{}]/;
 /** Words that only set a variable for the program after them. */
 const ASSIGNS = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
+/**
+ * Whether the shell builds the program of a piece, or git's subcommand, from a variable, a substitution, a glob or a
+ * brace list (what `live` holds of a word), or a program is handed its words on its input (`xargs git`).
+ */
+function shellNamesProgram(pieces: readonly (readonly QuotedWord[])[]): boolean {
+  return pieces.some((piece) => {
+    const first = piece.find((word) => !ASSIGNS.test(word.text));
+    // `[` and `[[` are the test command, written as a bracket.
+    if (first !== undefined && first.text !== "[" && first.text !== "[[" && (SHELL_BUILT.test(first.live) || first.live.startsWith("="))) return true;
+    return piece.some((word, i) => {
+      const rest = piece.slice(i + 1);
+      if (program(word.text) === "git") {
+        const sub = rest.findIndex((later) => !later.text.startsWith("-"));
+        return sub === -1 || SHELL_BUILT.test(rest[sub]!.live);
+      }
+      return program(word.text) === "xargs" && rest.some((later) => oneOf("git", "sudo", "su", "doas", "eval")(program(later.text)) || SHELLS(program(later.text)));
+    });
+  });
+}
+
+/** Words read without their quotes, as if all of each could be expanded: the reading that leans furthest towards asking. */
+const allLive = (segments: readonly Words[]): QuotedWord[][] => segments.map((segment) => segment.map((word) => ({ text: word, live: word })));
+
+/**
+ * The keychain and SSH key tools, when a word may name one as a program. A relative path shown to lie inside the task's
+ * worktree (`docs/security`) is the project's own file and is not one; any other path of that name is (`/usr/bin/security`,
+ * `~/bin/security`, and `./security` after a `cd` or from a folder outside the worktree).
+ */
+const KEY_TOOLS = new Set(["security", "ssh-add", "ssh-keygen"]);
+const namesKeyTool = (word: string, reading: Reading): boolean => KEY_TOOLS.has(program(word)) && !(word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && insideWorktree(word, reading));
+
 /** The last rule of the floor, which no other matched: the command is not one plain command, and so never runs on a grant. */
 export const NOT_PLAIN = "not-a-plain-command";
 
@@ -279,24 +314,17 @@ export const FLOOR_RULES: readonly FloorRule[] = [
     // Anything aimed at the shell profiles, SSH and GnuPG folders, keychains, login items, git's and npm's own settings,
     // cloud logins, `/etc`, the home directory as a whole, or Botbench's own records; and the keychain and SSH key tools.
     name: "guarded-place",
-    matches: (r) => runs(r, oneOf("security", "ssh-add", "ssh-keygen")) || r.segments.some((segment) => segment.some((word) => guardedPlace(word, r))),
+    matches: (r) => r.segments.some((segment) => segment.some((word) => namesKeyTool(word, r) || guardedPlace(word, r))),
   },
   {
     // A program, or git's subcommand, that the shell builds from a variable, a substitution, a glob or a brace list, or
-    // a program handed its words on its input (`xargs git`): the floor cannot read what will run, so it asks.
+    // a program handed its words on its input (`xargs git`): the floor cannot read what will run, so it asks. The pieces
+    // are read with their quotes, so that a quoted `|` or `(` (`grep "a\|b"`, `grep -n "admit(" src/*.ts`) does not make
+    // a pattern or a file name look like a program; a program a substitution prints is one the shell builds. When the
+    // quoted reading is not sure of itself, or a substitution inside double quotes holds a command it does not follow,
+    // the pieces read without quotes count too, as they always did.
     name: "program-named-by-the-shell",
-    matches: (r) =>
-      !r.plain &&
-      (r.segments.some((segment) => {
-        const first = segment.find((word) => !ASSIGNS.test(word));
-        // `[` and `[[` are the test command, written as a bracket.
-        return first !== undefined && first !== "[" && first !== "[[" && (SHELL_BUILT.test(first) || first.startsWith("="));
-      }) ||
-        runs(r, oneOf("git"), (rest) => {
-          const sub = rest.findIndex((word) => !word.startsWith("-"));
-          return sub === -1 || SHELL_BUILT.test(rest[sub]!);
-        }) ||
-        runs(r, oneOf("xargs"), (rest) => rest.some((word) => oneOf("git", "sudo", "su", "doas", "eval")(program(word)) || SHELLS(program(word))))),
+    matches: (r) => !r.plain && shellNamesProgram(r.quoted === null ? allLive(r.segments) : [...r.quoted.pieces, ...allLive(r.quoted.substitutes ? r.segments : r.inner)]),
   },
   {
     // Programs that start work outside the sandbox the command runs in: an app (`open`), AppleScript, a login item or a scheduled job.
@@ -336,7 +364,7 @@ export function floor(given: string, ctx: FloorContext): string | null {
   const outer = words === null ? roughSegments(command, ctx.home) : [words];
   // An argument with a space in it may be a command for the program to run (`env -S`, `git … foreach`, `find -exec sh -c`).
   const inner = outer.flatMap((segment) => segment.filter((word) => word.includes(" ")).flatMap((word) => roughSegments(word, ctx.home)));
-  const reading: Reading = { segments: [...outer, ...inner], plain: words !== null, raw: command, ctx };
+  const reading: Reading = { segments: [...outer, ...inner], inner, quoted: words === null ? quotedPieces(command) : null, plain: words !== null, raw: command, ctx };
   // The owner's own entries first: they say in the owner's words why this asks.
   for (const entry of ctx.extra ?? []) if (reading.segments.some((segment) => holds(segment, entry))) return entry.name;
   return FLOOR_RULES.find((rule) => rule.matches(reading))?.name ?? null;

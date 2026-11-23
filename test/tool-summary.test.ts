@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { approvalWords, callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { approvalWords, directoryWords, placeWords, callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
 import { bannedIn } from "../e2e/voice.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
@@ -145,4 +145,21 @@ test("an approval for a tool that is not a shell command reads as the tool's nam
   // A shell command is its command, as before; text that is not the JSON of an object is shown as it is.
   assert.deepEqual(approvalWords("Bash", "npm test"), { line: null, raw: "npm test" });
   assert.deepEqual(approvalWords("Odd", "not json"), { line: null, raw: "not json" });
+});
+
+test("an approval card names the file of a file tool and the folder otherwise, inside or outside the task's copy, and says Not reported only when nothing was given", () => {
+  // A shell command: the folder the agent stood in.
+  assert.deepEqual(placeWords({ tool: "Bash", cwd: ".", target: null }), { term: "Folder", words: "The top folder of the task's copy" });
+  assert.deepEqual(placeWords({ tool: "Bash", cwd: "sub", target: null }), { term: "Folder", words: "sub (inside the task's copy)" });
+  assert.deepEqual(placeWords({ tool: "Bash", cwd: "", target: null }), { term: "Folder", words: "Not reported" });
+  // A file tool: the file, however far the agent's own folder is from it.
+  assert.deepEqual(placeWords({ tool: "Write", cwd: "sub", target: "/Users/me/elsewhere.txt" }), { term: "File", words: "/Users/me/elsewhere.txt (outside the task's copy)" });
+  assert.deepEqual(placeWords({ tool: "Read", cwd: ".", target: "/Users/me/.claude/projects/x/s/tool-results/a.txt" }), { term: "File", words: "/Users/me/.claude/projects/x/s/tool-results/a.txt (outside the task's copy)" });
+  assert.deepEqual(placeWords({ tool: "Edit", cwd: ".", target: ".git/config" }), { term: "File", words: ".git/config (inside the task's copy)" });
+  assert.deepEqual(placeWords({ tool: "Write", cwd: "sub", target: null }), { term: "File", words: "Not reported" });
+  // A search: the folder it looks in.
+  assert.deepEqual(placeWords({ tool: "Grep", cwd: ".", target: "/etc" }), { term: "Folder", words: "/etc (outside the task's copy)" });
+  assert.deepEqual(placeWords({ tool: "Grep", cwd: "sub", target: "." }), { term: "Folder", words: "The top folder of the task's copy" });
+  assert.equal(directoryWords("../x"), "../x (outside the task's copy)");
+  for (const words of ["The top folder of the task's copy", "Not reported", "sub (inside the task's copy)"]) assert.deepEqual(bannedIn(words), []);
 });

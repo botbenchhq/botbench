@@ -218,6 +218,28 @@ export function stepGroupOpen({ touched, live, states }: { touched: boolean | nu
   return live || states.some((state) => state !== "done");
 }
 
+/** Where the agent stood, in words. The path is relative to the task's own copy of the project; "" is a folder nobody reported. */
+export function directoryWords(cwd: string): string {
+  if (cwd === ".") return "The top folder of the task's copy";
+  if (cwd === "") return "Not reported";
+  return cwd === ".." || cwd.startsWith("../") ? `${cwd} (outside the task's copy)` : `${cwd} (inside the task's copy)`;
+}
+
+/** The tools whose request names one file: their card shows that file, not the folder the agent stood in. */
+const FILE_TOOLS = new Set(["Read", "Write", "Edit", "NotebookEdit"]);
+
+/**
+ * Where a request is aimed, as its card says it: the file of a file tool, the folder a search looks in, and otherwise the
+ * folder the agent stood in. `target` is the server's: relative to the task's copy when inside it, a full path when not.
+ */
+export function placeWords(approval: { tool: string; cwd: string; target: string | null }): { term: "File" | "Folder"; words: string } {
+  const file = FILE_TOOLS.has(approval.tool);
+  const { target } = approval;
+  if (target === null) return file ? { term: "File", words: "Not reported" } : { term: "Folder", words: directoryWords(approval.cwd) };
+  if (target === ".") return { term: "Folder", words: directoryWords(".") };
+  return { term: file ? "File" : "Folder", words: target.startsWith("/") ? `${target} (outside the task's copy)` : `${target} (inside the task's copy)` };
+}
+
 /**
  * How an approval card says what is asked: for a tool that is not a shell command, a line in words from the tool's name
  * and main argument (as the transcript says it), with its raw arguments, which are what an allow lets run, laid out for

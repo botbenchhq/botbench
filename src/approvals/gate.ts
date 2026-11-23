@@ -10,9 +10,11 @@ import { splitPlain } from "./shell.ts";
  * The gate: what Botbench itself decides about a tool call before anyone is asked. It is a function of the
  * request, the grants and the safety floor: it writes nothing and asks nobody, and reads the file system only to
  * follow the links in a path.
- *   allow   the call may run, and `rule` says why: an edit or a read inside the worktree, a command the
- *           owner pre-approved for this run, or one the owner gave standing permission
- *   ask     the owner decides; `floor` names the floor rule when it is the floor that says so
+ *   allow   the call may run, and `rule` says why: an edit or a read inside the worktree, a Read of the CLI's own
+ *           saved output of the attempt's session, a command the owner pre-approved for this run, or one the owner
+ *           gave standing permission
+ *   ask     the owner decides; `floor` names the floor rule when it is the floor that says so, and `why` is the
+ *           reason the card gives (`askWords`)
  *   deny    the call cannot be put to anyone as it is
  *   refuse  a fully autonomous run asks nobody: what would ask the owner is refused instead, saying why
  * The floor is asked before any grant, so no grant gets past it.
@@ -48,7 +50,32 @@ export interface GateRequest {
    * run's pre-approved commands nor any standing permission. What the mode lets run because it is confined still runs.
    */
   outsideText?: boolean;
+  /**
+   * The folder where the agent's CLI saves the long output of this attempt's own tool calls, as a full path (for Claude
+   * Code `<config>/projects/<copy>/<session>/tool-results`, src/drivers/claude-code.ts). A Read of a file inside it is
+   * allowed: the CLI wrote it there from this session's own calls and told the agent to read it. Left out, none is.
+   */
+  sessionOutput?: string;
 }
+
+/** Why a request asks the owner. The card says it in words (`askWords`). */
+export type AskWhy =
+  /** The safety rules always ask about it; `floor` names the rule. */
+  | "floor"
+  /** A manual run asks about every command. */
+  | "manual"
+  /** A command that could not be shown to run inside the confinement, so the mode does not let it run. */
+  | "not_confined"
+  /** Botbench could not tie the request to the call its check saw: the folder was not reported, or the input differs. */
+  | "not_checked"
+  /** A file tool aimed outside the task's copy. */
+  | "outside_copy"
+  /** A change to git's own folder or Claude Code's settings inside the copy. */
+  | "guarded_in_copy"
+  /** A tool that is neither the shell nor a file tool, which always asks. */
+  | "other_tool"
+  /** The request does not say what it would run, or comes from an agent Botbench cannot place. */
+  | "unknown";
 
 /** The part of the floor that is not the request: the owner's home, and the entries the owner's config adds. */
 export interface FloorSettings {
@@ -61,14 +88,16 @@ export interface FloorSettings {
 export type GateVerdict =
   /** An edit inside the worktree, left to the CLI's own edit rule and logged; or a read inside it, which is not logged. */
   | { verdict: "allow"; rule: "auto_worktree_edit" | "worktree_read" }
+  /** A Read of the long output the CLI saved for this attempt's own calls (`sessionOutput`). Not logged, like a read inside the worktree. */
+  | { verdict: "allow"; rule: "session_output_read" }
   /** A command on the run's pre-approved list. */
   | { verdict: "allow"; rule: "preapproved"; grantId: number }
   /** A command the owner gave standing permission: the whole command, for this role, repository and directory. */
   | { verdict: "allow"; rule: "standing"; grantId: number }
   /** A confined command of a semi-autonomous or fully autonomous run. */
   | { verdict: "allow"; rule: "mode_confined" }
-  /** The owner decides. `floor` is the floor rule that makes this always ask, when one does. */
-  | { verdict: "ask"; floor?: string }
+  /** The owner decides. `floor` is the floor rule that makes this always ask, when one does; `why` is what the card says. */
+  | { verdict: "ask"; floor?: string; why: AskWhy }
   /** Refused without asking anyone. */
   | { verdict: "deny"; reason: string }
   /** What would ask the owner, refused because the run is fully autonomous; `floor` names the floor rule when it is the floor that would ask. */
@@ -79,6 +108,43 @@ export function fullAutonomyRefusal(tool: string, floorRule?: string): string {
   if (floorRule !== undefined) return `This run is fully autonomous, so Botbench refuses what its safety rules would otherwise ask you about (${floorRule}). It was not run.`;
   if (tool === "Bash") return "This run is fully autonomous, so a command runs without you only inside the protected copy, and this one could not be shown to run kept away from your sign-ins and the network. It was not run.";
   return `This run is fully autonomous, so nothing is put to you for approval, and ${tool.slice(0, 100)} was refused. It was not run.`;
+}
+
+/** What each rule of the safety rules is about, as the card's reason line says it. An entry the owner's config adds is shown by its own name. */
+const FLOOR_WORDS: Record<string, string> = {
+  "recursive-delete-outside-worktree": "it deletes a folder that is not shown to be inside the task's copy",
+  "git-push": "it sends commits to another computer",
+  "git-config-override": "it changes what git runs",
+  sudo: "it runs as another user",
+  "download-into-shell": "it runs something straight from the internet",
+  "shell-runs-text": "it hands a shell text to run",
+  "recursive-permissions-outside-worktree": "it changes permissions on a folder that is not shown to be inside the task's copy",
+  "disk-tool": "it writes to or formats a disk",
+  "guarded-place": "it reaches your sign-ins, settings, home folder or Botbench's own files",
+  "program-named-by-the-shell": "Botbench cannot read from the command which program it runs",
+  "leaves-the-sandbox": "it starts an app or a job outside the task's protection",
+};
+
+/** Why a request asks the owner, in one plain line for its card. */
+export function askWords(why: AskWhy, o: { tool: string; floor?: string }): string {
+  switch (why) {
+    case "floor":
+      return `On the always-ask list: ${o.floor === undefined ? "Botbench always asks about this." : `${FLOOR_WORDS[o.floor] ?? o.floor.slice(0, 100)}.`}`;
+    case "manual":
+      return "In Manual mode every command asks you.";
+    case "not_confined":
+      return "It could not be shown to run kept away from your sign-ins and the network.";
+    case "not_checked":
+      return "Botbench could not match it to the request it checked.";
+    case "outside_copy":
+      return "Outside the task's copy.";
+    case "guarded_in_copy":
+      return "It changes git's own files or Claude Code's settings in the task's copy.";
+    case "other_tool":
+      return `Botbench asks you each time ${o.tool.slice(0, 100)} is used.`;
+    case "unknown":
+      return "Botbench could not tell what this would run, or which of its agents asked.";
+  }
 }
 
 /** The tools that change a file, and the field of their input that names it. */
@@ -145,14 +211,16 @@ const CONFINED_SHELL_FIELDS = new Set([...PLAIN_SHELL_FIELDS, "timeout", "run_in
 /** Decide about a shell command: the floor first, then the grants (the run's pre-approved list and the standing permissions). */
 function shellVerdict(request: GateRequest, input: Record<string, unknown>, grants: readonly Grant[], settings: FloorSettings): GateVerdict {
   const { command } = input;
-  if (typeof command !== "string" || command === "") return { verdict: "ask" };
+  if (typeof command !== "string" || command === "") return { verdict: "ask", why: "unknown" };
   if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
   const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
   // What the mode lets run: a confined command of a semi-autonomous or fully autonomous run, with nothing beside it that could take it out.
-  const byMode = (request.mode === "semi" || request.mode === "full") && request.confined === true && Object.keys(input).every((name) => CONFINED_SHELL_FIELDS.has(name));
-  const otherwise: GateVerdict = byMode ? { verdict: "allow", rule: "mode_confined" } : { verdict: "ask" };
-  if (rule === NOT_PLAIN) return byMode ? otherwise : { verdict: "ask", floor: rule };
-  if (rule !== null) return { verdict: "ask", floor: rule };
+  const loosened = request.mode === "semi" || request.mode === "full";
+  const byMode = loosened && request.confined === true && Object.keys(input).every((name) => CONFINED_SHELL_FIELDS.has(name));
+  const why: AskWhy = loosened ? "not_confined" : "manual";
+  const otherwise: GateVerdict = byMode ? { verdict: "allow", rule: "mode_confined" } : { verdict: "ask", why };
+  if (rule === NOT_PLAIN) return byMode ? otherwise : { verdict: "ask", floor: rule, why };
+  if (rule !== null) return { verdict: "ask", floor: rule, why: "floor" };
   // A call that carries more than its command (a time limit, a background run) is not the command alone.
   if (!Object.keys(input).every((name) => PLAIN_SHELL_FIELDS.has(name))) return otherwise;
   const words = splitPlain(command);
@@ -179,20 +247,43 @@ function decide(request: GateRequest, grants: readonly Grant[], settings: FloorS
   const editField = EDIT_TOOLS[request.tool];
   if (editField !== undefined) {
     const relative = insideWorktree(request.worktree, request.cwd, input[editField]);
-    if (relative === null || guarded(relative)) return { verdict: "ask" };
+    if (relative === null) return { verdict: "ask", why: "outside_copy" };
+    if (guarded(relative)) return { verdict: "ask", why: "guarded_in_copy" };
     return { verdict: "allow", rule: "auto_worktree_edit" };
   }
   const readField = READ_TOOLS[request.tool];
   if (readField !== undefined) {
     const where = input[readField];
-    if (request.tool !== "Read" && (reachesOut(input.pattern) || reachesOut(input.glob))) return { verdict: "ask" };
+    if (request.tool !== "Read" && (reachesOut(input.pattern) || reachesOut(input.glob))) return { verdict: "ask", why: "outside_copy" };
     if (where === undefined && request.tool !== "Read") return { verdict: "allow", rule: "worktree_read" };
     const target = typeof where === "string" ? path.resolve(request.cwd, where) : null;
     const inside = target !== null && (target === path.resolve(request.worktree) || insideWorktree(request.worktree, request.cwd, where) !== null);
-    return inside ? { verdict: "allow", rule: "worktree_read" } : { verdict: "ask" };
+    if (inside) return { verdict: "allow", rule: "worktree_read" };
+    // The CLI's own saved output of this attempt's calls, links followed: nothing of another session's, nothing else of the CLI's folder.
+    if (request.tool === "Read" && request.sessionOutput !== undefined && insideWorktree(request.sessionOutput, request.cwd, where) !== null) return { verdict: "allow", rule: "session_output_read" };
+    return { verdict: "ask", why: "outside_copy" };
   }
-  return { verdict: "ask" };
+  return { verdict: "ask", why: "other_tool" };
 }
+
+/**
+ * Where a file tool's request is aimed, for its card: the path relative to the worktree when it lies inside it (links
+ * followed), the full path when it does not. Null for a tool that names no path, and for a relative path when the
+ * directory it starts from is not known: then the card cannot say where it lands.
+ */
+export function requestTarget(tool: string, input: unknown, worktree: string, cwd: string | null): string | null {
+  const field = EDIT_TOOLS[tool] ?? READ_TOOLS[tool];
+  const where = isObject(input) && field !== undefined ? input[field] : undefined;
+  if (typeof where !== "string" || where === "" || where.includes("\0")) return null;
+  if (cwd === null && !path.isAbsolute(where)) return null;
+  const from = cwd ?? worktree;
+  const full = path.resolve(from, where);
+  if (full === path.resolve(worktree) && real(full) === real(path.resolve(worktree))) return ".";
+  return insideWorktree(worktree, from, where) ?? full;
+}
+
+/** Whether a tool names a file, so that its card shows the file rather than the folder the agent stood in. */
+export const namesAFile = (tool: string): boolean => EDIT_TOOLS[tool] !== undefined || tool === "Read";
 
 /**
  * What a card shows for a request, which is all of what an allow lets run: a

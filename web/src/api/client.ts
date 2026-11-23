@@ -14,7 +14,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -662,6 +662,10 @@ export interface Approval {
   standingOffer?: StandingOffer;
   /** The request comes from a run that read a GitHub issue, written outside the project. */
   outsideText: boolean;
+  /** Why it asks, in one plain line; null for a request from before Botbench recorded it. */
+  asksBecause: string | null;
+  /** Where a file tool's request is aimed: relative to the task's copy when inside it, a full path when not; null when it names none or it is not known. */
+  target: string | null;
 }
 
 /** The scope of a standing permission a card offers. */
