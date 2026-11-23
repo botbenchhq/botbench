@@ -1129,4 +1129,18 @@ CREATE TRIGGER chat_attempts_no_delete BEFORE DELETE ON chat_attempts
 BEGIN SELECT RAISE(ABORT, 'chat attempts are append-only'); END;
 `,
   },
+  {
+    // Notifications already sent for a task's or run's end (src/push.ts): one row per task or run and fixed text, so a
+    // notification is sent once even across a restart. It holds no words of the task, only what the payload holds.
+    name: "push_sent",
+    sql: `
+CREATE TABLE push_sent (
+  subject TEXT NOT NULL CHECK (subject IN ('task', 'run')),
+  subject_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  PRIMARY KEY (subject, subject_id, title)
+);
+`,
+  },
 ];

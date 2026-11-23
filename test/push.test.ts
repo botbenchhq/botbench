@@ -3,7 +3,7 @@ import { createPublicKey, verify } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { approvalMessage, encryptMessage, loadOrCreatePushKeys, PUSH_KEYS_FILE, readyMessage, testMessage, vapidAuthorization } from "../src/push.ts";
+import { approvalMessage, encryptMessage, failedMessage, loadOrCreatePushKeys, nothingToReviewMessage, PUSH_KEYS_FILE, readyMessage, stoppedMessage, testMessage, vapidAuthorization } from "../src/push.ts";
 import { decrypt } from "./support/push-service.ts";
 import { tempDir } from "./support/repo.ts";
 
@@ -89,8 +89,34 @@ test("a notification carries only its fixed text and the screen to open: nothing
   const ready = readyMessage(task);
   assert.deepEqual(ready, { title: "A task is ready for review", path: "/#/tasks/4" });
   assert.deepEqual(Object.keys(testMessage()).sort(), ["path", "title"]);
-  for (const message of [fromTask, ready]) {
+  const run = { id: 9, status: "done", prompt: "secret words", repo: "/Users/me/secret-repo" };
+  const ended = { ...task, status: "failed", reason: "Claude Code finished without changing any file. secret words" };
+  const ends = [failedMessage(ended), stoppedMessage(ended), nothingToReviewMessage(run)];
+  assert.deepEqual(ends, [
+    { title: "A task failed", path: "/#/tasks/4" },
+    { title: "A task stopped", path: "/#/tasks/4" },
+    { title: "A run ended with nothing to review", path: "/#/runs/9" },
+  ]);
+  for (const message of [fromTask, ready, ...ends]) {
     const text = JSON.stringify(message);
     for (const forbidden of ["curl", ".env", "secret", "Users", "auth.ts", "because", "Bash", "src"]) assert.ok(!text.includes(forbidden), `${forbidden} in ${text}`);
+  }
+});
+
+/** The screens a notification may open, read from the file the browser runs: the service worker, or the page it hands the tap to. */
+function screenPattern(file: string): RegExp {
+  const source = fs.readFileSync(path.resolve(import.meta.dirname, "..", file), "utf8");
+  const literal = /const SCREEN = \/(.+)\/;\n/.exec(source);
+  assert.ok(literal, `${file} has its SCREEN pattern`);
+  return new RegExp(literal[1]!);
+}
+
+test("tapping any notification opens its screen: the service worker and the page both accept every path a message names, and nothing else", () => {
+  const paths = [approvalMessage({ taskId: 3, runId: 2 }), approvalMessage({ taskId: null, runId: 2 }), readyMessage({ id: 4 }), failedMessage({ id: 5 }), stoppedMessage({ id: 6 }), nothingToReviewMessage({ id: 7 }), testMessage()].map((m) => m.path);
+  assert.deepEqual(paths, ["/#/tasks/3", "/#/runs/2", "/#/tasks/4", "/#/tasks/5", "/#/tasks/6", "/#/runs/7", "/#/settings"]);
+  for (const file of ["web/public/sw.js", "web/src/app/notifications.ts"]) {
+    const screen = screenPattern(file);
+    for (const p of paths) assert.ok(screen.test(p), `${file} opens ${p}`);
+    for (const p of ["/#/tasks/0", "/#/runs/", "/#/tasks/5/x", "//evil.example/#/tasks/5", "https://evil.example/", "/#/runs/7?x"]) assert.ok(!screen.test(p), `${file} refuses ${p}`);
   }
 });

@@ -128,7 +128,10 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
-    }, onRunChange: stream.announceRun });
+    }, onRunChange: (run) => {
+      stream.announceRun(run);
+      push.runChanged(run);
+    } });
   const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
   // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.
   const connect = createConnect({
