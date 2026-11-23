@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, silenceLimitMs, usageLimitWaitMs } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryClaims, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, silenceLimitMs, usageLimitWaitMs } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -292,6 +292,16 @@ test("a repository may name the remote and base branch of its pull requests; ori
     [{ baseBranch: "a..b" }, /"baseBranch" must be/],
   ];
   for (const [over, words] of refused) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": over } })), words, JSON.stringify(over));
+});
+
+test("claiming issues is off for a repository unless its settings say true, and only true or false is taken", (t) => {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  assert.equal(repositoryClaims(loadConfig(configFiles(t, BASE)), repo), false);
+  assert.equal(repositoryClaims(loadConfig({ defaults: DEFAULT_CONFIG_FILE }), repo), false, "off as shipped");
+  assert.equal(repositoryClaims(loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { claimIssues: false } } })), repo), false);
+  assert.equal(repositoryClaims(loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { claimIssues: true } } })), repo), true);
+  for (const bad of ["true", 1, null]) assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": { claimIssues: bad } } })), /"claimIssues" must be true or false/, String(bad));
 });
 
 test("the cap on rounds of fixes after a review is 2 as shipped and when unset, can be set by the owner, and must be a whole number from 0 to 5", (t) => {

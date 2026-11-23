@@ -345,6 +345,14 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   {run.repo}
                 </dd>
               </div>
+              {run.claim !== null && (
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Other workbenches</dt>
+                  <dd data-testid="run-claim" data-ds-content="" className="ds-key-value__value">
+                    {run.claim.words}
+                  </dd>
+                </div>
+              )}
               {run.specPath !== null && (
                 <div className="ds-key-value__item">
                   <dt className="ds-key-value__label">Spec file</dt>

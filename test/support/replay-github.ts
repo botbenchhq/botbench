@@ -78,9 +78,12 @@ export function replayGitHub(o: { existing?: boolean; signedOut?: boolean; hold?
       issue: async () => {
         throw new Error("The delivery replay does not read issues.");
       },
-      // Open pull requests are listed through test/support/replay-peers.ts.
+      // A repository's pull requests are listed through test/support/replay-peers.ts.
+      pullRequests: async () => {
+        throw new Error("The delivery replay does not list a repository's pull requests.");
+      },
       openPullRequests: async () => {
-        throw new Error("The delivery replay does not list open pull requests.");
+        throw new Error("The delivery replay does not list a repository's open pull requests.");
       },
     },
   };

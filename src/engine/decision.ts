@@ -3,8 +3,10 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { appendLog } from "../approvals/broker.ts";
 import { now, transaction } from "../store/db.ts";
-import { isOwnBranch, notOwnWords } from "../workbench.ts";
+import { isOwnBranch, lessonBranch, notOwnWords, workbenchName } from "../workbench.ts";
 import { branchCheckedOutAt, branchCommit, deleteTaskBranch, forgetMissingWorktree, leftoverFiles, removeWorktree } from "../worktrees.ts";
+import { recordLearning, type KeptLearning } from "./learnings.ts";
+import { MAX_TITLE } from "./roles.ts";
 import { listed } from "./scope.ts";
 import { getTask, moveTaskIn, settleRunIn, TaskError, words, type Task, type TaskStatus } from "./task.ts";
 
@@ -273,12 +275,14 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
     }
   }
 
+  // The owner's reason for a reject, committed on a lesson branch for later runs to learn from (engine/learnings.ts).
+  const learned = decision === "reject" && note !== null ? await keepLearning(db, task, note) : null;
   const kept = discard ? "deleted" : "kept";
   const copy = present ? "removed the task's copy" : "found the task's copy already gone";
   const files = leftovers.length === 0 ? "" : ` The copy held ${leftovers.length === 1 ? "1 file" : `${leftovers.length} files`} the checks left, removed with it as you confirmed: ${listed(leftovers)}.`;
   // A run that chose pull requests pushes an accepted task's branch next (engine/delivery.ts): the entry says so.
   const delivers = decision === "accept" && task.runId !== null && db.prepare("SELECT delivery FROM runs WHERE id = ?").get(task.runId)?.delivery === "pull_request";
-  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. ${acceptedWords(delivers ? "pull_request" : "branch")}${files}${note === null ? "" : ` Your note: ${note}`}`;
+  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. ${acceptedWords(delivers ? "pull_request" : "branch")}${files}${learned === null ? "" : ` The note below is kept for later runs in ${learned.file} on the branch ${learned.branch}. Nothing was pushed or merged, and your own files and branch are as they were: review that branch and merge it like any change, and later runs here learn from the note.`}${note === null ? "" : ` Your note: ${note}`}`;
   const made = transaction(db, () => {
     const now_ = getTask(db, task.id)!;
     ready(now_);
@@ -293,6 +297,25 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
   });
   if (decision === "accept") announceAccepted(db, made.task);
   return made;
+}
+
+/**
+ * Commit the owner's reason for rejecting `task` to docs/solutions/ on its lesson branch (src/workbench.ts), based on
+ * the commit the task started from, from the task's plan title (or its number, for a task started on its own) and the
+ * note, and nothing else: never its prompt or any outside text. Returns the branch and file, or null when it could not
+ * be committed: the rejection goes on all the same.
+ */
+async function keepLearning(db: DatabaseSync, task: Task, note: string): Promise<KeptLearning | null> {
+  const row = db.prepare("SELECT title FROM plan_tasks WHERE task_id = ?").get(task.id);
+  const title = typeof row?.title === "string" ? row.title.slice(0, MAX_TITLE) : `Task ${task.id}`;
+  try {
+    if (task.baseCommit === null) throw new Error("the task has no commit it started from to base the lesson branch on.");
+    const at = { branch: lessonBranch(workbenchName(db), task.id), base: task.baseCommit };
+    return await recordLearning(task.repo, at, { title, note, taskId: task.id, date: now().slice(0, 10) });
+  } catch (err) {
+    console.error(`Keeping the note on task ${task.id} in ${task.repo} failed, and the task is rejected all the same: ${words(err)}`);
+    return null;
+  }
 }
 
 /*

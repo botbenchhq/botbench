@@ -57,7 +57,7 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[] }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[] } & ({ prompt: string } | { specPath: string } | {}));
 
 /**
  * Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens; `connect`
@@ -98,7 +98,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -112,7 +112,9 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
   const build = f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
-  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask };
+  // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
+  const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, ...takeOver };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
