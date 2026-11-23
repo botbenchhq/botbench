@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { logSandboxedCalls } from "../approvals/broker.ts";
 import { chatWebAccess } from "../approvals/web-access.ts";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { makeReviewFolder } from "../drivers/cli-sandbox.ts";
@@ -186,7 +187,7 @@ export function chatScopeWords(driver: Pick<Driver, "name" | "capabilities">): s
   if (driver.name === CLAUDE_CODE) return null;
   const name = agentName(driver.name);
   if (driver.capabilities.chatTools !== true) return `${name} answers from the conversation alone: it cannot read your files or change anything here. Botbench gives it the chat so far.`;
-  return `${name} cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds: in a chat it can read, change and run things only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access in chat is Allow. Botbench gives it the chat so far.`;
+  return `${name} cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds: in a chat it can read, change and run things only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access is Allow. Botbench gives it the chat so far.`;
 }
 
 /**
@@ -259,6 +260,7 @@ export function createChat(o: ChatOptions): Chat {
     }
     join(session.attemptId, roundId);
     session.onEvent(o.onEvent);
+    if (tools) logSandboxedCalls(db, session, { agent: name, taskId: null, cwd: folder.path, where: repository === null ? "the chat's folder" : "the chat's folder, the attached repository read-only" });
     const timer = setTimeout(() => {
       const event: DriverEvent = { type: "error", message: `${name} did not finish within ${minutes(limitMs)} and was stopped.`, raw: null };
       db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, ?, ?)").run(session.attemptId, now(), event.type, JSON.stringify(event));

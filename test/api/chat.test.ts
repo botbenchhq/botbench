@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { chatHistory, chatScopeWords, claudeContinues, createChat, type Chat } from "../../src/api/chat.ts";
-import { createBroker } from "../../src/approvals/broker.ts";
+import { actionLog, createBroker } from "../../src/approvals/broker.ts";
 import { createTurns, SCRATCH_DIR, TurnError } from "../../src/api/turns.ts";
 import { setChatWebAccess } from "../../src/approvals/web-access.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
@@ -72,7 +72,7 @@ test("the screen is told in plain words what each agent can do in a chat: for Co
   for (const [driver, name] of [[codex, "Codex"], [grok, "Grok"]] as const) {
     const words = chatScopeWords(driver)!;
     assert.ok(words.startsWith(`${name} cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds:`), words);
-    assert.match(words, /only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access in chat is Allow\./);
+    assert.match(words, /only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access is Allow\./);
   }
   assert.match(chatScopeWords(antigravity)!, /^Antigravity answers from the conversation alone: it cannot read your files or change anything here\./);
   assert.equal(chatScopeWords(new ClaudeCodeDriver()), null, "Claude Code asks you itself");
@@ -148,6 +148,35 @@ test("a web search an agent reports is a step of the chat's transcript: Codex's 
   assert.equal(ended(db, codex!.attemptId)?.reason, "completed");
   assert.equal(ended(db, grok!.attemptId)?.reason, "completed");
   assert.equal(text(db, grok!.attemptId), "People say yes.");
+});
+
+test("CRITICAL: every tool call Codex and Grok make in a chat is in the append-only action log, once, under the chat's attempt, as run in its own sandbox without asking", async (t) => {
+  // Constructed lines, in the forms each CLI prints (Codex 0.171.0's items; Grok 1.0.92's tool calls): no CLI ran.
+  const codexLines = [
+    '{"type":"thread.started","thread_id":"t1"}',
+    '{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \'printf hello > made.txt\'","aggregated_output":"","exit_code":null,"status":"in_progress"}}',
+    '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc \'printf hello > made.txt\'","aggregated_output":"","exit_code":0,"status":"completed"}}',
+    '{"type":"item.completed","item":{"id":"item_0","type":"web_search","id":"exec-1","query":"node 24 release date","action":{"type":"search","query":"node 24 release date"}}}',
+    '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}',
+  ];
+  const grokLines = [
+    '{"type":"available_commands","tools":["run_terminal_command","read_file"],"commands":[]}',
+    '{"type":"tool_call","toolCallId":"c1","toolName":"run_terminal_command","rawInput":{"command":"cat notes.txt","description":"Read notes"}}',
+    '{"type":"tool_call_update","toolCallId":"c1","rawOutput":{"exit_code":0}}',
+    '{"type":"tool_call","toolCallId":"c1","toolName":"run_terminal_command","rawInput":{"command":"cat notes.txt","description":"Read notes"}}',
+    '{"type":"text","data":"Done."}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"s1","usage":{"input_tokens":5,"output_tokens":2}}',
+  ];
+  const { db, chat } = setup(t, { codex: { lines: codexLines }, grok: { lines: grokLines } });
+  const [codex, grok] = await chat.send({ message: "Do it.", conversation: [], agents: [{ agent: "codex", model: null }, { agent: "grok", model: null }] });
+  await settled(chat, [codex!.attemptId, grok!.attemptId]);
+  const logged = actionLog(db).map((e) => ({ rule: e.rule, taskId: e.taskId, attemptId: e.attemptId, tool: e.tool, command: e.command }));
+  assert.deepEqual(logged.filter((e) => e.attemptId === codex!.attemptId), [
+    { rule: "sandboxed", taskId: null, attemptId: codex!.attemptId, tool: "shell", command: "/bin/zsh -lc 'printf hello > made.txt'" },
+    { rule: "sandboxed", taskId: null, attemptId: codex!.attemptId, tool: "web_search", command: "node 24 release date" },
+  ]);
+  assert.deepEqual(logged.filter((e) => e.attemptId === grok!.attemptId), [{ rule: "sandboxed", taskId: null, attemptId: grok!.attemptId, tool: "run_terminal_command", command: "cat notes.txt" }]);
+  assert.match(actionLog(db).find((e) => e.attemptId === codex!.attemptId)!.detail ?? "", /Codex cannot ask you, so it ran this without asking, kept by its own sandbox to the chat's folder/);
 });
 
 test("a second message, to another agent, carries the first message and the first reply, and the replies say who wrote them", async (t) => {

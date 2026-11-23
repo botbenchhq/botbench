@@ -31,6 +31,7 @@ const RULE_WORDS: Record<LogRule, string> = {
   web_allowed: "Ran without asking: Web access is Allow",
   web_refused: "Refused without asking: Web access is Off",
   bookkeeping: "Ran without asking: Claude Code's own to-do list or tool loading",
+  sandboxed: "Ran without asking: kept by its own sandbox, as Codex and Grok cannot ask",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { logSandboxedCalls } from "../approvals/broker.ts";
 import type { Confinement } from "../confinement.ts";
 import { DriverUnavailableError, type Driver, type DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
@@ -177,6 +178,8 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
     return store();
   }
   attemptId = session.attemptId;
+  // A reviewer that cannot ask (Codex, Grok) runs its tools without the broker: each call is logged under the task.
+  if (session.capabilities.permissionRequests === false && tools) logSandboxedCalls(o.db, session, { agent: name, taskId: o.taskId, cwd: o.worktree, where: "the task's copy, read-only" });
   let failure: string | null = null;
   session.onEvent((event) => {
     if (event.type === "text") reply = event.text;

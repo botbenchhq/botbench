@@ -1386,4 +1386,45 @@ INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated
 DROP TABLE owner_settings_before_actions;
 `,
   },
+  {
+    // Codex and Grok have their own tools in a chat and a review and cannot ask before they act (threat model, B17):
+    // each tool call they report is logged as one that ran without asking under the agent's own sandbox (`sandboxed`),
+    // as every agent action that ran is logged. The check is made again as in the migration before.
+    name: "sandboxed agent calls in the log",
+    sql: `
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_sandboxed;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'sandboxed')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_sandboxed ORDER BY id;
+DROP TABLE action_log_before_sandboxed;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

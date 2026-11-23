@@ -274,7 +274,9 @@ export function parseCodexLine(line: string): DriverEvent[] {
         }
         case "web_search": {
           // A search OpenAI runs on its own servers: a step of the transcript, with what was searched for.
-          const query = str(item.query) ?? (isObject(item.action) ? str(item.action.query) : null) ?? "";
+          // 0.171.0 starts the item before the query is known (`"query":""`), so the step is recorded once complete.
+          const query = str(item.query) || (isObject(item.action) ? str(item.action.query) : null) || "";
+          if (!done && query === "") return [];
           const call: DriverEvent = { type: "tool_call", id, name: "web_search", input: { query } };
           return done ? [call, { type: "tool_result", id, output: query, isError: false }] : [call];
         }

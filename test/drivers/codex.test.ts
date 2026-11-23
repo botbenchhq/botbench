@@ -174,6 +174,17 @@ test("a web search Codex reports becomes a step of the transcript, with what was
   ]);
 });
 
+test("Codex 0.171.0 starts a search before it knows the query: the step is recorded once it is complete, with what was searched for, not as an empty search", () => {
+  // The two lines as Codex 0.171.0 printed them on this Mac (results cut).
+  const started = parseCodexLine('{"type":"item.started","item":{"id":"item_0","type":"web_search","id":"exec-5b2e","query":"","action":{"type":"other"}}}');
+  assert.deepEqual(started, [], "no step with an empty query");
+  const done = parseCodexLine('{"type":"item.completed","item":{"id":"item_0","type":"web_search","id":"exec-5b2e","query":"node 24 release date","action":{"type":"search","query":"node 24 release date"},"results":[]}}');
+  assert.deepEqual(done, [
+    { type: "tool_call", id: "exec-5b2e", name: "web_search", input: { query: "node 24 release date" } },
+    { type: "tool_result", id: "exec-5b2e", output: "node 24 release date", isError: false },
+  ]);
+});
+
 test("the login Codex 0.171.0 reports in its own words: ChatGPT is a subscription, an API key is billed by use, anything else is signed out", () => {
   assert.deepEqual(parseLoginStatus("Logged in using ChatGPT\n", 0), { signedIn: true, billing: "subscription" });
   assert.deepEqual(parseLoginStatus("Logged in using an API key - sk-proj-***ABCD\n", 0), { signedIn: true, billing: "metered" });
