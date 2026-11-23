@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { ApiError, signIn } from "../api/client.ts";
+import { tabTitle } from "../app/arrival.ts";
 import { codeFromAddress } from "../app/sign-in-code.ts";
 import { Alert } from "../components/header.tsx";
 
@@ -12,6 +13,9 @@ export function SignInScreen({ notice, onSignedIn }: { notice: string | null; on
   useEffect(() => {
     if (carried !== null) window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }, [carried]);
+  useEffect(() => {
+    document.title = tabTitle("Sign in");
+  }, []);
   const [method, setMethod] = useState<Method>(carried === null ? "token" : "code");
   const [token, setToken] = useState("");
   const [code, setCode] = useState(carried ?? "");

@@ -451,3 +451,30 @@ export function reviewRows(reviewers: readonly { agent: string; models: ModelLis
     ];
   });
 }
+
+/** The parts of a key press that decide whether it sends. */
+export interface SendKey {
+  key: string;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  /** The key belongs to text still being composed (Japanese, Chinese, Korean input): Enter there picks a word. */
+  isComposing: boolean;
+  /** 229 marks a key the input method took. Safari reports the Enter that ends a composition this way, after `isComposing` is already false. */
+  keyCode: number;
+}
+
+/**
+ * Whether a key press in the message box sends. With a keyboard and a mouse (`fine`), Enter sends and Shift with Enter
+ * starts a new line, as in the chat products people know. On a touch screen Enter is the keyboard's new-line key and
+ * Send is the button. Cmd or Ctrl with Enter sends on both.
+ */
+export function sendsOn(event: SendKey, pointer: { fine: boolean }): boolean {
+  if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return false;
+  if (event.metaKey || event.ctrlKey) return true;
+  return pointer.fine && !event.shiftKey && !event.altKey;
+}
+
+/** The line under the message box that says which key sends, where Enter does. */
+export const SEND_KEY_HINT = "Enter sends. Shift with Enter starts a new line.";

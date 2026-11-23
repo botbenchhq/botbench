@@ -187,6 +187,8 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
   const id = useId();
   const [value, setValue] = useState<WebAccess | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // The last choice reached Botbench: said under the row, since a select shows the choice before it is kept.
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     getChatWebAccess().then(setValue, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
@@ -197,7 +199,11 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
     const before = value;
     setValue(next);
     setProblem(null);
-    setChatWebAccess(next).then(setValue, (err: unknown) => {
+    setSaved(false);
+    setChatWebAccess(next).then((kept) => {
+      setValue(kept);
+      setSaved(true);
+    }, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       setValue(before);
       setProblem(err instanceof ApiError ? `Web access was not saved. ${err.message}` : "Web access was not saved: Botbench could not be reached.");
@@ -216,6 +222,11 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
           <p className="ds-settings-row__description" id={`${id}-web-about`}>
             Whether Claude Code may fetch pages and search the web, in a chat, a task or a run. The address or search goes to that site or search service; what comes back goes to Claude Code. Each one shows in the transcript. A run started from a GitHub issue always asks. Codex, Grok and Antigravity search the web, in a chat and when they review a task, only on Allow: their own provider runs the search without asking you first, and their commands reach nothing on the network but that provider.
           </p>
+          {saved && problem === null && (
+            <p role="status" data-testid="web-access-saved" className="ds-settings-row__description">
+              Saved.
+            </p>
+          )}
         </div>
         <div className="ds-settings-row__control">
           <div className="ds-select">
@@ -252,6 +263,8 @@ function FallbackList({ onSignedOut }: { onSignedOut: () => void }) {
   const id = useId();
   const [value, setValue] = useState<FallbackSetting | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // The last choice reached Botbench: said under the row, since a select shows the choice before it is kept.
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     getFallbacks().then(setValue, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
@@ -262,7 +275,11 @@ function FallbackList({ onSignedOut }: { onSignedOut: () => void }) {
     const before = value;
     if (before !== null) setValue({ ...before, list });
     setProblem(null);
-    setFallbacks(list).then(setValue, (err: unknown) => {
+    setSaved(false);
+    setFallbacks(list).then((kept) => {
+      setValue(kept);
+      setSaved(true);
+    }, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       setValue(before);
       setProblem(err instanceof ApiError ? `The list of agents to switch to was not saved. ${err.message}` : "The list of agents to switch to was not saved: Botbench could not be reached.");
@@ -280,6 +297,11 @@ function FallbackList({ onSignedOut }: { onSignedOut: () => void }) {
           <p className="ds-settings-row__description" id={`${id}-fallbacks-about`}>
             {FALLBACK_ABOUT}
           </p>
+          {saved && problem === null && (
+            <p role="status" data-testid="fallbacks-saved" className="ds-settings-row__description">
+              Saved.
+            </p>
+          )}
         </div>
         <div className="ds-settings-row__control">
           <div className="ds-select">
@@ -307,6 +329,8 @@ function AskEveryCommand({ onSignedOut }: { onSignedOut: () => void }) {
   const id = useId();
   const [value, setValue] = useState<boolean | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // The last choice reached Botbench: said under the row, since a select shows the choice before it is kept.
+  const [saved, setSaved] = useState(false);
   useEffect(() => {
     getAskEveryCommand().then(setValue, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
@@ -317,7 +341,11 @@ function AskEveryCommand({ onSignedOut }: { onSignedOut: () => void }) {
     const before = value;
     setValue(next);
     setProblem(null);
-    setAskEveryCommand(next).then(setValue, (err: unknown) => {
+    setSaved(false);
+    setAskEveryCommand(next).then((kept) => {
+      setValue(kept);
+      setSaved(true);
+    }, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       setValue(before);
       setProblem(err instanceof ApiError ? `Ask before every command was not saved. ${err.message}` : "Ask before every command was not saved: Botbench could not be reached.");
@@ -333,6 +361,11 @@ function AskEveryCommand({ onSignedOut }: { onSignedOut: () => void }) {
           <p className="ds-settings-row__description" id={`${id}-every-about`}>
             In Manual runs and single tasks, asks you before each command, also one kept inside the task's copy. Off, only commands on the always-ask list or outside the copy ask.
           </p>
+          {saved && problem === null && (
+            <p role="status" data-testid="ask-every-saved" className="ds-settings-row__description">
+              Saved.
+            </p>
+          )}
         </div>
         <div className="ds-settings-row__control">
           <div className="ds-select">
@@ -362,6 +395,15 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
   // Opened at Paired workbench below 1024px (a thread's back link, a card's): that group is brought into view.
   useEffect(() => {
     if (section === "paired" && !wide) document.querySelector('[data-testid="paired-workbench"]')?.scrollIntoView({ block: "start" });
+  }, [section, wide]);
+  // The two-pane Settings draws no new screen when another section is chosen, so the section itself takes focus then:
+  // a keyboard or a screen reader starts in what the row opened. Not on the first draw, which the screen's heading has.
+  const detail = useRef<HTMLElement>(null);
+  const drawn = useRef<SettingsSection | null | undefined>(undefined);
+  useEffect(() => {
+    const before = drawn.current;
+    drawn.current = section;
+    if (wide && before !== undefined && before !== section && section !== "agents") detail.current?.focus();
   }, [section, wide]);
   useEffect(() => {
     if (section !== "agents") return;
@@ -512,7 +554,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
       <Frame current={null}>
         <main data-testid="settings-panes" className="ds-app-shell__main ds-master-detail min-w-0 px-lg">
           <div className="ds-master-detail__list">
-            <PageHeader title="Settings" compact>
+            <PageHeader title="Settings" tab={chosen.name} compact>
               <p className="ds-page-header__description">Each change is saved as you make it.</p>
             </PageHeader>
             <ul data-testid="settings-sections" className="ds-list">
@@ -528,7 +570,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
             </ul>
           </div>
           {/* The section's own groups carry its headings, so the region is named by the row that opened it. */}
-          <section data-testid="settings-section" className="ds-master-detail__detail ds-settings-page" aria-label={chosen.name}>
+          <section ref={detail} tabIndex={-1} data-testid="settings-section" className="ds-master-detail__detail ds-settings-page" aria-label={chosen.name}>
             {content[chosen.section]}
           </section>
         </main>

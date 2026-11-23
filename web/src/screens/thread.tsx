@@ -54,7 +54,7 @@ export function ThreadScreen({ pairingId, contextId, onSignedOut }: { pairingId:
   return (
     <Frame current={null} back={{ href: "#/settings/paired", label: "Paired workbench" }}>
       <Page>
-        <PageHeader title={name === null ? "Conversation" : `Conversation with ${name}`} theirs={name !== null}>
+        <PageHeader title={name === null ? "Conversation" : `Conversation with ${name}`} tab="Conversation" theirs={name !== null}>
           {pairing !== null && (
             <p className="ds-page-header__description">{pairing.state === "ended" ? "The pairing has ended: nothing more is sent or taken." : "Each message leaves this Mac only when you press Send."}</p>
           )}

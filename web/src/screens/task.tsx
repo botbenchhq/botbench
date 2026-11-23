@@ -262,7 +262,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
     <Frame current={null} banner={connected ? undefined : <StreamBanner />} showing={waiting.map((approval) => approval.id)}>
       <Page>
         {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be: the task's own words, once read. */}
-        <PageHeader title={taskTitle(id, task?.prompt ?? null)} theirs={task !== null}>
+        <PageHeader title={taskTitle(id, task?.prompt ?? null)} tab={`Task ${id}`} theirs={task !== null}>
           {/* While a card waits, the header holds the title alone and the card comes next; these lines follow the card. */}
           {task !== null && asking === undefined && (
             <>

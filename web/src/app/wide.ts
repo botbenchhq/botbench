@@ -7,12 +7,19 @@ import { useSyncExternalStore } from "react";
  */
 export const WIDE = "(min-width: 1024px)";
 
-const query = (): MediaQueryList => window.matchMedia(WIDE);
-const subscribe = (changed: () => void): (() => void) => {
-  const list = query();
-  list.addEventListener("change", changed);
-  return () => list.removeEventListener("change", changed);
-};
+/** A media query as a value a screen reads: the screen is drawn again when the answer changes. */
+function media(text: string): () => boolean {
+  const query = (): MediaQueryList => window.matchMedia(text);
+  const subscribe = (changed: () => void): (() => void) => {
+    const list = query();
+    list.addEventListener("change", changed);
+    return () => list.removeEventListener("change", changed);
+  };
+  return () => useSyncExternalStore(subscribe, () => query().matches);
+}
 
 /** Whether the window is at least 1024px wide now; the screen is drawn again when it crosses that width. */
-export const useWide = (): boolean => useSyncExternalStore(subscribe, () => query().matches);
+export const useWide = media(WIDE);
+
+/** Whether the main pointer is a mouse or a trackpad, which comes with a keyboard: there Enter sends a message. */
+export const useFinePointer = media("(pointer: fine)");
