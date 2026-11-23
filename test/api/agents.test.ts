@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createAgentChecks } from "../../src/api/agents.ts";
@@ -25,7 +26,7 @@ async function codexRoles(): Promise<string[]> {
 
 function counted(): { drivers: Driver[]; calls: () => number } {
   let calls = 0;
-  const drivers: Driver[] = [new ClaudeCodeDriver(), new CodexDriver(), new GrokDriver(), new AntigravityDriver()];
+  const drivers: Driver[] = [new ClaudeCodeDriver(), new CodexDriver(), new GrokDriver(), new AntigravityDriver({ dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "botbench-agents-")) })];
   for (const d of drivers) {
     const real = d.probe.bind(d);
     d.probe = () => {
@@ -82,7 +83,7 @@ test("GET /api/agents says when the agents were checked, answers a second time f
   const first = await get("/api/agents");
   assert.deepEqual(first.agents.map((a) => a.agent), ["claude-code", "codex", "grok", "antigravity"]);
   // Which agents read a repository attached to a chat: the rule the chat's own request is checked by (src/api/chat.ts).
-  assert.deepEqual(first.agents.map((a) => a.readsRepository), [false, true, true, false]);
+  assert.deepEqual(first.agents.map((a) => a.readsRepository), [false, true, true, true]);
   assert.deepEqual(first.agents.map((a) => a.roles), [["planner", "builder"], await codexRoles(), ["reviewer"], ["reviewer"]]);
   assert.ok(Number.isFinite(Date.parse(first.checkedAt)), first.checkedAt);
   const again = await get("/api/agents");

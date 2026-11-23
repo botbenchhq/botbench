@@ -80,7 +80,7 @@ test("start waits with the link, a second start is 409, a wrong code ends it wit
   const { base, headers } = await start(t, replayedClaude("wait", state));
   const connect = "/api/agents/claude-code/connect";
   const idle = await call(base, headers, "GET", connect);
-  assert.deepEqual(idle, { status: 200, body: { driver: "claude-code", kind: "link", terminalCommand: "claude auth login", signOutCommand: "claude auth logout", takesCode: true, state: "idle", url: null, code: null, expiresAt: null, reason: null } });
+  assert.deepEqual(idle, { status: 200, body: { driver: "claude-code", kind: "link", terminalCommand: "claude auth login", signOutCommand: "claude auth logout", keptByBotbench: false, takesCode: true, state: "idle", url: null, code: null, expiresAt: null, reason: null } });
 
   const started = await call(base, headers, "POST", connect);
   assert.equal(started.status, 200);

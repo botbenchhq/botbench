@@ -45,6 +45,9 @@ export const REFUSAL_REASONS = [
   "thread_full",
   "too_many_messages",
   "too_many_cards",
+  // The receiving end does not take this kind on the route it came by, or not yet at all (a question or an answer
+  // before anything can show it).
+  "kind_not_taken",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
@@ -78,28 +81,35 @@ export interface SignedEnvelope {
 }
 
 /** Whether `text` has no lone surrogate, so it has exactly one UTF-8 form. */
-const wellFormed = (text: string): boolean => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text);
+export const wellFormed = (text: string): boolean => !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text);
 
 const PREFIX = Buffer.from("botbench peer envelope 1\n", "utf8");
 const FIELDS = ["pairingId", "kind", "messageId", "contextId", "parentId", "repository", "senderKey", "recipientKey", "sequence", "time", "body"] as const;
 
-/** The one byte form of an envelope that is signed and checked. */
-export function envelopeBytes(e: Envelope): Buffer {
-  const parts: Buffer[] = [PREFIX];
-  for (const field of FIELDS) {
-    const value = e[field];
-    if (typeof value === "string" && !wellFormed(value)) throw new Error(`The envelope's ${field} is not well-formed text, so it has no one byte form.`);
+/**
+ * A fixed prefix and then each value in order, as one tag byte (0 absent, 1 present) and, when present, a 4-byte
+ * big-endian length and the value's UTF-8 bytes: the one byte form of everything Botbench signs or MACs for a peer.
+ */
+export function lengthPrefixed(prefix: Buffer, values: readonly (string | null)[], names: readonly string[] = []): Buffer {
+  const parts: Buffer[] = [prefix];
+  for (const [i, value] of values.entries()) {
     if (value === null) {
       parts.push(Buffer.from([0]));
       continue;
     }
-    const bytes = Buffer.from(typeof value === "number" ? String(value) : value, "utf8");
+    if (!wellFormed(value)) throw new Error(`The ${names[i] ?? `field ${i + 1}`} is not well-formed text, so it has no one byte form.`);
+    const bytes = Buffer.from(value, "utf8");
     const head = Buffer.alloc(5);
     head[0] = 1;
     head.writeUInt32BE(bytes.length, 1);
     parts.push(head, bytes);
   }
   return Buffer.concat(parts);
+}
+
+/** The one byte form of an envelope that is signed and checked. */
+export function envelopeBytes(e: Envelope): Buffer {
+  return lengthPrefixed(PREFIX, FIELDS.map((field) => (typeof e[field] === "number" ? String(e[field]) : (e[field] as string | null))), FIELDS.map((field) => `envelope's ${field}`));
 }
 
 /** The SHA-256 of an envelope's byte form, hex: what tells a replay (same bytes) from a conflict (same id, other bytes). */

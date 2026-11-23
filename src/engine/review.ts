@@ -1,11 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
-import { logSandboxedCalls } from "../approvals/broker.ts";
+import { askThroughBroker, logSandboxedCalls, type Broker } from "../approvals/broker.ts";
 import type { Confinement } from "../confinement.ts";
 import { DriverUnavailableError, type Driver, type DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now } from "../store/db.ts";
 import { commitsDiff, describeCommits } from "../worktrees.ts";
-import { agentName, parseVerdict, reviewDiff, reviewerPrompt, sentOfDiff, type PlanTask, type PreviousReview, type ReviewedFile } from "./roles.ts";
+import { agentName, parseVerdict, REVIEWER, reviewDiff, reviewerPrompt, sentOfDiff, type PlanTask, type PreviousReview, type ReviewedFile } from "./roles.ts";
 
 /*
  * The review station (U20, in part). Once a task of a run that names a reviewer is built, committed and checked, the
@@ -138,6 +138,11 @@ export interface ReviewOptions {
    */
   webSearch?: boolean;
   limitMs?: number;
+  /**
+   * Where the requests of a reviewer that asks before it acts (Antigravity) go, as the task's review step's: read-only,
+   * so only reads and confined commands can be allowed. Without it, everything such a reviewer would ask is refused.
+   */
+  broker?: Pick<Broker, "admit" | "request">;
   /** Aborted when the run is cancelled or Botbench stops: the review is stopped. */
   signal?: AbortSignal;
   /** Called when one of the reviewer's events was stored. */
@@ -185,15 +190,21 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
     return store();
   }
   let session: DriverSession;
+  // A reviewer that asks (Antigravity) is admitted as the task's review step: read-only, its commands confined.
+  const asks = tools && o.driver.capabilities.permissionRequests && o.driver.capabilities.chatTools === true;
+  const admission = asks && o.broker !== undefined ? o.broker.admit({ taskId: o.taskId, role: REVIEWER, worktree: o.worktree, readOnly: true, confined: o.driver.capabilities.confinedCommands === true }) : null;
   try {
-    session = await o.driver.startAttempt({ db: o.db, cwd: o.worktree, readOnly: true, confinement: { ...o.confinement, allowedHosts: [] }, ...(webSearch ? { webSearch } : {}), ...(o.model === null ? {} : { model: o.model }) });
+    session = await o.driver.startAttempt({ db: o.db, cwd: o.worktree, readOnly: true, ...(admission === null ? {} : { gate: { socketPath: admission.socketPath, secret: admission.secret } }), confinement: { ...o.confinement, allowedHosts: [] }, ...(webSearch ? { webSearch } : {}), ...(o.model === null ? {} : { model: o.model }) });
   } catch (err) {
+    admission?.release();
     problem = `${name} could not review this task: ${err instanceof DriverUnavailableError ? err.probe.problem ?? err.message : words(err)}`;
     return store();
   }
   attemptId = session.attemptId;
+  admission?.bind(session.attemptId);
   // A reviewer that cannot ask (Codex, Grok) runs its tools without the broker: each call is logged under the task.
   if (session.capabilities.permissionRequests === false && tools) logSandboxedCalls(o.db, session, { agent: name, taskId: o.taskId, cwd: o.worktree, where: "the task's copy, read-only" });
+  else if (asks) askThroughBroker(o.db, o.broker ?? { request: async () => ({ decision: "decline", note: null, approvalId: null, refused: "Botbench's permission check is not set up for this review." }) }, session, { who: { taskId: o.taskId }, role: REVIEWER, agent: name, cwd: o.worktree, where: "the task's copy, read-only" });
   let failure: string | null = null;
   session.onEvent((event) => {
     if (event.type === "text") reply = event.text;
@@ -221,6 +232,7 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
     o.signal?.removeEventListener("abort", onAbort);
   }
   await session.close().catch(() => {});
+  admission?.release();
 
   if (why === "limit") {
     outcome = "timed_out";
