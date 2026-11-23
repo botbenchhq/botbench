@@ -1,9 +1,0 @@
-test/api/chat.test.ts
-test/api/tasks.test.ts
-test/chat-view.test.ts
-test/confinement.test.ts
-test/drivers/cli-sandbox.test.ts
-test/drivers/codex.test.ts
-test/drivers/grok.test.ts
-test/engine/review.test.ts
-test/engine/reviewer-prompt.test.ts
