@@ -1,8 +1,10 @@
 import type { RunDetail, RunStatus, RunSummary } from "../api/client.ts";
 import { LOOKS, type Look } from "./looks.ts";
 import { folderName } from "../app/composer.ts";
+import { counted } from "../app/format.ts";
 
-const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
+/** A count of tasks: "1 task", "3 tasks". */
+export const tasksWord = (n: number): string => counted(n, "task", "tasks");
 
 /** A run that is done although no task of it was ever ready for review: each failed, was stopped or was cancelled. */
 const nothingReviewed = (run: { status: RunStatus; tasks: readonly { status: string }[] }): boolean => run.status === "done" && !run.tasks.some((task) => task.status === "accepted" || task.status === "rejected");

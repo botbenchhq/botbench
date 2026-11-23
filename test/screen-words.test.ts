@@ -131,20 +131,25 @@ test("the header's tray is not shown on the screen that already shows every appr
 });
 
 test("a task waiting for a usage limit says so in plain words, naming the time it tries again, with its own label and look", () => {
-  // Built from local times, so the words are the same in any time zone the test runs in.
-  const waiting = { status: "waiting_for_limit" as const, reason: null, baseCommit: "a", headCommit: "b", attemptId: 1, waitingOnApproval: false, parked: false, resuming: false, ofPlan: 3, decision: null, pullRequest: { state: "none" as const, number: null }, retryAt: new Date(2026, 10, 22, 14, 30).toISOString() };
-  assert.equal(statusSentence(waiting, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset. It will try again at 14:30.");
+  // The reader's time zone and locale are named, so the words are the same on any machine the test runs on.
+  const GB = { locale: "en-GB", timeZone: "Europe/London" };
+  const at = (day: number, hour: number, minute: number): Date => new Date(Date.UTC(2026, 10, day, hour, minute));
+  const waiting = { status: "waiting_for_limit" as const, reason: null, baseCommit: "a", headCommit: "b", attemptId: 1, waitingOnApproval: false, parked: false, resuming: false, ofPlan: 3, decision: null, pullRequest: { state: "none" as const, number: null }, retryAt: at(22, 14, 30).toISOString() };
+  assert.equal(statusSentence(waiting, at(22, 9, 5), GB), "Waiting for a usage limit to reset. It will try again at 14:30.");
   // Another day is named.
-  assert.equal(statusSentence({ ...waiting, retryAt: new Date(2026, 10, 24, 8, 0).toISOString() }, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset. It will try again on Tuesday 24 November at 08:00.");
+  assert.equal(statusSentence({ ...waiting, retryAt: at(24, 8, 0).toISOString() }, at(22, 9, 5), GB), "Waiting for a usage limit to reset. It will try again on Tuesday 24 November at 08:00.");
+  // The clock, the day's order and the day itself are the reader's: twelve hours in the United States, and already tomorrow in Tokyo.
+  assert.match(statusSentence(waiting, at(22, 9, 5), { locale: "en-US", timeZone: "Europe/London" }), /^Waiting for a usage limit to reset\. It will try again at 2:30\sPM\.$/u);
+  assert.equal(statusSentence({ ...waiting, retryAt: at(22, 16, 30).toISOString() }, at(22, 9, 5), { locale: "en-GB", timeZone: "Asia/Tokyo" }), "Waiting for a usage limit to reset. It will try again on Monday 23 November at 01:30.");
   // The time has come and the task is being started again.
-  assert.equal(statusSentence(waiting, new Date(2026, 10, 22, 14, 31)), "Waiting for a usage limit to reset. It is trying again now.");
+  assert.equal(statusSentence(waiting, at(22, 14, 31), GB), "Waiting for a usage limit to reset. It is trying again now.");
   assert.equal(statusWord(waiting), "Usage limit");
   assert.deepEqual(statusLook(waiting), LOOKS.usageLimit);
   assert.notDeepEqual(LOOKS.usageLimit, LOOKS.stopped);
-  assert.deepEqual(bannedIn(statusSentence(waiting, new Date(2026, 10, 22, 9, 5))), []);
+  assert.deepEqual(bannedIn(statusSentence(waiting, at(22, 9, 5), GB)), []);
   // The run screen's row for it, and its transcript, use the same words.
-  assert.equal(waitingWords(waiting.retryAt, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset. It will try again at 14:30.");
-  assert.equal(waitingWords(null, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset.");
+  assert.equal(waitingWords(waiting.retryAt, at(22, 9, 5), GB), "Waiting for a usage limit to reset. It will try again at 14:30.");
+  assert.equal(waitingWords(null, at(22, 9, 5), GB), "Waiting for a usage limit to reset.");
 });
 
 test("a task stopped because its agent went silent says so in words on the task screen and on the run screen, naming the limit", () => {

@@ -3,6 +3,7 @@ import { Approval as ApprovalView, type ApprovalFact, visibleText } from "../../
 import { answerApproval, answerQuestion, ApiError, grantStanding, type Approval } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ConfirmAction } from "./confirm.tsx";
+import { counted } from "../app/format.ts";
 import { approvalWords, directoryWords, placeWords } from "./tool-summary.ts";
 
 /** The tray's last "open" a card has answered by taking the focus. Kept across screens, so one open moves the focus once. */
@@ -16,7 +17,7 @@ let focusedFor = 0;
 export const visible = (text: string): string => visibleText(text);
 
 /** A count as it is said: "once", "3 times". */
-export const times = (n: number): string => (n === 1 ? "once" : `${n} times`);
+export const times = (n: number): string => (n === 1 ? "once" : counted(n, "time", "times"));
 
 
 /** Which step of the work asks, in the words of the steps: Plan, Build, Review. Any other name is shown as it is. */

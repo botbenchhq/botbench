@@ -1,6 +1,7 @@
 import { LOOKS, type Look } from "./looks.ts";
 import type { FileChange, ModelList, PullRequestView, TaskDecision, TaskStatus, TaskSummary } from "../api/client.ts";
 import { firstLine } from "../../../src/shorten.ts";
+import { clock, counted, dayAndClock, plural, sameDay, type Where } from "../app/format.ts";
 
 const STATUS_WORD: Record<TaskStatus, string> = {
   queued: "Queued",
@@ -17,23 +18,17 @@ const STATUS_WORD: Record<TaskStatus, string> = {
   drafted: "Drafted a message",
 };
 
-const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const two = (n: number): string => String(n).padStart(2, "0");
-
 /**
- * A task waiting for a usage limit, in words, with the time it tries again in this device's own time: "at 14:30" the
- * same day, with the day named on another. Without a time, only the wait; once the time has come, that it is trying now.
+ * A task waiting for a usage limit, in words, with the time it tries again in this device's own time and as its locale
+ * writes a clock and a day: "at 14:30" the same day, with the day named on another. Without a time, only the wait; once
+ * the time has come, that it is trying now.
  */
-export function waitingWords(retryAt: string | null, now = new Date()): string {
+export function waitingWords(retryAt: string | null, now = new Date(), where: Where = {}): string {
   const base = "Waiting for a usage limit to reset.";
   const at = retryAt === null ? Number.NaN : Date.parse(retryAt);
   if (!Number.isFinite(at)) return base;
   if (at <= now.getTime()) return `${base} It is trying again now.`;
-  const when = new Date(at);
-  const clock = `${two(when.getHours())}:${two(when.getMinutes())}`;
-  const sameDay = when.getFullYear() === now.getFullYear() && when.getMonth() === now.getMonth() && when.getDate() === now.getDate();
-  return `${base} It will try again ${sameDay ? `at ${clock}` : `on ${DAYS[when.getDay()]} ${when.getDate()} ${MONTHS[when.getMonth()]} at ${clock}`}.`;
+  return `${base} It will try again ${sameDay(at, now, where) ? `at ${clock(at, where)}` : `on ${dayAndClock(at, { ...where, weekday: true })}`}.`;
 }
 
 /** Whether the task stands still until the owner answers a request of its agent. */
@@ -68,7 +63,7 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming"> & Partial<Pick<TaskSummary, "waitingFor">>): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : behind(task) ? LOOKS.queued : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt" | "waitingFor" | "waitingNote" | "onNoteRound" | "noteRoundLine">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date()): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt" | "waitingFor" | "waitingNote" | "onNoteRound" | "noteRoundLine">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date(), where: Where = {}): string {
   // Why the task needs the owner: a fully autonomous run that did not accept it, or, in any mode, a protected file it changed.
   const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
@@ -113,7 +108,7 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
     case "cancelled":
       return `Cancelled. ${task.reason ?? "Its run was cancelled."}`;
     case "waiting_for_limit":
-      return waitingWords(task.retryAt ?? null, now);
+      return waitingWords(task.retryAt ?? null, now, where);
     case "drafted":
       return `Drafted a message. ${task.reason ?? "Claude Code changed no file and drafted a message for another workbench."}`;
   }
@@ -148,12 +143,12 @@ export const fileMarks = (file: Pick<FileChange, "expected" | "protected">): str
 
 /** The line over the changed files that says what their marks mean, or null when no file has a mark. */
 export function fileMarksLine(files: readonly Pick<FileChange, "expected" | "protected">[]): string | null {
-  const count = (n: number): string => (n === 1 ? "1 file" : `${n} files`);
+  const count = (n: number): string => counted(n, "file", "files");
   const guarded = files.filter((f) => f.protected).length;
   const unexpected = files.filter((f) => !f.expected).length;
   const parts = [
-    ...(guarded > 0 ? [`${count(guarded)} ${guarded === 1 ? "is" : "are"} under a protected path, which only you can accept`] : []),
-    ...(unexpected > 0 ? [`${count(unexpected)} ${unexpected === 1 ? "was" : "were"} not expected from the plan: the task's words, its checks and its tests do not name ${unexpected === 1 ? "it" : "them"}`] : []),
+    ...(guarded > 0 ? [`${count(guarded)} ${plural(guarded, "is", "are")} under a protected path, which only you can accept`] : []),
+    ...(unexpected > 0 ? [`${count(unexpected)} ${plural(unexpected, "was", "were")} not expected from the plan: the task's words, its checks and its tests do not name ${plural(unexpected, "it", "them")}`] : []),
   ];
   return parts.length === 0 ? null : `${parts.join(". ")}.`;
 }

@@ -2,6 +2,7 @@ import type { Delivery, IssueChoice, KnownRepository, ModelList, OnLimit, Review
 import { chipWords } from "./chat.ts";
 import { noteProblem, sourceRepoProblem, type ComposerSource } from "./run-source.ts";
 import { MODE_NAMES } from "./run-words.ts";
+import { counted } from "./format.ts";
 
 /*
  * The composer on the home screen: one box that sends a chat prompt, starts a task or plans a run, depending on what
@@ -412,7 +413,7 @@ export function issueWords(issue: Pick<AttachedIssue, "number" | "title"> | null
 }
 
 /** The Allowed commands row's value. */
-export const commandsWords = (n: number): string => (n === 0 ? "None" : n === 1 ? "1 command" : `${n} commands`);
+export const commandsWords = (n: number): string => (n === 0 ? "None" : counted(n, "command", "commands"));
 
 /** A path as the two parts the design system cuts in the middle: the folders before the last, and the last. */
 export function splitPath(path: string): [string, string] {

@@ -1,6 +1,7 @@
 import type { BoardGroup, BoardItem } from "../api/client.ts";
 import { runWord } from "../components/run-status.ts";
 import { statusWord } from "../components/task-status.ts";
+import { counted } from "./format.ts";
 
 /*
  * What the column of chats and work beside a wide screen lists and says, decided without a browser
@@ -45,8 +46,6 @@ export function matching(rows: readonly WorkRow[], query: string): WorkRow[] {
   const words = query.trim().toLowerCase();
   return words === "" ? [...rows] : rows.filter((r) => r.title.toLowerCase().includes(words));
 }
-
-const counted = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 /** "2 runs and 3 tasks", "1 task", "1 chat, 1 run and 2 tasks": what the listed rows are, by kind. */
 function kinds(rows: readonly WorkRow[]): string {

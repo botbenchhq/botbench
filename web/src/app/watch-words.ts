@@ -1,15 +1,13 @@
 import type { AuthorRelation } from "../../../src/github.ts";
 import type { Proposal, WatchStatus } from "../api/client.ts";
 import { folderName } from "./composer.ts";
+import { clock } from "./format.ts";
 
 /*
  * The words of the issue watch on Work and in Settings (src/engine/watch.ts), decided without a browser. A proposal's
  * title and author were written outside the project, and what gh said is a program's output: each is returned on its
  * own, for the screen to show as plain text apart from Botbench's words.
  */
-
-/** A time of day on this device, such as 14:30. */
-export const clockTime = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** How an issue's author relates to the repository, as GitHub says it (author_association), in a few plain words. */
 const RELATION: Record<AuthorRelation, string> = {
@@ -44,7 +42,7 @@ export function watchStateWords(s: Pick<WatchStatus, "state" | "checkedAt">): st
   if (s.state === "waiting") return "Not checked yet";
   if (s.state === "checking") return "Checking";
   if (s.state === "failed") return "Could not check";
-  return s.checkedAt === null ? "Checked" : `Checked at ${clockTime(s.checkedAt)}`;
+  return s.checkedAt === null ? "Checked" : `Checked at ${clock(s.checkedAt)}`;
 }
 
 /** What a watched repository's row in Settings says about it, the label's warning included. */
@@ -55,7 +53,7 @@ export function watchAbout(s: Pick<WatchStatus, "label" | "intervalMinutes" | "r
 
 /** Why the last look failed and when the next is, around what gh said, for Work and Settings. */
 export function watchFailure(s: Pick<WatchStatus, "path" | "problem" | "nextAt">): { lead: string; after: string } {
-  return { lead: `Botbench could not check the issues of ${folderName(s.path)}. ${s.problem ?? ""}`.trimEnd(), after: s.nextAt === null ? "" : `It tries again at ${clockTime(s.nextAt)}.` };
+  return { lead: `Botbench could not check the issues of ${folderName(s.path)}. ${s.problem ?? ""}`.trimEnd(), after: s.nextAt === null ? "" : `It tries again at ${clock(s.nextAt)}.` };
 }
 
 /** What Settings says when no repository is watched. */

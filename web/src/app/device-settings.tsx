@@ -6,12 +6,11 @@ import { Alert } from "../components/header.tsx";
 import { QrCode } from "../components/qr-code.tsx";
 import { byteCapacity, MAX_VERSION } from "./qr.ts";
 import { groupCode, signInAddress } from "./sign-in-code.ts";
+import { clock, counted, fullDate } from "./format.ts";
 
 /** Whether the encoder can draw this text: at most what a version-10 symbol holds. */
 const qrFits = (text: string): boolean => new TextEncoder().encode(text).length <= byteCapacity(MAX_VERSION);
 
-const when = (ts: string): string => new Date(ts).toLocaleString();
-const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const words = (err: unknown): string => (err instanceof Error && err.message ? err.message : "Botbench could not be reached.");
 
 /** How often the device list is read again while a code is shown, so the device it adds appears at once. */
@@ -126,7 +125,7 @@ function AddDevice({ onSignedOut, onDevices }: { onSignedOut: () => void; onDevi
             </li>
           </ol>
           <div className="ds-device-code__status">
-            <p className="ds-device-code__note">{`It works once, for ${shown.minutes} ${shown.minutes === 1 ? "minute" : "minutes"}: until ${timeOf(shown.expiresAt)}. Making a new code stops this one working.`}</p>
+            <p className="ds-device-code__note">{`It works once, for ${counted(shown.minutes, "minute", "minutes")}: until ${clock(shown.expiresAt)}. Making a new code stops this one working.`}</p>
           </div>
         </div>
       )}
@@ -195,7 +194,7 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
         <div key={device.id} className="ds-settings-row" data-testid="device">
           <div className="ds-settings-row__text">
             <p className="ds-settings-row__label">{device.device}</p>
-            <p className="ds-settings-row__description">{`Signed in ${when(device.signedInAt)}. Last used ${when(device.lastUsedAt)}.`}</p>
+            <p className="ds-settings-row__description">{`Signed in ${fullDate(device.signedInAt)}. Last used ${fullDate(device.lastUsedAt)}.`}</p>
           </div>
           <div className="ds-settings-row__control">
             {device.current && <p className="ds-settings-row__status">This device</p>}

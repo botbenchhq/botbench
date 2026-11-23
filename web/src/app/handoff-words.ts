@@ -5,6 +5,7 @@
  */
 
 import { agentName as agentLabel } from "./chat.ts";
+import { counted, plural } from "./format.ts";
 
 export const MOVE_HEADING = "Move to another agent";
 
@@ -58,6 +59,6 @@ export const sessionAgent = (task: Sessions, attempt: number): string | null => 
 /** The line above the transcript when the screen shows more than one agent's sessions on the task. */
 export const sessionsLine = (builder: string, earlier: number, handedOver: boolean): string | null => {
   if (earlier === 0) return null;
-  const kept = earlier === 1 ? "Its 1 earlier session is" : `Its ${earlier} earlier sessions are`;
+  const kept = `Its ${counted(earlier, "earlier session", "earlier sessions")} ${plural(earlier, "is", "are")}`;
   return handedOver ? `These are the sessions before and after each move to another agent. ${kept} kept in Botbench's records, not shown here.` : `This is ${agentLabel(builder)}'s latest session on this task. ${kept} kept in Botbench's records, not shown here.`;
 };

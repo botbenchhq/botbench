@@ -25,14 +25,14 @@ import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
 import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
-import { duration as fromTo } from "../components/tool-summary.ts";
+import { counted, duration, number, plural } from "../app/format.ts";
 import { oldestCommand, runningCommands, runningWords, type RunningCommand } from "../../../src/engine/command-limit.ts";
 import { MakeRunSection } from "../components/make-run.tsx";
 import { offersRun } from "../app/run-source.ts";
 import { firstLine } from "../../../src/shorten.ts";
 
 /** A time in the transcript's own words ("42s", "2m 14s"). */
-const msWords = (ms: number): string => fromTo(new Date(0).toISOString(), new Date(ms).toISOString()) ?? "0s";
+const shortTime = (ms: number): string => duration(ms, "short").words;
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
@@ -98,11 +98,11 @@ function Counts({ file }: { file: FileChange }) {
     <span className="ds-diff__counts">
       <span className="ds-diff__added">
         {`+${file.added}`}
-        <span className="ds-diff__label">{file.added === 1 ? " line added" : " lines added"}</span>
+        <span className="ds-diff__label">{plural(file.added, " line added", " lines added")}</span>
       </span>
       <span className="ds-diff__removed">
         {`−${file.removed}`}
-        <span className="ds-diff__label">{file.removed === 1 ? " line removed" : " lines removed"}</span>
+        <span className="ds-diff__label">{plural(file.removed, " line removed", " lines removed")}</span>
       </span>
     </span>
   );
@@ -120,7 +120,7 @@ function RefusedCommand({ command }: { command: string }) {
     <details data-testid="refused-command" className="ds-disclosure">
       <summary className="ds-disclosure__summary">
         <code data-ds-content="">{first}</code>
-        <span className="ds-disclosure__meta">{lines === 1 ? `${command.trim().length.toLocaleString("en")} characters` : `${lines.toLocaleString("en")} lines`}</span>
+        <span className="ds-disclosure__meta">{lines === 1 ? `${number(command.trim().length)} characters` : `${number(lines)} lines`}</span>
       </summary>
       <div className="ds-disclosure__content">
         <figure className="ds-code-block">
@@ -140,7 +140,7 @@ function RunningFor({ agent, command }: { agent: string; command: RunningCommand
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  return <span data-testid="running-for">{` ${runningWords(agent, command, now, msWords).time}`}</span>;
+  return <span data-testid="running-for">{` ${runningWords(agent, command, now, shortTime).time}`}</span>;
 }
 
 /** `discard`: the owner chose Discard from the task's More menu on Work, so its confirmation opens once the task is read. */
@@ -246,7 +246,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   const turnOn = task?.status === "building" && !task.resuming && attemptId !== null && !current.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended");
   // The command the agent is running now, which may print nothing for minutes: the line says which, and for how long.
   const command = turnOn ? oldestCommand(runningCommands(current)) : null;
-  const working = turnOn ? (asking !== undefined ? "" : command !== null ? runningWords(agentName(task!.builder), command, Date.now(), msWords).line : `${agentName(task!.builder)} is working.`) : null;
+  const working = turnOn ? (asking !== undefined ? "" : command !== null ? runningWords(agentName(task!.builder), command, Date.now(), shortTime).line : `${agentName(task!.builder)} is working.`) : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
@@ -525,7 +525,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </p>
                 ))}
                 <p>{`Accept keeps the branch for you to merge yourself and removes the task's copy of the project. Reject removes the copy too, and asks whether to keep the branch.${task.pullRequest.choice === "pull_request" ? " This run then pushes an accepted task's branch and opens a pull request for it." : ""}${task.checks === "failed" ? " The checks failed; you can still accept or reject it." : ""}`}</p>
-                {task.leftovers !== null && task.leftovers.length > 0 && <p>{`The checks left ${task.leftovers.length === 1 ? "1 file" : `${task.leftovers.length} files`} in the task's copy that ${task.leftovers.length === 1 ? "is" : "are"} not on the branch. Accept and Reject list ${task.leftovers.length === 1 ? "it" : "them"} before anything is removed.`}</p>}
+                {task.leftovers !== null && task.leftovers.length > 0 && <p>{`The checks left ${counted(task.leftovers.length, "file", "files")} in the task's copy that ${plural(task.leftovers.length, "is", "are")} not on the branch. Accept and Reject list ${plural(task.leftovers.length, "it", "them")} before anything is removed.`}</p>}
               </ReviewDecision>
             )}
 

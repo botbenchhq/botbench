@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, issueSourceOf, lookUpIssue, timedOut, type IssuePreview } from "../api/client.ts";
 import type { AttachedIssue } from "../app/composer.ts";
 import { authorWords, hostsHint } from "../app/run-words.ts";
+import { counted } from "../app/format.ts";
 
 /*
  * From an issue, in the Add context sheet: the owner names one issue of the chosen repository, Botbench reads it with the
@@ -132,8 +133,6 @@ export function useIssueChoice(repo: string, wanted: boolean, onSignedOut: () =>
   };
 }
 
-const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
-
 /** The From an issue view: the field, Look it up, then what was read, and Attach this issue or Remove the issue. */
 export function IssueOptions({ state }: { state: IssueChoiceState }) {
   const { preview, attached, source } = state;
@@ -209,7 +208,7 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
           <details className="ds-disclosure">
             <summary className="ds-disclosure__summary">
               What the issue says
-              <span className="ds-disclosure__meta">{plural(shown.comments.length, "comment", "comments")}</span>
+              <span className="ds-disclosure__meta">{counted(shown.comments.length, "comment", "comments")}</span>
             </summary>
             <div className="ds-disclosure__content ds-stack ds-gap-sm">
               {/* Plain text only: React writes it as text, so no markdown, link or image in it is drawn or fetched. */}

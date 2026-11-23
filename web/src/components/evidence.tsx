@@ -1,4 +1,5 @@
 import { agentName } from "../app/chat.ts";
+import { counted, duration } from "../app/format.ts";
 import type { ChecksMark, CommandList, Evidence, Refinement, Review } from "../api/client.ts";
 import { roundLabel } from "./command-rounds.ts";
 import { failureExtract } from "./failure-extract.ts";
@@ -39,19 +40,6 @@ export function MachineChecksNote({ rows }: { rows: readonly Evidence[] }) {
 }
 import { StatusBadge } from "./status.tsx";
 
-/** A duration in words with its unit, and as an ISO 8601 duration for the time element. */
-export function duration(ms: number): { words: string; iso: string } {
-  if (ms < 10_000) {
-    const s = Math.round(ms / 100) / 10;
-    return { words: `${s} s`, iso: `PT${s}S` };
-  }
-  const total = Math.round(ms / 1000);
-  const min = Math.floor(total / 60);
-  const s = total % 60;
-  if (min === 0) return { words: `${s} s`, iso: `PT${s}S` };
-  return { words: s === 0 ? `${min} min` : `${min} min ${s} s`, iso: `PT${min}M${s === 0 ? "" : `${s}S`}` };
-}
-
 /** A command's result in words, and the modifier that draws its icon. The word always says it; the icon only repeats it. */
 function result(row: Evidence): { words: string; look: string } {
   switch (row.outcome) {
@@ -60,7 +48,7 @@ function result(row: Evidence): { words: string; look: string } {
     case "failed":
       return { words: row.exitCode === null ? `Failed, ended by ${row.signal ?? "a signal"}` : `Failed, exit code ${row.exitCode}`, look: "ds-check-list__result--failed" };
     case "timed_out":
-      return { words: `Timed out after ${duration(row.limitMs).words}`, look: "ds-check-list__result--timed-out" };
+      return { words: `Timed out after ${duration(row.limitMs, "units").words}`, look: "ds-check-list__result--timed-out" };
     case "stopped":
       // Stopped by Botbench (the run was cancelled, or Botbench stopped): it says nothing about the command itself.
       return { words: "Stopped before it finished", look: "" };
@@ -71,8 +59,6 @@ function result(row: Evidence): { words: string; look: string } {
       return { words: "Skipped: it cannot run here", look: "ds-check-list__result--skipped" };
   }
 }
-
-const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 /**
  * The count a check list opens with: how many passed out of the whole list, then each other result by itself. The
@@ -89,7 +75,7 @@ function summary(rows: readonly Evidence[], what: { one: string; many: string },
   ].filter((part) => part !== null);
   const notRun = total - rows.length;
   if (notRun > 0) others.push(`${notRun} not run`);
-  return `${count("passed")} of ${plural(total, what.one, what.many)} passed.${others.length === 0 ? "" : ` ${others.join(", ")}.`}`;
+  return `${count("passed")} of ${counted(total, what.one, what.many)} passed.${others.length === 0 ? "" : ` ${others.join(", ")}.`}`;
 }
 
 /**
@@ -108,7 +94,7 @@ export function CommandEvidence({ rows, what, failedFirst = false, testId, total
       <ul className="ds-check-list__items">
         {shownRows.map((row) => {
           const shown = result(row);
-          const took = duration(row.durationMs);
+          const took = duration(row.durationMs, "units");
           return (
             <li key={row.id} className="ds-check-list__item">
               <span data-ds-content="" className="ds-check-list__name">
@@ -212,7 +198,7 @@ export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: reado
 /** How many of the latest round's checks passed, or did not: "3 of 3 checks passed." A machine check with nothing to run is not counted against it. */
 function checksCount(checks: "passed" | "failed", rows: readonly Evidence[]): string {
   const notPassed = rows.filter((row) => row.outcome !== "passed" && row.outcome !== "skipped").length;
-  return checks === "passed" ? `${rows.length} of ${plural(rows.length, "check", "checks")} passed.` : `${notPassed} of ${plural(rows.length, "check", "checks")} did not pass.`;
+  return checks === "passed" ? `${rows.length} of ${counted(rows.length, "check", "checks")} passed.` : `${notPassed} of ${counted(rows.length, "check", "checks")} did not pass.`;
 }
 
 /**
@@ -269,7 +255,7 @@ export function ReviewEvidence({ review }: { review: Review }) {
       </Alert>
     );
   }
-  const took = duration(review.durationMs);
+  const took = duration(review.durationMs, "units");
   return (
     <div className="ds-stack ds-gap-sm">
       <p data-testid="review-verdict">{verdictWords(review)}</p>
@@ -328,7 +314,7 @@ export function FixesEvidence({ fix }: { fix: Refinement }) {
       </Alert>
     );
   }
-  const took = duration(Math.max(0, Date.parse(fix.endedAt) - Date.parse(fix.startedAt)));
+  const took = duration(Date.parse(fix.endedAt) - Date.parse(fix.startedAt), "units");
   return (
     <details data-testid="fixes-detail" className="ds-disclosure">
       <summary className="ds-disclosure__summary">

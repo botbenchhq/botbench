@@ -1,4 +1,5 @@
 import type { BoardItem, RunStatus } from "../api/client.ts";
+import { counted } from "./format.ts";
 
 /*
  * What each row's More menu on Work offers, decided here without a browser (test/row-menu.test.ts). A run or a task
@@ -40,11 +41,9 @@ export function rowMenu(item: BoardItem, hiddenView: boolean): RowMenuItem[] {
   return items;
 }
 
-const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
-
 /** What cancelling a run does, as its confirmation says it, on the run's screen and from its More menu alike. */
 export function cancelStatement(status: RunStatus, planned: number): string {
   if (status === "planning") return "The planner is stopped and no plan is kept. Nothing was built.";
-  if (status === "awaiting_plan_approval") return `The plan of ${tasksWord(planned)} is dropped and nothing is built. A cancelled run cannot be started again; start a new one instead.`;
+  if (status === "awaiting_plan_approval") return `The plan of ${counted(planned, "task", "tasks")} is dropped and nothing is built. A cancelled run cannot be started again; start a new one instead.`;
   return "Tasks that have finished keep their branches. The task being built is stopped, and what it did so far is committed to its branch. Tasks that have not started are not built. A cancelled run cannot be started again.";
 }

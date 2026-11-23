@@ -2,11 +2,10 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ApiError, editMemoryNote, forgetMemoryNote, getMemory, type MemoryList, type MemoryNote } from "../api/client.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert } from "../components/header.tsx";
+import { fullDate, number as grouped } from "./format.ts";
 
 /** The note being edited: what the owner typed, the version it was read at, and why it was not saved. */
 type Editing = { id: number; text: string; hash: string; saving: boolean; problem: string | null; now: string | null };
-
-const when = (ts: string): string => new Date(ts).toLocaleString();
 
 /** One note at rest: its text, when it was saved or edited, and Edit and Forget. Its text is always a React child, never markup. */
 function NoteRow({ note, number, busy, onEdit, onForget }: { note: MemoryNote; number: number; busy: boolean; onEdit: () => void; onForget: () => void }) {
@@ -14,7 +13,7 @@ function NoteRow({ note, number, busy, onEdit, onForget }: { note: MemoryNote; n
     <>
       <span className="ds-editable-list__text ds-stack ds-gap-xs">
         <span data-ds-content="">{note.text}</span>
-        <span className="ds-settings-row__description">{note.editedAt === null ? `Saved ${when(note.savedAt)}` : `Edited ${when(note.editedAt)}`}</span>
+        <span className="ds-settings-row__description">{note.editedAt === null ? `Saved ${fullDate(note.savedAt)}` : `Edited ${fullDate(note.editedAt)}`}</span>
       </span>
       <span className="ds-editable-list__actions">
         <button type="button" data-memory-edit={note.id} disabled={busy} data-ds-content-label="" aria-label={`Edit note ${number}: ${note.text}`} onClick={onEdit} className="ds-button ds-button--quiet ds-button--small">
@@ -43,7 +42,7 @@ function NoteEditor({ editing, number, max, onChange, onSave, onCancel }: { edit
       <div className="ds-field">
         <label htmlFor={`${id}-text`} className="ds-field__label">{`Note ${number}`}</label>
         <input ref={input} data-testid="memory-note-text" id={`${id}-text`} type="text" autoComplete="off" maxLength={max} readOnly={editing.saving} value={editing.text} onChange={(e) => onChange(e.currentTarget.value)} aria-invalid={editing.problem !== null || undefined} aria-describedby={described} className="ds-field__control" />
-        <p id={`${id}-about`} className="ds-field__description">{`One line, at most ${max.toLocaleString("en")} characters.`}</p>
+        <p id={`${id}-about`} className="ds-field__description">{`One line, at most ${grouped(max)} characters.`}</p>
         {editing.now !== null && (
           <p id={`${id}-now`} data-ds-content="" className="ds-field__description">
             {`The note now: ${editing.now}`}
@@ -160,7 +159,7 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
         Memory
       </h2>
       <p className="ds-settings-row__description">
-        {`Start a chat message with "Remember:" or "Remember that" and Botbench keeps the rest of it as a note, in your words. Every agent of a later chat, and the planner and builder of a later run, is given your notes. Botbench keeps them on this Mac, in its data folder, and never adds them to a repository. An agent given them sends them to its provider with the rest of its prompt, as it does your messages.${list === null ? "" : ` At most ${list.maxNoteChars.toLocaleString("en")} characters a note, and ${list.maxKb} KB in all.`}`}
+        {`Start a chat message with "Remember:" or "Remember that" and Botbench keeps the rest of it as a note, in your words. Every agent of a later chat, and the planner and builder of a later run, is given your notes. Botbench keeps them on this Mac, in its data folder, and never adds them to a repository. An agent given them sends them to its provider with the rest of its prompt, as it does your messages.${list === null ? "" : ` At most ${grouped(list.maxNoteChars)} characters a note, and ${list.maxKb} KB in all.`}`}
       </p>
       {problem !== null && (
         <Alert tone="error" role="alert">
