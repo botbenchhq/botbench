@@ -211,7 +211,7 @@ test("fully autonomous: a dangerous command is refused without asking anyone, th
   // What the agent was told is the refusal, in the driver's answer to its request.
   const told = e.db.prepare("SELECT payload FROM events WHERE type = 'permission_resolved'").all().map((row) => JSON.parse(String(row.payload)));
   assert.deepEqual(told.map((event) => event.decision), ["denied"]);
-  assert.equal(task.reason, "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
+  assert.equal(task.reason, "It needs your review: 1 command refused during this task. Each is listed under Refused without asking.");
   assert.equal(taskDecision(e.db, id), null);
   // It is on the safety floor, so it still blocks the accept.
   assert.deepEqual(refused.map((entry) => entry.refusal), ["floor"]);
@@ -250,7 +250,7 @@ test("fully autonomous: a harmless refused command no longer blocks the accept; 
   assert.match(refused[0]!.detail!, / It only reads files in the task's copy, so it does not stop the task being accepted\.$/);
   const decision = taskDecision(e.db, id)!;
   assert.equal(decision.decidedBy, "mode");
-  assert.equal(decision.reasons, "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src) was not on the always-ask list and would not have reached outside the task's copy.");
+  assert.equal(decision.reasons, "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and the 1 command Botbench refused was not on the always-ask list and would not have reached outside the task's copy. Each is listed under Refused without asking.");
 });
 
 test("fully autonomous: beside a harmless refusal, an unconfined one still blocks the accept and is the one counted; the harmless one is named apart", { skip: NO_SANDBOX }, async (t) => {
@@ -262,7 +262,7 @@ test("fully autonomous: beside a harmless refusal, an unconfined one still block
   const task = getTask(e.db, id)!;
   assert.equal(task.status, "awaiting_decision");
   assert.deepEqual(actionLog(e.db, id).filter((entry) => entry.rule === "mode_refused").map((entry) => entry.refusal), ["read_only", "unconfined"]);
-  assert.equal(task.reason, "It needs your review: Botbench refused something an agent asked to do during this task (npm test). Botbench also refused, without that keeping it from being accepted: ls src.");
+  assert.equal(task.reason, "It needs your review: 1 command refused during this task. Also 1 command refused that would not have kept it from being accepted. Each is listed under Refused without asking.");
   assert.equal(taskDecision(e.db, id), null);
 });
 

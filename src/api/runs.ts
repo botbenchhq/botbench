@@ -6,8 +6,8 @@ import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, type Run } from "../engine/run.ts";
 import { modeChanges, stricterModes } from "../engine/modes.ts";
 import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
-import { resumeNote } from "../engine/task.ts";
-import { decisionOf, leftoversOf } from "./tasks.ts";
+import { restartLine, resumeNote } from "../engine/task.ts";
+import { decisionOf, leftoversOf, waitingForOf } from "./tasks.ts";
 import { deliveryOf } from "../engine/delivery.ts";
 import { issueHostsFor, runIssue } from "../engine/intake.ts";
 import { repositoryHosts } from "../config.ts";
@@ -75,6 +75,9 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
       pullRequest: deliveryOf(db, task),
       leftovers: await leftoversOf(task),
       resumeNote: resumeNote(db, task),
+      // Taken up again by Botbench after a restart, and waiting behind another task's work: as on the task's own screen.
+      restartLine: restartLine(db, task),
+      waitingFor: waitingForOf(db, task),
     }))),
     preapproved: runGrants(db, id).map((grant) => showWords(grant.words)),
     waitingOnApproval: waiting(db, run),

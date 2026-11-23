@@ -11,7 +11,7 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
-import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS, watchSilence } from "./silence.ts";
+import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS, watchSilence, type StoppedDuring } from "./silence.ts";
 import { agentName, correctionPrompt, IMPLEMENTER, mergePlan, oneTaskPrompt, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
@@ -654,6 +654,8 @@ export function createRuns(options: RunsOptions): Runs {
 
     /** Whether a turn of this planner was stopped because it went silent (engine/silence.ts). */
     let silent = false;
+    /** The command a silent planner was stopped during, when one was running. */
+    let silentDuring: StoppedDuring | null = null;
     const turn = async (prompt: string): Promise<{ end: TurnEndReason; text: string }> => {
       reply = [];
       detail = null;
@@ -668,11 +670,14 @@ export function createRuns(options: RunsOptions): Runs {
       } finally {
         silence.clear();
       }
-      if (silence.fired() && end !== "completed") silent = true;
+      if (silence.fired() && end !== "completed") {
+        silent = true;
+        silentDuring = silence.stoppedDuring();
+      }
       return { end, text: reply.join("\n") };
     };
     const problemOf = (end: TurnEndReason): string =>
-      silent ? plannerSilenceReason(agentName(driver.name), silenceLimit) : closed ? STOPPED : end === "interrupted" ? "The planner was stopped before it finished." : `The planner ended with an error${detail === null ? "." : `: ${detail}`}`;
+      silent ? plannerSilenceReason(agentName(driver.name), silenceLimit, silentDuring) : closed ? STOPPED : end === "interrupted" ? "The planner was stopped before it finished." : `The planner ended with an error${detail === null ? "." : `: ${detail}`}`;
 
     let outcome: Outcome;
     try {

@@ -159,7 +159,9 @@ export function createAuth(options: AuthOptions): Auth {
     if (waiting >= MAX_WAITING_SIGN_INS) return Promise.resolve("busy");
     waiting += 1;
     const result = queue.then(async () => {
-      const wait = notBefore - Date.now();
+      // Measured on the monotonic clock: a step of the wall clock (a time sync, a virtual machine catching up) must not
+      // shorten or lengthen the wait.
+      const wait = notBefore - performance.now();
       if (wait > 0) await sleep(wait, undefined, { ref: false });
       const outcome = check();
       if (outcome === true) {
@@ -168,7 +170,7 @@ export function createAuth(options: AuthOptions): Auth {
         return true as const;
       }
       failures += 1;
-      notBefore = Date.now() + Math.min(baseDelay * 2 ** (failures - 1), MAX_SIGN_IN_DELAY_MS);
+      notBefore = performance.now() + Math.min(baseDelay * 2 ** (failures - 1), MAX_SIGN_IN_DELAY_MS);
       return outcome;
     });
     queue = result.catch(() => undefined);

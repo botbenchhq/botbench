@@ -14,7 +14,9 @@ import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, re
 import { reviewAssignment, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkFixView } from "../engine/check-fix.ts";
-import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
+import { checkRepository, getTask, listTasks, restartLine, resumeNote, TaskError, waitingBehind, words, type Task } from "../engine/task.ts";
+import { noteRoundLine, openNoteRound } from "../engine/note-rounds.ts";
+import { firstLine } from "../shorten.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
 import { runsMadeFrom } from "../engine/run-source.ts";
@@ -40,6 +42,9 @@ export const MAX_DIFF = 400_000;
  * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  * `decision`: the owner's decision, once there is one.
  * `resumeNote`: for a stopped task the owner can resume, what Resume will do, in words; null for any other task.
+ * `restartLine`: for a task Botbench took up again by itself after a restart, the plain line that says so, with the time.
+ * `waitingFor`: for a task the owner resumed or sent a note for a round, whose work waits for another task's to end
+ * first, that task's number and title; null once its own work has started.
  */
 export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, checks, createdAt, updatedAt } = task;
@@ -64,6 +69,12 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     decision: decisionOf(db, task.id),
     pullRequest: deliveryOf(db, task),
     resumeNote: resumeNote(db, task),
+    restartLine: restartLine(db, task),
+    waitingFor: waitingForOf(db, task),
+    // On a round started by the owner's note (engine/note-rounds.ts), and, once it brought the task back with nothing
+    // changed, the plain line that says so.
+    onNoteRound: task.status === "building" && openNoteRound(db, task.id) !== null,
+    noteRoundLine: noteRoundLine(db, task),
     // The owner's note that waits for its builder (engine/notes.ts), with whether it replaced one that waited before it;
     // and the latest note when it was not delivered, with why. Neither is in the transcript: only a delivered note is.
     ...notesOf(db, task.id),
@@ -78,6 +89,13 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   };
 }
 
+/** The task another one waits behind, as its screen and row name it: its number and the first line of its prompt. */
+export function waitingForOf(db: DatabaseSync, task: Task): { taskId: number; title: string } | null {
+  const other = waitingBehind(db, task.id);
+  const found = other === null ? null : getTask(db, other);
+  return found === null ? null : { taskId: found.id, title: firstLine(found.prompt) };
+}
+
 function givenMessageOf(db: DatabaseSync, runId: number | null): { pairingId: string; messageId: string; contextId: string | null; peerName: string } | null {
   if (runId === null) return null;
   const row = db.prepare("SELECT r.peer_pairing_id, r.peer_message_id, r.peer_name, m.context_id FROM runs r LEFT JOIN peer_messages m ON m.pairing_id = r.peer_pairing_id AND m.message_id = r.peer_message_id AND m.direction = 'in' WHERE r.id = ? AND r.peer_pairing_id IS NOT NULL").get(runId);
@@ -89,12 +107,15 @@ function notesOf(db: DatabaseSync, taskId: number): { waitingNote: Record<string
   const waiting = waitingNote(db, taskId);
   const undelivered = undeliveredNote(db, taskId);
   return {
-    waitingNote: waiting === null ? null : { id: waiting.id, text: waiting.text, sentAt: waiting.sentAt, replacedOne: replacedOne(db, waiting) },
+    waitingNote: waiting === null ? null : { id: waiting.id, text: waiting.text, sentAt: waiting.sentAt, replacedOne: replacedOne(db, waiting), forRound: waiting.forRound },
     undeliveredNote: undelivered === null ? null : { id: undelivered.id, text: undelivered.text, sentAt: undelivered.sentAt, reason: undelivered.reason },
   };
 }
 
-/** POST /api/tasks/:id/notes: the owner's note for a building task's builder, `{ "text": "..." }`. Answers with the note as stored. */
+/**
+ * POST /api/tasks/:id/notes: the owner's note for a building task's builder, or for a task that is ready for review,
+ * whose builder's session it then takes up again (engine/note-rounds.ts), `{ "text": "..." }`. Answers with the note as stored.
+ */
 async function sendNote(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, id: number): Promise<void> {
   let body: unknown;
   try {
@@ -105,6 +126,8 @@ async function sendNote(req: http.IncomingMessage, res: http.ServerResponse, ctx
   }
   // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
   if (!isObject(body) || typeof body.text !== "string") throw new TaskError(400, 'expected { "text": "the note" }');
+  // A decision at work on the task may be removing its copy: no round is started in it meanwhile.
+  if (beingDecided(id)) throw new TaskError(409, "This task is being decided, so a note cannot reach Claude Code now.");
   json(res, 200, ctx.tasks.sendNote(id, body.text));
 }
 

@@ -14,7 +14,7 @@ const run = (o: Partial<Extract<BoardItem, { kind: "run" }>> = {}): BoardItem =>
   waitingOnApproval: false, mode: "manual", outsideText: false, createdAt: at, updatedAt: at, branch: null, pullRequest: null, cancellable: true, ...o,
 } as BoardItem);
 const task = (o: Partial<Extract<BoardItem, { kind: "task" }>> = {}): BoardItem => ({
-  kind: "task", id: 12, repo: "/r/api", title: "create hello.txt", status: "failed", reason: "it broke", checks: null, waitingOnApproval: false, resuming: false,
+  kind: "task", id: 12, repo: "/r/api", title: "create hello.txt", status: "failed", reason: "it broke", checks: null, waitingOnApproval: false, resuming: false, restartLine: null, waitingFor: null,
   createdAt: at, updatedAt: at, branch: "botbench/mac/run-3/task-12", pullRequest: null, discardable: true, ...o,
 });
 const chat = (o: Partial<Extract<BoardItem, { kind: "chat" }>> = {}): BoardItem => ({ kind: "chat", id: 7, title: "Colours for the logo", named: true, agents: ["codex"], attempts: [7, 9], createdAt: at, updatedAt: at, ...o });

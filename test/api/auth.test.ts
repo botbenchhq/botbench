@@ -15,6 +15,7 @@ import { deviceLabel, SESSION_MAX_AGE_S } from "../../src/api/sessions.ts";
 import { DEFAULT_CONFIG_FILE, loadConfig, type Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { removedAtEnd } from "../support/repo.ts";
+import { fillLine } from "../support/sign-in-line.ts";
 
 type T = { after(fn: () => unknown): void };
 
@@ -198,28 +199,39 @@ test("repeated wrong tokens are slowed down, and a correct sign-in resets the de
 
   // The owner's correct token still works, after the 16-delay wait, and clears the count. Shown by the wait after it:
   // two wrong tokens now cost one delay between them, as at the start. Had the count stayed at five, the second would
-  // wait 32 delays. The upper bound is half that, far from both, so load cannot push a real reset past it.
+  // wait 32 delays. The upper bound is half that plus what two requests cost this machine right now, measured in this
+  // run: a pair of right tokens, which wait for nothing, taken three times and the slowest kept. Load adds the same to
+  // both, so it cannot push a real reset past the bound, and a count that was not reset is still 16 delays beyond it.
   const right = await timed(token);
   assert.equal(right.status, 200);
+  let requests = 0;
+  for (let i = 0; i < 3; i++) {
+    const free = await pair(token, token);
+    assert.deepEqual(free.statuses, [200, 200]);
+    requests = Math.max(requests, free.ms);
+  }
   const reset = await pair("wrong-6", "wrong-7");
   assert.deepEqual(reset.statuses, [401, 401]);
   assert.ok(reset.ms >= delay - slack, `after a successful sign-in, a second wrong token still waits one delay: took ${reset.ms}ms`);
-  assert.ok(reset.ms < 16 * delay, `after a successful sign-in, two wrong tokens took ${reset.ms}ms: the count was not reset (32 delays, ${32 * delay}ms, is what a count of five costs)`);
+  assert.ok(reset.ms < 16 * delay + requests, `after a successful sign-in, two wrong tokens took ${reset.ms}ms, and two requests take this machine ${requests}ms now: the count was not reset (32 delays, ${32 * delay}ms, is what a count of five costs)`);
 });
 
 test("a flood of guesses is turned away unchecked instead of queueing without end", async (t) => {
-  const { server, token } = await start(t, {}, 2000);
-  assert.equal((await signIn(server.port, "wrong-0")).status, 401); // from here each attempt waits two seconds or more
+  // A long first wait, so that nothing leaves the line while the test looks, however slow the machine.
+  const delay = 30_000;
+  const { server, token } = await start(t, {}, delay);
+  assert.equal((await signIn(server.port, "wrong-0")).status, 401); // from here each attempt waits the delay or more
   // These wait their turn; the test does not wait for them, and closing the server ends them.
   for (let i = 0; i < MAX_WAITING_SIGN_INS; i++) signIn(server.port, `queued-${i}`).catch(() => undefined);
-  await new Promise((resolve) => setTimeout(resolve, 100)); // let them arrive
-  const began = performance.now();
+  // The line is full once a wrong guess is turned away; one sent before that joins it (test/support/sign-in-line.ts).
+  await fillLine(() => signIn(server.port, "over-0").then((reply) => reply.status));
   for (const candidate of ["over-1", "over-2", token]) {
+    const began = performance.now();
     const turnedAway = await signIn(server.port, candidate);
     assert.equal(turnedAway.status, 429, candidate === token ? "even the right token is not checked" : candidate);
     assert.equal(turnedAway.headers["set-cookie"], undefined);
+    assert.ok(performance.now() - began < delay, "turned away at once, not after the wait");
   }
-  assert.ok(performance.now() - began < 1500, "turned away at once, not after the wait");
 });
 
 test("with no extra address configured, Botbench listens on the loopback address only", async (t) => {

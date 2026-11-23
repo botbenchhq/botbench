@@ -230,8 +230,11 @@ export function ChecksFinding({ checks, rows }: { checks: ChecksMark | null; row
   );
 }
 
-/** The plain sentence about what checks are, shown wherever their results are. */
-export const CHECKS_RISK = "Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: they cannot read the sign-in, key and credential folders Botbench keeps them from or Botbench's own files, can change files only in this task's copy and a temporary folder, and reach the internet only at hosts allowed for this repository in Botbench's settings file. They can still read the rest of your home folder. The agent may have changed the code they run, so read the output, not only the result.";
+/** The one short line about what checks are, shown wherever their results are. The full limits are `CHECKS_LIMITS`. */
+export const CHECKS_LINE = "The agent may have changed the code the checks run, so read their output, not only the result.";
+
+/** What checks can and cannot reach, in full: once on the task's screen, behind its Details (docs/security/threat-model.md has the rest). */
+export const CHECKS_LIMITS = "Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: they cannot read the sign-in, key and credential folders Botbench keeps them from or Botbench's own files, can change files only in this task's copy and a temporary folder, and reach the internet only at hosts allowed for this repository in Botbench's settings file. They can still read the rest of your home folder.";
 
 /** An agent by its product name, as the screens name it (docs/product/voice.md). */
 export { agentName };
@@ -239,8 +242,11 @@ export { agentName };
 /** The reviewer and its model, as a screen names them: "Codex, gpt-6-luna", or "Codex, its default model". */
 export const reviewerWords = (reviewer: { agent: string; model: string | null }): string => `${agentName(reviewer.agent)}, ${reviewer.model ?? "its default model"}`;
 
-/** The plain sentence about what a review is, shown wherever one is. */
-export const REVIEW_RISK = "A model's opinion of the changes, not a check. The reviewer read the diff where it could change nothing and reach no network. Botbench reads only its verdict line and the lines under its Checked heading, which it must give to count as satisfied: with concerns, the builder is given the review to fix what it agrees with, under the same permissions as for its build, and the same reviewer looks again.";
+/** The one short line about what a review is, shown with it. The full limits are `REVIEW_LIMITS`. */
+export const REVIEW_LINE = "A model's opinion, not a check.";
+
+/** What a review can reach and what Botbench takes from it, in full: once on the task's screen, behind its Details. */
+export const REVIEW_LIMITS = "The reviewer read the changes where it could change nothing and reach no network. Botbench reads only its verdict and the lines under its Checked heading, which it must give to count as satisfied: with concerns, the builder is given the review to fix what it agrees with, under the same permissions as for its build, and the same reviewer looks again.";
 
 /** A review's verdict line: the verdict in words when the reply gave it in the asked form. */
 function verdictWords(review: Review): string {

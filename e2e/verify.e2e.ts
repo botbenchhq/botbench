@@ -70,7 +70,12 @@ test("LIVE: a task whose check fails says so in words with an icon, opens the fa
   const result = page.getByTestId("checks-result");
   await expect(result).toHaveText("Checks failed: 1 of 2 checks did not pass.");
   await expect(result.locator("svg")).toHaveCount(1);
-  await expect(page.getByText("Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: they cannot read the sign-in, key and credential folders Botbench keeps them from or Botbench's own files, can change files only in this task's copy and a temporary folder, and reach the internet only at hosts allowed for this repository in Botbench's settings file. They can still read the rest of your home folder. The agent may have changed the code they run, so read the output, not only the result.")).toBeVisible();
+  // One short line under the checks; the full limits once, behind the task's Details.
+  await expect(page.getByTestId("checks-line")).toHaveText("The agent may have changed the code the checks run, so read their output, not only the result.");
+  await expect(page.getByTestId("checks-limits")).toBeHidden();
+  await page.getByTestId("task-details").locator("summary").click();
+  await expect(page.getByTestId("checks-limits")).toHaveText(/^Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: .* They can still read the rest of your home folder\.$/);
+  await page.getByTestId("task-details").locator("summary").click();
   const items = page.getByTestId("checks").locator(".ds-check-list__item");
   await expect(items).toHaveCount(2);
   // The failed check comes first; its result is words, and its output opens.

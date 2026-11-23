@@ -611,12 +611,13 @@ function StepGroup({ steps, live, worked, children }: { steps: { call: Of<"tool_
 
 /**
  * The transcript of one or more attempts, oldest first. `working` is a note shown last while something is still
- * running; an empty note means it is running and another part of the screen says what it waits for. `modelName` gives the name Claude Code has for a model id, or the id itself when it has none. `promptBy`
+ * running, and `workingMore` follows it, outside its status (a clock); an empty note means it is running and another
+ * part of the screen says what it waits for. `modelName` gives the name Claude Code has for a model id, or the id itself when it has none. `promptBy`
  * says who wrote the prompts (the owner, unless Botbench wrote them, as it does for planning). `folded` is for a
  * transcript that sits behind a disclosure of its own, so its rows fold one level and not two, and its tool calls are
  * not grouped (a step group inside a disclosure would be a third level).
  */
-export function Transcript({ events, working, modelName, modelDiffers, promptBy = "You", folded = false, who = NOBODY, after, asking }: { events: StoredEvent[]; working: string | null; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean; who?: (attemptId: number) => string | null; after?: ReactNode; asking?: (attemptId: number, toolCallId: string) => ReactNode }) {
+export function Transcript({ events, working, workingMore, modelName, modelDiffers, promptBy = "You", folded = false, who = NOBODY, after, asking }: { events: StoredEvent[]; working: string | null; workingMore?: ReactNode; modelName: (id: string) => string; modelDiffers?: (attemptId: number, model: string) => string | null; promptBy?: string; folded?: boolean; who?: (attemptId: number) => string | null; after?: ReactNode; asking?: (attemptId: number, toolCallId: string) => ReactNode }) {
   const story = useMemo(() => readStory(events, working !== null), [events, working]);
   const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
   const set = useCallback((id: string, open: boolean) => setOpened((have) => new Map(have).set(id, open)), []);
@@ -670,6 +671,8 @@ export function Transcript({ events, working, modelName, modelDiffers, promptBy 
         {working !== null && working !== "" && (
           <li className="ds-streaming ds-streaming--row">
             <span role="status">{working}</span>
+            {/* A clock that moves every second stays out of the status, which a screen reader would read out each time. */}
+            {workingMore}
           </li>
         )}
       </ol>
