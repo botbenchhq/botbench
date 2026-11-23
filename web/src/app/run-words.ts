@@ -17,7 +17,7 @@ export const MODE_SENTENCE: Record<RunMode, string> = {
 };
 
 /** What the run screen says over its choice of a stricter mode (components/mode-change.tsx). */
-export const STRICTER_HINT = "You can make the mode stricter while the run works, never looser. A request already waiting for you stays, and what an agent is doing now finishes; the new mode applies to everything after it. The safety rules are the same in every mode.";
+export const STRICTER_HINT = "You can make the mode stricter while the run works, never looser. A request already waiting for you stays, and a command already running finishes; the new mode applies from the agent's next request, also while it is still working. The safety rules are the same in every mode.";
 
 /** "a", "a and b", "a, b and c". */
 const listed = (items: readonly string[]): string => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
