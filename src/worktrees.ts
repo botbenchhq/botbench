@@ -608,6 +608,35 @@ export async function pushNewBranch(o: { repo: string; remote: string; branch: s
 }
 
 /**
+ * Create every branch of `branches` on `remote` at `commit`, all or none:
+ * `git push --porcelain --atomic … <remote> <commit>:refs/heads/<a> <commit>:refs/heads/<b>`. Never by force. This is
+ * a compare-and-set on the remote: for a branch git did not see there, it asks the remote to create it only if it does
+ * not exist, and the remote checks that as it takes the push, so of two pushes that race for one name exactly one is
+ * taken. A branch already there, at any commit, refuses it, since `commit` (a claim's, with no parent) cannot be a
+ * fast-forward of anything; with `--atomic`, that refusal leaves the others uncreated too. Only branches in
+ * Botbench's own form.
+ */
+export async function pushNewBranches(o: { repo: string; remote: string; branches: readonly string[]; commit: string }): Promise<void> {
+  checkRemote(o.remote);
+  if (o.branches.length === 0) throw new Error("No branch to push.");
+  for (const branch of o.branches) checkPushable(branch);
+  checkBase(o.commit);
+  await pushRef(o.repo, o.branches.join(" and "), ["--atomic", "--no-follow-tags", o.remote, ...o.branches.map((b) => `${o.commit}:refs/heads/${b}`)]);
+}
+
+/**
+ * Delete every branch of `branches` on `remote`, all or none, and only while each still points at `commit`: one
+ * `--force-with-lease=refs/heads/<branch>:<commit>` for each (see `deleteRemoteBranchAt`) and `--atomic`.
+ */
+export async function deleteRemoteBranchesAt(o: { repo: string; remote: string; branches: readonly string[]; commit: string }): Promise<void> {
+  checkRemote(o.remote);
+  if (o.branches.length === 0) throw new Error("No branch to delete.");
+  for (const branch of o.branches) checkPushable(branch);
+  checkBase(o.commit);
+  await pushRef(o.repo, o.branches.join(" and "), ["--atomic", ...o.branches.map((b) => `--force-with-lease=refs/heads/${b}:${o.commit}`), o.remote, ...o.branches.map((b) => `:refs/heads/${b}`)]);
+}
+
+/**
  * Delete the branch `branch` on `remote`, and only while it still points at `commit`. A delete needs no force; the
  * `--force-with-lease=<ref>:<commit>` here forces nothing: it is git's compare-and-delete, which makes git refuse unless
  * the remote branch is at exactly `commit` when the remote takes the request, so a branch somebody moved, even a moment

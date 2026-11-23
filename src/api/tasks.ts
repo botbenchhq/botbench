@@ -5,7 +5,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
-import { repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
+import { repositoryClaims, repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
 import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
@@ -270,7 +270,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const given = url.searchParams.getAll("path");
       if (given.length !== 1 || given[0]!.includes("\0") || !path.isAbsolute(given[0]!)) throw new TaskError(400, 'Give one "path": the full path of a repository, starting with /.');
       // What the owner's config offers for this repository. It grants nothing: a task gets only what its own start request lists.
-      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [], hasChecks: (repositorySettings(ctx.config, given[0]!).checks ?? []).length > 0 });
+      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [], hasChecks: (repositorySettings(ctx.config, given[0]!).checks ?? []).length > 0, claimIssues: repositoryClaims(ctx.config, given[0]!) });
     } else if (method === "GET" && one) {
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");

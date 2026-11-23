@@ -480,6 +480,11 @@ export interface RepoSettings {
   preapproved: string[];
   /** Whether at least one check command is configured: a fully autonomous run needs one. */
   hasChecks: boolean;
+  /**
+   * Whether a run from an issue that opens pull requests first pushes a claim that other workbenches see (the setting
+   * `claimIssues`, src/engine/claims.ts); nothing is pushed for a run that keeps its work on this Mac.
+   */
+  claimIssues: boolean;
 }
 export const getRepoSettings = (path: string, giveUp: AbortSignal): Promise<RepoSettings> =>
   request("GET", `/api/repos/settings?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
@@ -579,7 +584,7 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   /** Those hosts, by name, for a run from an issue whose owner allowed them; empty for any other run. */
   issueHosts: string[];
   /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
-  claim: { state: "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
+  claim: { state: "claiming" | "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
 }
 
 /** One task of a run as the run's screen shows it. */

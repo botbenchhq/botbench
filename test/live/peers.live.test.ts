@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { ghArgs, parsePullRequestList, runGh, type RepoRef } from "../../src/github.ts";
+import { ghArgs, parsePullRequestList, parsePullRequestPage, PR_LIST_LIMIT, runGh, type RepoRef } from "../../src/github.ts";
 import { remoteTaskBranches } from "../../src/worktrees.ts";
 import { initRepo, git, tempDir } from "../support/repo.ts";
 import { PEERS_CAPTURE_FILE, PEERS_REPO, type PeersCapture } from "../support/replay-peers.ts";
@@ -59,4 +59,26 @@ test("live: the owner's gh lists a repository's open pull requests with Botbench
     assert.doesNotMatch(text, /gh[opsu]_[A-Za-z0-9]{10,}/, "no token in the capture");
     fs.writeFileSync(PEERS_CAPTURE_FILE, `${text}\n`);
   }
+});
+
+// Peers P3: when gh's page of pull requests is full, the view asks about each remaining pushed branch on its own. Full
+// is what gh gave, not what the parser kept: a page of 100 that holds forks' pull requests (which the parser drops) is
+// still full. Read live, with Botbench's exact arguments, from a public repository whose pull requests come from forks
+// (cli/cli, gh's own); nothing is written.
+test("live: a full page of pull requests that holds forks' is full though the forks' are dropped", { timeout: 120_000 }, async (t) => {
+  try {
+    execFileSync("gh", ["--version"], { stdio: "ignore" });
+  } catch {
+    return t.skip("gh is not installed here");
+  }
+  const repo: RepoRef = { host: "github.com", owner: "cli", name: "cli" };
+  const result = await runGh(ghArgs.prListOpen(repo, "all"), { cwd: process.cwd() });
+  assert.equal(result.code, 0, result.stderr);
+  const raw = JSON.parse(result.stdout) as { isCrossRepository: boolean }[];
+  assert.equal(raw.length, PR_LIST_LIMIT, "gh gave a full page");
+  const forks = raw.filter((pr) => pr.isCrossRepository).length;
+  assert.ok(forks > 0, "the page holds forks' pull requests");
+  const page = parsePullRequestPage(result.stdout, repo);
+  assert.ok(page.pullRequests.length <= PR_LIST_LIMIT - forks, "the forks' were dropped");
+  assert.equal(page.full, true, "and the page is still full");
 });

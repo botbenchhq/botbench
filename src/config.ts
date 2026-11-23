@@ -112,8 +112,9 @@ export interface RepositoryConfig {
   /** Paths in this repository, added to the top-level "protectedPaths", that only the owner may accept a change to. */
   protectedPaths?: string[];
   /**
-   * Whether a run started from an issue of this repository claims it on the remote (Peers P3, engine/claims.ts): an
-   * early branch other workbenches see, deleted again when the run ends without a pull request. Off when absent.
+   * Whether a run started from an issue of this repository, and set to open pull requests, claims the issue on the
+   * remote as it starts (Peers P3, engine/claims.ts): two empty branches other workbenches see, deleted again when the
+   * run ends without a pull request. A run that keeps its work on this Mac pushes nothing either way. Off when absent.
    */
   claimIssues?: boolean;
 }
@@ -279,7 +280,7 @@ function validate(c: Json, where: string): Config {
           continue;
         }
         if (setting === "claimIssues") {
-          if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue pushes a branch that tells other workbenches you started on it.`);
+          if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue, set to open pull requests, first pushes a claim that tells other workbenches you started on it.`);
           continue;
         }
         if (setting === "preapproved") {
@@ -376,7 +377,7 @@ export function repositoryDelivery(config: Config, repo: string): { remote: stri
   return { remote: settings.remote ?? "origin", baseBranch: settings.baseBranch ?? null };
 }
 
-/** Whether a run started from an issue of a repository claims it on its remote. Off unless its settings say true. */
+/** Whether a run started from an issue of a repository, set to open pull requests, claims it on its remote. Off unless its settings say true. */
 export function repositoryClaims(config: Config, repo: string): boolean {
   return repositorySettings(config, repo).claimIssues === true;
 }

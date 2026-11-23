@@ -16,7 +16,8 @@ import { gitEnv } from "./worktrees.ts";
  *                                                                  gives it, read only, for how its author relates to the repository
  *   gh pr list --repo=... --state=all --json=... --limit=100       the latest pull requests in any state, read only (engine/peers.ts)
  *
- * The one write besides a pull request goes through git, not gh: a claim branch pushed and deleted (engine/claims.ts).
+ * The one write besides a pull request goes through git, not gh, and only for a run that opens pull requests: an issue
+ * claim (its lock and named branch) pushed and deleted (engine/claims.ts).
  * Never `gh pr merge`, never `gh repo delete`, never anything that changes a branch, and nothing that writes to an
  * issue: no comment, label, close or assignment.
  */

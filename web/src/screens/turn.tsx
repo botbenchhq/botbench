@@ -16,7 +16,7 @@ import { choiceName, modelName, useModelChoice } from "../components/model-picke
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
 import { useIssueChoice } from "../components/issue-choice.tsx";
 import { usePeersOf } from "../components/other-workbenches.tsx";
-import { agoWords, issueWarnings, oldClaims } from "../app/peers.ts";
+import { agoWords, claimNotice, issueWarnings, oldClaims } from "../app/peers.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -617,7 +617,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
                     ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
-                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
+                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
                 </p>
               )
             )}
@@ -709,7 +709,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             takeOver.includes(c.branch) ? (
               <p key={c.branch} data-testid="peer-taken-over" className="ds-composer__reason">
                 <span data-ds-content="">{c.workbench}</span>
-                {`'s claim on issue #${c.issue} is taken over: your run goes ahead, and Botbench leaves its branch as it is.`}
+                {`'s claim on issue #${c.issue} is taken over: your run goes ahead, and Botbench leaves its branches as they are.`}
               </p>
             ) : (
               <ConfirmAction
@@ -727,7 +727,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   <span data-ds-content="">{c.workbench}</span>
                   {` started on issue #${c.issue} ${agoWords(c.startedAt, Date.now())} and has opened no pull request. Your run goes ahead as if `}
                   <span data-ds-content="">{c.workbench}</span>
-                  {" had not started. Botbench leaves its branch on the remote as it is. If that workbench is still working on the issue, the two of you may do the same work twice."}
+                  {" had not started. Botbench leaves its branches on the remote as they are, and pushes only a branch of your own. If that workbench is still working on the issue, the two of you may do the same work twice."}
                 </p>
               </ConfirmAction>
             ),

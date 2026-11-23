@@ -10,7 +10,21 @@ import { parseTaskBranch } from "../workbench.ts";
  * `parseTaskBranch` accepts: `botbench/<workbench>/run-<N>/issue-<number>-at-<YYYYMMDD>T<HHMMSSmmm>Z`. Another
  * workbench reads all of it from `git ls-remote` alone. The time is the claiming workbench's own clock, to the
  * millisecond, so two claims made in the same minute still have an order.
+ *
+ * Which claim is the earliest is not decided from those names: it is decided by the remote. With its named branch, a
+ * claim creates the issue's one lock branch `botbench/claims/issue-<number>` at the same commit, in one atomic push
+ * that never forces (engine/claims.ts). A ref that already exists refuses such a push, so of two workbenches that push
+ * at once exactly one gets the lock. Who holds it is read from which named claim branch points at the lock's commit.
  */
+
+/** The issue's lock branch, `botbench/claims/issue-<number>`: whichever claim created it first holds the issue. */
+export const lockBranch = (issue: number): string => `botbench/claims/issue-${issue}`;
+
+/** The issue number of a lock branch's name; null for any other branch. */
+export function parseLockBranch(branch: string): number | null {
+  const m = /^botbench\/claims\/issue-([1-9]\d{0,9})$/.exec(branch);
+  return m === null || Number(m[1]) > MAX_ISSUE_NUMBER ? null : Number(m[1]);
+}
 
 /** A claim branch's last part: the issue number and the UTC time the claim was made, such as `issue-82-at-20261122T210530123Z`. */
 const CLAIM_PART = /^issue-([1-9]\d{0,9})-at-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})Z$/;
@@ -44,18 +58,6 @@ export function parseClaimBranch(branch: string): ClaimName | null {
   const at = new Date(Date.UTC(y, mo - 1, d, h, mi, s, ms));
   if (at.getUTCFullYear() !== y || at.getUTCMonth() !== mo - 1 || at.getUTCDate() !== d || at.getUTCHours() !== h || at.getUTCMinutes() !== mi || at.getUTCSeconds() !== s) return null;
   return { branch, workbench: parsed.workbench, run: Number(run[1]), issue, startedAt: at.toISOString() };
-}
-
-/**
- * Whether claim `a` comes before claim `b` on the same issue: made earlier, and at the very same millisecond, the one
- * whose workbench name sorts first, then the lower run number. Every workbench that reads the same two names comes to
- * the same answer, so exactly one of two claims is the earliest.
- */
-export function claimedBefore(a: ClaimName, b: ClaimName): boolean {
-  const at = Date.parse(a.startedAt) - Date.parse(b.startedAt);
-  if (at !== 0) return at < 0;
-  if (a.workbench !== b.workbench) return a.workbench < b.workbench;
-  return a.run < b.run;
 }
 
 /**

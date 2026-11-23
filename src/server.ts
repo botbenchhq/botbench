@@ -133,8 +133,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db.close();
     throw err;
   }
-  // Pushes, pull requests and issue claims use the owner's own git and gh; only for a run that chose them, the owner's
-  // own action, or a repository whose settings turn claims on (engine/claims.ts).
+  // Pushes, pull requests and issue claims use the owner's own git and gh; only for a run that chose pull requests, or
+  // the owner's own action. An issue claim also needs the repository's settings to turn claims on (engine/claims.ts).
   const github = options.github ?? createGitHub();
   const claims = createClaims({ db, config, github, onRunChange: (id) => {
       // A claim's step is shown on the run's screen: it reads the run again.
@@ -143,7 +143,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     }, stopRun: (id) => {
       // A run whose claim gave way to another workbench's earlier one is stopped as a cancel stops it.
       try {
-        runs.cancel(id, "stopped: another workbench's claim on its issue is earlier");
+        runs.cancel(id, "stopped: another workbench holds the claim on its issue");
       } catch (err) {
         console.error(`Stopping run ${id} after its issue claim gave way failed: ${err instanceof Error ? err.message : String(err)}`);
       }

@@ -42,6 +42,18 @@ export function oldClaims(view: PeersView | null, o: { attached: number | null; 
   return issue === null ? [] : view.claims.filter((c) => c.issue === issue && now - Date.parse(c.startedAt) >= OLD_CLAIM_MS);
 }
 
+/**
+ * What the composer says, before Send, about a claim the run would push (src/engine/claims.ts): only for a repository
+ * whose setting `claimIssues` is on, a run that opens pull requests, and one issue (the one attached, else the one
+ * number the message names). Empty otherwise: then nothing about the issue leaves this Mac when the run starts.
+ */
+export function claimNotice(o: { claimIssues: boolean; delivery: "branch" | "pull_request"; attached: number | null; message: string }): string {
+  if (!o.claimIssues || o.delivery !== "pull_request") return "";
+  const named = spottedIssues(o.message);
+  const issue = o.attached ?? (named.length === 1 ? named[0]! : null);
+  return issue === null ? "" : ` When the run starts, Botbench pushes two empty branches to the remote so that other workbenches see you started on issue #${issue}; they are deleted if the run ends without a pull request.`;
+}
+
 /** How long ago `startedAt` was, from `now`: "less than a minute ago", "1 minute ago", "12 minutes ago", "3 hours ago", "2 days ago". */
 export function agoWords(startedAt: string, now: number): string {
   const minutes = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 60_000));

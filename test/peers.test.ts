@@ -78,13 +78,9 @@ test("another workbench's claim branch is read as a claim from its name alone; t
   assert.deepEqual(work.branches.map((b) => b.branch), ["botbench/carol/run-2/issue-82-at-20261322T210530123Z", "botbench/dave/run-2/issue-0-at-20261122T210530123Z"], "a name that is not a real claim (month 13, issue 0) is only a pushed branch");
 });
 
-test("a page is full by what gh gave, not by what was kept: 100 entries with a fork's pull request among them is full though 99 are kept", () => {
+test("a page is full by what gh gave: the real list of jon-lange/botbench held 61 when it was captured, so it is not full", () => {
   const capture = loadPeersCapture();
   const real = parsePullRequestPage(capture.outputs.all.result.stdout, PEERS_REPO);
-  assert.deepEqual([real.pullRequests.length, real.full], [61, false], "the real list held 61 when it was captured: not full");
-  // An answer of the same shape as the real one, for the parser's own rule: 99 of the repository's own and one fork's.
-  const pr = (number: number, o: Record<string, unknown> = {}) => ({ number, title: `t${number}`, url: `https://github.com/jon-lange/botbench/pull/${number}`, state: "MERGED", headRefName: `feature/${number}`, isCrossRepository: false, closingIssuesReferences: [], files: [], ...o });
-  const page = parsePullRequestPage(JSON.stringify([...Array.from({ length: 99 }, (_, i) => pr(i + 1)), pr(100, { isCrossRepository: true, headRefName: "botbench/bob/run-7/task-1" })]), PEERS_REPO);
-  assert.deepEqual([page.pullRequests.length, page.full], [99, true]);
-  assert.equal(parsePullRequestPage(JSON.stringify(Array.from({ length: 99 }, (_, i) => pr(i + 1))), PEERS_REPO).full, false);
+  assert.deepEqual([real.pullRequests.length, real.full], [61, false]);
+  // A full page with a fork's pull request among them is read live from a public repository: test/live/peers.live.test.ts.
 });

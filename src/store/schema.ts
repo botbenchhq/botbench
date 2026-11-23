@@ -1388,10 +1388,11 @@ DROP TABLE owner_settings_before_actions;
   },
   {
     // Claiming an issue on the shared remote (Peers P3, engine/claims.ts), step by step for a run, append-only: the
-    // branch pushed with the commit Botbench made for it (`claimed`), a claim that could not be made and why
-    // (`not_claimed`), a claim given up because another workbench's was earlier (`withdrawn`, naming it), and when the
-    // run ended without a pull request, the branch deleted (`released`) or left on the remote and why (`kept`). A run
-    // claims at most once. `claim_takeovers`: another workbench's old claim the owner chose, after a confirm naming
+    // commit Botbench made for the claim, stored before it is pushed (`claiming`), so a restart finds a push it never saw
+    // end; the branches pushed with it (`claimed`), a claim that could not be made or was not to be made, and why
+    // (`not_claimed`), a claim given up because another workbench holds the issue's lock (`withdrawn`, naming it), and
+    // when the run ended without a pull request, the branches deleted (`released`) or left on the remote and why
+    // (`kept`). A run claims at most once. `claim_takeovers`: another workbench's old claim the owner chose, after a confirm naming
     // its holder, not to give way to; stored with the run, before its claim. The action log gains `issue_claim`, one
     // entry per step that wrote to the remote or released a claim. A check cannot be altered in place, so the action
     // log is made again with every row kept, ids included, and its indexes and triggers put back.
@@ -1400,7 +1401,7 @@ DROP TABLE owner_settings_before_actions;
 CREATE TABLE issue_claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id INTEGER NOT NULL REFERENCES runs (id),
-  step TEXT NOT NULL CHECK (step IN ('claimed', 'not_claimed', 'withdrawn', 'released', 'kept')),
+  step TEXT NOT NULL CHECK (step IN ('claiming', 'claimed', 'not_claimed', 'withdrawn', 'released', 'kept')),
   issue INTEGER NOT NULL CHECK (issue >= 1),
   remote TEXT,
   branch TEXT,

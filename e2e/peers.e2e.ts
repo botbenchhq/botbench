@@ -4,8 +4,8 @@ import { test as base } from "@playwright/test";
 import { createTask, moveTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { chooseWorkbench } from "../src/workbench.ts";
-import { claimBranchName } from "../src/engine/claim-branch.ts";
-import { commitWork, createWorktree, makeClaimCommit, pushNewBranch } from "../src/worktrees.ts";
+import { claimBranchName, lockBranch } from "../src/engine/claim-branch.ts";
+import { commitWork, createWorktree, makeClaimCommit, pushNewBranches } from "../src/worktrees.ts";
 import { PEERS_ADDRESS } from "../test/support/replay-peers.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { checkDesign, chooseRepository, closeContext, expect, messageBox, signIn } from "./helpers.ts";
@@ -40,12 +40,13 @@ const test = base.extend<{ dir: string; seeded: { home: string; repo: string; ta
     git(bob, "add", "bob.txt");
     git(bob, "-c", "user.name=Bob", "-c", "user.email=bob@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "bob's work");
     git(bob, "push", "--quiet", "origin", "HEAD:refs/heads/botbench/bob/run-1/task-1");
-    // And bob's claim on issue #82 (Peers P3), made three minutes ago with Botbench's own claim commit and push.
+    // And bob's claim on issue #82 (Peers P3), made three minutes ago with Botbench's own claim commit and push: the
+    // issue's lock and bob's named claim branch, at one commit, in one push.
     const claim = claimBranchName("bob", 2, 82, new Date(Date.now() - 3 * 60_000));
-    await pushNewBranch({ repo: bob, remote: "origin", branch: claim, commit: await makeClaimCommit(bob, "Botbench: bob started on issue #82") });
+    await pushNewBranches({ repo: bob, remote: "origin", branches: [lockBranch(82), claim], commit: await makeClaimCommit(bob, "Botbench: bob started on issue #82") });
     // And an old claim of bob's on issue #90, from three hours ago, which alice's owner may take over.
     const old = claimBranchName("bob", 1, 90, new Date(Date.now() - 3 * 60 * 60_000));
-    await pushNewBranch({ repo: bob, remote: "origin", branch: old, commit: await makeClaimCommit(bob, "Botbench: bob started on issue #90") });
+    await pushNewBranches({ repo: bob, remote: "origin", branches: [lockBranch(90), old], commit: await makeClaimCommit(bob, "Botbench: bob started on issue #90") });
     // Alice's installation, this one: its own clone of the same remote, and a task ready for review on its named branch.
     const repo = path.join(dir, "alice");
     git(dir, "clone", "--quiet", bare, repo);
@@ -122,7 +123,7 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(dialog).toContainText("bob started on issue #90 3 hours ago and has opened no pull request.");
   await checkDesign(page, "Take over another workbench's claim");
   await dialog.getByRole("button", { name: "Take over" }).click();
-  await expect(page.getByTestId("peer-taken-over")).toHaveText("bob's claim on issue #90 is taken over: your run goes ahead, and Botbench leaves its branch as it is.");
+  await expect(page.getByTestId("peer-taken-over")).toHaveText("bob's claim on issue #90 is taken over: your run goes ahead, and Botbench leaves its branches as they are.");
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
   await page.goto(`${botbench.base}/#/settings`);
