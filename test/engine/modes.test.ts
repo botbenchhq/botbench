@@ -186,7 +186,7 @@ async function heldTask(e: Line, requests: readonly { command: string; input: Re
   return id;
 }
 
-test("fully autonomous: a harmless refused command no longer blocks the accept; it is still recorded, in words, and named in the accept's reasons", async (t) => {
+test("fully autonomous: a harmless refused command no longer blocks the accept; it is still recorded, in words, and named in the accept's reasons", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { hold: [0] });
   const id = await heldTask(e, [{ command: "ls src", input: { command: "ls src", description: "List the sources" } }]);
   const task = getTask(e.db, id)!;
@@ -201,7 +201,7 @@ test("fully autonomous: a harmless refused command no longer blocks the accept; 
   assert.equal(decision.reasons, "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src) was not on the always-ask list and would not have reached outside the task's copy.");
 });
 
-test("fully autonomous: beside a harmless refusal, an unconfined one still blocks the accept and is the one named", async (t) => {
+test("fully autonomous: beside a harmless refusal, an unconfined one still blocks the accept and is the one named", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { hold: [0] });
   const id = await heldTask(e, [
     { command: "ls src", input: { command: "ls src" } },
@@ -255,7 +255,7 @@ const MERGED = {
   criteria: ["hello.txt exists at the top of the repository", "hello.txt holds the single line hi", "bye.txt exists at the top of the repository", "README.md names hello.txt", "README.md names bye.txt"],
 };
 
-test("kept to one task, fully autonomous by default: the planner is told one task, a plan of three is sent back once, still three is merged by Botbench, and that one task is built and accepted", async (t) => {
+test("kept to one task, fully autonomous by default: the planner is told one task, a plan of three is sent back once, still three is merged by Botbench, and that one task is built and accepted", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { planner: [THREE_TASKS, THREE_TASKS] });
   const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "full" });
   assert.equal(run.oneTask, true, "on by default in fully autonomous");

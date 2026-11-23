@@ -73,12 +73,20 @@ export function refusalKind(r: RefusedRequest): RefusalKind {
   return r.why === "unknown" ? "unconfined" : "other";
 }
 
-/** Programs that only read the files they are given, or print, and write nothing: none of them runs another program. */
+/** Programs that only read the files they are given, or print, and write nothing: none of them runs another program but through the options below. */
 const READ_ONLY_PROGRAMS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "stat", "du", "diff", "pwd", "echo", "true"]);
 /** git's subcommands that only read the repository. */
 const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "ls-files", "rev-parse", "blame", "grep"]);
-/** Options that make a reading program run something or write a file (`rg --pre`, `git diff --output`, `--ext-diff`). */
-const RUNS_OR_WRITES = /^-(exec|execdir|ok|okdir)$|^--(pre|extcmd|exec|config-env|upload-pack|receive-pack|output|ext-diff|textconv)(=|$)/;
+/** Long options that make a reading program run something or write a file (`rg --pre`, `git diff --output`, `--ext-diff`). */
+const RUNS_OR_WRITES_LONG = ["pre", "extcmd", "exec", "config-env", "upload-pack", "receive-pack", "output", "ext-diff", "textconv", "open-files-in-pager", "search-zip", "hostname-bin"];
+const RUNS_OR_WRITES = new RegExp(`^-(exec|execdir|ok|okdir)$|^--(${RUNS_OR_WRITES_LONG.join("|")})(=|$)`);
+/** git takes a long option by any start of its name that names one option only (`--outp` for `--output`): such a start counts as the option. */
+const gitStartOf = (word: string): boolean => {
+  const name = /^--([^=]+)/.exec(word)?.[1];
+  return name !== undefined && RUNS_OR_WRITES_LONG.some((option) => option.startsWith(name));
+};
+/** Short option letters that make one program start another: `git grep -O` (a pager on the files), `rg -z` (a decompressor). Taken anywhere in a word of short options. */
+const RUNS_BY_LETTER: ReadonlyMap<string, string> = new Map([["git grep", "O"], ["rg", "z"]]);
 /** Sending output or errors nowhere: the one redirection a read-only command may carry. */
 const TO_NOWHERE = /(^|\s)(?:[12]?>|&>)\s*\/dev\/null(?=\s|$|[;&|])|(^|\s)2>&1(?=\s|$|[;&|])/g;
 
@@ -87,7 +95,8 @@ const TO_NOWHERE = /(^|\s)(?:[12]?>|&>)\s*\/dev\/null(?=\s|$|[;&|])|(^|\s)2>&1(?
  * only read or print (git with a subcommand that only reads), nothing in it runs another program or writes a file, and
  * every word that could be a path lies inside the copy (links followed), read from the folder the agent stood in. A
  * redirection other than to /dev/null, a substitution, a variable, a glob, a `..`, a `~`, an assignment and a `cd` all make
- * it not one; after `--`, a word that starts with a dash is a path like any other.
+ * it not one; after `--`, a word that starts with a dash is a path like any other, and before it an option's value is
+ * checked as a path, whether after an `=` or attached to a short option's letter.
  * Leans towards "no": a false "no" only hands a task back to the owner.
  */
 export function readOnlyCommand(command: string, worktree: string, cwd: string): boolean {
@@ -106,6 +115,7 @@ export function readOnlyCommand(command: string, worktree: string, cwd: string):
     const [first, ...args] = piece.map((word) => word.text);
     if (first === undefined) return false;
     let operands = args;
+    const runs = RUNS_BY_LETTER.get(first === "git" ? `git ${args[0] ?? ""}` : first);
     if (first === "git") {
       if (!READ_ONLY_GIT.has(args[0] ?? "")) return false;
       operands = args.slice(1);
@@ -114,10 +124,15 @@ export function readOnlyCommand(command: string, worktree: string, cwd: string):
     let options = true;
     return operands.every((word) => {
       if (options && word === "--") return !(options = false);
-      if (options && RUNS_OR_WRITES.test(word)) return false;
-      // An option's value is a path wherever a program may read it as one; a bare option names nothing.
-      const value = options && word.startsWith("-") ? (word.includes("=") ? word.slice(word.indexOf("=") + 1) : "") : word;
-      return value === "" || inCopy(value);
+      if (options && (RUNS_OR_WRITES.test(word) || (first === "git" && gitStartOf(word)))) return false;
+      if (options && runs !== undefined && /^-[^-]/.test(word) && [...runs].some((letter) => word.includes(letter))) return false;
+      if (!options || !word.startsWith("-")) return inCopy(word);
+      // An option's value is a path wherever a program may read it as one: after an `=`, and, for a short option, attached
+      // to its letter with nothing between (`grep -f<file>`, also after other letters, `-rf<file>`). Which letter takes a
+      // value is not known here, so every ending of the word after its first letter is checked as a path.
+      const values = word.includes("=") ? [word.slice(word.indexOf("=") + 1)] : [];
+      if (!word.startsWith("--")) for (let i = 2; i < word.length; i++) values.push(word.slice(i));
+      return values.every((value) => value === "" || (!value.startsWith("~") && inCopy(value)));
     });
   });
 }

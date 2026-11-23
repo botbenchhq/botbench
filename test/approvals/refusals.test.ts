@@ -112,3 +112,56 @@ test("a word after -- that is a real link out of the copy is followed, and the c
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a short option with its value attached is read as a path too: one that names a file outside the copy is not read-only", () => {
+  // `grep -f<file>` reads its patterns from <file>; the value can follow the option letter with no space or `=`.
+  assert.equal(readOnlyCommand("grep -f/etc/passwd README.md", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("grep -rf/etc/passwd src", WORKTREE, WORKTREE), false, "after other letters of the same word");
+  assert.equal(readOnlyCommand("grep -f~/notes README.md", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("grep -f../x README.md", WORKTREE, WORKTREE), false);
+  // Bare options and options with a value that is no path outside the copy stay read-only.
+  assert.equal(readOnlyCommand("ls -la src", WORKTREE, WORKTREE), true);
+  assert.equal(readOnlyCommand("head -n5 README.md", WORKTREE, WORKTREE), true);
+  assert.equal(readOnlyCommand("grep -fpatterns.txt README.md", WORKTREE, WORKTREE), true);
+});
+
+test("a short option's attached value that is a real link out of the copy is followed, and the command is not read-only", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-refusals-")));
+  try {
+    const copy = path.join(dir, "copy");
+    fs.mkdirSync(copy);
+    fs.writeFileSync(path.join(dir, "secret.txt"), "x");
+    fs.symlinkSync(path.join(dir, "secret.txt"), path.join(copy, "pattern-link"));
+    fs.writeFileSync(path.join(copy, "text.txt"), "x");
+    assert.equal(readOnlyCommand("grep -fpattern-link text.txt", copy, copy), false);
+    assert.equal(readOnlyCommand("grep -f pattern-link text.txt", copy, copy), false, "as a separate word it was already followed");
+    assert.equal(readOnlyCommand("grep -ftext.txt text.txt", copy, copy), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("options that make git grep or rg start another program are not read-only, in long form or as a short letter", () => {
+  // `git grep -O<pager>` opens the matching files in a program; `rg -z` starts a decompression program on each file;
+  // `rg --hostname-bin` runs the program it names.
+  assert.equal(readOnlyCommand("git grep -Oless foo", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("git grep -nO foo", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("git grep --open-files-in-pager=less foo", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("rg -z foo", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("rg -nz foo", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("rg --search-zip foo", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("rg --hostname-bin=x foo", WORKTREE, WORKTREE), false);
+  // The same letters elsewhere are not that option.
+  assert.equal(readOnlyCommand("git grep -n foo", WORKTREE, WORKTREE), true);
+  assert.equal(readOnlyCommand("rg -n foo", WORKTREE, WORKTREE), true);
+  assert.equal(readOnlyCommand("git log -z", WORKTREE, WORKTREE), true);
+});
+
+test("git takes a long option by any unambiguous start of its name, so a start of one that runs or writes is not read-only", () => {
+  assert.equal(readOnlyCommand("git diff --outp=notes.txt", WORKTREE, WORKTREE), false, "--output, which writes the file");
+  assert.equal(readOnlyCommand("git diff --ext", WORKTREE, WORKTREE), false, "--ext-diff");
+  assert.equal(readOnlyCommand("git show --textc HEAD", WORKTREE, WORKTREE), false, "--textconv");
+  assert.equal(readOnlyCommand("git grep --open=less foo", WORKTREE, WORKTREE), false, "--open-files-in-pager");
+  assert.equal(readOnlyCommand("git diff --stat", WORKTREE, WORKTREE), true);
+  assert.equal(readOnlyCommand("git log --oneline -5", WORKTREE, WORKTREE), true);
+});
