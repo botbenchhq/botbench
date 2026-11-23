@@ -25,8 +25,11 @@ import { git, initRepo, tempDir } from "../support/repo.ts";
 type T = { after(fn: () => unknown): void };
 const cmd = (command: string): StationCommand => ({ command, limitMs: 10_000 });
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-/** A silent agent that is never stopped sleeps for ten minutes: the test fails long before that. */
-const WITHIN = { timeout: 60_000 };
+/**
+ * A silent agent that is never stopped sleeps for ten minutes: the test fails long before that. Each test waits a few
+ * silence limits of up to 10 seconds each (`limitFor`), on a machine that may be loaded.
+ */
+const WITHIN = { timeout: 180_000 };
 
 /**
  * How long this machine takes, now, to start a shell that starts a child, records its number and waits for it: the
@@ -49,11 +52,15 @@ async function pace(): Promise<number> {
   fs.rmSync(dir, { recursive: true, force: true });
   return slowest;
 }
-/** A silence limit of at least `floorMs` and at least twenty of this machine's starts (`pace`), in whole tenths of a second. */
-const limitFor = async (floorMs: number): Promise<number> => Math.ceil(Math.max(floorMs, 20 * (await pace())) / 100) * 100;
+/**
+ * A silence limit of at least `floorMs` and at least twenty of this machine's starts (`pace`), in whole tenths of a
+ * second; at most 10 seconds, still ten of the slowest starts seen under load, so that a test waiting several limits stays
+ * within its time.
+ */
+const limitFor = async (floorMs: number): Promise<number> => Math.min(10_000, Math.ceil(Math.max(floorMs, 20 * (await pace())) / 100) * 100);
 
 /** Wait until `ready` holds, checking every 20 ms; fails after `ms`. */
-async function until(ready: () => boolean, what: string, ms = 10_000): Promise<void> {
+async function until(ready: () => boolean, what: string, ms = 60_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!ready()) {
     if (Date.now() > deadline) assert.fail(`Timed out waiting until ${what}.`);
@@ -284,10 +291,7 @@ function allowAll(t: T, e: Line): void {
 const payloads = (db: DatabaseSync, attemptId: number): { type: string; at: number; payload: Record<string, unknown> }[] =>
   db.prepare("SELECT type, ts, payload FROM events WHERE attempt_id = ? ORDER BY id").all(attemptId).map((row) => ({ type: String(row.type), at: Date.parse(String(row.ts)), payload: JSON.parse(String(row.payload)) as Record<string, unknown> }));
 
-/** The tests below wait several silence limits, each set from this machine's pace: a loaded machine needs longer. */
-const LONGER = { timeout: 180_000 };
-
-test("a builder whose command runs quietly for many times the silence limit, within the command's own limit, is not stopped: the clock waits for the command", LONGER, async (t) => {
+test("a builder whose command runs quietly for many times the silence limit, within the command's own limit, is not stopped: the clock waits for the command", WITHIN, async (t) => {
   const limitMs = await limitFor(400);
   // Four limits of a real sleep, printing nothing, then a change to the copy; the recorded call names no limit of its
   // own, so it has Claude Code's two minutes.
@@ -320,7 +324,7 @@ test("a builder whose command runs quietly for many times the silence limit, wit
   assert.equal(git(e.repo, "show", `${task.branch!}:hello.txt`), "hi\n");
 });
 
-test("a command past its own time limit is still stopped: once that limit has passed the silence limit counts again, and the task says which command ran and for how long", LONGER, async (t) => {
+test("a command past its own time limit is still stopped: once that limit has passed the silence limit counts again, and the task says which command ran and for how long", WITHIN, async (t) => {
   const limitMs = await limitFor(400);
   const pids = tempDir("botbench-silence-pids-");
   t.after(() => fs.rmSync(pids, { recursive: true, force: true }));
@@ -347,7 +351,7 @@ test("a command past its own time limit is still stopped: once that limit has pa
   await until(() => !alive(sleeper), "the command's sleep is stopped");
 });
 
-test("the owner's time to allow a command is not the command's: its own limit counts from the answer, so a quiet command after a long wait is not stopped", LONGER, async (t) => {
+test("the owner's time to allow a command is not the command's: its own limit counts from the answer, so a quiet command after a long wait is not stopped", WITHIN, async (t) => {
   const limitMs = await limitFor(400);
   // The call's own limit is one silence limit; the owner takes three to answer; then the command sleeps one and a half,
   // printing nothing: past its limit counted from the call, within it counted from the answer.
