@@ -11,7 +11,7 @@ import { createRun, createRuns, getRun, storePlan, type Runs } from "../../src/e
 import { taskEvidence, type StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, resumeNote, type Tasks } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
-import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
+import { buildReplayDriver, type BuildReplay, type BuildTurn, type FixtureTurn } from "../support/replay-build.ts";
 import { reviewReplayDriver, type ReviewReplay, type ReviewSession } from "../support/replay-review.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
@@ -44,7 +44,7 @@ interface Line {
   engines: Tasks[];
 }
 
-async function line(t: T, builds: BuildTurn[], reviews: ReviewSession[], o: { hold?: number[]; holdAt?: "prompt" | "session"; checks?: StationCommand[] } = {}): Promise<Line> {
+async function line(t: T, builds: (BuildTurn | FixtureTurn)[], reviews: ReviewSession[], o: { hold?: number[]; holdAt?: "prompt" | "session"; checks?: StationCommand[] } = {}): Promise<Line> {
   const dir = tempDir("botbench-refine-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -83,6 +83,13 @@ async function until(what: string, done: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+/**
+ * A real resumed Claude Code turn that ended with no reply and no change, as the driver before the fix of #111 stored it
+ * (test/support/capture-empty-resumed.ts; its `about` says how it was recorded). The replay plays it up to its first end of turn.
+ */
+const EMPTY: FixtureTurn = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "fixtures", "empty-resumed-turn", "turn.json"), "utf8"));
+const notes = (db: DatabaseSync, id: number): string[] => db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND detail IS NOT NULL ORDER BY id").all(id).map((row) => String(row.detail));
 
 const checkRounds = (db: DatabaseSync, id: number): string[] => taskEvidence(db, id).filter((row) => row.kind === "check").map((row) => `${row.round}:${row.outcome}`);
 const outcome = (db: DatabaseSync, id: number) => {
@@ -323,4 +330,63 @@ test("semi-autonomous: a round of fixes runs its confined commands without askin
   assert.equal(e.builder.started.length, 2, "a build and a round of fixes");
   assert.equal(listApprovals(e.db).length, 0, "nothing was put to the owner");
   assert.deepEqual(actionLog(e.db, taskId).filter((entry) => entry.rule === "mode_allowed").map((entry) => entry.command), ["sh other.sh"]);
+});
+
+test("a resumed round of fixes that ends with no reply and no change is noted and run once more in a new session with the whole task; that session's answer goes on through the loop", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done", EMPTY, "refine"], ["review", "second-review"]);
+  const { taskId } = approved(e);
+  await e.tasks.idle();
+  const task = getTask(e.db, taskId)!;
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(e.builder.started.length, 3, "the build, the resumed round and its new session");
+  const buildCursor = e.db.prepare("SELECT resume_cursor FROM attempts WHERE id = (SELECT min(id) FROM attempts WHERE driver = 'claude-code')").get()!.resume_cursor;
+  assert.equal(e.builder.started[1]!.resumeCursor, buildCursor, "the round first took up the builder's session");
+  assert.equal(e.builder.started[2]!.resumeCursor, undefined, "the retry has no resume cursor");
+  assert.doesNotMatch(e.builder.prompts[1]!, /<task>/);
+  assert.match(e.builder.prompts[2]!, /<task>\nAdd a function/, "the retry is sent the whole task");
+  assert.match(e.builder.prompts[2]!, /<review>\nVerdict: concerns/);
+  const said = notes(e.db, taskId);
+  assert.ok(said.some((note) => /^round 1 of fixes: Claude Code took up its earlier session \(attempt \d+\) and ended its turn with no reply and no change; the round runs once more in a new session; attempt \d+$/.test(note)), said.join("\n"));
+  // The note is stored with the retry's own attempt, in one write: a restart before that attempt started finds no note.
+  const retry = said.find((note) => note.includes("runs once more in a new session"))!;
+  assert.equal(retry.slice(retry.lastIndexOf("attempt ")), `attempt ${task.attemptId}`);
+  // One round, recorded once, as the new session's: it changed the work, so it was checked and reviewed again.
+  const fixes = taskRefinements(e.db, taskId);
+  assert.equal(fixes.length, 1);
+  assert.deepEqual([fixes[0]!.outcome, fixes[0]!.changed, fixes[0]!.attemptId], ["finished", true, task.attemptId]);
+  assert.deepEqual(checkRounds(e.db, taskId), ["1:failed", "2:passed"]);
+  assert.equal(e.reviewer.started.length, 2);
+  assert.deepEqual(outcome(e.db, taskId), { outcome: "unaccounted", line: "Codex raised 1 concern. Claude Code addressed 1. Codex said it looks right but gave no account of what it checked: needs your judgment." });
+});
+
+test("a resumed round with no reply and no change whose new session is empty too is not tried a third time: it is recorded with no answer, the task is Ready for review, and the outcome says the builder did not answer", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done", EMPTY, EMPTY, "refine"], ["review", "second-review"]);
+  const { taskId } = approved(e);
+  await e.tasks.idle();
+  const task = getTask(e.db, taskId)!;
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(e.builder.started.length, 3, "one retry, not two");
+  assert.equal(e.builder.started[2]!.resumeCursor, undefined);
+  assert.equal(e.reviewer.started.length, 1, "nothing new to review");
+  const [fix, ...more] = taskRefinements(e.db, taskId);
+  assert.deepEqual(more, []);
+  assert.deepEqual([fix!.outcome, fix!.changed, fix!.reply, fix!.attemptId], ["finished", false, "", task.attemptId]);
+  assert.deepEqual(outcome(e.db, taskId), { outcome: "unresolved", line: "Codex raised 1 concern. Claude Code did not answer. Needs your judgment." });
+});
+
+test("the one retry in a new session is counted per round: a restart that takes the retry up again in its own session, and ends empty, starts no further session", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done", EMPTY, EMPTY, EMPTY, "refine"], ["review", "second-review"], { hold: [2], holdAt: "session" });
+  const { taskId } = approved(e);
+  await e.builder.held(2);
+  // Botbench is started again while the retry's session is under way: the round is taken up again in that session.
+  const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
+  e.engines.push(after);
+  await until("ready for review", () => getTask(e.db, taskId)!.status === "awaiting_decision");
+  assert.equal(e.builder.started.length, 4, "the build, the resumed round, its retry, and the retry taken up after the restart");
+  assert.ok(e.builder.started[3]!.resumeCursor !== undefined, "the restart took up the retry's own session");
+  assert.equal(notes(e.db, taskId).filter((note) => note.includes("the round runs once more in a new session")).length, 1, "retried once");
+  const [fix, ...more] = taskRefinements(e.db, taskId);
+  assert.deepEqual(more, []);
+  assert.deepEqual([fix!.outcome, fix!.changed, fix!.reply], ["finished", false, ""]);
+  assert.equal(outcome(e.db, taskId).line, "Codex raised 1 concern. Claude Code did not answer. Needs your judgment.");
 });

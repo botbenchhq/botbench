@@ -6,7 +6,7 @@ import os from "node:os";
  * bearer or basic authentication", are not themselves secrets and are let through.
  */
 export function checkRecording(lines: readonly string[]): void {
-  const SECRET = /sk-[A-Za-z0-9]|xai-[A-Za-z0-9]|AIza[0-9A-Za-z_-]{10}|ya29\.|eyJ[A-Za-z0-9_-]{10}|account[_-]?id|@[a-z0-9-]+\.[a-z]{2,}|bearer\s+[A-Za-z0-9]|refresh_token|access_token|client_secret/i;
+  const SECRET = /(?<![A-Za-z0-9])sk-[A-Za-z0-9]|xai-[A-Za-z0-9]|AIza[0-9A-Za-z_-]{10}|ya29\.|eyJ[A-Za-z0-9_-]{10}|account[_-]?id|@[a-z0-9-]+\.[a-z]{2,}|bearer\s+[A-Za-z0-9]|refresh_token|access_token|client_secret/i;
   const home = os.homedir();
   for (const line of lines) {
     const words = line.replace("Missing bearer or basic authentication", "");

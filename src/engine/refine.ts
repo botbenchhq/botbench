@@ -39,6 +39,12 @@ export interface LoopRefinement {
   reply: string;
 }
 
+/**
+ * A round of fixes that finished with no reply and no change: the builder did not answer. It is not counted as a
+ * reply. A resumed round that ends so is tried once more in a new session (`refined` in engine/task.ts).
+ */
+export const unanswered = (fix: LoopRefinement): boolean => fix.outcome === "finished" && !fix.changed && fix.reply.trim() === "";
+
 /** The verdict the loop goes by: a review in the asked form says it; any other finished review counts as concerns; a review that did not finish has none. */
 export function loopVerdict(review: Pick<LoopReview, "outcome" | "verdict">): "looks_right" | "concerns" | null {
   if (review.outcome !== "reviewed") return null;
@@ -143,7 +149,9 @@ export function outcomeLine(r: LoopRecord): string {
   const [firstCount, ...later] = raised;
   const opening = firstCount === undefined || firstCount === 0 ? `${reviewer} raised concerns` : `${reviewer} raised ${count(firstCount, "concern", "concerns")}`;
   parts.push(`${opening}${later.map((n) => (n === 0 ? ", then concerns again" : `, then ${n}`)).join("")}.`);
-  const finished = r.refinements.filter((fix) => fix.outcome === "finished");
+  // A round with no reply and no change is no answer, never "replied to them". It ends the loop, so it is the last.
+  const finished = r.refinements.filter((fix) => fix.outcome === "finished" && !unanswered(fix));
+  const silent = r.refinements.some(unanswered);
   if (finished.length > 0) {
     const replies = finished.map((fix) => parseRefineReply(fix.reply));
     if (replies.some((reply) => reply === null)) parts.push(`${builder} replied to them.`);
@@ -154,6 +162,7 @@ export function outcomeLine(r: LoopRecord): string {
       else parts.push(`${builder} addressed ${addressed}${explained > 0 ? ` and explained ${explained}` : ""}.`);
     }
   }
+  if (silent) parts.push(finished.length > 0 ? `${builder} did not answer the last round.` : `${builder} did not answer.`);
   const last = r.reviews.at(-1)!;
   const fix = fixAfterLastReview(r);
   if (outcome === "failed") parts.push(last.outcome !== "reviewed" ? `${reviewer}'s next review did not finish: needs your judgment.` : `${builder}'s fixes did not finish: needs your judgment.`);
