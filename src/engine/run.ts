@@ -590,8 +590,10 @@ export function createRuns(options: RunsOptions): Runs {
       if (!gone()) move(run.id, "planning", { attemptId: session.attemptId, detail: `planner attempt ${session.attemptId}` });
       const issue = runIssue(db, run.id);
       const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
-      const first = gone() ? null : await turn(plannerPrompt({ work, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
-      if (first === null || gone()) outcome = { cancelled: true };
+      // `close` stops only a session it can see: one still being started when Botbench began stopping is sent no turn.
+      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
+      if (first === null && !gone()) outcome = { problem: STOPPED };
+      else if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };
       else {
         let plan = parsePlan(first.text);

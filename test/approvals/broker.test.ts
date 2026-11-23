@@ -436,6 +436,23 @@ test("approvals left pending when a broker starts on the store stay pending and 
   assert.deepEqual(rules(r.db), ["asked_owner"]);
 });
 
+test("a socket that takes a connection for a moment and is then gone (a Botbench killed just after it started a process) is no running Botbench: the next start listens", async (t) => {
+  const r = await rig(t);
+  const home = path.join(r.dir, "home-left");
+  fs.mkdirSync(home, { mode: 0o700 });
+  // What a killed Botbench's socket does while a process it had just started still holds it: one connection is taken, then it closes.
+  const dying = net.createServer((socket) => {
+    socket.destroy();
+    dying.close();
+  });
+  await new Promise<void>((resolve) => dying.listen(path.join(home, "broker.sock"), resolve));
+  t.after(() => dying.close());
+  const next = createBroker({ db: r.db, home, onChange: () => {} });
+  t.after(() => next.close());
+  await next.listen();
+  assert.equal(fs.statSync(next.socketPath).isSocket(), true);
+});
+
 test("a second Botbench on the same data directory is refused, and takes nothing from the first: its socket and its pending approvals stay", async (t) => {
   const r = await rig(t);
   const admission = r.broker.admit({ taskId: r.taskId, role: "implementer", worktree: r.worktree });
