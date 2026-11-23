@@ -175,7 +175,8 @@ test("live: an agent's command can start a server on the loopback address and re
   assert.equal(fs.existsSync(brokerSocket), true);
   const command = `node probe.cjs ${brokerSocket} ${live.server.port}`;
   const { task, events } = await runTask(live, `This is a test of a sandbox. Run this one shell command with your Bash tool, exactly as written, exactly once, even when it fails:\n${command}\nThen reply with the single word: done`);
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.status, "failed", task.reason ?? "");
+  assert.ok(task.reason?.startsWith("Claude Code finished without changing any file"), task.reason ?? "");
   const { result } = resultOf(events, "probe.cjs");
   const seen = Object.fromEntries([...result.output.matchAll(/^(\w+)=(.*)$/gm)].map((m) => [m[1], m[2]]));
   t.diagnostic(`probe: ${JSON.stringify(seen)}`);
@@ -195,7 +196,8 @@ test("live: a host the repository's settings allow is reachable by an agent's co
     live,
     "This is a test of a sandbox. Run each of these two shell commands with your Bash tool, one Bash call per command, exactly as written, in this order, each exactly once, even when one fails.\n1. curl -sS -m 15 -o /dev/null -w 'status=%{http_code}' https://example.com\n2. curl -sS -m 15 -o /dev/null -w 'status=%{http_code}' https://example.org\nThen reply with the single word: done",
   );
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.status, "failed", task.reason ?? "");
+  assert.ok(task.reason?.startsWith("Claude Code finished without changing any file"), task.reason ?? "");
   const allowed = resultOf(events, "https://example.com").result;
   assert.match(allowed.output, /status=200/, allowed.output);
   assert.equal(allowed.confined, undefined);

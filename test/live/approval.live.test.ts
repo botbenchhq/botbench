@@ -135,7 +135,7 @@ test("live: a task that must run the repository's marker script waits as a pendi
   const approval = await nextPending(live, taskId);
   assert.deepEqual(
     { taskId: approval.taskId, role: approval.role, tool: approval.tool, command: approval.command, cwd: approval.cwd, status: approval.status, title: approval.taskTitle },
-    { taskId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", status: "pending", title: "Run the command `sh make-marker.sh` with your Bash tool, exa…" },
+    { taskId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", status: "pending", title: "Run the command `sh make-marker.sh` with your Bash tool…" },
   );
   assert.ok(approval.reason === null || typeof approval.reason === "string");
   // While it waits: the task says so, the turn has not moved on, and the script has not run.
@@ -202,7 +202,8 @@ test("live: declining returns a declined result to the agent and the turn ends; 
     asked.push(approval);
     await answer(live, approval.id, "decline", note);
   });
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.status, "failed", task.reason ?? "");
+  assert.ok(task.reason?.startsWith("Claude Code finished without changing any file"), task.reason ?? "");
 
   // Both the command and the write outside the worktree were asked about, and declined.
   const outside = asked.find((a) => a.tool === "Write");

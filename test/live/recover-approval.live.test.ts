@@ -160,7 +160,7 @@ test("live: Botbench is killed while a task waits on an approval and its Claude 
   for (const deadline = Date.now() + 15_000; attemptRows(botbench.home)[0]!.pgid !== null && Date.now() < deadline; ) await new Promise((r) => setTimeout(r, 100));
   assert.equal(processGroupAlive(survivor), false, "the surviving Claude Code was stopped on start");
   assert.deepEqual(attemptRows(botbench.home).map((a) => [a.id, a.pgid]), [[first.id, null]]);
-  await assert.rejects(getTask(client, taskId).then((task) => assert.equal(task.id, taskId)), "the old session is gone with the old process");
+  assert.equal((await getTask(client, taskId)).id, taskId, "the device stays signed in across the restart (sessions are kept in the database)");
   client = await signIn(botbench.base, botbench.home);
 
   // The approval is still there, as it was asked, and its task waits on the owner; nothing was run, re-driven or committed.
@@ -230,7 +230,8 @@ test("live: Botbench is shut down while a task waits on an approval and started 
   const note = "Not in this task.";
   await answer(client, asked.id, "decline", note);
   const task = await untilEnded(client, taskId);
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.status, "failed", task.reason ?? "");
+  assert.ok(task.reason?.startsWith("Claude Code finished without changing any file"), task.reason ?? "");
   assert.notEqual(task.attemptId, firstAttempt);
 
   // The agent was told, in the resumed session, that the owner declined, with the note.
