@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, dismissProposal, getWatch, type Proposal, type WatchStatus } from "../api/client.ts";
 import { PROPOSALS_ABOUT, proposalLine, startAddress, watchFailure } from "../app/watch-words.ts";
 import { Alert } from "./header.tsx";
@@ -83,9 +84,9 @@ export function Proposals({ refresh, onSignedOut }: { refresh: number; onSignedO
                 </div>
                 <div className="ds-list__action">
                   <div className="ds-button-group" role="group" aria-label={`Issue #${p.number}`}>
-                    <button type="button" disabled={busy === p.id} aria-busy={busy === p.id || undefined} aria-label={`Dismiss issue #${p.number}`} onClick={() => dismiss(p)} className="ds-button ds-button--quiet ds-button--small">
+                    <BusyButton variant="quiet" size="small" busy={busy === p.id} busyLabel="Dismissing" aria-label={`Dismiss issue #${p.number}`} onClick={() => dismiss(p)}>
                       Dismiss
-                    </button>
+                    </BusyButton>
                     <button type="button" aria-label={`Start a run from issue #${p.number}`} onClick={() => (window.location.hash = startAddress(p))} className="ds-button ds-button--small">
                       Start
                     </button>

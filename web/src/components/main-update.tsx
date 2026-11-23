@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, updateWithMain, type TaskDetail } from "../api/client.ts";
 import { agentName } from "../app/chat.ts";
 import { behindLine, choiceLine, MAIN_HEADING, updateAbout, updateButton, updateRefused } from "../app/main-words.ts";
@@ -54,9 +55,9 @@ export function MainUpdateSection({ task, onChanged, onSignedOut }: { task: Pick
           {choice !== null && <p data-testid="main-choice">{choice}</p>}
           <p data-testid="main-about">{updateAbout(m.branch!, agentName(task.builder))}</p>
           <div className="ds-cluster">
-            <button type="button" aria-busy={busy} disabled={busy} onClick={update} className="ds-button">
-              {updateButton(m.branch!, busy)}
-            </button>
+            <BusyButton busy={busy} busyLabel={updateButton(m.branch!, true)} onClick={update}>
+              {updateButton(m.branch!, false)}
+            </BusyButton>
           </div>
         </>
       )}

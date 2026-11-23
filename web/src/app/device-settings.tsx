@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, listDevices, newPairingCode, signOutDevice, signOutOtherDevices, type SignedInDevice } from "../api/client.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { DeviceCode } from "../components/connect-sheet.tsx";
@@ -82,9 +83,9 @@ function AddDevice({ onSignedOut, onDevices }: { onSignedOut: () => void; onDevi
           </p>
         </div>
         <div className="ds-settings-row__control">
-          <button type="button" className="ds-button" aria-describedby={`${id}-about`} disabled={busy} onClick={ask}>
+          <BusyButton aria-describedby={`${id}-about`} busy={busy} busyLabel="Making a code" onClick={ask}>
             {pairing === null ? "Add a device" : "Make a new code"}
-          </button>
+          </BusyButton>
         </div>
       </div>
       {problem !== null && (
@@ -141,7 +142,8 @@ function AddDevice({ onSignedOut, onDevices }: { onSignedOut: () => void; onDevi
 export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
   const [devices, setDevices] = useState<SignedInDevice[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // What is being sent: the id of the device being signed out, or "others". Its button is busy; the others wait.
+  const [busy, setBusy] = useState<number | "others" | null>(null);
   const id = useId();
 
   const failed = useCallback(
@@ -158,7 +160,7 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
   useEffect(refresh, [refresh]);
 
   const signOut = (device: SignedInDevice): void => {
-    setBusy(true);
+    setBusy(device.id);
     setNote(null);
     signOutDevice(device.id)
       .then(() => {
@@ -166,15 +168,15 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
         if (device.current) return window.location.assign("/");
         refresh();
       }, failed(`${device.device} was not signed out.`))
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
 
   const signOutOthers = (): void => {
-    setBusy(true);
+    setBusy("others");
     setNote(null);
     signOutOtherDevices()
       .then(refresh, failed("The other devices were not signed out."))
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
 
   const others = devices?.filter((d) => !d.current).length ?? 0;
@@ -197,16 +199,17 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
             <p className="ds-settings-row__label">{device.device}</p>
             <p className="ds-settings-row__description">{`Signed in ${when(device.signedInAt)}. Last used ${when(device.lastUsedAt)}.`}</p>
           </div>
-          <div className="ds-settings-row__control">
+          {/* The device names the group, so a Sign out that is busy, and reads "Signing out", still says which device. */}
+          <div className="ds-settings-row__control" role="group" aria-label={device.device} data-ds-content-label="">
             {device.current && <p className="ds-settings-row__status">This device</p>}
             {device.current ? (
-              <ConfirmAction label="Sign out" opener={{ small: false, name: "Sign out this device" }} title="Sign out this device?" confirmLabel="Sign out" cancelLabel="Stay signed in" disabled={busy} losing testId="sign-out-dialog" onConfirm={() => signOut(device)}>
+              <ConfirmAction label="Sign out" opener={{ small: false, name: "Sign out this device", object: "this device" }} title="Sign out this device?" confirmLabel="Sign out" cancelLabel="Stay signed in" disabled={busy !== null && busy !== device.id} busy={busy === device.id} busyLabel="Signing out" losing testId="sign-out-dialog" onConfirm={() => signOut(device)}>
                 <p>You will need the login token to sign in again on this device.</p>
               </ConfirmAction>
             ) : (
-              <button type="button" className="ds-button" aria-label={`Sign out ${device.device}`} data-ds-content-label="" disabled={busy} onClick={() => signOut(device)}>
+              <BusyButton aria-label={`Sign out ${device.device}`} data-ds-content-label="" busy={busy === device.id} busyLabel="Signing out" disabled={busy !== null && busy !== device.id} onClick={() => signOut(device)}>
                 Sign out
-              </button>
+              </BusyButton>
             )}
           </div>
         </div>
@@ -221,9 +224,9 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
             </p>
           </div>
           <div className="ds-settings-row__control">
-            <button type="button" className="ds-button" aria-describedby={`${id}-others-about`} disabled={busy} onClick={signOutOthers}>
+            <BusyButton aria-describedby={`${id}-others-about`} busy={busy === "others"} busyLabel="Signing out" disabled={busy !== null && busy !== "others"} onClick={signOutOthers}>
               Sign out everywhere else
-            </button>
+            </BusyButton>
           </div>
         </div>
       )}

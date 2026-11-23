@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, issueSourceOf, lookUpIssue, timedOut, type IssuePreview } from "../api/client.ts";
 import type { AttachedIssue } from "../app/composer.ts";
 import { authorWords, hostsHint } from "../app/run-words.ts";
@@ -166,9 +167,9 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
           </p>
         </div>
         <div className="ds-cluster ds-gap-xs">
-          <button type="submit" className="ds-button" disabled={state.looking || state.given.trim() === ""} aria-busy={state.looking || undefined}>
+          <BusyButton type="submit" busy={state.looking} busyLabel="Looking it up" disabled={state.given.trim() === ""}>
             Look it up
-          </button>
+          </BusyButton>
         </div>
       </form>
 
