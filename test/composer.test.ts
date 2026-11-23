@@ -300,6 +300,9 @@ test("with Claude Code or an agent that cannot read a repository asked, Send wai
   assert.equal(sendFor(chatReading({}, [codex, { name: "Claude Code", reads: false }]), extras).do, "blocked");
   // Not known yet (an older check): asked as chosen, and the server's refusal is shown if it comes.
   assert.equal(blocked(chatReading({}, [{ name: "Grok", reads: null }])), null);
+  // While the agents are being checked, an agent not yet known to read waits for the answer instead.
+  assert.deepEqual(blocked({ ...chatReading({}, [codex, { name: "Antigravity", reads: null }]), agentsChecking: true }), { reason: "Checking which agents can read the repository.", required: null });
+  assert.equal(blocked({ ...chatReading({}, [codex]), agentsChecking: true }), null, "all known: nothing to wait for");
   assert.equal(blocked(chatReading({}, undefined)), null);
   // With nothing to read, any agent is asked as before.
   assert.equal(blocked({ ...ready, read: { pick: { kind: "none" }, status: { state: "none" } }, asked: [{ name: "Claude Code", reads: false }] }), null);

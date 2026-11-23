@@ -421,6 +421,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     hasChecks: repository.listed?.hasChecks ?? null,
     issue: kind === "run" ? issue.attached : null,
     read: { pick: readPick, status: reading.status },
+    agentsChecking: agents.offer.checking,
     // Claude Code is never given a repository in a chat; another agent reads one as the server said (src/api/chat.ts).
     ...(targets.ok ? { asked: targets.targets.map((t) => ({ name: agentName(t.agent), reads: t.agent === CLAUDE ? false : (offered?.find((o) => o.agent === t.agent)?.readsRepository ?? null) })) } : {}),
   };

@@ -44,6 +44,8 @@ export interface Facts {
   read?: { pick: ReadPick; status: RepoStatus };
   /** The agents a chat asks, for what a repository to read needs of them; left out when not known. */
   asked?: readonly Reader[];
+  /** Whether the agents are being checked now, so an agent's `reads` not yet known may still be learned. */
+  agentsChecking?: boolean;
 }
 
 /**
@@ -68,7 +70,11 @@ function readStop(f: Facts): string | null {
   if (f.read.status.state === "checking") return "Checking the repository for the chat to read.";
   if (f.read.status.state === "refused") return `${f.read.status.words} Choose another repository for the chat to read, or choose None.`;
   const cannot = (f.asked ?? []).filter((a) => a.reads === false);
-  if (cannot.length === 0) return null;
+  if (cannot.length === 0) {
+    // A check kept from before the server said who reads: wait for the one under way rather than send a likely refusal.
+    if (f.agentsChecking === true && (f.asked ?? []).some((a) => a.reads === null)) return "Checking which agents can read the repository.";
+    return null;
+  }
   const why = cannot.map((a) => (a.name === "Claude Code" ? "Claude Code works on a repository only as a task, in a separate copy, so a chat does not give it one." : `${a.name} cannot read a repository: it answers from the conversation alone.`));
   return `${why.join(" ")} The repository is read only by the other agents: ask only them, or choose None for the repository to read.`;
 }
