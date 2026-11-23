@@ -14,6 +14,7 @@ import { now, openStore } from "../../src/store/db.ts";
 import { RESTART_STOPPED as SHOWN } from "../../web/src/api/client.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { tempDir } from "../support/repo.ts";
+import { NO_PROCESS_LIST } from "../support/confined.ts";
 
 // A chat or review turn a restart cut off (Codex, Grok, Antigravity: one CLI process for one turn, src/drivers/one-turn.ts).
 // The process left behind is real: a child in its own process group, recorded on an attempt the way the one-turn session
@@ -76,7 +77,7 @@ const ends = (db: DatabaseSync, id: number) => events(db, id).filter((e) => e.pa
 const attempt = (db: DatabaseSync, id: number) => ({ ...db.prepare("SELECT status, pgid FROM attempts WHERE id = ?").get(id) });
 const STOPPED = { turn: 1, payload: { type: "turn_ended", reason: "interrupted", detail: RESTART_STOPPED } };
 
-test("a chat turn and a review turn cut off by a restart: their CLI groups are stopped, the record is cleared, and each turn ends as stopped because Botbench restarted, once", { timeout: 30_000 }, async (t) => {
+test("a chat turn and a review turn cut off by a restart: their CLI groups are stopped, the record is cleared, and each turn ends as stopped because Botbench restarted, once", { skip: NO_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   const dir = home(t);
   const chatGroup = realGroup(t);
   const reviewGroup = realGroup(t);
@@ -105,7 +106,7 @@ test("a chat turn and a review turn cut off by a restart: their CLI groups are s
   for (const id of [chat, review]) assert.deepEqual(ends(third, id), [STOPPED]);
 });
 
-test("a recorded group whose number now belongs to an unrelated process is not killed, and the turn is still recorded as stopped with the record cleared", { timeout: 30_000 }, async (t) => {
+test("a recorded group whose number now belongs to an unrelated process is not killed, and the turn is still recorded as stopped with the record cleared", { skip: NO_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   const dir = home(t);
   // A real process that began an hour after the attempt was recorded, as one given the number again would.
   const stranger = realGroup(t);
@@ -129,7 +130,7 @@ test("a turn whose process number was never written down, or was cleared before 
   assert.deepEqual(ends(db, id), [STOPPED]);
 });
 
-test("an attempt that ended in the ordinary way gets no stopped event: one whose turn has its end, and one no longer running", { timeout: 30_000 }, async (t) => {
+test("an attempt that ended in the ordinary way gets no stopped event: one whose turn has its end, and one no longer running", { skip: NO_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   const dir = home(t);
   const group = realGroup(t);
   const before = openStore(dir);
