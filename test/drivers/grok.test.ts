@@ -117,6 +117,25 @@ const read = (lines: readonly string[]) => {
   return lines.map(reader);
 };
 
+test("a search Grok runs on xAI's own servers (X search) is recorded and does not stop the turn; a tool on this Mac still does", () => {
+  // The line Grok 1.0.92 printed in a real chat on the owner's Mac, 2026-11-22: a backend tool, run by xAI, not here.
+  const backend = read(['{"type":"tool_call","toolCallId":"ctc_1","toolName":"X search:","rawInput":{"variant":"XSearch","backend":true}}'])[0]!;
+  assert.deepEqual(backend.events, [{ type: "tool_call", id: "ctc_1", name: "X search:", input: { variant: "XSearch", backend: true } }]);
+  assert.equal(backend.stop, null);
+  // "backend" must be exactly true, and a local tool's name does not become harmless by claiming it.
+  for (const rawInput of ['{"variant":"XSearch","backend":"true"}', '{"variant":"XSearch"}', '{"backend":false}', "null"]) {
+    const local = read([`{"type":"tool_call","toolCallId":"c","toolName":"X search:","rawInput":${rawInput}}`])[0]!;
+    assert.match(local.stop ?? "", /Grok tried to use a tool/);
+  }
+  for (const name of ["run_terminal_cmd", "read_file", "write", "edit_file", "search_tool", "use_tool"]) {
+    const claimed = read([`{"type":"tool_call","toolCallId":"c","toolName":"${name}","rawInput":{"backend":true,"path":"/etc/hosts"}}`])[0]!;
+    assert.match(claimed.stop ?? "", /Grok tried to use a tool/, name);
+  }
+  // The wording no longer says "a reviewer": the same stop is shown in a chat.
+  const call = read(['{"type":"tool_call","toolCallId":"c","toolName":"read_file","rawInput":{"path":"/etc/hosts"}}'])[0]!;
+  assert.doesNotMatch(call.stop ?? "", /reviewer/);
+});
+
 test("an output line that is not JSON, or not an event, becomes an error event", () => {
   const [bad, notEvent, blank] = read(["oops", "[1]", ""]);
   assert.equal(bad!.events[0]?.type, "error");
