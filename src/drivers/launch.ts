@@ -117,11 +117,18 @@ export function processGroupAlive(pgid: number): boolean {
   }
 }
 
+/**
+ * Send `signal` to every process in the group. A group that is gone is fine (ESRCH), and so is EPERM: macOS gives it
+ * for a group whose leader has just exited and whose members are all exited processes not yet collected, so there is
+ * nothing left to signal. Either way the caller then waits for `processGroupAlive` to say the group is empty, which
+ * counts EPERM as still there: the group is confirmed gone only once the system no longer knows it.
+ */
 function signalGroup(pgid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pgid, signal);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") throw err;
   }
 }
 
@@ -137,7 +144,8 @@ async function waitUntilGone(pgid: number, ms: number): Promise<boolean> {
 /**
  * Stop every process in the group: ask first, then force after `graceMs`.
  * Resolves once the group is empty and throws if it is still there after the
- * forced kill. A group that is already gone is fine.
+ * forced kill. A group that is already gone is fine, and so is one that can no
+ * longer be signalled because its leader has just exited (EPERM on macOS).
  */
 export async function killProcessGroup(pgid: number, options: { graceMs?: number } = {}): Promise<void> {
   if (!Number.isInteger(pgid) || pgid <= 1) throw new Error(`Refusing to signal process group ${pgid}.`);

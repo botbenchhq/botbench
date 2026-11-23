@@ -36,6 +36,10 @@ export function runFacts(run: RunSummary): string {
   return `Run ${run.id} · ${count} · ${folderName(run.repo)}`;
 }
 
+/** What a task's row on the run screen says under its title: why it ended, for a task that failed, was stopped or was cancelled; else nothing. */
+export const runTaskNote = (task: { status: string; reason: string | null }): string | null =>
+  (task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null ? task.reason : null;
+
 /** A run's state as a sentence that says only what is so. */
 export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingOnApproval" | "tasks" | "attemptId" | "mode">): string {
   switch (run.status) {
