@@ -170,8 +170,12 @@ test("LIVE: Codex chosen for a chat answers, and its reply is named as Codex's",
   const sheet = await openRow(page, "Model");
   await sheet.getByRole("radio", { name: "Codex", exact: true }).check({ timeout: 60_000 });
   const codexModels = sheet.getByTestId("model-codex-options");
-  if ((await codexModels.getByTestId("more-models").count()) > 0) await codexModels.getByText("More models…").click();
-  await codexModels.getByRole("radio", { name: /luna/i }).first().check();
+  // Codex's own list arrives after the configured one, and its order changes as OpenAI adds models: wait for a luna
+  // model or More models… to show before looking under it.
+  const luna = codexModels.getByRole("radio", { name: /luna/i }).first();
+  await expect(luna.or(codexModels.getByText("More models…"))).toBeVisible({ timeout: 30_000 });
+  if (!(await luna.isVisible())) await codexModels.getByText("More models…").click();
+  await luna.check();
   await closeContext(page);
   await expect(page.getByRole("button", { name: /^Agent and model: / })).toContainText("Codex");
   await page.getByLabel("Message Codex").fill("Reply with exactly the word: marmot");

@@ -154,7 +154,8 @@ const WEB_ACCESS: { value: WebAccess; label: string }[] = [
 
 /**
  * Web access: whether Claude Code may fetch pages and search the web without asking, in a chat, a task or a run, asks
- * you each time, or may not. Kept by Botbench and saved as it is chosen; it is read at each request.
+ * you each time, or may not; and whether Codex and Grok, which cannot ask, may use their own web search (Allow only), in
+ * a chat and in a review. Kept by Botbench and saved as it is chosen; it is read at each request.
  */
 function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
   const id = useId();
@@ -187,7 +188,7 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
             Web access
           </label>
           <p className="ds-settings-row__description" id={`${id}-web-about`}>
-            Whether Claude Code may fetch pages and search the web, in a chat, a task or a run. The address or search goes to that site or search service; what comes back goes to Claude Code. Each one shows in the transcript. A run started from a GitHub issue always asks.
+            Whether Claude Code may fetch pages and search the web, in a chat, a task or a run. The address or search goes to that site or search service; what comes back goes to Claude Code. Each one shows in the transcript. A run started from a GitHub issue always asks. Codex and Grok cannot ask you first, so they search the web, in a chat and when they review a task, only on Allow; their own provider runs the search, and their commands reach nothing on the network but that provider.
           </p>
         </div>
         <div className="ds-settings-row__control">

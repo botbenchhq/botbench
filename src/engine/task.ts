@@ -5,7 +5,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import { insertPreapproved, realRepo } from "../approvals/grants.ts";
-import { allowedHostsFor, outsideTextPrompt, runIssue } from "./intake.ts";
+import { chatWebAccess } from "../approvals/web-access.ts";
+import { allowedHostsFor, outsideTextPrompt, runIssue, runOutside } from "./intake.ts";
 import { learningsSection } from "./learnings.ts";
 import { memorySection } from "./memory.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
@@ -23,6 +24,7 @@ import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
+import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, limitNoSessionReason, MAX_TIMER_MS, retryTime, USAGE_LIMIT_WAIT_MS } from "./usage-limit.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
@@ -30,8 +32,10 @@ import { commandProblem, nextRound, runCommand, startCommandList, type CommandRu
  * committed. `reviewing` is the run's reviewer reading the work, after the checks (engine/review.ts); after a review with
  * concerns the task goes back to `building` for a round of fixes, then `verifying` and `reviewing` again (engine/refine.ts). `awaiting_decision` means nothing further happens until the owner decides; `accepted` and `rejected` are
  * the owner's decision (engine/decision.ts); `interrupted`, `failed` and `cancelled` are ends that carry a reason.
+ * `waiting_for_limit` is a builder's turn that ended on its agent's usage limit: its work is committed, and at the time
+ * stored with it Botbench resumes its session once and it goes back to `building` (engine/usage-limit.ts).
  */
-export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit";
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -41,7 +45,7 @@ export type ChecksMark = "passed" | "failed" | "none";
  */
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
-  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
+  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled", "waiting_for_limit"],
   verifying: ["verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
   // To itself: a fully autonomous run that could not accept the task records why it waits for the owner.
@@ -52,6 +56,8 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   // Only by the owner's Resume of a task whose builder changed no file (`changedNothing`).
   failed: ["building"],
   cancelled: [],
+  // Back to work at its stored time, by Botbench itself; or ended by a cancel of its run.
+  waiting_for_limit: ["building", "cancelled"],
 };
 
 export interface Task {
@@ -77,6 +83,8 @@ export interface Task {
   dependsOn: string;
   /** How many times a restart took it up again since it was started or last resumed by the owner. */
   restarts: number;
+  /** For a task waiting for a usage limit: when Botbench tries again (ISO). Null for every other task. */
+  retryAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -122,6 +130,7 @@ function toTask(row: Record<string, unknown>): Task {
     attemptId: int(row.attempt_id),
     dependsOn: String(row.depends_on),
     restarts: Number(row.restarts ?? 0),
+    retryAt: text(row.retry_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -188,6 +197,8 @@ export interface TaskChange {
   attemptId?: number;
   headCommit?: string;
   checks?: ChecksMark;
+  /** For a move to `waiting_for_limit`: when to try again (ISO). Cleared by any move away from that wait. */
+  retryAt?: string;
 }
 
 /**
@@ -207,8 +218,18 @@ export function moveTaskIn(db: DatabaseSync, id: number, to: TaskStatus, change:
     if (!MOVES[task.status]?.includes(to)) throw new Error(`Task ${id} is ${task.status} and cannot move to ${to}.`);
     const at = now();
     const sets = ["status = ?", "updated_at = ?"];
-    const values: (string | number)[] = [to, at];
+    const values: (string | number | null)[] = [to, at];
     const details: string[] = [];
+    if (to === "waiting_for_limit") {
+      if (change.retryAt === undefined) throw new Error(`Task ${id} cannot wait for a usage limit without a time to try again.`);
+      sets.push("retry_at = ?");
+      values.push(change.retryAt);
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+      details.push(`tries again at ${change.retryAt}`);
+    } else if (task.status === "waiting_for_limit") {
+      sets.push("retry_at = ?");
+      values.push(null);
+    }
     if (change.worktree) {
       sets.push("worktree_path = ?", "branch = ?", "base_commit = ?");
       values.push(change.worktree.path, change.worktree.branch, change.worktree.baseCommit);
@@ -257,7 +278,8 @@ export function settleRunIn(db: DatabaseSync, runId: number): { id: number; stat
   const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
   if (run?.status !== "running" && run?.status !== "awaiting_decision") return null;
   const has = (statuses: string): boolean => db.prepare(`SELECT 1 FROM tasks WHERE run_id = ? AND status IN (${statuses}) LIMIT 1`).get(runId) !== undefined;
-  if (has("'queued', 'building', 'verifying', 'reviewing'")) return null;
+  // A task waiting for a usage limit is still on its way: its run is neither done nor waiting on decisions.
+  if (has("'queued', 'building', 'verifying', 'reviewing', 'waiting_for_limit'")) return null;
   // A task that is ready for review keeps the run waiting. With none, nothing is left to decide and the run is done,
   // also when no task was ever ready for review because each failed or was stopped.
   const to = has("'awaiting_decision'") ? "awaiting_decision" : "done";
@@ -288,7 +310,8 @@ export function stageOf(db: DatabaseSync, task: Task): "setup" | "turn" | "check
   const from = stopped ? db.prepare("SELECT status FROM task_events WHERE task_id = ? AND status NOT IN ('interrupted', 'failed') ORDER BY id DESC LIMIT 1").get(task.id)?.status : task.status;
   if (from === "verifying") return task.headCommit === null ? null : "checks";
   // An agent is sent its prompt only once its task names its attempt, so a task with none has had nothing written by an agent.
-  if (from === "building") return task.attemptId === null ? "setup" : "turn";
+  // A wait for a usage limit is only ever entered from a builder's turn.
+  if (from === "building" || from === "waiting_for_limit") return task.attemptId === null ? "setup" : "turn";
   return null;
 }
 
@@ -328,6 +351,7 @@ const STANDS: Record<TaskStatus, string> = {
   interrupted: "is stopped",
   failed: "failed",
   cancelled: "was cancelled",
+  waiting_for_limit: "is waiting for a usage limit to reset, and Botbench tries again by itself at the time it shows",
 };
 
 const MAX_PATH = 4096;
@@ -399,6 +423,8 @@ export interface TasksOptions {
   reviewLimitMs?: number;
   /** How long a builder may send nothing before it is stopped (engine/silence.ts); 10 minutes when left out, and 0 for no limit. */
   silenceLimitMs?: number;
+  /** How long a task waits after its builder's usage limit when the agent gives no reset time (engine/usage-limit.ts); 30 minutes when left out. */
+  usageLimitWaitMs?: number;
   /**
    * The check-together gate a fully autonomous run's accept passes through (engine/combined.ts): with the owner's
    * "require checking together" on, it waits while an overlapping open pull request of another workbench has no
@@ -423,6 +449,7 @@ export interface TasksOptions {
 export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
   const silenceLimit = options.silenceLimitMs ?? SILENCE_LIMIT_MS;
+  const usageLimitWait = options.usageLimitWaitMs ?? USAGE_LIMIT_WAIT_MS;
   /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
   /**
@@ -575,6 +602,12 @@ export function createTasks(options: TasksOptions): Tasks {
    * is stored on the task; however the review went, the task then waits for the owner, as a review is an opinion and
    * not a check. Only a cancel of the run ends it otherwise.
    */
+  /**
+   * Whether a reviewer, which cannot ask, may use its own web search: only on Web access Allow, and never in a run that
+   * read outside text (a GitHub issue), whose web tools always ask: for an agent that cannot ask, that is Off.
+   */
+  const reviewerWebSearch = (task: Task): boolean => chatWebAccess(db) === "allow" && !runOutside(db, task.runId).text;
+
   const review = async (task: Task, from: "building" | "verifying", change: TaskChange, stopped?: AbortSignal): Promise<void> => {
     const assigned = reviewAssignment(db, task.id);
     if (assigned === null) return handOver(task, from, change);
@@ -590,7 +623,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const done = await runReview({
       db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, round, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
       ...(before === undefined ? {} : { previous: { round, review: before.text, reasons: parseRefineReply(lastFix?.reply ?? "")?.notAddressed ?? null } }),
-      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
+      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, webSearch: reviewerWebSearch(task), ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
     });
     options.onTaskChange(getTask(db, task.id)!);
     if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });
@@ -644,9 +677,10 @@ export function createTasks(options: TasksOptions): Tasks {
   /**
    * What the builder is sent for a round of fixes: the latest review as another model's opinion. A builder that takes
    * up its earlier session already has the task; one started without it is also given the task and the files its work
-   * changed. `again`: Botbench stopped while the builder was on this round, and it is taken up again.
+   * changed. `again`: the builder was stopped while on this round (by Botbench stopping, or by its usage limit), and it
+   * is taken up again; the words say which.
    */
-  const refinePromptFor = async (task: Task, reviewer: string, fresh: boolean, again = false): Promise<string> => {
+  const refinePromptFor = async (task: Task, reviewer: string, fresh: boolean, again: "restart" | "limit" | null = null): Promise<string> => {
     const latest = taskReview(db, task.id)!;
     let files: string[] = [];
     if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
@@ -654,7 +688,9 @@ export function createTasks(options: TasksOptions): Tasks {
     // A new session has not seen the issue a run was started from: it is given again, as the first build's prompt gives it.
     const prompt = `${refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
-    return again ? prompt.replace("[From Botbench, not from the owner] ", "[From Botbench, not from the owner] Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.\n\n") : prompt;
+    const note = again === "limit" ? LIMIT_ROUND_NOTE : "Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.";
+    // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
+    return again !== null ? prompt.replace("[From Botbench, not from the owner] ", `[From Botbench, not from the owner] ${note}\n\n`) : prompt;
   };
 
   /**
@@ -814,14 +850,15 @@ export function createTasks(options: TasksOptions): Tasks {
   /**
    * Build a run's queued tasks one after another, in plan order, while the run is running. It stops at a task of the
    * run that is still building without being worked on here: one that waits for the owner's answer across a restart
-   * holds up the tasks after it until it is resumed.
+   * holds up the tasks after it until it is resumed, and so does one waiting for a usage limit until it has resumed
+   * and reached an end.
    */
   const runLine = async (runId: number): Promise<void> => {
     for (;;) {
       if (closed) return;
       const run = db.prepare("SELECT status FROM runs WHERE id = ? AND kind = 'planned'").get(runId);
       if (run?.status !== "running") return;
-      if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying', 'reviewing') LIMIT 1").get(runId)) return;
+      if (db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying', 'reviewing', 'waiting_for_limit') LIMIT 1").get(runId)) return;
       const next = db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id LIMIT 1").get(runId);
       if (!next) return settle(runId);
       await build(Number(next.id));
@@ -831,16 +868,19 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /**
    * Run one turn of a task's attempt to its end and record where that leaves the task. `resumed` says why a task is
-   * driven again: the owner's answer to a request from before a restart, a restart, or the owner's Resume; null for
-   * its first turn. `fromSession`: the attempt takes up the session of the one before. If Botbench is stopped while
+   * driven again: the owner's answer to a request from before a restart, a restart, the owner's Resume, or the end of a
+   * wait for a usage limit; null for its first turn. A turn that ends on the usage limit makes the task wait for it, once:
+   * the turn that resumed it after that wait stops it for the owner instead. `fromSession`: the attempt takes up the session of the one before. If Botbench is stopped while
    * the turn waits for the owner, the task is parked: its approvals stay pending and it stays at `building` for the
    * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | "limit" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
     let detail: string | null = null;
+    /** Set when the turn ended on the agent's usage limit (`limitedEnd`): the reset time it gave, or null. */
+    let usageLimit = null as { resetsAt: string | null } | null;
     let reply = "";
     // A task with a review whose round has no fixes yet is on a round of fixes (engine/refine.ts).
     const refineRound = refineRoundOf(db, id);
@@ -852,7 +892,10 @@ export function createTasks(options: TasksOptions): Tasks {
     session.onEvent((event) => {
       if (event.type === "session_started") sessionStarted = true;
       if (event.type === "text") reply = event.text;
-      if (event.type === "turn_ended") detail = event.detail;
+      if (event.type === "turn_ended") {
+        detail = event.detail;
+        usageLimit = event.usageLimit ?? null;
+      }
       if (event.type === "permission_request") {
         asking.add(event.id);
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
@@ -871,7 +914,7 @@ export function createTasks(options: TasksOptions): Tasks {
       options.onEvent();
     });
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner" } as const;
+    const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner", limit: "resumed after waiting for a usage limit to reset" } as const;
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     // `note`: the caller's own, stored in the same write as the attempt (a round's retry in a new session, `refined`).
     move(id, "building", { attemptId: session.attemptId, ...(note !== undefined ? { note } : resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
@@ -928,6 +971,14 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
     else if (silent) await finish(task, "interrupted", silenceReason(agentName(driver.name), silenceLimit));
+    // The usage limit, in any kind of builder turn: the task waits for it and is resumed once. Reached again after that
+    // wait (by the resumed turn, or any later turn, also across a restart) it stops the task for the owner; only the
+    // owner's Resume allows another wait. Botbench stopping ends a turn as interrupted, never as a limit; a limit reached
+    // just as Botbench stops is still stored, and the next start arms its time.
+    else if (end === "error" && usageLimit !== null) {
+      if (resumed === "limit" || waitedForLimit(id)) await finish(task, "interrupted", limitAgainReason(agentName(driver.name)));
+      else await waitForLimit(task, usageLimit.resetsAt);
+    }
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
     else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped, fromSession);
     else if (end === "completed") await verify(task, reply, stopped);
@@ -939,6 +990,71 @@ export function createTasks(options: TasksOptions): Tasks {
     else if (resumed === "answer" && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
     else if (fromSession && !sessionStarted) await finish(task, "interrupted", `Claude Code could not carry on where this task stopped${detail === null ? "." : `: ${detail}`} The work done up to then is committed.`);
     else await finish(task, "failed", `Claude Code ended with an error${detail === null ? "." : `: ${detail}`}`);
+  };
+
+  /** Whether a task already waited for a usage limit since it was started or the owner last resumed it, read from its history. */
+  const waitedForLimit = (id: number): boolean =>
+    db.prepare("SELECT 1 FROM task_events WHERE task_id = ? AND status = 'waiting_for_limit' AND id > (SELECT COALESCE(MAX(id), 0) FROM task_events WHERE task_id = ? AND detail LIKE 'resumed by the owner%') LIMIT 1").get(id, id) !== undefined;
+
+  /** The timer that wakes each task waiting for a usage limit, by task id. Armed from the stored time; the store is what counts. */
+  const timers = new Map<number, NodeJS.Timeout>();
+
+  /** Set the timer that wakes a waiting task at its stored time (at once when that has passed). */
+  const arm = (task: Pick<Task, "id" | "retryAt">): void => {
+    clearTimeout(timers.get(task.id));
+    // Stopping: the next start arms it from the store.
+    if (closed) return;
+    const delay = Math.min(Math.max(0, Date.parse(task.retryAt ?? "") - Date.now()) || 0, MAX_TIMER_MS);
+    timers.set(
+      task.id,
+      setTimeout(() => {
+        timers.delete(task.id);
+        chain = chain.then(() => wake(task.id)).catch(report(`Resuming task ${task.id} after its usage limit`));
+      }, delay),
+    );
+  };
+
+  /**
+   * The builder's turn ended on its usage limit: what it wrote is committed, as for any stop, and the task waits until
+   * the time stored with it. Read again in the write: a cancel of its run meanwhile ends it as cancelled instead.
+   */
+  const waitForLimit = async (task: Task, resetsAt: string | null): Promise<void> => {
+    const made = await commit(task);
+    if (made === null) return;
+    const retryAt = retryTime(resetsAt, Date.now(), usageLimitWait);
+    const moved = transaction(db, () => {
+      if (getTask(db, task.id)?.status !== "building") return null;
+      if (cancelled(task)) return moveTaskIn(db, task.id, "cancelled", { headCommit: made.headCommit, reason: CANCELLED });
+      return moveTaskIn(db, task.id, "waiting_for_limit", { headCommit: made.headCommit, retryAt });
+    });
+    if (moved === null) return;
+    options.onTaskChange(moved);
+    if (moved.status === "waiting_for_limit") arm(moved);
+  };
+
+  /**
+   * A waiting task's time has come: it goes back to building and its builder is started again, by Botbench itself, in
+   * the same session with the task's own model (`carryOn`), once. Nothing happens for a task that no longer waits (its
+   * run was cancelled), and a task whose run was cancelled without its wait being ended is ended now. A timer that fired
+   * early (a due time beyond the longest timer) is set again. Then the tasks of its run behind it go on.
+   */
+  const wake = async (id: number): Promise<void> => {
+    if (closed) return;
+    const task = getTask(db, id);
+    if (task?.status !== "waiting_for_limit") return;
+    if (Date.parse(task.retryAt ?? "") > Date.now()) return arm(task);
+    const moved = transaction(db, () => {
+      const now_ = getTask(db, id);
+      if (now_?.status !== "waiting_for_limit") return null;
+      if (cancelled(now_)) return moveTaskIn(db, id, "cancelled", { reason: LIMIT_CANCELLED });
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+      return moveTaskIn(db, id, "building", { note: "the wait for the usage limit is over; the builder's session is resumed once" });
+    });
+    if (moved === null) return;
+    options.onTaskChange(moved);
+    if (moved.status === "building") await carryOn(id, "limit");
+    settle(moved.runId);
+    if (moved.runId !== null && !closed) await runLine(moved.runId);
   };
 
   /** End a task that waited on the owner across a restart and cannot go on: its approvals are closed, never allowed, and it says why. */
@@ -1016,16 +1132,16 @@ export function createTasks(options: TasksOptions): Tasks {
    * was: its checks run again from the start on the committed work; its setup runs again from the start in a copy no
    * agent has worked in; or its agent is started again in its copy, once whatever is left of the agent before it is
    * known to be stopped, taking up the session it had reported (told what happened), or with the task's own prompt
-   * when it had reported none.
+   * when it had reported none. `limit`: the task waited for its builder's usage limit, and this is the one resume after it.
    */
-  const carryOn = async (id: number, by: "restart" | "owner", before: Before = null): Promise<void> => {
+  const carryOn = async (id: number, by: "restart" | "owner" | "limit", before: Before = null): Promise<void> => {
     const task = getTask(db, id);
     if (!task || (task.status !== "building" && task.status !== "verifying") || closed) return;
     await atWork(task, (stop) => carryOnNow(task, by, stop, before));
   };
 
   /** `before`: the owner resumed a task whose builder's turn had ended without changing a file, or had gone silent, and it is told so. */
-  const carryOnNow = async (task: Task, by: "restart" | "owner", stop: AbortController, before: Before = null): Promise<void> => {
+  const carryOnNow = async (task: Task, by: "restart" | "owner" | "limit", stop: AbortController, before: Before = null): Promise<void> => {
     const stage = stageOf(db, task);
     const commands = options.repoCommands?.(task.repo) ?? { setup: [], checks: [] };
     if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
@@ -1040,6 +1156,8 @@ export function createTasks(options: TasksOptions): Tasks {
     if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
     const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    // Botbench starts a builder by itself only to take up the same session: with none to take up, the owner decides.
+    if (by === "limit" && cursor === null) return finish(task, "interrupted", limitNoSessionReason(agentName(driver.name)));
     const admission = admitBuilder(task);
     let session: DriverSession;
     try {
@@ -1054,7 +1172,13 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
     const reviewer = refineRoundOf(db, task.id) === null ? null : reviewAssignment(db, task.id)?.agent ?? null;
-    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? builderPrompt(task) : before === "changed nothing" ? CHANGED_NOTHING_PROMPT : before === "silent" ? silentPrompt(durationWords(silenceLimit)) : CONTINUE_PROMPT;
+    const prompt =
+      reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, by === "limit" ? "limit" : "restart")
+      : cursor === null ? builderPrompt(task)
+      : by === "limit" ? LIMIT_PROMPT
+      : before === "changed nothing" ? CHANGED_NOTHING_PROMPT
+      : before === "silent" ? silentPrompt(durationWords(silenceLimit))
+      : CONTINUE_PROMPT;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 
@@ -1189,6 +1313,16 @@ export function createTasks(options: TasksOptions): Tasks {
     .then(resumeRuns)
     .catch(report("Building the runs that were building"));
 
+  // A task left waiting for a usage limit by the last Botbench keeps its stored time: it is woken then, or at once when
+  // that has passed, in its turn after the recovery above.
+  // Each is announced again: a Botbench that stopped between storing the wait and announcing it sent no notification,
+  // and the push service records what it sent, so one already sent is not sent twice.
+  for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'waiting_for_limit' ORDER BY id").all()) {
+    const waiting = getTask(db, Number(row.id))!;
+    options.onTaskChange(waiting);
+    arm(waiting);
+  }
+
   // An answer stored for a parked approval re-drives its task, in its turn like any other work.
   broker.onStoredAnswer((approval) => {
     // A planner's request belongs to no task; a run that was planning when Botbench stopped is ended by the runs engine.
@@ -1261,6 +1395,11 @@ export function createTasks(options: TasksOptions): Tasks {
     // A task of the run that waits, parked, for an answer from before a restart has nothing at work: it is ended here,
     // its work committed. Its requests were closed with the cancel.
     // So is one the owner resumed that waits for its turn. What its checks left is not committed.
+    // A task waiting for a usage limit was ended by the cancel's own write (`cancelRun`); its timer has nothing left to wake.
+    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'cancelled'").all(runId)) {
+      clearTimeout(timers.get(Number(row.id)));
+      timers.delete(Number(row.id));
+    }
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying') ORDER BY id").all(runId)) {
       const task = getTask(db, Number(row.id))!;
       if (active?.taskId === task.id) continue;
@@ -1276,6 +1415,9 @@ export function createTasks(options: TasksOptions): Tasks {
 
   const close = async (): Promise<void> => {
     closed = true;
+    // A task waiting for a usage limit keeps its stored time for the next start; only this start's timers go.
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
     // A task that is waiting for the owner right now is parked, not ended: its approvals stay for the next start.
     parkCurrent?.();
     // A setup command at work is stopped with its process group.

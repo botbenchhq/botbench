@@ -22,7 +22,8 @@ export type DriverEvent =
   | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
-  | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
+  /** `usageLimit`: the turn ended because the agent's usage limit was reached; `resetsAt` is when it said it resets, or null. */
+  | { type: "turn_ended"; reason: TurnEndReason; detail: string | null; usageLimit?: { resetsAt: string | null } }
   | { type: "error"; message: string; raw: string | null };
 
 /** One stored event, from the stream or from a transcript request. */
@@ -133,6 +134,8 @@ export const transcribe = async (recording: Blob): Promise<string> => (await req
 export interface AgentState extends Omit<DriverState, "driver"> {
   agent: string;
   roles: string[];
+  /** What it can do in a chat, in one sentence; null for Claude Code. */
+  chat?: string | null;
 }
 /** The agents as their last check found them, when it ended, whether a new check is running, and the cap on rounds of fixes. */
 export interface AgentsAnswer {
@@ -276,7 +279,8 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled";
+/** `waiting_for_limit`: its builder's usage limit was reached; Botbench tries again by itself at `retryAt`. */
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit";
 
 /** The owner's decision on a task, as it was recorded. */
 /** One time a list of setup or check commands was run on a task, and how many commands it holds. */
@@ -377,6 +381,8 @@ export interface TaskSummary {
   attemptId: number | null;
   /** What its checks found once it was built; null before that. */
   checks: ChecksMark | null;
+  /** For a task waiting for a usage limit: when Botbench tries again (ISO). Null for every other task. */
+  retryAt: string | null;
   /** The task's agent asked for permission and is paused until the owner answers. */
   waitingOnApproval: boolean;
   /** A request that waits for the owner was asked before Botbench restarted: the agent is stopped, and the answer resumes the task. */
@@ -596,6 +602,8 @@ export interface RunTask {
   attemptId: number | null;
   branch: string | null;
   checks: ChecksMark | null;
+  /** For a task waiting for a usage limit: when Botbench tries again (ISO). Null for every other task. */
+  retryAt: string | null;
   waitingOnApproval: boolean;
   evidence: Evidence[];
   /** How many commands each round of setup and checks holds, recorded as it starts. */
@@ -887,6 +895,7 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
+  | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory";
 

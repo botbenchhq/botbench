@@ -289,7 +289,7 @@ export function captureNote(db: DatabaseSync, home: string, text: string): Memor
   checkRoom(home, { [name]: raw, [MEMORY_INDEX]: index });
   ensureFolder(home);
   const file = memoryPath(home, name);
-  logged(db, home, { kind: "remember", id, detail: `You asked Botbench to remember a note in a chat (${count(note.length)} characters). It is kept on this Mac only, in Botbench's data folder.` }, () => {
+  logged(db, home, { kind: "remember", id, detail: `You asked Botbench to remember a note in a chat (${count(note.length)} characters). Botbench keeps it in its data folder on this Mac and gives it to agents in their prompts.` }, () => {
     writeFileAtomic(file, raw, 0o600);
     try {
       writeFileAtomic(memoryPath(home, MEMORY_INDEX), index, 0o600);

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryClaims, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, silenceLimitMs } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryClaims, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, silenceLimitMs, usageLimitWaitMs } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -203,7 +203,7 @@ test("a repository's settings are keyed by its full path: lists of plain command
 
 test("the number of approvals after which a card offers standing permission is 3 as shipped, can be set by the owner, and must be a whole number of at least 1", (t) => {
   // Changed with the refine loop: the shipped settings name its cap too.
-  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual", maxRefineRounds: 2, silenceLimitSeconds: 600 });
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).autonomy, { offerStandingAfter: 3, mode: "manual", maxRefineRounds: 2, silenceLimitSeconds: 600, usageLimitWaitSeconds: 1800 });
   assert.equal(offerStandingAfter(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 3);
   // A config that says nothing of it still means 3.
   const silent = loadConfig(configFiles(t, BASE));
@@ -324,6 +324,20 @@ test("the silence limit is 600 seconds as shipped and when unset, 0 turns it off
   assert.equal(local.autonomy?.maxRefineRounds, 1);
   for (const bad of [-1, -600, 1.5, 0.1, "600", null, true, [600], { seconds: 600 }, 86_401, Number.NaN, 1e21]) {
     assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { silenceLimitSeconds: bad } })), /"autonomy\.silenceLimitSeconds" must be a whole number of seconds from 0 to 86400: how long a builder or planner may send nothing while it works before Botbench stops it\. 0 turns the limit off\./, String(bad));
+  }
+});
+
+test("the wait after a usage limit with no reset time is 1800 seconds as shipped and when unset, can be set by the owner, and anything but a whole number of seconds from 1 to 86,400 is refused at start", (t) => {
+  assert.equal(usageLimitWaitMs(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 1_800_000);
+  assert.equal(usageLimitWaitMs(loadConfig(configFiles(t, BASE))), 1_800_000);
+  assert.equal(usageLimitWaitMs(loadConfig(configFiles(t, { ...BASE, autonomy: {} }))), 1_800_000);
+  for (const good of [1, 60, 3600, 86_400]) assert.equal(usageLimitWaitMs(loadConfig(configFiles(t, { ...BASE, autonomy: { usageLimitWaitSeconds: good } }))), good * 1000, String(good));
+  // The owner's local file sets it and keeps the rest of the shipped autonomy settings.
+  const local = loadConfig(configFiles(t, { ...BASE, autonomy: { silenceLimitSeconds: 90 } }, { autonomy: { usageLimitWaitSeconds: 600 } }));
+  assert.equal(usageLimitWaitMs(local), 600_000);
+  assert.equal(local.autonomy?.silenceLimitSeconds, 90);
+  for (const bad of [0, -1, 1.5, "1800", null, true, [1800], { seconds: 1800 }, 86_401, Number.NaN, 1e21]) {
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { usageLimitWaitSeconds: bad } })), /"autonomy\.usageLimitWaitSeconds" must be a whole number of seconds from 1 to 86400: how long Botbench waits before it tries a builder again once its usage limit was reached, when the agent gives no time it resets\./, String(bad));
   }
 });
 

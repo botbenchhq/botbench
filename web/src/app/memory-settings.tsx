@@ -160,7 +160,7 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
         Memory
       </h2>
       <p className="ds-settings-row__description">
-        {`Start a chat message with "Remember:" or "Remember that" and Botbench keeps the rest of it as a note, in your words. Every agent of a later chat, and the planner and builder of a later run, is given your notes. They stay on this Mac, in Botbench's data folder, and are never added to a repository.${list === null ? "" : ` At most ${list.maxNoteChars.toLocaleString("en")} characters a note, and ${list.maxKb} KB in all.`}`}
+        {`Start a chat message with "Remember:" or "Remember that" and Botbench keeps the rest of it as a note, in your words. Every agent of a later chat, and the planner and builder of a later run, is given your notes. Botbench keeps them on this Mac, in its data folder, and never adds them to a repository. An agent given them sends them to its provider with the rest of its prompt, as it does your messages.${list === null ? "" : ` At most ${list.maxNoteChars.toLocaleString("en")} characters a note, and ${list.maxKb} KB in all.`}`}
       </p>
       {problem !== null && (
         <Alert tone="error" role="alert">

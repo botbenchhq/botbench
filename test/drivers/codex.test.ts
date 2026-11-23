@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { HOME_SECRETS } from "../../src/confinement.ts";
-import { CODEX_CAPABILITIES, codexArgs, codexEnv, parseCodexLine, parseCodexModels, parseLoginStatus, REVIEW_PROFILE } from "../../src/drivers/codex.ts";
+import { CHAT_PROFILE, CODEX_CAPABILITIES, codexArgs, codexConfig, codexEnv, codexSandboxCheckArgs, codexSandboxProblem, DISABLED_FEATURES, parseCodexLine, parseCodexModels, parseCodexSandbox, parseLoginStatus, REVIEW_PROFILE } from "../../src/drivers/codex.ts";
 import { checkVersion } from "../../src/drivers/launch.ts";
 import { tempDir } from "../support/repo.ts";
 
@@ -91,8 +91,98 @@ test("AE7: the review's environment has no provider key, keeps Codex's own folde
   assert.equal(env.GIT_CONFIG_GLOBAL, "/dev/null");
 });
 
-test("Codex reports what it lacks for any role but review: no resume, no permission requests, no edits; it can be stopped", () => {
-  assert.deepEqual(CODEX_CAPABILITIES, { resume: false, interrupt: true, permissionRequests: false, edits: false });
+test("Codex reports what it lacks: no resume, no permission requests, no edits of a task's copy; it has its own tools in a chat and can be stopped", () => {
+  assert.deepEqual(CODEX_CAPABILITIES, { resume: false, interrupt: true, permissionRequests: false, edits: false, chatTools: true });
+});
+
+const CHAT = path.join(DATA_DIR, "scratch");
+const REPO = path.join(DATA_DIR, "..", `codex-attached-${process.pid}`);
+fs.mkdirSync(CHAT, { recursive: true });
+fs.mkdirSync(path.join(REPO, ".git"), { recursive: true });
+process.on("exit", () => fs.rmSync(REPO, { recursive: true, force: true }));
+const chatTurn = { place: { cwd: CHAT, dataDir: DATA_DIR }, chat: { readable: [REPO, path.join(REPO, ".git")] } };
+
+test("CRITICAL: a chat turn has its own profile: the home folder, every secret place and Botbench's data folder denied, the chat's folder writable, the attached repository and its git folder readable only, no network for commands", () => {
+  const home = os.homedir();
+  const args = codexArgs(chatTurn);
+  const set = overrides(args);
+  assert.equal(set.get("default_permissions"), JSON.stringify(CHAT_PROFILE));
+  assert.equal(set.get(`permissions.${CHAT_PROFILE}.extends`), '":workspace"', "commands may write the working folder, the chat's");
+  assert.equal(set.get(`permissions.${CHAT_PROFILE}.network.enabled`), "false");
+  assert.equal(set.get("mcp_servers"), "{}");
+  const table = set.get(`permissions.${CHAT_PROFILE}.filesystem`)!;
+  const rules = new Map([...table.slice(1, -1).matchAll(/("(?:[^"\\]|\\.)*")\s*=\s*("(?:[^"\\]|\\.)*")/g)].map((m) => [JSON.parse(m[1]!) as string, JSON.parse(m[2]!) as string]));
+  assert.equal(rules.get(home), "deny");
+  for (const place of HOME_SECRETS) assert.equal(rules.get(path.join(home, place)), "deny", place);
+  assert.equal(rules.get(fs.realpathSync(DATA_DIR)) ?? rules.get(DATA_DIR), "deny");
+  assert.equal(rules.get(fs.realpathSync(CHAT)), "write", "the chat's folder, inside the denied data folder, is opened by a narrower rule");
+  assert.equal(rules.get(fs.realpathSync(REPO)), "read", "the repository is read, never written");
+  assert.equal(rules.get(fs.realpathSync(path.join(REPO, ".git"))), "read");
+  assert.deepEqual([...rules.values()].filter((v) => v === "write"), ["write"], "the chat's folder is the one place written");
+  assert.ok(args.includes("--skip-git-repo-check"), "the chat's folder is no git repository");
+  assert.equal(args.includes("--sandbox") || args.some((arg) => /^sandbox_mode\b/.test(arg)), false);
+});
+
+test("Codex's own web search, which OpenAI runs, follows the setting: live when it is on, disabled when it is off, for a chat and a review", () => {
+  for (const turn of [chatTurn, { place: PLACE }]) {
+    assert.equal(overrides(codexArgs({ ...turn, webSearch: true })).get("web_search"), '"live"');
+    assert.equal(overrides(codexArgs({ ...turn, webSearch: false })).get("web_search"), '"disabled"');
+    assert.equal(overrides(codexArgs(turn)).get("web_search"), '"disabled"');
+    assert.equal(overrides(codexArgs({ ...turn, webSearch: true })).get(`permissions.${turn === chatTurn ? CHAT_PROFILE : REVIEW_PROFILE}.network.enabled`), "false", "its commands still reach no network");
+  }
+});
+
+test("CRITICAL: Codex has its MCP servers, hooks, plugins, apps, browser, computer use and its background service turned off, in a chat as in a review", () => {
+  for (const args of [codexArgs(chatTurn), codexArgs({ place: PLACE })]) {
+    assert.equal(overrides(args).get("mcp_servers"), "{}");
+    const disabled = args.flatMap((arg, i) => (arg === "--disable" ? [args[i + 1]] : []));
+    assert.deepEqual(disabled, [...DISABLED_FEATURES]);
+    for (const feature of ["hooks", "plugins", "apps", "remote_plugin", "browser_use", "browser_use_external", "in_app_browser", "computer_use", "skill_mcp_dependency_install", "daemon_auto_start"]) assert.ok(disabled.includes(feature), feature);
+  }
+});
+
+test("the check before a turn asks `codex debug prompt-input` under the turn's own settings, and starts no turn", () => {
+  const check = codexSandboxCheckArgs(chatTurn);
+  assert.deepEqual(check.slice(0, 2), ["debug", "prompt-input"]);
+  assert.deepEqual(check.slice(2, -1), codexConfig(chatTurn), "the very settings `codex exec` is given");
+  assert.equal(check.includes("exec"), false);
+});
+
+test("CRITICAL: Codex is refused at start when it reports a looser sandbox than Botbench set, network for its commands, or no sandbox Botbench can read", () => {
+  // Codex 0.171.0's own words, from `codex debug prompt-input` on this Mac, 2026-11-22.
+  const readOnly = "`sandbox_mode` is `read-only`: The sandbox only permits reading files. Network access is restricted.";
+  const workspace = "`sandbox_mode` is `workspace-write`: The sandbox permits reading files, and editing files in `cwd` and `writable_roots`. Editing files in other directories requires approval. Network access is restricted.";
+  const full = "`sandbox_mode` is `danger-full-access`: No filesystem sandboxing - all commands are permitted. Network access is enabled.";
+  assert.deepEqual(parseCodexSandbox(readOnly), { mode: "read-only", network: "restricted" });
+  assert.equal(codexSandboxProblem(parseCodexSandbox(readOnly), "read-only"), null);
+  assert.equal(codexSandboxProblem(parseCodexSandbox(workspace), "workspace-write"), null);
+  assert.equal(codexSandboxProblem(parseCodexSandbox(readOnly), "workspace-write"), null, "tighter than set is not refused");
+  assert.match(codexSandboxProblem(parseCodexSandbox(workspace), "read-only")!, /workspace-write access, looser than the read-only Botbench set/);
+  assert.match(codexSandboxProblem(parseCodexSandbox(full), "workspace-write")!, /danger-full-access access, looser/);
+  assert.match(codexSandboxProblem(parseCodexSandbox(workspace.replace("restricted", "enabled")), "workspace-write")!, /would reach the network/);
+  assert.match(codexSandboxProblem(parseCodexSandbox("nothing about it"), "read-only")!, /did not say which sandbox/);
+  assert.equal(parseCodexSandbox("`sandbox_mode` is `external-sandbox`: … Network access is restricted."), null, "a mode Botbench does not know is no answer");
+});
+
+test("a web search Codex reports becomes a step of the transcript, with what was searched for, done once the item is complete", () => {
+  const started = parseCodexLine('{"type":"item.started","item":{"id":"ws_1","type":"web_search","query":"node 24 release date"}}');
+  assert.deepEqual(started, [{ type: "tool_call", id: "ws_1", name: "web_search", input: { query: "node 24 release date" } }]);
+  const done = parseCodexLine('{"type":"item.completed","item":{"id":"ws_1","type":"web_search","action":{"type":"search","query":"node 24 release date"}}}');
+  assert.deepEqual(done, [
+    { type: "tool_call", id: "ws_1", name: "web_search", input: { query: "node 24 release date" } },
+    { type: "tool_result", id: "ws_1", output: "node 24 release date", isError: false },
+  ]);
+});
+
+test("Codex 0.171.0 starts a search before it knows the query: the step is recorded once it is complete, with what was searched for, not as an empty search", () => {
+  // The two lines as Codex 0.171.0 printed them on this Mac (results cut).
+  const started = parseCodexLine('{"type":"item.started","item":{"id":"item_0","type":"web_search","id":"exec-5b2e","query":"","action":{"type":"other"}}}');
+  assert.deepEqual(started, [], "no step with an empty query");
+  const done = parseCodexLine('{"type":"item.completed","item":{"id":"item_0","type":"web_search","id":"exec-5b2e","query":"node 24 release date","action":{"type":"search","query":"node 24 release date"},"results":[]}}');
+  assert.deepEqual(done, [
+    { type: "tool_call", id: "exec-5b2e", name: "web_search", input: { query: "node 24 release date" } },
+    { type: "tool_result", id: "exec-5b2e", output: "node 24 release date", isError: false },
+  ]);
 });
 
 test("the login Codex 0.171.0 reports in its own words: ChatGPT is a subscription, an API key is billed by use, anything else is signed out", () => {

@@ -516,6 +516,21 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
           </li>
         );
       }
+      // The agent's usage limit ended the reply: said as that, not as an error. The row before it says when the limit
+      // resets; whether Botbench tries again is the task's to say, after the transcript.
+      if (e.usageLimit !== undefined) {
+        return (
+          <Line kind={e.type} look="end" label={by === null ? "Stopped" : `${by}: Stopped`}>
+            <Body>Stopped here because the usage limit was reached.</Body>
+            {tokens !== false && (
+              <details className="ds-message__details">
+                <summary className="ds-message__summary">Usage</summary>
+                {tokens}
+              </details>
+            )}
+          </Line>
+        );
+      }
       return (
         <Line kind={e.type} look="end" label={by === null ? (e.reason === "interrupted" ? "Stopped" : "Error") : `${by}: ${e.reason === "interrupted" ? "Stopped" : "Failed"}`}>
           <Body>

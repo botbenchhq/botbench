@@ -199,7 +199,7 @@ test("a committed task is described with its changed files, each marked as the p
   assert.equal(described.status, 200);
   assert.deepEqual({ ...described.body, createdAt: null, updatedAt: null }, {
     id: task.id, repo, prompt: "change three files", requestedModel: null, status: "awaiting_decision", reason: null,
-    branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, waitingOnApproval: false, parked: false, resuming: false, ofPlan: null, preapproved: [], outsideText: false, issue: null, resumeNote: null, mode: "manual", reviewOutcome: "none", reviewRounds: 0, refineRounds: 0, createdAt: null, updatedAt: null, issueHosts: [],
+    branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, retryAt: null, waitingOnApproval: false, parked: false, resuming: false, ofPlan: null, preapproved: [], outsideText: false, issue: null, resumeNote: null, mode: "manual", reviewOutcome: "none", reviewRounds: 0, refineRounds: 0, createdAt: null, updatedAt: null, issueHosts: [],
     // "change three files" names none of them, and src/ is protected in this server's settings.
     files: [
       { path: "hello.txt", status: "added", added: 1, removed: 0, binary: false, expected: false, protected: false },
@@ -371,7 +371,7 @@ test("a task or a run asked of another agent than Claude Code is refused, before
   ] as const) {
     const res = await post(base, headers, route, body);
     assert.equal(res.status, 400, route);
-    assert.match(String(res.body.error), /^Only Claude Code can work in a repository\. Codex, Grok and Antigravity answer in a chat with no repository, from the conversation alone\.$/);
+    assert.match(String(res.body.error), /^Only Claude Code can work on a repository as a task\. Codex, Grok and Antigravity answer in a chat\.$/);
   }
   assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n), 0);
   assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM runs").get()!.n), 0);
