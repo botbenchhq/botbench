@@ -54,6 +54,9 @@ test("Send makes the run from the note and names its source; the owner may choos
     assert.deepEqual(sent, { do: "run", repo: REPO, prompt: "Now add a farewell file too.", model: "haiku", preapproved: [], reviewer: null, mode, delivery: "branch", oneTask: true, onLimit: "wait", source: { kind: "task", id: 12 } });
   }
   assert.deepEqual((sendFor(run({ source: FROM_CHAT }), extras) as { source?: unknown }).source, { kind: "chat", id: 5 });
+  // An approval time limit chosen for it is sent with it, as for any run; Off sends none.
+  assert.equal((sendFor(run({}), { ...extras, approvalLimitMinutes: 60 }) as { approvalLimitMinutes?: number }).approvalLimitMinutes, 60);
+  assert.equal("approvalLimitMinutes" in sendFor(run({}), { ...extras, approvalLimitMinutes: null }), false);
   // A spec file or an issue is never sent with it.
   const sent = sendFor(run({ specPath: "/tmp/spec.md", issue: { fetchId: 3, allowHosts: false, number: 9, title: "Bug" } }), extras) as Record<string, unknown>;
   assert.equal(sent.specPath, undefined);
@@ -65,8 +68,8 @@ test("Send makes the run from the note and names its source; the owner may choos
 
 test("the Add context sheet of a run made from a source offers no issue and no spec file, and keeps every other setting", () => {
   const rows = rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", reviewOffered: true, commandsKnown: true, issueOffered: true, builderOffered: true, sourced: true });
-  assert.deepEqual(rows, ["repository", "kind", "builder", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", reviewOffered: true, commandsKnown: true, issueOffered: true, sourced: false }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
+  assert.deepEqual(rows, ["repository", "kind", "builder", "mode", "tasks", "review", "delivery", "limit", "approvalLimit", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", reviewOffered: true, commandsKnown: true, issueOffered: true, sourced: false }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "approvalLimit", "commands", "models"]);
 });
 
 test("a task offers Make this a run once it is ready for review, accepted or rejected, and never while it is being built or reviewed", () => {
