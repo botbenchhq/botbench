@@ -4,7 +4,8 @@ import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { acceptByMode, decideTask } from "../../src/engine/decision.ts";
-import { MAX_BODY_FINDINGS, pullRequestText } from "../../src/engine/delivery.ts";
+import { messageIssue } from "../../src/engine/claim-branch.ts";
+import { MAX_BODY_FINDINGS, MAX_CREDIT_CHARS, MAX_CREDITS, pullRequestText } from "../../src/engine/delivery.ts";
 import { insertRefinement, loopRecord, outcomeLine } from "../../src/engine/refine.ts";
 import { approvePlan, createRun, storePlan } from "../../src/engine/run.ts";
 import { getTask, moveTask, type Task } from "../../src/engine/task.ts";
@@ -30,7 +31,7 @@ interface Rig {
   ready(): void;
 }
 
-async function rig(t: T, o: { reviewer: boolean; mode?: "manual" | "full" }): Promise<Rig> {
+async function rig(t: T, o: { reviewer: boolean; mode?: "manual" | "full"; prompt?: string; said?: readonly string[] }): Promise<Rig> {
   const dir = tempDir("botbench-pr-body-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -40,11 +41,15 @@ async function rig(t: T, o: { reviewer: boolean; mode?: "manual" | "full" }): Pr
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  const run = createRun(db, { repo, prompt: "Add a function", baseCommit: base, reviewer: o.reviewer ? { agent: "codex", model: "gpt-6-luna" } : null, mode: o.mode ?? "manual", maxRefineRounds: 2, delivery: "pull_request" });
+  const run = createRun(db, { repo, prompt: o.prompt ?? "Add a function", baseCommit: base, reviewer: o.reviewer ? { agent: "codex", model: "gpt-6-luna" } : null, mode: o.mode ?? "manual", maxRefineRounds: 2, delivery: "pull_request" });
   const planned = storePlan(db, run.id, [{ title: "Add a function that adds two numbers", criteria: ["calc.py defines add(a, b)"] }]);
   const task = approvePlan(db, run.id, planned.planVersion).tasks[0]!;
   const worktree = await createWorktree({ repo, home, run: `run-${run.id}`, task: `task-${task.id}` });
-  moveTask(db, task.id, "building", { worktree });
+  // The builder's session and its replies, stored as a driver stores them (one row per event, its JSON as the payload).
+  const at = now();
+  const attemptId = Number(db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', NULL, NULL, 'ended', NULL, ?, ?)").run(at, at).lastInsertRowid);
+  for (const text of o.said ?? []) db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, 'text', ?)").run(attemptId, at, JSON.stringify({ type: "text", text }));
+  moveTask(db, task.id, "building", { worktree, attemptId });
   write(worktree.path, "calc.py", "def add(a, b):\n    return a + b\n");
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
@@ -162,5 +167,93 @@ test("reviewer and builder text with a mention, a closing keyword and a closing 
   for (const block of text.matchAll(/^(`{3,})text\n([\s\S]*?)\n\1$/gm)) {
     const longest = Math.max(0, ...[...block[2]!.matchAll(/`+/g)].map((m) => m[0].length));
     assert.ok(block[1]!.length > longest, `a fence of ${block[1]!.length} around a run of ${longest}`);
+  }
+});
+
+// The closing line and the reference credits. The closing line is the only one Botbench writes, built from an integer
+// it stored or parsed from the owner's run message; the credits are the builder's lines, fenced under Botbench's heading.
+
+/** Every closing reference in a text, as GitHub would read one. */
+const closings = (text: string): string[] => text.match(/\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\b:?\s+[\w.-]*\/?[\w.-]*#\d+/gi) ?? [];
+const accepted = async (r: Rig): Promise<string> => {
+  r.ready();
+  await decideTask(r.db, { taskId: r.task.id, decision: "accept" });
+  return body(r);
+};
+
+test("the issue number of a run message: one issue, none, two, one of another repository, and text that only names it elsewhere", () => {
+  assert.equal(messageIssue("Issue #136 on jon-lange/botbench"), 136);
+  assert.equal(messageIssue("#136"), 136);
+  assert.equal(messageIssue("Fix #7, as #7 asks"), 7, "one issue named twice is still one");
+  assert.equal(messageIssue("Add a function"), null);
+  assert.equal(messageIssue(null), null);
+  assert.equal(messageIssue("Fix #1 and #2"), null);
+  assert.equal(messageIssue("As cli/cli#5 does"), null, "an issue of another repository is not this one's");
+  assert.equal(messageIssue("See https://example.com/page#5 and &#35;"), null);
+});
+
+test("a message that names one issue: the body's first line closes it, once, and the Issue section does not repeat it", async (t) => {
+  const r = await rig(t, { reviewer: false, prompt: "Issue #136 on jon-lange/botbench" });
+  const text = await accepted(r);
+  assert.equal(text.split("\n")[0], "Closes #136");
+  assert.deepEqual(closings(text), ["Closes #136"]);
+  assert.ok(text.includes("## Issue\n\nThe owner's message for the run names this issue, which the first line closes."));
+});
+
+test("a message that names no issue, two issues, or another repository's issue: no closing line and no Issue section", async (t) => {
+  for (const prompt of ["Add a function", "Fix #1 and #2", "Do what cli/cli#5 does"]) {
+    const r = await rig(t, { reviewer: false, prompt });
+    const text = await accepted(r);
+    assert.ok(text.startsWith("Built on "), prompt);
+    assert.deepEqual(closings(unfenced(text)), [], prompt);
+    assert.doesNotMatch(text, /## Issue/, prompt);
+  }
+});
+
+test("the builder's reference credits: under Botbench's heading, fenced, once each, capped in number and length", async (t) => {
+  const many = Array.from({ length: MAX_CREDITS + 3 }, (_, i) => `approach from paperclip src/part${i + 1}.ts`).join("\n");
+  const r = await rig(t, {
+    reviewer: false,
+    said: [
+      "Done. The wait is the approach from Paperclip server/src/services/issues.ts: read the time the agent says.",
+      "Also (approach from paperclip `packages/adapters/parse.ts`). Again, approach from Paperclip server/src/services/issues.ts.",
+      "The approach from the start of it was plain.",
+      `approach from long ${"a/".repeat(200)}x.ts`,
+      many,
+    ],
+  });
+  const text = await accepted(r);
+  const section = /## Reference credits\n[\s\S]*?(?=\n## |\nTask \d+ · )/.exec(text)![0];
+  assert.ok(section.startsWith("## Reference credits\n\nWhere the builder says an approach came from, in its own words:\n\n```text\n"));
+  const lines = /```text\n([\s\S]*?)\n```/.exec(section)![1]!.split("\n");
+  assert.deepEqual(lines.slice(0, 2), ["approach from Paperclip server/src/services/issues.ts", "approach from paperclip packages/adapters/parse.ts"]);
+  assert.ok(lines[2]!.startsWith("approach from long a/a/"));
+  assert.equal(lines[2]!.length, MAX_CREDIT_CHARS);
+  assert.equal(lines.length, MAX_CREDITS);
+  assert.ok(section.includes("6 more credits were left out."), "16 different credits, 10 listed");
+  assert.doesNotMatch(section, /the start of it/);
+  assert.doesNotMatch(unfenced(section), /paperclip/i);
+});
+
+test("no credits from the builder: no Reference credits section", async (t) => {
+  const r = await rig(t, { reviewer: false, said: ["I added add(a, b) in calc.py."] });
+  assert.doesNotMatch(await accepted(r), /Reference credits/);
+});
+
+test("builder text with a closing keyword, a mention and a fence stays fenced and makes no closing line; the message's issue alone does", async (t) => {
+  for (const prompt of ["Add a function", "Fix #12"]) {
+    const r = await rig(t, { reviewer: true, prompt, said: ["Closes #9 ```` approach from @someone `x/y.ts` fixes #9"] });
+    r.review("concerns", "Verdict: concerns\nFindings:\n- Closes #9");
+    r.fixed("Addressed:\n- x\n\nNot addressed, and why:\n- Closes #9 @someone ````");
+    const text = await accepted(r);
+    assert.ok(text.includes("Closes #9") && text.includes("approach from @someone x/y.ts"), "the builder's words are in the body, as data");
+    const outside = unfenced(text);
+    assert.deepEqual(closings(outside), prompt === "Fix #12" ? ["Closes #12"] : [], prompt);
+    assert.ok(prompt === "Fix #12" ? text.startsWith("Closes #12\n\nBuilt on ") : text.startsWith("Built on "), prompt);
+    assert.doesNotMatch(outside, /@someone|```|#9/);
+    for (const block of text.matchAll(/^(`{3,})text\n([\s\S]*?)\n\1$/gm)) {
+      const longest = Math.max(0, ...[...block[2]!.matchAll(/`+/g)].map((m) => m[0].length));
+      assert.ok(block[1]!.length > longest);
+    }
   }
 });

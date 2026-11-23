@@ -15,6 +15,7 @@ import { MODE_WORDS, isRunMode } from "./modes.ts";
 import { getTask, TaskError, words, type Task } from "./task.ts";
 import { runIssue } from "./intake.ts";
 import type { Claims } from "./claims.ts";
+import { messageIssue } from "./claim-branch.ts";
 
 /*
  * Delivery: an accepted task's branch pushed, and a pull request opened for it, by Botbench itself on this Mac with the
@@ -208,11 +209,82 @@ function reviewSection(db: DatabaseSync, taskId: number): string[] {
   return parts;
 }
 
+/** The most reference credits a pull request's body lists, and the most characters of each. */
+export const MAX_CREDITS = 10;
+export const MAX_CREDIT_CHARS = 200;
+
+/**
+ * The reference credits in a builder's text: each "approach from <project> <path>" it wrote (the form CLAUDE.md asks
+ * for), once each, in order, as `approach from <project> <path>`, cut to MAX_CREDIT_CHARS. The path must hold a "/" or
+ * a "." so a plain sentence ("approach from the start of it") is not taken for one. Data: shown only inside a fence.
+ */
+export function referenceCredits(texts: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const text of texts) {
+    for (const m of text.matchAll(/\bapproach from\s+`?([\w@][\w.@-]{0,80})`?\s+`?([\w.@/-]{1,300})`?/gi)) {
+      const where = m[2]!.replace(/[.:,;-]+$/, "");
+      if (!/[/.]/.test(where)) continue;
+      const line = `approach from ${m[1]} ${where}`.slice(0, MAX_CREDIT_CHARS);
+      if (!found.includes(line)) found.push(line);
+    }
+  }
+  return found;
+}
+
+/** What the task's builder said, text only: the build session's replies and those of each round of fixes, oldest first. */
+function builderTexts(db: DatabaseSync, task: Task): string[] {
+  const sessions = new Set<number>();
+  if (task.attemptId !== null) sessions.add(task.attemptId);
+  for (const row of db.prepare("SELECT attempt_id FROM refinements WHERE task_id = ? AND attempt_id IS NOT NULL ORDER BY round, id").all(task.id)) sessions.add(Number(row.attempt_id));
+  const texts: string[] = [];
+  for (const attemptId of sessions) {
+    for (const row of db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'text' ORDER BY id").all(attemptId)) {
+      try {
+        const event: unknown = JSON.parse(String(row.payload));
+        const text = (event as { text?: unknown } | null)?.text;
+        if (typeof text === "string") texts.push(text);
+      } catch {
+        // A payload that is not JSON has no text to read credits from; the transcript itself is left as it is.
+      }
+    }
+  }
+  return texts;
+}
+
+/** The body's Reference credits section, or nothing when the builder gave none. Botbench's heading and words; the builder's lines fenced. */
+function creditsSection(db: DatabaseSync, task: Task): string[] {
+  const credits = referenceCredits(builderTexts(db, task));
+  if (credits.length === 0) return [];
+  const parts = ["## Reference credits", "Where the builder says an approach came from, in its own words:", fenced(credits.slice(0, MAX_CREDITS).join("\n"))];
+  const cut = credits.length - MAX_CREDITS;
+  if (cut > 0) parts.push(`${count(cut, "more credit was", "more credits were")} left out.`);
+  return parts;
+}
+
+/**
+ * The issue the pull request closes, as Botbench writes it, from integers and a repository it stored or parsed alone:
+ * the issue attached to the run ("From an issue"), `Closes #N` on its own repository (`repo`, where the pull request is
+ * opened) and `Closes owner/name#N` elsewhere; else the one issue number the owner's run message names
+ * (`messageIssue`, the rule `runIssueNumber` uses), `Closes #N`. Null when there is neither, or the message names more
+ * than one. Nothing a builder, planner, reviewer or the issue wrote is read for it.
+ */
+function closingLine(db: DatabaseSync, runId: number | null, prompt: unknown, repo?: RepoRef): { line: string; attached: boolean } | null {
+  const issue = runIssue(db, runId);
+  if (issue !== null) {
+    const [, owner, name] = issue.repository.split("/");
+    if (!Number.isSafeInteger(issue.number) || issue.number < 1 || owner === undefined || name === undefined) return null;
+    const here = repo !== undefined && repoName(repo).toLowerCase() === issue.repository.toLowerCase();
+    return { line: `Closes ${here ? "" : `${owner}/${name}`}#${issue.number}`, attached: true };
+  }
+  const named = messageIssue(typeof prompt === "string" ? prompt : null);
+  return named === null ? null : { line: `Closes #${named}`, attached: false };
+}
+
 /**
  * The title and body of a task's pull request, made from what is stored. Everything an agent, a planner, a reviewer or
- * the owner wrote goes in fenced blocks, as data, each fence longer than any run of backticks inside it. For a run started from a GitHub issue the body closes that issue, the one line
- * Botbench writes from it: built from the stored number and repository alone, `Closes #N` on the issue's own repository
- * (`repo`, where the pull request is opened) and `Closes owner/name#N` elsewhere. Nothing the issue says is in the body.
+ * the owner wrote goes in fenced blocks, as data, each fence longer than any run of backticks inside it. The body's
+ * first line closes the run's one issue (`closingLine`), the only closing line Botbench writes. Nothing the issue says
+ * is in the body.
  */
 export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): { title: string; body: string } {
   const plan = db.prepare("SELECT title, criteria FROM plan_tasks WHERE task_id = ?").get(task.id);
@@ -233,7 +305,9 @@ export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): {
   const mode = isRunMode(run?.mode) ? MODE_WORDS[run.mode] : null;
   // The workbench the branch was made on (its name in the branch), or this one for a branch from before workbenches had names.
   const workbench = (task.branch === null ? null : parseTaskBranch(task.branch)?.workbench) ?? workbenchName(db);
+  const closing = closingLine(db, task.runId, run?.prompt, repo);
   const parts = [
+    ...(closing === null ? [] : [closing.line]),
     `Built on ${workbench} with Botbench: an accepted task, pushed and opened by Botbench on the owner's machine. Nothing was merged.`,
     "## What was asked",
     fenced(plan ? String(plan.title) : task.prompt),
@@ -241,13 +315,9 @@ export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): {
   if (criteria.length > 0) parts.push("## Acceptance criteria", fenced(criteria.map((c) => `- ${c}`).join("\n")));
   parts.push("## Checks", latest.length === 0 ? "No checks are set up for this repository." : fenced(latest.map((e) => `${e.outcome === "passed" ? "passed" : e.outcome === "timed_out" ? "timed out" : e.outcome}  ${e.command}`).join("\n")));
   parts.push(...reviewSection(db, task.id));
+  parts.push(...creditsSection(db, task));
   if (mode !== null) parts.push("## Mode", fenced(mode));
-  const issue = runIssue(db, task.runId);
-  if (issue !== null) {
-    const [, owner, name] = issue.repository.split("/");
-    const here = repo !== undefined && repoName(repo).toLowerCase() === issue.repository.toLowerCase();
-    parts.push("## Issue", `Started from a GitHub issue. Closes ${here ? "" : `${owner}/${name}`}#${issue.number}`);
-  }
+  if (closing !== null) parts.push("## Issue", closing.attached ? "Started from a GitHub issue, which the first line closes." : "The owner's message for the run names this issue, which the first line closes.");
   parts.push(`Task ${task.id} · branch \`${task.branch}\` · commit \`${taskDecision(db, task.id)?.headCommit ?? task.headCommit}\``);
   return { title, body: `${parts.join("\n\n")}\n` };
 }
