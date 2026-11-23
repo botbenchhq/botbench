@@ -65,13 +65,20 @@ session.onEvent((event: DriverEvent) => {
     .request({ taskId, attemptId: session.attemptId, role: "implementer", tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
     .then((answer) => session.respondToRequest(event.id, permissionResponse(answer)))
     .catch((err: unknown) => console.error(`The answer could not be given: ${String(err)}`));
-  // The owner's side: a question's card that is pending gets the answer, through the broker as the API gives it.
+  // The owner's side: a question's card that is pending gets the answer, through the broker as the API gives it. Any
+  // other card is declined, so the turn never waits on a request the prompt did not ask for.
   setImmediate(() => {
-    const card = broker.pending().find((a) => a.question !== null);
-    if (card) broker.answerQuestion(card.id, ANSWER);
+    for (const card of broker.pending()) {
+      if (card.question !== null) broker.answerQuestion(card.id, ANSWER);
+      else broker.answer(card.id, "decline", "Do not use any tool but AskUserQuestion.");
+    }
   });
 });
+// A turn that does not end within the limit is stopped, and reported below as not having gone on.
+const LIMIT_MS = 5 * 60_000;
+const limit = setTimeout(() => void session.interruptTurn(), LIMIT_MS);
 const end = await session.sendTurn(PROMPT);
+clearTimeout(limit);
 await session.close();
 admission.release();
 
@@ -93,7 +100,10 @@ if (asked === undefined) {
 const resolved = events.find((e) => e.type === "permission_resolved" && e.toolCallId === asked!.toolCallId);
 if (resolved === undefined || resolved.type !== "permission_resolved" || resolved.decision !== "answered") report(`The question reached Botbench but was not answered as a question (it ended ${resolved?.type === "permission_resolved" ? resolved.decision : "with no answer"}). See src/approvals/question.ts for what Botbench can show.`);
 const after = events.slice(events.indexOf(resolved!) + 1);
-if (end !== "completed" || !after.some((e) => e.type === "text")) report(`The answer was given, but the agent's turn did not go on with it (the turn ended ${end}).`);
+if (end !== "completed" || !after.some((e) => e.type === "text")) report(`The answer was given, but the agent's turn did not go on with it (the turn ended ${end}${end === "interrupted" ? `, stopped after ${LIMIT_MS / 60_000} minutes or by a stop` : ""}).`);
+// The prompt asks for the chosen label as the reply: only then is the answer known to have reached the agent.
+const replied = after.filter((e): e is Extract<DriverEvent, { type: "text" }> => e.type === "text").map((e) => e.text.trim());
+if (!replied.some((text) => new RegExp(`(^|\\W)${ANSWER}(\\W|$)`).test(text))) report(`The turn went on, but the agent's reply does not name the answer it was given ("${ANSWER}"), so the answer may not have reached it. It replied: ${JSON.stringify(replied).slice(0, 300)}`);
 
 const recording = {
   about:

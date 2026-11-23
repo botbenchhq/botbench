@@ -35,6 +35,7 @@ test("a question Botbench cannot show as it is gets a plain reason for the agent
     ["question text too long", asked({ question: "x".repeat(2001) })],
     ["header not text", asked({ header: 3 })],
     ["multiSelect not true or false", asked({ multiSelect: "yes" })],
+    ["several choices allowed, which the card's one choice cannot answer", asked({ multiSelect: true })],
     ["no list of choices", asked({ options: "Hello, Hi" })],
     ["one choice", asked({}, [{ label: "Hello" }])],
     ["five choices", asked({}, [{ label: "A" }, { label: "B" }, { label: "C" }, { label: "D" }, { label: "E" }])],

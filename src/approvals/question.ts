@@ -53,7 +53,8 @@ const refusal = (why: string): string => `Botbench could not show this question 
 /**
  * Read an AskUserQuestion call's input. Pure. Answers the one question as its card shows it, or, as text for the agent,
  * why it cannot be shown: not one question, no question text, fewer than two or more than four choices, a choice with no
- * label, two choices with the same label, a field of the wrong type, or text too long for a card.
+ * label, two choices with the same label, several choices allowed (`multiSelect`), a field of the wrong type, or text
+ * too long for a card.
  */
 export function readQuestion(input: unknown): Question | { problem: string } {
   if (!isObject(input) || !Array.isArray(input.questions)) return { problem: refusal("it holds no list of questions.") };
@@ -65,6 +66,8 @@ export function readQuestion(input: unknown): Question | { problem: string } {
   if (q.header !== undefined && typeof q.header !== "string") return { problem: refusal("its header is not text.") };
   if (typeof q.header === "string" && q.header.length > MAX_HEADER) return { problem: refusal(`its header is longer than ${MAX_HEADER} characters.`) };
   if (q.multiSelect !== undefined && typeof q.multiSelect !== "boolean") return { problem: refusal("multiSelect is not true or false.") };
+  // The card sends one choice: a question that lets the owner pick several cannot be shown as it was meant.
+  if (q.multiSelect === true) return { problem: refusal("it lets the owner pick several choices, and Botbench's card takes one; set multiSelect to false.") };
   if (!Array.isArray(q.options)) return { problem: refusal("it has no list of choices.") };
   if (q.options.length < 2 || q.options.length > 4) return { problem: refusal(`it has ${q.options.length} choice${q.options.length === 1 ? "" : "s"}.`) };
   const choices: QuestionChoice[] = [];
