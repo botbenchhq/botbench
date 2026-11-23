@@ -263,7 +263,7 @@ test("the approval limits and reminders migration keeps every row, id, index and
     if (!changed.includes(`${entry.type} ${entry.name}`)) assert.deepEqual(now, entry, `${entry.type} ${entry.name} is unchanged`);
   }
   const added = after.filter((entry) => !before.some((b) => b.type === entry.type && b.name === entry.name)).map((entry) => `${entry.type} ${entry.name}`).sort();
-  assert.deepEqual(added, ["trigger approvals_expired_once", "trigger approvals_expiry_asked", "trigger approvals_expiry_fixed", "trigger approvals_no_allow_past_expiry", "trigger runs_approval_limit_fixed"]);
+  assert.deepEqual(added, ["trigger approvals_expired_once", "trigger approvals_expiry_asked", "trigger approvals_expiry_fixed", "trigger approvals_no_answer_past_expiry", "trigger runs_approval_limit_fixed"]);
   // The log's three indexes, its two append-only triggers and the trigger naming a peer are on the new table.
   const onLog = after.filter((entry) => entry.type !== "table" && /\bON action_log\b/.test(entry.sql)).map((entry) => entry.name).sort();
   assert.deepEqual(onLog, ["action_log_approval", "action_log_grant", "action_log_no_delete", "action_log_no_update", "action_log_peer_asked", "action_log_task"]);
@@ -303,6 +303,7 @@ test("the approval limits and reminders migration keeps every row, id, index and
   assert.throws(() => db.prepare("UPDATE approvals SET status = 'declined', expired_at = ? WHERE id = ?").run(t0, live), /only into a decline/, "not stamped before its time");
   assert.throws(() => db.prepare("UPDATE approvals SET status = 'allowed', expired_at = ? WHERE id = ?").run(due, live), /only into a decline|never allowed/, "never into an allow");
   assert.throws(() => db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ?").run(due, live), /never allowed/, "past its time, no allow without expiring either");
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'declined', resolved_at = ? WHERE id = ?").run(due, live), /nor answered by the owner/, "past its time, not the owner's decline either: only Botbench's expiry");
   db.prepare("UPDATE approvals SET status = 'declined', resolved_at = ?, expired_at = ? WHERE id = ?").run(due, due, live);
   assert.throws(() => db.prepare("UPDATE approvals SET expired_at = ? WHERE id = ?").run(later, live), /already answered|expires once/, "never twice");
   const early = ask("call-6", later);

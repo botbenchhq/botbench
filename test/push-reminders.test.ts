@@ -152,7 +152,7 @@ test("an approval still waiting past the reminder wait is reminded of once, and 
   assert.equal(getApproval(b.db, approval.id)!.status, "pending", "it still waits for the owner");
 });
 
-test("a restart before the reminder wait has passed neither loses the reminder nor sends it early; an approval answered before the wait gets none", async (t) => {
+test("after a restart, an approval still pending sends nothing more, not even the reminder it had not had yet; one answered before the wait gets none", async (t) => {
   const b = await bench(t);
   const kept = building(b);
   void kept.ask("git push origin main");
@@ -163,13 +163,13 @@ test("a restart before the reminder wait has passed neither loses the reminder n
   b.broker.answer(toAnswer!.id, "decline");
   await answering;
   await b.restart();
-  await sleep(WAIT_MS / 3);
+  // Well past the reminder wait of both.
+  await sleep(WAIT_MS * 2);
   await b.push.idle();
-  assert.deepEqual(b.titles(), ["An approval is waiting", "An approval is waiting"], "not early");
-  await sleep(WAIT_MS);
-  await b.push.idle();
-  assert.deepEqual(b.titles(), ["An approval is waiting", "An approval is waiting", "An approval is still waiting"]);
-  assert.deepEqual(sentRows(b).filter((row) => (row as { title: string }).title === "An approval is still waiting"), [{ subject: "approval", subject_id: left!.id, title: "An approval is still waiting" }]);
+  assert.deepEqual(b.titles(), ["An approval is waiting", "An approval is waiting"], "no further push after the restart");
+  assert.equal(getApproval(b.db, left!.id)!.status, "pending", "it still waits for the owner");
+  assert.notEqual(getApproval(b.db, left!.id)!.parkedAt, null, "parked by the restart");
+  assert.deepEqual(sentRows(b).filter((row) => (row as { title: string }).title === "An approval is still waiting"), []);
 });
 
 test("an approval past its run's approval time limit when Botbench starts is denied, and gets no reminder, even though its reminder wait passed too", async (t) => {

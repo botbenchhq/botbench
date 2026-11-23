@@ -2343,7 +2343,7 @@ DROP TABLE owner_settings_before_update;
     // chat's approval never expire. Nobody having answered by then, Botbench declines it, once, as its own answer and
     // never the owner's (`expired_at`): a live one ends declined, a parked one has the decline stored for its resumed
     // task. Only a pending approval with no answer stored, at or past its time by the store's own clock, can expire, and
-    // only into a decline; past its time, one with no answer can no longer be allowed. The action log gains
+    // only into a decline; past its time, one with no answer can no longer be allowed, nor answered by the owner. The action log gains
     // `expired_unanswered` (that decline, naming the approval) and `repeat_declined` (a task's request refused without a
     // card because the owner had declined the same one in that task, naming that earlier approval). The record of
     // notifications sent gains approvals, so each is sent once across a restart, and a reminder, under its own title,
@@ -2367,10 +2367,10 @@ WHEN OLD.expired_at IS NOT NULL OR NEW.expired_at IS NULL OR OLD.expires_at IS N
   OR OLD.status <> 'pending' OR OLD.stored_decision IS NOT NULL
   OR NOT (NEW.status = 'declined' OR (NEW.status = 'pending' AND NEW.stored_decision IS 'decline'))
 BEGIN SELECT RAISE(ABORT, 'an approval expires once, unanswered, after its time, and only into a decline'); END;
-CREATE TRIGGER approvals_no_allow_past_expiry BEFORE UPDATE OF status, stored_decision ON approvals
+CREATE TRIGGER approvals_no_answer_past_expiry BEFORE UPDATE OF status, stored_decision ON approvals
 WHEN OLD.expires_at IS NOT NULL AND OLD.stored_decision IS NULL AND strftime('%Y-%m-%dT%H:%M:%fZ', 'now') >= OLD.expires_at
-  AND (NEW.status = 'allowed' OR NEW.stored_decision IS 'allow')
-BEGIN SELECT RAISE(ABORT, 'an approval past its time limit with no answer is Botbench''s to decline, and is never allowed'); END;
+  AND NEW.expired_at IS NULL AND (NEW.status IN ('allowed', 'declined') OR NEW.stored_decision IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'an approval past its time limit with no answer is Botbench''s to decline: it is never allowed, nor answered by the owner, after its time'); END;
 
 DROP TRIGGER action_log_no_update;
 DROP TRIGGER action_log_no_delete;

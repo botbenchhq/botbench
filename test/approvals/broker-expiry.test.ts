@@ -246,6 +246,22 @@ test("past the limit, an answer is refused even when Botbench's denial cannot be
   assert.deepEqual(rulesOf(b, approval.id), ["asked_owner", "expired_unanswered"]);
 });
 
+test("an expiry whose write fails when its timer runs is tried again by itself: nobody has to answer for the approval to be declined once the write works", async (t) => {
+  const b = await bench(t);
+  const a = agent(b, { limit: 1 });
+  const asked = a.ask("git push origin main");
+  const approval = await onlyPending(b);
+  b.db.exec("CREATE TRIGGER refuse_expiry BEFORE INSERT ON action_log WHEN NEW.rule = 'expired_unanswered' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END");
+  // The timer runs, and its write fails.
+  await sleep(Date.parse(approval.expiresAt!) - Date.now() + 100);
+  assert.deepEqual([getApproval(b.db, approval.id)!.status, getApproval(b.db, approval.id)!.expiredAt], ["pending", null]);
+  b.db.exec("DROP TRIGGER refuse_expiry");
+  const answer = await within(asked, 3000);
+  assert.notEqual(answer, "waiting", "declined by the retry, with no answer of the owner's");
+  assert.deepEqual(answer === "waiting" ? null : [answer.decision, answer.expired], ["decline", true]);
+  assert.deepEqual(rulesOf(b, approval.id), ["asked_owner", "expired_unanswered"]);
+});
+
 test("the expiry timer survives a restart: an approval past its limit when Botbench starts is declined at that start, once, and a second start adds nothing", async (t) => {
   const b = await bench(t);
   const a = agent(b, { limit: 1 });

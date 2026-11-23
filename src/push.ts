@@ -222,7 +222,7 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
       let message: PushMessage | null = null;
       if (subject === "approval") {
         // One past its run's approval time limit is Botbench's to decline, whether or not that has run yet: it is waiting for nobody.
-        const row = db.prepare("SELECT task_id, run_id, chat, question FROM approvals WHERE id = ? AND status = 'pending' AND stored_decision IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(id, now());
+        const row = db.prepare("SELECT task_id, run_id, chat, question FROM approvals WHERE id = ? AND status = 'pending' AND stored_decision IS NULL AND parked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(id, now());
         if (row !== undefined) message = approvalReminderMessage({ taskId: typeof row.task_id === "number" ? row.task_id : null, runId: typeof row.run_id === "number" ? row.run_id : null, chat: row.chat === 1, question: row.question });
       } else if (db.prepare("SELECT 1 FROM tasks WHERE id = ? AND status = 'awaiting_decision'").get(id) !== undefined) {
         message = readyReminderMessage({ id });
@@ -342,12 +342,13 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
 
   const approvalChanged = (approval: Approval): void => {
     try {
-      if (approval.status !== "pending" || approval.storedDecision !== null) return;
-      // Still waiting for the owner, here or across a restart: reminded of once after the wait from when it was asked.
+      // Only an approval asked in this run: one parked by a restart stays pending but sends nothing more, neither its
+      // announcement again nor a reminder.
+      if (approval.status !== "pending" || approval.storedDecision !== null || approval.parkedAt !== null) return;
+      // Reminded of once after the wait from when it was asked, if it still waits then.
       schedule("approval", approval.id, approval.createdAt, approvalReminderMessage(approval));
-      // Announced only when newly asked in this run, and once: an answer to a parked one stays pending but asks nothing new.
       const message = approvalMessage(approval);
-      if (approval.parkedAt === null && firstTime("approval", approval.id, message)) sendAll(message);
+      if (firstTime("approval", approval.id, message)) sendAll(message);
     } catch (err) {
       console.error(`A notification for an approval could not be started: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -400,13 +401,10 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
     reminders.clear();
   };
 
-  // What waited for the owner when the last Botbench stopped keeps its reminder, at the time it was due: at once when
-  // that passed while Botbench was stopped, never earlier than the wait after the first notice.
+  // A task that waited for the owner's decision when the last Botbench stopped keeps its reminder, at the time it was
+  // due: at once when that passed while Botbench was stopped, never earlier than the wait after its first notice. An
+  // approval left pending is parked by this start and sends nothing more.
   try {
-    for (const row of db.prepare("SELECT id, task_id, run_id, chat, question, created_at FROM approvals WHERE status = 'pending' AND stored_decision IS NULL ORDER BY id").all()) {
-      const reminder = approvalReminderMessage({ taskId: typeof row.task_id === "number" ? row.task_id : null, runId: typeof row.run_id === "number" ? row.run_id : null, chat: row.chat === 1, question: row.question });
-      schedule("approval", Number(row.id), String(row.created_at), reminder);
-    }
     for (const row of db.prepare("SELECT id, updated_at FROM tasks WHERE status = 'awaiting_decision' ORDER BY id").all()) scheduleReady(Number(row.id), String(row.updated_at));
   } catch (err) {
     console.error(`The reminders of what waits for you could not be set again: ${err instanceof Error ? err.message : String(err)}`);

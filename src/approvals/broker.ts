@@ -740,6 +740,8 @@ export function createBroker(options: {
     }
   };
 
+  /** How soon an expiry whose write failed is tried again. */
+  const EXPIRE_RETRY_MS = 1000;
   /** The timer of each approval that expires, by its id. The store is what counts: a timer only ever reads it again. */
   const timers = new Map<number, NodeJS.Timeout>();
 
@@ -787,8 +789,10 @@ export function createBroker(options: {
         return { parked, told };
       });
     } catch (err) {
-      // It stays pending, for the owner to answer; nothing was allowed.
-      console.error(`Approval ${id} could not be ended after its time limit: ${words(err)}`);
+      // It stays pending and nothing was allowed; an answer of the owner's is refused as too late. Tried again in a
+      // second, until the write works or Botbench stops.
+      console.error(`Approval ${id} could not be ended after its time limit, so Botbench tries again in a second: ${words(err)}`);
+      arm(id, new Date(Date.now() + EXPIRE_RETRY_MS).toISOString());
       return;
     }
     if (ended === null) return;
@@ -821,7 +825,7 @@ export function createBroker(options: {
   const OVERDUE = "Nobody answered it in time, so Botbench denies it: its run's approval time limit passed. It was not run.";
   /**
    * The owner's answer to approval `id`, written in one transaction. Should its time pass between the check above and the
-   * write, the store refuses the allow (`approvals_no_allow_past_expiry`): Botbench then declines it, and the owner is
+   * write, the store refuses the answer (`approvals_no_answer_past_expiry`): Botbench then declines it, and the owner is
    * told so, as for any answer given too late.
    */
   const inTime = <R>(id: number, write: () => R): R => {
