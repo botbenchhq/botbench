@@ -631,6 +631,10 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   issueHosts: string[];
   /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
   claim: { state: "claiming" | "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
+  /** The stricter modes the owner may move the run to now, loosest first; empty for a manual or finished run. */
+  modeChoices: RunMode[];
+  /** Each change of mode the owner made, oldest first, with the sentence the run screen shows for it. */
+  modeChanges: { at: string; from: RunMode; to: RunMode; words: string }[];
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -906,6 +910,8 @@ export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Pr
 export const approvePlan = (id: number, planVersion: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/approve`, { planVersion }, 30_000);
 export const requestPlanChanges = (id: number, planVersion: number, feedback: string): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/request-changes`, { planVersion, feedback }, 30_000);
 export const cancelRun = (id: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/cancel`, {}, 30_000);
+/** Make the run's mode stricter; the server refuses a looser or the same mode, and a finished run. */
+export const changeRunMode = (id: number, mode: RunMode): Promise<RunDetail> => request("POST", `/api/runs/${id}/mode`, { mode }, 30_000);
 
 export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 

@@ -1,4 +1,5 @@
 import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode } from "../api/client.ts";
+import { MODE_NAMES } from "./run-words.ts";
 
 /*
  * The composer on the home screen: one box that sends a chat prompt, starts a task or plans a run, depending on what
@@ -216,16 +217,18 @@ export interface ChosenMode {
 export interface Remembered {
   repo: Exclude<RepoPick, { kind: "needed" }>;
   kind: Kind;
-  /** The mode chosen here, for the repository it was chosen for; never Fully autonomous, which is a default only when set in Settings. */
+  /** The mode last chosen here, for the repository it was chosen for and that one alone (`modeFor`); Fully autonomous too, which `startMode` falls back from where it cannot start. */
   mode: ChosenMode | null;
   /** The reviewer's select value: "" for Off. */
   review: string;
   delivery: Delivery;
+  /** Whether a run builds on its planning model; false when a build model of its own was chosen (the model itself is kept by its picker). */
+  sameBuild: boolean;
 }
 
-export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" };
+export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch", sameBuild: true };
 
-export const writeRemembered = (r: Remembered): string => JSON.stringify({ ...r, mode: r.mode?.mode === "full" ? null : r.mode });
+export const writeRemembered = (r: Remembered): string => JSON.stringify(r);
 
 /** What was remembered, each part checked on its own: a part that is not what it should be is the default. */
 export function readRemembered(raw: string | null): Remembered {
@@ -244,14 +247,34 @@ export function readRemembered(raw: string | null): Remembered {
     mode: rememberedMode(r.mode),
     review: typeof r.review === "string" ? r.review : DEFAULTS.review,
     delivery: r.delivery === "branch" || r.delivery === "pull_request" ? r.delivery : DEFAULTS.delivery,
+    sameBuild: typeof r.sameBuild === "boolean" ? r.sameBuild : DEFAULTS.sameBuild,
   };
 }
 
-/** A remembered mode: Manual or Semi-autonomous for a named repository. Anything else, a bare mode an earlier version kept among it, is no choice. */
+/** A remembered mode: Manual, Semi-autonomous or Fully autonomous for a named repository. Anything else, a bare mode an earlier version kept among it, is no choice. */
 function rememberedMode(value: unknown): ChosenMode | null {
   if (typeof value !== "object" || value === null) return null;
   const { repo, mode } = value as Record<string, unknown>;
-  return typeof repo === "string" && repo !== "" && (mode === "manual" || mode === "semi") ? { repo, mode } : null;
+  return typeof repo === "string" && repo !== "" && (mode === "manual" || mode === "semi" || mode === "full") ? { repo, mode } : null;
+}
+
+/**
+ * The mode a run starts in, and why when it is not the one remembered. A Fully autonomous remembered for this repository
+ * (`remembered`: not chosen on this visit) that cannot start here, on a repository with no check command or from a
+ * GitHub issue, falls back to Semi-autonomous, which is stricter, and says why; the owner can still choose another. A
+ * mode chosen on this visit is left as it is, and Send then says why it is disabled (`blocked`). Never looser.
+ */
+export function startMode(mode: RunMode | null, o: { remembered: boolean; hasChecks: boolean | null; issue: boolean }): { mode: RunMode | null; why: string | null } {
+  if (mode !== "full" || !o.remembered) return { mode, why: null };
+  if (o.issue) return { mode: "semi", why: "A run started from a GitHub issue cannot be fully autonomous, so this run starts Semi-autonomous, not Fully autonomous as you last chose for this repository." };
+  if (o.hasChecks === false) return { mode: "semi", why: "Fully autonomous, your last choice for this repository, needs a check command, and this repository has none, so this run starts Semi-autonomous." };
+  return { mode, why: null };
+}
+
+/** The line under the box that names the mode a run starts in before Send, and why when it fell back; null while the mode is read. */
+export function modeLine(start: { mode: RunMode | null; why: string | null }): string | null {
+  if (start.mode === null) return null;
+  return start.why === null ? `Mode: ${MODE_NAMES[start.mode]}.` : `Mode: ${MODE_NAMES[start.mode]}. ${start.why}`;
 }
 
 /**
