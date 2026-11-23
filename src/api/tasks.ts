@@ -16,6 +16,7 @@ import { checkFixView } from "../engine/check-fix.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
+import { runsMadeFrom } from "../engine/run-source.ts";
 import { MAX_NOTE, replacedOne, undeliveredNote, waitingNote } from "../engine/notes.ts";
 import { commitsFileDiff, describeCommits, describeWork, type FileChange } from "../worktrees.ts";
 import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
@@ -238,7 +239,8 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   const { db } = ctx;
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
+  // `runsMade`: the runs the owner made from this task ("Make this a run", engine/run-source.ts), oldest first.
+  return { ...summary(db, task), runsMade: runsMadeFrom(db, task.id), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
     // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
     refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }

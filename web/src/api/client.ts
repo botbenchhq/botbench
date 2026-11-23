@@ -455,6 +455,8 @@ export interface CheckFix {
 }
 
 export interface TaskDetail extends TaskSummary {
+  /** The runs the owner made from this task ("Make this a run"), oldest first; empty for none. */
+  runsMade: number[];
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
   /** The files changed from the base commit to Botbench's commit; null until there is a commit, or when they cannot be read. */
@@ -640,7 +642,28 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   modeChoices: RunMode[];
   /** Each change of mode the owner made, oldest first, with the sentence the run screen shows for it. */
   modeChanges: { at: string; from: RunMode; to: RunMode; words: string }[];
+  /** The finished task or the chat the owner made this run from, with its line ("From task 12"); null for any other run. */
+  source: { kind: "task" | "chat"; id: number; label: string } | null;
 }
+
+/** Where a run is made from with "Make this a run": a finished task or a chat, by id. */
+export type RunSourceRef = { kind: "task" | "chat"; id: number };
+
+/** A source as the composer opens on it: checked by the server, read only, nothing stored. */
+export interface RunSourceView {
+  kind: "task" | "chat";
+  /** The task's id, or the chat's own. */
+  id: number;
+  /** The task's repository; null for a chat, which has none of its own. */
+  repo: string | null;
+  branch: string | null;
+  /** One plain line: "From task 12", "From a chat". */
+  label: string;
+  /** For a chat: the owner's own messages in it, oldest first, any of which may be picked as the note. Never an agent's. */
+  messages?: { text: string; at: string }[];
+}
+/** Read a source for the composer; refused, with the server's reason, for a task not yet finished or a source Botbench does not have. */
+export const getRunSource = (source: RunSourceRef): Promise<RunSourceView> => request("GET", `/api/run-sources/${source.kind}/${source.id}`, undefined, 30_000);
 
 /** One task of a run as the run's screen shows it. */
 export interface RunTask {
@@ -674,8 +697,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[]; agent?: string }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[]; agent?: string; source?: RunSourceRef }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.source === undefined ? {} : { source: { [o.source.kind]: o.source.id } }), ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {

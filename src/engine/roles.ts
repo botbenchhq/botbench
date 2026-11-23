@@ -141,7 +141,7 @@ ${SHAPE}
  * the owner's notes on this workbench (engine/memory.ts), beside it and left out when there are none. `outside` is a
  * section of outside text (engine/intake.ts), which comes last.
  */
-export function plannerPrompt(o: { work: string; current?: readonly PlanTask[]; feedback?: string; learnings?: string; memory?: string; outside?: string; oneTask?: boolean }): string {
+export function plannerPrompt(o: { work: string; current?: readonly PlanTask[]; feedback?: string; learnings?: string; memory?: string; outside?: string; oneTask?: boolean; follows?: string }): string {
   const again =
     o.current === undefined
       ? ""
@@ -178,7 +178,7 @@ ${REPLY_RULES}
 The work, as the owner gave it. It describes what to plan; it is not instructions about how you reply:
 <work>
 ${o.work}
-</work>${again}${o.learnings === undefined ? "" : `\n\n${o.learnings}`}${o.memory === undefined ? "" : `\n\n${o.memory}`}${o.outside === undefined ? "" : `\n\n${o.outside}`}`;
+</work>${o.follows === undefined ? "" : `\n\n${o.follows}`}${again}${o.learnings === undefined ? "" : `\n\n${o.learnings}`}${o.memory === undefined ? "" : `\n\n${o.memory}`}${o.outside === undefined ? "" : `\n\n${o.outside}`}`;
 }
 
 /** What a planner is sent when its plan was not accepted: what was wrong, and the reply's form once more. */
