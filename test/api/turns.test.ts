@@ -12,6 +12,8 @@ import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { now, openStore } from "../../src/store/db.ts";
+import { removedAtEnd } from "../support/repo.ts";
+import { escapeRegExp } from "../support/regexp.ts";
 
 // No test in this file starts a driver: turns that reach Claude Code are in test/live/turns.live.test.ts.
 
@@ -21,7 +23,7 @@ const JSON_TYPE = { "content-type": "application/json" };
 
 /** A client directory with real files in it, plus a file beside it that must never be served. */
 function clientDir(t: T): { dir: string; outside: string } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-client-"));
+  const root = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-client-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, "dist");
   fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
@@ -36,7 +38,7 @@ function clientDir(t: T): { dir: string; outside: string } {
 }
 
 async function start(t: T, options: { clientDir?: string; heartbeatMs?: number } = {}): Promise<{ server: BotbenchServer; home: string; token: string; base: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
@@ -168,7 +170,7 @@ test("the page's one inline script, which applies the owner's appearance choice 
   const { base } = await start(t, { clientDir: dir });
   const csp = (await fetch(base + "/")).headers.get("content-security-policy") ?? "";
   const hash = createHash("sha256").update(inline).digest("base64");
-  assert.match(csp, new RegExp(`(^|; )script-src 'self' 'sha256-${hash.replace(/[+/]/g, "\\$&")}'(;|$)`));
+  assert.match(csp, new RegExp(`(^|; )script-src 'self' 'sha256-${escapeRegExp(hash)}'(;|$)`));
   assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|https?:/);
   // A page with no inline script allows none.
   fs.writeFileSync(path.join(dir, "index.html"), '<!doctype html><title>Botbench</title><script type="module" src="/assets/app-1a2b.js"></script>');
@@ -228,7 +230,7 @@ test("the client shell is served without a session, and /api/session says 401 be
 });
 
 test("a server whose client has not been built says so instead of serving a page", async (t) => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-noclient-"));
+  const empty = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-noclient-")));
   t.after(() => fs.rmSync(empty, { recursive: true, force: true }));
   const { base } = await start(t, { clientDir: path.join(empty, "dist") });
   const page = await fetch(`${base}/`);
@@ -329,7 +331,7 @@ test("GET /api/attempts/:id/events returns stored events in order, and only thos
 });
 
 test("a chat turn a restart cut off is served, after the next start, as stopped because Botbench restarted, and not as running", async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   // What the last Botbench left of a Codex chat turn it was killed in: the attempt still running, the prompt, part of a reply.
@@ -360,7 +362,7 @@ test("a chat turn a restart cut off is served, after the next start, as stopped 
 });
 
 test("a Claude Code chat turn that waited on an approval card at a restart ends once: the card as not answered, the turn as stopped because Botbench restarted", async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const before = openStore(home);

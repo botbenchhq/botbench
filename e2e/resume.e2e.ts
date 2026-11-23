@@ -10,6 +10,13 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 // re-drives it once, and Botbench is killed again during that turn, so the start after it leaves the task stopped for
 // the owner. Nothing about the stop is staged.
 
+/** After a restart the device is still signed in: its session is kept in Botbench's database, so no login is asked for. */
+async function stillSignedIn(page: Page, botbench: Botbench): Promise<void> {
+  await page.goto(botbench.base);
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.getByLabel("Login token")).toHaveCount(0);
+}
+
 const test = base.extend<{ dir: string; botbench: Botbench }>({
   dir: async ({}, use) => {
     const dir = tempDir("botbench-e2e-resume-");
@@ -78,11 +85,11 @@ test("LIVE: a task stopped by two restarts shows Stopped with what happened and 
   await turnUnderWay(page, botbench, taskId, 1, true);
   await botbench.kill();
   await botbench.restart();
-  await signIn(page, botbench);
+  await stillSignedIn(page, botbench);
   await turnUnderWay(page, botbench, taskId, 2, false);
   await botbench.kill();
   await botbench.restart();
-  await signIn(page, botbench);
+  await stillSignedIn(page, botbench);
 
   // The run screen: the task is Stopped, says what happened in plain words, and offers Resume.
   await page.goto(`${botbench.base}/#/runs/${runId}`);

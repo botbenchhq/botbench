@@ -25,8 +25,18 @@ export interface Botbench {
   stop(): Promise<{ leftover: number[] }>;
 }
 
+// Each test or fixture removes the folders it makes in its own teardown. What one could not reach (a fixture whose
+// setup threw before `use`, a teardown that threw before its removal) is removed when the Playwright worker exits.
+const made = new Set<string>();
+process.once("exit", () => {
+  for (const dir of made) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+});
+
+/** A temporary folder by its real path. The caller removes it; at the latest it goes when this worker exits. */
 export function tempDir(prefix: string): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  made.add(dir);
+  return dir;
 }
 
 /** Start one `node src/server.ts` and wait until it listens. */

@@ -107,6 +107,11 @@ function resultOf(events: DriverEvent[], marker: string): { call: Call; result: 
 /** Whether the Keychain holds the item, asked outside any sandbox without reading its secret. */
 const keychainHasItem = (): boolean => spawnSync("security", ["find-generic-password", "-s", KEYCHAIN_ITEM], { stdio: "ignore" }).status === 0;
 const homeHas = (place: string): boolean => fs.existsSync(path.join(os.homedir(), place));
+/**
+ * The whole host of a blocked connection, as the sandbox reports it ("example.com:443"), without its port. Compared
+ * whole: a prefix test would also take "example.com.attacker.net" for example.com.
+ */
+const blockedHost = (entry: string): string => entry.replace(/:\d+$/, "");
 
 test("live: with the sandbox on and Ask before every command on, every shell command still asks the owner first; an allowed command cannot read Botbench's data folder, a sign-in folder, SSH keys or the Keychain, gets no gate secret and no network, while writing its own copy works and the CLI's own turn finishes", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t);
@@ -150,7 +155,7 @@ test("live: with the sandbox on and Ask before every command on, every shell com
 
   const network = resultOf(events, "https://example.com").result;
   assert.equal(network.output.includes("status=200"), false, network.output);
-  assert.ok(network.confined?.hosts.some((host) => host.startsWith("example.com")), JSON.stringify(network.confined));
+  assert.ok(network.confined?.hosts.some((host) => blockedHost(host) === "example.com"), JSON.stringify(network.confined));
 
   const keychain = resultOf(events, "find-generic-password").result;
   if (keychainHasItem()) assert.match(keychain.output, /keychain=(?!0\b)\d+/, "the Keychain item is out of reach");
@@ -207,7 +212,7 @@ test("live: a host the repository's settings allow is reachable by an agent's co
   assert.equal(allowed.confined, undefined);
   const other = resultOf(events, "https://example.org").result;
   assert.equal(other.output.includes("status=200"), false);
-  assert.ok(other.confined?.hosts.some((host) => host.startsWith("example.org")), JSON.stringify(other.confined));
+  assert.ok(other.confined?.hosts.some((host) => blockedHost(host) === "example.org"), JSON.stringify(other.confined));
 });
 
 test("live: a read-only attempt, as the planner works, cannot read outside its folder either", { timeout: TASK_TIMEOUT }, async (t) => {

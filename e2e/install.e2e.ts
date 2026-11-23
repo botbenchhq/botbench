@@ -1,7 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { chromium } from "@playwright/test";
+import { tempDir } from "./botbench.ts";
 import { checkDesign, expect, signIn, test, THEME_COLOR } from "./helpers.ts";
 
 // Installing Botbench, in the real client at a phone's size: a real Botbench process serving the built client, and
@@ -16,7 +15,7 @@ import { checkDesign, expect, signIn, test, THEME_COLOR } from "./helpers.ts";
 test("the manifest and service worker pass Chrome's install checks, the worker registers at the root, and Settings shows the true notification state", async ({ botbench }) => {
   // A profile of its own on disk, at the same phone size: Chrome refuses to install from an incognito profile, which is
   // what a test's usual browser context is, so its install check would only ever say that.
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-install-profile-"));
+  const profile = tempDir("botbench-install-profile-");
   const context = await chromium.launchPersistentContext(profile, { channel: "chrome", headless: true, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true });
   const page = context.pages()[0] ?? (await context.newPage());
   try {

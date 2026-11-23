@@ -14,6 +14,7 @@ import { LOGIN_TOKEN_FILE, MAX_WAITING_SIGN_INS, SESSION_COOKIE } from "../../sr
 import { deviceLabel, SESSION_MAX_AGE_S } from "../../src/api/sessions.ts";
 import { DEFAULT_CONFIG_FILE, loadConfig, type Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 type T = { after(fn: () => unknown): void };
 
@@ -22,7 +23,7 @@ const hasIpv6Loopback = Object.values(os.networkInterfaces()).flat().some((i) =>
 
 /** Start the real server on a free port with its data in a temporary directory. */
 async function start(t: T, overrides: Partial<Config> = {}, signInDelayMs = 1): Promise<{ server: BotbenchServer; home: string; token: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...overrides };
@@ -167,28 +168,44 @@ test("repeated wrong tokens are slowed down, and a correct sign-in resets the de
   };
   const slack = 5; // timers may fire a few milliseconds early
 
-  const a = await timed("wrong-1");
-  const b = await timed("wrong-2");
-  const c = await timed("wrong-3");
-  assert.deepEqual([a.status, b.status, c.status], [401, 401, 401]);
-  assert.ok(b.ms >= delay - slack, `second wrong attempt waited ${b.ms}ms`);
-  assert.ok(c.ms >= 2 * delay - slack, `third wrong attempt waited ${c.ms}ms`);
+  // What is measured, and why it holds on a loaded machine. Each wrong attempt sets the wait before the next is
+  // checked, counted from the moment it was itself checked. That moment comes after the client sent it and before the
+  // client has its answer, and a loaded machine can spend much of the next wait just delivering that answer, so the
+  // time of one request alone proves nothing (this test used to fail that way). What load cannot shorten: from the
+  // moment attempt n is sent to the moment attempt n+1 is answered, at least the wait attempt n set passes. So attempts
+  // are timed from one's sending to a later one's answer. Load only adds to these times, so they fall short only when
+  // the wait is: removed (the pair below takes about 0), or not growing (the parallel pair takes about 2 delays where
+  // 8 are due; seen failing both ways).
+  const pair = async (first: string, second: string): Promise<{ statuses: number[]; ms: number }> => {
+    const began = performance.now();
+    const statuses = [(await signIn(server.port, first)).status, (await signIn(server.port, second)).status];
+    return { statuses, ms: performance.now() - began };
+  };
+  assert.equal((await timed("wrong-1")).status, 401); // the first failure: the next one waits 1 delay
+  // wrong-2 waits 1 delay and sets 2 for wrong-3, so wrong-3 is answered at least 2 delays after wrong-2 was sent. This
+  // shows there is a wait; a wait that did not grow would still take about 2 delays here (1 left of wrong-2's, 1 of
+  // wrong-3's), and it is the 8 delays below that show the doubling.
+  const second = await pair("wrong-2", "wrong-3");
+  assert.deepEqual(second.statuses, [401, 401]);
+  assert.ok(second.ms >= 2 * delay - slack, `from sending the second wrong token to the third's answer took ${second.ms}ms; the third must wait 2 delays (${2 * delay}ms) after the second is checked`);
 
-  // Sending guesses side by side does not get around the wait: they are answered one after another. The fifth waits
-  // its own 8 delays after the fourth is checked; checked side by side, both would be answered within the 4 delays the
-  // third set off. (The fourth's wait is counted from when the third was checked, which is before `began`: a loaded
-  // machine takes some of it to deliver the third's answer, so it is not counted here.)
+  // Sending guesses side by side does not get around the wait: they are answered one after another. wrong-4 waits the
+  // 4 delays wrong-3 set and sets 8, so the fifth is answered at least 8 delays after the fourth was checked, which is
+  // after `began`; checked side by side, both would be answered within the 4 delays the third set off.
   const began = performance.now();
   const parallel = await Promise.all([timed("wrong-4"), timed("wrong-5")]);
   assert.deepEqual(parallel.map((p) => p.status), [401, 401]);
-  assert.ok(performance.now() - began >= 8 * delay - slack, `two parallel guesses took ${performance.now() - began}ms`);
+  assert.ok(performance.now() - began >= 8 * delay - slack, `two parallel guesses took ${performance.now() - began}ms; the fifth must wait 8 delays (${8 * delay}ms) after the fourth is checked`);
 
-  // The owner's correct token still works, after the wait, and clears the count.
+  // The owner's correct token still works, after the 16-delay wait, and clears the count. Shown by the wait after it:
+  // two wrong tokens now cost one delay between them, as at the start. Had the count stayed at five, the second would
+  // wait 32 delays. The upper bound is half that, far from both, so load cannot push a real reset past it.
   const right = await timed(token);
   assert.equal(right.status, 200);
-  const after = await timed("wrong-6");
-  assert.equal(after.status, 401);
-  assert.ok(after.ms < delay, `after a successful sign-in a wrong attempt is answered at once, took ${after.ms}ms`);
+  const reset = await pair("wrong-6", "wrong-7");
+  assert.deepEqual(reset.statuses, [401, 401]);
+  assert.ok(reset.ms >= delay - slack, `after a successful sign-in, a second wrong token still waits one delay: took ${reset.ms}ms`);
+  assert.ok(reset.ms < 16 * delay, `after a successful sign-in, two wrong tokens took ${reset.ms}ms: the count was not reset (32 delays, ${32 * delay}ms, is what a count of five costs)`);
 });
 
 test("a flood of guesses is turned away unchecked instead of queueing without end", async (t) => {
@@ -271,7 +288,7 @@ test("the token file is owner-only and the token is in no response after sign-in
 });
 
 test("the entry point prints the token only on the start that created it", async (t) => {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-entry-")), "home");
+  const home = path.join(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-entry-"))), "home");
   t.after(() => fs.rmSync(path.dirname(home), { recursive: true, force: true }));
   const entry = fileURLToPath(new URL("../../src/server.ts", import.meta.url));
 
@@ -434,6 +451,17 @@ test("a device is labelled from its browser's User-Agent, and an unknown one is 
   assert.equal(deviceLabel("curl/8.7.1"), "Browser");
   assert.equal(deviceLabel(""), "Browser");
   assert.equal(deviceLabel(undefined), "Browser");
+});
+
+test("a User-Agent made to make a pattern backtrack is labelled at once: the work grows with its length, not its square", () => {
+  // "Version/" and a long run of digits with no "Safari/" after it: the pattern this replaced, `Version\/[\d.]+.*Safari\/`,
+  // tried every split of the digits between its two repeats: about 4 seconds for this one (CodeQL alert 1).
+  const hostile = `Mozilla/5.0 (Macintosh) Version/${"1".repeat(100_000)}`;
+  const began = performance.now();
+  assert.equal(deviceLabel(hostile), "Mac");
+  assert.equal(deviceLabel(`${hostile} Safari/605.1.15`), "Mac", "what lies past the first 512 characters is not read");
+  // Under a quarter of what the old pattern took, and loose enough for a loaded machine.
+  assert.ok(performance.now() - began < 1000, `took ${performance.now() - began}ms`);
 });
 
 interface SessionRow {

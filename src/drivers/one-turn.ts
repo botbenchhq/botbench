@@ -166,6 +166,13 @@ export class OneTurnSession implements DriverSession {
 /** Make the attempt one review turn runs in, and its session. */
 export function startOneTurn(db: DatabaseSync, driver: string, model: string | null, spec: OneTurnSpec): OneTurnSession {
   const at = now();
-  const { lastInsertRowid } = db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (?, ?, NULL, 'running', NULL, ?, ?)").run(driver, model, at, at);
-  return new OneTurnSession(db, Number(lastInsertRowid), spec);
+  let attemptId: number;
+  try {
+    attemptId = Number(db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (?, ?, NULL, 'running', NULL, ?, ?)").run(driver, model, at, at).lastInsertRowid);
+  } catch (err) {
+    // No session will ever end to remove what the driver made for it (Grok's temporary folder, a review folder).
+    spec.cleanup?.();
+    throw err;
+  }
+  return new OneTurnSession(db, attemptId, spec);
 }

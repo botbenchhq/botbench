@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createAgentChecks } from "../../src/api/agents.ts";
@@ -26,7 +25,7 @@ async function codexRoles(): Promise<string[]> {
 
 function counted(): { drivers: Driver[]; calls: () => number } {
   let calls = 0;
-  const drivers: Driver[] = [new ClaudeCodeDriver(), new CodexDriver(), new GrokDriver(), new AntigravityDriver({ dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "botbench-agents-")) })];
+  const drivers: Driver[] = [new ClaudeCodeDriver(), new CodexDriver(), new GrokDriver(), new AntigravityDriver({ dataDir: tempDir("botbench-agents-") })];
   for (const d of drivers) {
     const real = d.probe.bind(d);
     d.probe = () => {

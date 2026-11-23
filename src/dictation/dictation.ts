@@ -240,14 +240,18 @@ export function createDictation(options: DictationOptions): Dictation {
 const runDirectly = process.argv[1] !== undefined && fs.realpathSync(process.argv[1]) === import.meta.filename;
 if (runDirectly && process.argv[2] === "install") {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-dictation-install-"));
-  const before = await createDictation({ home }).status();
-  if (before.available || before.reason !== MODEL_MISSING) {
-    console.log(before.available ? "Dictation is ready: the English speech model is already on this Mac." : before.reason);
-  } else {
-    const dir = path.join(home, "dictation");
-    const helperFile = path.join(dir, fs.readdirSync(dir).find((name) => /^helper-[0-9a-f]{16}$/.test(name))!);
-    const installed = await run(helperFile, ["install"], 30 * 60_000);
-    console.log(installed.stdout.trim() === "ready" ? "The English speech model is installed. Dictation is ready." : `The model was not installed: ${firstLine(installed.stderr) || installed.stdout.trim()}`);
+  // Removed whether the install worked, failed or threw.
+  try {
+    const before = await createDictation({ home }).status();
+    if (before.available || before.reason !== MODEL_MISSING) {
+      console.log(before.available ? "Dictation is ready: the English speech model is already on this Mac." : before.reason);
+    } else {
+      const dir = path.join(home, "dictation");
+      const helperFile = path.join(dir, fs.readdirSync(dir).find((name) => /^helper-[0-9a-f]{16}$/.test(name))!);
+      const installed = await run(helperFile, ["install"], 30 * 60_000);
+      console.log(installed.stdout.trim() === "ready" ? "The English speech model is installed. Dictation is ready." : `The model was not installed: ${firstLine(installed.stderr) || installed.stdout.trim()}`);
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
-  fs.rmSync(home, { recursive: true, force: true });
 }

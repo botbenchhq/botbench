@@ -25,8 +25,8 @@ const test = base.extend<{ repo: string }>({
     const botbench: Botbench = await startBotbench({ home: path.join(path.dirname(repo), "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, autonomy: { offerStandingAfter: 1 } } });
     await use(botbench);
     const { leftover } = await botbench.stop();
-    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
+    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
   },
 });
 

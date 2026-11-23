@@ -13,6 +13,7 @@ import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { loadPlanRecording, THREE_TASKS, planReplayDriver } from "../support/replay-plan.ts";
 import { checkoutState, git, initRepo, tempDir, write } from "../support/repo.ts";
+import { escapeRegExp } from "../support/regexp.ts";
 
 // The north star of the learnings layer (ADR 0005), as one yes/no test: a reason the owner gave for rejecting a task on
 // workbench A is committed on A's lesson branch, never in A's checkout, and once the owner merged that branch into the
@@ -99,7 +100,7 @@ test("north star: a reason given when rejecting a task on workbench A, once the 
   assert.deepEqual(checkoutState(repoA), before);
   const lesson = git(repoA, "for-each-ref", "--format=%(refname:short)", "refs/heads/botbench-lesson/").trim();
   assert.match(lesson, /^botbench-lesson\/[a-z0-9-]+\/task-1$/);
-  assert.match(git(repoA, "show", `${lesson}:docs/solutions/rejected-add-a-greeting-file.md`), new RegExp(REASON.replace(/\./g, "\\.")));
+  assert.match(git(repoA, "show", `${lesson}:docs/solutions/rejected-add-a-greeting-file.md`), new RegExp(escapeRegExp(REASON)));
   assert.equal(git(remote, "for-each-ref", "refs/heads/botbench-lesson/").trim(), "", "nothing was pushed");
   // Until the owner merges it, no run is given it.
   const unmerged = await b.prompts();

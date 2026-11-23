@@ -7,6 +7,7 @@ import { loadConfig, repositoryWatch, watchedRepositories } from "../src/config.
 import { backoffMs, ghArgs, ghSaysLimited, githubRetryDelay, labelProblem, parseApiHead, parseWatchedIssues, type RepoRef } from "../src/github.ts";
 import { ISSUE_REPO, loadIssueCapture } from "./support/replay-issue.ts";
 import { capturedIssue, loadWatchCapture, WATCH_REPO } from "./support/replay-watch.ts";
+import { removedAtEnd } from "./support/repo.ts";
 
 // Watching a repository for labelled issues (issue #73), at the lowest layer: the one list command's exact arguments,
 // the reading of gh's answer, the label and interval settings, and the wait after GitHub's limits. Pure functions: no
@@ -118,7 +119,7 @@ test("a failed gh says GitHub's limit stopped it from REST's 429 and its words, 
 });
 
 function configFile(t: { after(fn: () => void): void }, repositories: unknown): { defaults: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-watch-config-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-watch-config-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const defaults = path.join(dir, "botbench.config.json");
   fs.writeFileSync(defaults, JSON.stringify({ port: 4780, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: { implementer: { driver: "claude-code" } }, repositories }));

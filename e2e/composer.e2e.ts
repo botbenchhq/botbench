@@ -21,8 +21,9 @@ async function withKnownRepository(run: (botbench: Awaited<ReturnType<typeof sta
   try {
     await run(botbench, repo);
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 }
 
