@@ -4,6 +4,7 @@ import { transaction } from "../store/db.ts";
 import { WORKBENCH_RULE, isWorkbench } from "../workbench.ts";
 import { MESSAGE_KINDS, envelopeDigest, isId, newId, repositoryProblem, signEnvelope, type MessageKind, type SignedEnvelope } from "./envelope.ts";
 import { fingerprintOf, publicKeyProblem, type WorkbenchKey } from "./key.ts";
+import { logPeer } from "./log.ts";
 
 /*
  * Pairings in the store (Peers P5, ADR 0004 decisions 3, 4 and 11). No network: what the peer listener will call, kept
@@ -108,22 +109,29 @@ const ownWrite = (db: DatabaseSync, what: string): void => {
   if (db.isTransaction) throw new Error(`${what} erases an invite's secret and must not run inside another write: call it on its own.`);
 };
 
-/** Close every open invite whose 15 minutes have passed, erasing its secret. */
-export function closeExpiredInvites(db: DatabaseSync, at: Date = new Date()): void {
-  erasing(db, () => db.prepare("UPDATE peer_invites SET state = 'expired', secret = NULL, closed_at = ? WHERE state = 'open' AND expires_at <= ?").run(iso(at), iso(at)));
+/** Close every open invite whose 15 minutes have passed, erasing its secret, each with its row in the action log. The ids closed. */
+export function closeExpiredInvites(db: DatabaseSync, at: Date = new Date()): string[] {
+  return erasing(db, () =>
+    atomically(db, () => {
+      const closed = db.prepare("UPDATE peer_invites SET state = 'expired', secret = NULL, closed_at = ? WHERE state = 'open' AND expires_at <= ? RETURNING id, repository").all(iso(at), iso(at));
+      for (const row of closed) logPeer(db, { rule: "peer_invite", command: "invite expired", detail: `The invite ${String(row.id)} to pair on ${String(row.repository)} expired unused; its secret is erased.`, at });
+      return closed.map((row) => String(row.id));
+    }),
+  );
 }
 
 /**
  * Make an invite for `repository`. The secret is returned this once, to be put in the invite the owner passes on; it
  * is never shown again or logged.
  */
-export function createInvite(db: DatabaseSync, repository: string, at: Date = new Date()): { id: string; secret: Buffer; expiresAt: string } {
+export function createInvite(db: DatabaseSync, repository: string, at: Date = new Date(), lifeMs: number = INVITE_LIFE_MS): { id: string; secret: Buffer; expiresAt: string } {
   const problem = repositoryProblem(repository);
   if (problem !== null) throw new Error(problem);
   closeExpiredInvites(db, at);
   const id = newId();
   const secret = randomBytes(32);
-  const expiresAt = iso(new Date(at.getTime() + INVITE_LIFE_MS));
+  if (!Number.isSafeInteger(lifeMs) || lifeMs < 1 || lifeMs > INVITE_LIFE_MS) throw new Error("An invite lives at most 15 minutes.");
+  const expiresAt = iso(new Date(at.getTime() + lifeMs));
   db.prepare("INSERT INTO peer_invites (id, secret, repository, created_at, expires_at, state) VALUES (?, ?, ?, ?, ?, 'open')").run(id, secret, repository, iso(at), expiresAt);
   return { id, secret, expiresAt };
 }

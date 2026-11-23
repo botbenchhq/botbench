@@ -34,6 +34,8 @@ import type { Chat } from "./chat.ts";
 import type { AgentChecks } from "./agents.ts";
 import type { Watch } from "../engine/watch.ts";
 import { watchRoutes } from "./watch.ts";
+import { peerPairingRoutes } from "./peer-pairing.ts";
+import type { PeerLink } from "../peers/service.ts";
 import { updateRoutes } from "./update.ts";
 import type { Updates } from "../update.ts";
 
@@ -76,6 +78,8 @@ export interface RouteContext {
   claims: Claims;
   /** The issue watch: each watched repository's state, and the issues proposed as runs on Work. */
   watch: Watch;
+  /** Pairing with another workbench: invites, the pair request, confirmations and ends (src/peers/service.ts). */
+  peerLink: PeerLink;
   /** Updating Botbench to a published release (src/update.ts). */
   updates: Updates;
   /** Where the built client is. */
@@ -174,6 +178,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await settingsRoutes(req, res, ctx, url)) return;
   if (await memoryRoutes(req, res, ctx, url)) return;
   if (await peersRoutes(req, res, ctx, url)) return;
+  if (await peerPairingRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (await boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;

@@ -37,6 +37,10 @@ const RULE_WORDS: Record<LogRule, string> = {
   owner_answered: "You answered Claude Code's question",
   question_unasked: "Not asked: fully autonomous, Claude Code chose itself",
   peer_message_conflict: "Refused: another workbench sent a message again with other content",
+  peer_invite: "Invite to pair with another workbench",
+  peer_pairing: "Pairing with another workbench",
+  peer_protocol: "Sent to a paired workbench without asking: a fixed reply or notice",
+  peer_refused: "Refused from another workbench",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();

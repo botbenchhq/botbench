@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { AntigravityDriver } from "../../src/drivers/antigravity.ts";
@@ -21,11 +22,12 @@ import { initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
 
 const DECOY = "DECOY-41b9-not-for-reviewers";
 
-// Grok reviews with its own read-only tools since it has them in Botbench (src/drivers/grok.ts): for it, a tool call is
-// allowed, and the sandbox, not the absence of tools, is what keeps the copy unchanged and the decoy unread.
+// Grok and Antigravity review with their own read-only tools since they have them in Botbench (src/drivers/grok.ts,
+// src/drivers/antigravity.ts): a tool call is allowed, and the sandbox, not the absence of tools, is what keeps the
+// copy unchanged and the decoy unread. Antigravity uses Botbench's own profile in ~/.botbench, connected from Settings.
 for (const [name, make, model, tools] of [
   ["Grok", () => new GrokDriver(), "grok-4.7-build-fast", true],
-  ["Antigravity", () => new AntigravityDriver(), "gemini-3.8-flash-low", false],
+  ["Antigravity", () => new AntigravityDriver({ dataDir: path.join(os.homedir(), ".botbench") }), "gemini-3.8-flash-low", true],
 ] as const) {
   test(`LIVE: ${name}: a review turn returns a critique in the asked form, ${tools ? "with" : "with no tool call,"} no file written in the task's copy, the decoy not read, and nothing of the repository loaded`, { timeout: 300_000 }, async (t) => {
     const dir = tempDir("botbench-live-no-tools-");

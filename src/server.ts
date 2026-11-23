@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryExecution, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, peersProblem, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log, repositoryExecution } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -36,6 +36,7 @@ import { createContainers } from "./engine/containers.ts";
 import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
 import { moveOldHome } from "./store/move-home.ts";
+import { createPeerLink, type PeerLink } from "./peers/service.ts";
 import { createUpdates, GIT_URL, RELEASES_URL, SERVICE_LABEL, type UpdateOptions } from "./update.ts";
 
 export interface BotbenchServer {
@@ -51,6 +52,8 @@ export interface BotbenchServer {
   newLoginToken?: string;
   /** How many clients have the event stream open. */
   streamClients(): number;
+  /** The peer listener's address and port ("127.0.0.1:4790"), or null when the settings leave it off. */
+  peerAddress: string | null;
   /** Stop listening, drop open connections, stop every CLI process and close the database. Safe to call twice. */
   close(): Promise<void>;
 }
@@ -103,6 +106,8 @@ export interface StartOptions {
   codexBuilder?: Driver;
   /** The gh the issue watch lists labelled issues with. The owner's own unless a test replays output captured from it. */
   watchGh?: RunGh;
+  /** How long an invite to pair lives; 15 minutes, its most, unless a test asks for less. */
+  peerInviteLifeMs?: number;
   /**
    * Where Botbench looks for releases and fetches them, and the service it restarts through (src/update.ts). Left out,
    * it does not look for releases at all: only the entry point below turns that on, so no test reaches GitHub.
@@ -126,6 +131,9 @@ export function workUnderWay(db: DatabaseSync, turns: { anyRunning(): boolean },
 /** Open the store under `home` and serve on every configured address. */
 export async function startServer(options: StartOptions): Promise<BotbenchServer> {
   const { config, home } = options;
+  // A config handed over in code has not been through the loader: a public peer address stops the start here too.
+  const peering = peersProblem(config.peers);
+  if (peering !== null) throw new Error(`The settings: ${peering}`);
   const db = openStore(home);
   // The workbench's name: the settings file's when it sets one; else the one kept, made from the host name at first start.
   if (config.workbench !== undefined) chooseWorkbench(db, config.workbench, "settings_file");
@@ -151,7 +159,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan. Codex also builds a
   // task or a run's tasks the owner chose it for, when its probe finds it can (src/drivers/codex-app-server.ts).
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
-  const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
+  const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver({ dataDir: home, ...configured(ANTIGRAVITY) }) };
   const builders: Partial<Record<string, Driver>> = { [CODEX]: options.codexBuilder ?? reviewers[CODEX] };
   let broker: Broker;
   let push: Push;
@@ -195,7 +203,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const chatClaude = options.chatClaude ?? driver;
   const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
-  const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
+  const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, broker, onEvent: stream.notify });
   // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
   const peers = createPeers({ db, config, github });
   // Checking a task together with another workbench's open pull request, in a temporary copy (engine/combined.ts).
@@ -249,7 +257,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // interval and proposed on Work. It reads only; a run starts only when the owner presses Start and submits the composer.
   const watch = startWatch({ db, config, run: options.watchGh ?? runGh, onProposed: () => push.issueProposed(), onChange: stream.announceWatch });
   const updates = createUpdates({ db, home, installDir: options.installDir ?? ROOT, busy: () => workUnderWay(db, turns, chat), notifyUpdated: (version) => push.updated(version), options: options.updates ?? null });
-  const ctx = { db, home, config, updates, driver, reviewers, builders,agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  // Pairing with another workbench (src/peers/): its listener starts after the owner's, and only when the settings name one.
+  const peerLink: PeerLink = createPeerLink({ db, home, config, ...(options.peerInviteLifeMs === undefined ? {} : { inviteLifeMs: options.peerInviteLifeMs }) });
+  const ctx = { peerLink, updates, db, home, config, driver, reviewers, builders,agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs, pairingLifetimeMs: options.pairingLifetimeMs });
@@ -272,7 +282,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     if (closed) return;
     closed = true;
     stream.close();
-    await Promise.all(servers.map(stop));
+    await Promise.all([...servers.map(stop), peerLink.close()]);
     // A poll under way writes its issues to the store when it ends: its timers stop and it is waited for first.
     await watch.close();
     // An update under way finishes the step it is on: a checkout is never left half moved.
@@ -299,11 +309,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
       // With port 0 the first address picks a free port and the rest share it.
       port = await listen(server, port, address);
     }
+    await peerLink.listen();
   } catch (err) {
     await close();
     throw err;
   }
-  return { port, addresses: [...config.listen], db, broker, push, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, close };
+  return { port, addresses: [...config.listen], db, broker, push, ...(login.created ? { newLoginToken: login.token } : {}), streamClients: stream.clients, peerAddress: peerLink.address(), close };
 }
 
 /**
@@ -335,6 +346,7 @@ if (runDirectly) {
   for (const address of server.addresses) {
     console.log(`Botbench is listening on http://${address.includes(":") ? `[${address}]` : address}:${server.port}`);
   }
+  if (server.peerAddress !== null) console.log(`The listener for paired workbenches is on ${server.peerAddress}.`);
   if (server.newLoginToken !== undefined) {
     // Shown once, on the start that created it. Afterwards it is only in the owner-only file under the data directory.
     console.log(`Login token (shown this once, kept in ${path.join(home, LOGIN_TOKEN_FILE)}): ${server.newLoginToken}`);

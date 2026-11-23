@@ -16,6 +16,6 @@ Context: the owner wants Botbench to publish versioned releases like a product, 
 ## Consequences
 
 - The update path is code execution by design. It trusts the repository's own commits on `main` reached by a release tag, the packages its lockfiles pin, and GitHub's TLS; it trusts GitHub's release metadata only to name a version, never to supply what runs. Releases are not signed: anyone with write access to `main` and its tags can run code on every updating installation.
-- A failure of the real start that neither check covers (restart recovery on the owner's data, the owner's settings file) shows only after the restart; going back is by hand (threat model, open item 13), because an older Botbench refuses a database a newer one migrated.
+- A failure of the real start that neither check covers (restart recovery on the owner's data, the owner's settings file) shows only after the restart; going back is by hand (threat model, open item 14), because an older Botbench refuses a database a newer one migrated.
 - The release pull request's dispatched CI is proven only when the first release pull request opens; if GitHub ever stops counting a dispatched run's checks for a pull request, the owner can re-run its checks or close and reopen it.
 - Not here: a stable channel (OpenMausBot promotes a release after 48 hours on its own instances), signed releases, and updating an installation that is not a git checkout.

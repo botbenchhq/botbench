@@ -1,0 +1,18 @@
+{
+  "cli": "antigravity",
+  "version": "1.5.14",
+  "captured": "2026-11-23",
+  "command": "agy acp --login --gemini-dir <Botbench's profile>/.gemini",
+  "conditions": "Under the sign-in's sandbox (no Keychain), with a new empty profile, BROWSER=/usr/bin/true, stdin, stdout and stderr are pipes (no terminal). The wrong code was a made-up one.",
+  "placeholders": "The values of state and code_challenge in the link are replaced by X of the same length. Nothing else was changed.",
+  "beforeCode": {
+    "stdout": "Open this link in a browser to log in with Google:\n\n  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=XXXXXXXXXXXXXXXXXXXXXX\n\nThen paste the authorization code, or the full URL of the page you land on, and press Enter:\n",
+    "stderr": ""
+  },
+  "wrongCode": {
+    "input": "4/0AbogusCODEforTesting123",
+    "stdout": "\ncouldn't log in: token exchange failed: oauth2: \"invalid_grant\" \"Bad Request\"\n",
+    "stderr": "",
+    "exitCode": 1
+  }
+}
