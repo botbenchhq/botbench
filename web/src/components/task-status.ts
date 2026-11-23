@@ -1,5 +1,5 @@
 import { LOOKS, type Look } from "./looks.ts";
-import type { ModelList, PullRequestView, TaskDecision, TaskStatus, TaskSummary } from "../api/client.ts";
+import type { FileChange, ModelList, PullRequestView, TaskDecision, TaskStatus, TaskSummary } from "../api/client.ts";
 import { firstLine } from "../../../src/shorten.ts";
 
 const STATUS_WORD: Record<TaskStatus, string> = {
@@ -40,7 +40,7 @@ export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval
 
 /** A task's station as a sentence that says only what is so. */
 export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & { pullRequest: Pick<PullRequestView, "state" | "number"> }): string {
-  // A fully autonomous run that did not accept the task says why it needs the owner.
+  // Why the task needs the owner: a fully autonomous run that did not accept it, or, in any mode, a protected file it changed.
   const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
     return task.parked
@@ -102,6 +102,21 @@ const TITLE_LEAST = 40;
 
 /** Whether an accepted task offers the command that merges its branch on this Mac: not when its run opens pull requests, where the pull request is how the work comes in. */
 export const offersMerge = (task: { pullRequest: Pick<PullRequestView, "choice"> }): boolean => task.pullRequest.choice !== "pull_request";
+
+/** A changed file's marks, in words (src/engine/scope.ts): under a protected path, and not expected from the plan. None for a file the plan expected. */
+export const fileMarks = (file: Pick<FileChange, "expected" | "protected">): string[] => [...(file.protected ? ["Protected"] : []), ...(file.expected ? [] : ["Not expected from the plan"])];
+
+/** The line over the changed files that says what their marks mean, or null when no file has a mark. */
+export function fileMarksLine(files: readonly Pick<FileChange, "expected" | "protected">[]): string | null {
+  const count = (n: number): string => (n === 1 ? "1 file" : `${n} files`);
+  const guarded = files.filter((f) => f.protected).length;
+  const unexpected = files.filter((f) => !f.expected).length;
+  const parts = [
+    ...(guarded > 0 ? [`${count(guarded)} ${guarded === 1 ? "is" : "are"} under a protected path, which only you can accept`] : []),
+    ...(unexpected > 0 ? [`${count(unexpected)} ${unexpected === 1 ? "was" : "were"} not expected from the plan: the task's words, its checks and its tests do not name ${unexpected === 1 ? "it" : "them"}`] : []),
+  ];
+  return parts.length === 0 ? null : `${parts.join(". ")}.`;
+}
 
 /** What has left the machine, in one sentence that is true before a decision, after one, and after a push for a pull request. */
 export const notMergedLine = (task: { decision: Pick<TaskDecision, "decision"> | null; pullRequest: Pick<PullRequestView, "pushed"> }): string =>

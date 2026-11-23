@@ -74,6 +74,8 @@ On screen since the cards say why they ask: on an approval card, "Why it asks" w
 
 On screen since reviews say what they checked: each review shows its verdict line and, under it without any tap, "Checked:" with the reviewer's own lines, or the plain note "The reviewer gave no account of what it checked."; its whole reply is behind "The full review". A looks-right verdict with no Checked lines reads "Codex said it looks right but gave no account of what it checked: needs your judgment." as the outcome line, and a fully autonomous run does not accept it ("It needs your review: The reviewer gave no account of what it checked."). Fully autonomous's line says it accepts work that its reviewer "said looks right and named what it checked".
 
+On screen since scope checks: on the task, under Changed files, the marks "Protected" and "Not expected from the plan" beside a file, with one line over the list ("1 file is under a protected path, which only you can accept. 2 files were not expected from the plan: the task's words, its checks and its tests do not name them."); and as a reason under "It needs your review:", "It changed 1 file under a protected path, which only you can accept: test/recordings/a.json." or "It changed 2 files not expected from the plan: …".
+
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.

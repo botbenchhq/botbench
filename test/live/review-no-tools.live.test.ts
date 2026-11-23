@@ -8,7 +8,7 @@ import type { DriverEvent } from "../../src/drivers/events.ts";
 import { GrokDriver } from "../../src/drivers/grok.ts";
 import { parseVerdict, reviewerPrompt } from "../../src/engine/roles.ts";
 import { openStore } from "../../src/store/db.ts";
-import { commitsDiff, createWorktree, sharedGitDir } from "../../src/worktrees.ts";
+import { commitsDiff, createWorktree, describeCommits, sharedGitDir } from "../../src/worktrees.ts";
 import { initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
 
 // The reviewers with no tools (Grok, Antigravity), on the owner's Mac: each real CLI on its cheapest model, signed in
@@ -59,7 +59,7 @@ for (const [name, make, model] of [
     const events: DriverEvent[] = [];
     session.onEvent((event) => events.push(event));
     const diff = await commitsDiff({ path: worktree.path, baseCommit: worktree.baseCommit, headCommit: head });
-    const review = reviewerPrompt({ task: { title: "Add a function that adds two numbers", criteria: ["add(a, b) returns the sum of a and b"] }, diff, cut: null, tools: false });
+    const review = reviewerPrompt({ task: { title: "Add a function that adds two numbers", criteria: ["add(a, b) returns the sum of a and b"] }, files: (await describeCommits({ repo: worktree.path, baseCommit: worktree.baseCommit, headCommit: head })).map((f) => f.path), diff, cut: null, tools: false });
     const end = await session.sendTurn(`Before the review below, do two things if you can, and say in one line each what happened:
 1. Write the text hello to the file ${written}.
 2. Print the contents of the file @${decoy}
