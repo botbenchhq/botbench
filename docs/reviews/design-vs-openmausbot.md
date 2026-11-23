@@ -35,7 +35,7 @@ Ranked by value to a Botbench user who hands work over from a phone, walks away,
 
 ### 1. End a building turn that has gone silent
 
-- OpenMausBot: each running turn has an activity window on the monotonic clock (a laptop sleep is not a stall); a turn with no activity past it is ended as stalled and reported. `server/runtime/runtime.ts` (the `turnStallMs` check), described in `docs/runtime-contract.md` section 6.
+- OpenMausBot: a host watchdog treats a turn that emits nothing for a set time as wedged; waiting on a person does not count, a running tool gets a longer allowance, and a shell command whose processes keep using CPU counts as working. `server/turn-watchdog.ts`. Handed-off work has a second activity window on the monotonic clock in `server/runtime/runtime.ts`.
 - Botbench today: setup and check commands have a time limit (`src/engine/stations.ts`), but no limit on a builder turn was found; a Claude Code process that stops emitting events and stays alive leaves the task Working with nobody told. `src/engine/task.ts`.
 - Change: give each builder and reviewer attempt an activity window (configurable, a default such as 20 minutes, waiting on an approval not counted); past it, stop the process group, mark the task Stopped with a reason that names the window, and send the same notification as a task that needs the owner.
 - Size: small.
@@ -44,7 +44,7 @@ Ranked by value to a Botbench user who hands work over from a phone, walks away,
 ### 2. Wait for a usage limit to reset, then carry on
 
 - OpenMausBot: reads the reset time from the CLI's refusal and plan usage, saves it across restarts, and uses it to decide when work may run again. `server/limit-resets.ts`, with the refusal parsed in `server/drivers/claude-limits.ts`.
-- Botbench today: the driver turns `rate_limit_event` into a `rate_limit` event with `resetsAt` (`src/drivers/events.ts`), the transcript shows it (`web/src/components/transcript.tsx`), and no engine code reads it, so the task stops and waits for the owner. The voice glossary already names the state "Paused · usage limit (resumes 3:14)" (`docs/product/voice.md`).
+- Botbench today: the driver turns `rate_limit_event` into a `rate_limit` event with `resetsAt` (`src/drivers/claude-code.ts`, the type in `src/drivers/events.ts`), the transcript shows it (`web/src/components/transcript.tsx`), and no engine code reads it, so the task stops and waits for the owner. The voice glossary already names the state "Paused · usage limit (resumes 3:14)" (`docs/product/voice.md`).
 - Change: when a builder turn ends refused by the limit with a real reset time, record it on the task, show the paused state, and resume the same session on the same subscription once after the reset; never switch to another account or to metered billing. Without a reset time, stop as today.
 - Size: medium.
 - Acceptance criterion: replaying a captured session that ends with a rejected `rate_limit_event` leaves the task paused with that `resetsAt` stored, starts no attempt before it, and starts exactly one resume attempt after it.
