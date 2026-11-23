@@ -6,8 +6,8 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 /** An issue as the owner is shown it before a run is started from it. All of it but the number and address is text written outside the project, to be shown as plain text. */
 export function issueView(issue: StoredIssue): Record<string, unknown> {
-  const { id, repository, number, url, title, author, state, labels, body, comments, commentCount, fetchedAt } = issue;
-  return { fetchId: id, repository, number, url, title, author, state, labels, body, comments, commentCount, cutWords: cutWords(issue), fetchedAt };
+  const { id, repository, number, url, title, author, authorRelation, state, labels, body, comments, commentCount, fetchedAt } = issue;
+  return { fetchId: id, repository, number, url, title, author, authorRelation, state, labels, body, comments, commentCount, cutWords: cutWords(issue), fetchedAt };
 }
 
 /** The short form a run or task links to its issue by. */

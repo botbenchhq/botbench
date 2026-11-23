@@ -45,7 +45,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Working. Claude Code is working in a separate copy of the project.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
-  await expect(page.getByTestId("task-details").getByTestId("branch")).toHaveValue(/^botbench\/[a-z0-9-]+\/run-\d+\/task-\d+$/);
+  await expect(page.getByTestId("task-details").getByTestId("branch")).toHaveText(/^botbench\/[a-z0-9-]+\/run-\d+\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
   // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
   const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();
@@ -92,7 +92,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(await diff.locator('[data-line="added"]').first().textContent()).toMatch(/^\+/);
 
   // The branch, by name, with a copy control that copies it.
-  const branch = await page.getByTestId("branch").inputValue();
+  const branch = (await page.getByTestId("branch").textContent())!;
   expect(git(repo, "show", `${branch}:hello.txt`).trim()).toBe("hi");
   await page.getByRole("button", { name: "Copy branch name" }).click();
   await expect(page.getByTestId("branch-copy-state")).toHaveText("Copied.");
@@ -133,7 +133,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await checkDesign(page, "work, with one task");
   await copyShot(page, "work");
   await rows.first().click();
-  await expect(page.getByTestId("branch")).toHaveValue(branch);
+  await expect(page.getByTestId("branch")).toHaveText(branch);
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
 
   // The turn screen is still there and still works as the first screen.

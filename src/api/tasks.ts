@@ -1,11 +1,11 @@
-import { runIssue, runOutside } from "../engine/intake.ts";
+import { issueHostsFor, runIssue, runOutside } from "../engine/intake.ts";
 import { issueLink } from "./issues.ts";
 import type http from "node:http";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
-import { repositorySettings } from "../config.ts";
+import { repositoryHosts, repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
 import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
@@ -173,7 +173,8 @@ function earlierAttempts(db: DatabaseSync, task: Task): number {
 async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unknown>> {
   const { db } = ctx;
   const left = await remainsOf(db, task);
-  return { ...summary(db, task), earlierAttempts: earlierAttempts(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+  // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
+  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {

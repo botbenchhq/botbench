@@ -71,6 +71,8 @@ test("an issue is looked up by number or same-repository address and kept as rea
   assert.equal(issue.repository, "github.com/cli/cli");
   assert.equal(issue.state, "CLOSED");
   assert.equal(issue.author, "jeffwall-curlewlabs");
+  // The replay holds gh issue view's answer only, which does not say how the author relates to the repository.
+  assert.equal(issue.authorRelation, null);
   assert.equal(typeof issue.body, "string");
   assert.equal(issue.commentCount, 3);
   assert.equal(issue.cutWords, null);
@@ -117,4 +119,11 @@ test("a run from an issue is refused as fully autonomous, chosen or by default, 
   const taskShown = (await call(api, "GET", `/api/tasks/${task!.id}`)).body;
   assert.equal(taskShown.outsideText, true);
   assert.equal((taskShown.issue as Body).number, ISSUE_NUMBER);
+  // The network hosts are named only for a run whose owner allowed them, as the repository's settings list them.
+  assert.deepEqual(shown.issueHosts, []);
+  assert.deepEqual(taskShown.issueHosts, []);
+  const allowing = createRun(db, { repo: api.repo, baseCommit: git(api.repo, "rev-parse", "HEAD").trim(), issue: { fetchId: Number(fetchId), allowHosts: true }, mode: "semi" });
+  const [hostsTask] = approvePlan(db, allowing.id, storePlan(db, allowing.id, [{ title: "Fix it", criteria: ["Fixed"] }]).planVersion).tasks;
+  assert.deepEqual((await call(api, "GET", `/api/runs/${allowing.id}`)).body.issueHosts, ["registry.npmjs.org"]);
+  assert.deepEqual((await call(api, "GET", `/api/tasks/${hostsTask!.id}`)).body.issueHosts, ["registry.npmjs.org"]);
 });

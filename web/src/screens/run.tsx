@@ -7,7 +7,7 @@ import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { PullRequestLink, pullRequestWords } from "../components/pull-request.tsx";
 import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
-import { MODE_SENTENCE } from "../components/mode-choice.tsx";
+import { modeSentence } from "../app/run-words.ts";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
@@ -355,7 +355,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
               <div className="ds-key-value__item">
                 <dt className="ds-key-value__label">Mode</dt>
                 <dd data-testid="run-mode" className="ds-key-value__value">
-                  {MODE_SENTENCE[run.mode]}
+                  {modeSentence(run.mode, run.issueHosts)}
                 </dd>
               </div>
               <div className="ds-key-value__item">
