@@ -1143,4 +1143,28 @@ CREATE TABLE push_sent (
 );
 `,
   },
+  {
+    // The first run of an installation (src/api/settings.ts, `firstRun`): the home screen's first-run lines show until
+    // the first chat, task or run is stored. One row, written by the store itself the moment the first attempt, task or
+    // run is inserted, whatever code path inserts it, and kept for good: deleting that chat, task or run later, or a
+    // restart, never brings the lines back. An installation that already holds any of them is marked as it migrates.
+    name: "first_use",
+    sql: `
+CREATE TABLE first_use (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  at TEXT NOT NULL
+);
+INSERT INTO first_use (id, at) SELECT 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE EXISTS (SELECT 1 FROM attempts) OR EXISTS (SELECT 1 FROM tasks) OR EXISTS (SELECT 1 FROM runs);
+CREATE TRIGGER first_use_by_attempt AFTER INSERT ON attempts WHEN NOT EXISTS (SELECT 1 FROM first_use)
+BEGIN INSERT INTO first_use (id, at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')); END;
+CREATE TRIGGER first_use_by_task AFTER INSERT ON tasks WHEN NOT EXISTS (SELECT 1 FROM first_use)
+BEGIN INSERT INTO first_use (id, at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')); END;
+CREATE TRIGGER first_use_by_run AFTER INSERT ON runs WHEN NOT EXISTS (SELECT 1 FROM first_use)
+BEGIN INSERT INTO first_use (id, at) VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')); END;
+CREATE TRIGGER first_use_no_update BEFORE UPDATE ON first_use
+BEGIN SELECT RAISE(ABORT, 'first use is kept: it is never changed'); END;
+CREATE TRIGGER first_use_no_delete BEFORE DELETE ON first_use
+BEGIN SELECT RAISE(ABORT, 'first use is kept: it is never deleted'); END;
+`,
+  },
 ];

@@ -608,6 +608,9 @@ export const issueSourceOf = (path: string, giveUp: AbortSignal): Promise<IssueS
 /** The gh tool reads it from GitHub, which can take a while. */
 export const lookUpIssue = async (repo: string, issue: string): Promise<IssuePreview> => (await request<{ issue: IssuePreview }>("POST", "/api/issues", { repo, issue }, 70_000)).issue;
 /** The mode a new run is given unless the owner chooses another in the composer. */
+/** Whether this installation is on its first run: no chat, task or run has ever been stored in it. */
+export const getFirstRun = async (): Promise<boolean> => (await request<{ firstRun: boolean }>("GET", "/api/first-run", undefined, 30_000)).firstRun;
+
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;

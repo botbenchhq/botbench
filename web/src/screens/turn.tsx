@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { ApiError, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
+import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
 import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
@@ -40,10 +41,27 @@ function saveConversation(ids: number[]): void {
 }
 
 /** What is wrong with the agent, or null: while it is being checked and when all is well, the header says nothing. */
-function driverProblem(driver: DriverState | null, failed: boolean): string | null {
-  if (failed) return "Claude Code: could not be checked";
-  if (driver === null || driver.problem === null) return null;
-  return !driver.installed ? "Claude Code: not installed" : !driver.supported ? "Claude Code: unsupported version" : !driver.signedIn ? "Claude Code: signed out" : "Claude Code: unavailable";
+const HEADER_PROBLEM: Record<AgentStatus, string | null> = {
+  checking: null,
+  ready: null,
+  "not-checked": "Claude Code: could not be checked",
+  "not-installed": "Claude Code: not installed",
+  unsupported: "Claude Code: unsupported version",
+  "signed-out": "Claude Code: signed out",
+  unavailable: "Claude Code: unavailable",
+};
+
+/** The one link to connect an agent, at the end of a sentence that says the agent cannot be used. */
+function ConnectAgent() {
+  return (
+    <>
+      {` ${CONNECT.before}`}
+      <a href={AGENTS_ADDRESS} className="ds-link">
+        {CONNECT.link}
+      </a>
+      {CONNECT.after}
+    </>
+  );
 }
 
 /** What the composer remembers on this device: the repository, what to do, mode, review and delivery. */
@@ -123,6 +141,21 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   useEffect(() => {
     if (start !== null) window.history.replaceState(null, "", "#/turn");
   }, [start]);
+  /** Whether this installation has never stored a chat, task or run; null until the server has said, and then nothing is shown. */
+  const [firstRun, setFirstRun] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    getFirstRun().then(
+      (found) => live && setFirstRun(found),
+      (err: unknown) => {
+        // Not known: the lines are not shown, and the home screen is as it always was.
+        if (live && err instanceof ApiError && err.status === 401) onSignedOut();
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [onSignedOut]);
   useEffect(() => {
     let live = true;
     getDefaultMode().then(
@@ -338,6 +371,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
         saveConversation(next);
         setAsked((have) => ({ ...have, ...Object.fromEntries(replies.map((r) => [r.attemptId, r.model])) }));
         setActive(replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
+        // The chat is stored now, and the first run is over for good: New chat does not bring the lines back.
+        setFirstRun(false);
         setStarting(false);
         if (compare === undefined) setPrompt("");
         // Events stored before the attempts were known here may have been missed by a stream that was reconnecting.
@@ -431,7 +466,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   };
 
   const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
-  const problem = driverProblem(driver, driverFailed);
+  const claudeStatus = agentStatus(driver, driverFailed);
+  const problem = HEADER_PROBLEM[claudeStatus];
+  // On a first run, an empty chat shows what to do first and the agent's state: with the header's line when the agent
+  // cannot be used, three short lines at most above the box.
+  const welcome = firstRun === true && chatting && shown.length === 0 ? agentLine(claudeStatus) : null;
   /** The model each chat attempt was asked for, as this screen sent it; an attempt from before a reload has none recorded. */
   const [asked, setAsked] = useState<Record<number, string | null | undefined>>({});
   /** The name of the model asked for when the one that answered is a different one; null when it is the same or the ask is not known. */
@@ -518,6 +557,15 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   </>
                 }
               />
+            ) : welcome !== null ? (
+              // A first run: two plain lines, no tour and nothing over the screen. Gone once a chat, task or run is stored.
+              <div data-testid="first-run" className="ds-stack ds-gap-xs pt-md">
+                <p className="ds-composer__reason">{FIRST_STEP}</p>
+                <p data-testid="first-run-agent" className="ds-composer__reason">
+                  {welcome.words}
+                  {welcome.connect && <ConnectAgent />}
+                </p>
+              </div>
             ) : (
               // An empty chat shows nothing above the box. Work in a repository says, in one muted line, where and what follows.
               !chatting && (
@@ -595,6 +643,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             stopReason !== null && (
               <p id="composer-reason" data-testid={builderDown ? "driver-problem" : "composer-reason"} className="ds-composer__reason">
                 {stopReason.reason}
+                {stopReason.connect && <ConnectAgent />}
               </p>
             )
           )}
