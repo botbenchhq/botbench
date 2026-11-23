@@ -95,7 +95,8 @@ export function threadFriction(db: DatabaseSync, pairingId: string, contextId: s
       kind: String(row.kind),
       decision,
       waitedMs: byPerson ? Date.parse(String(row.decided_at)) - Date.parse(String(row.shown_at)) : null,
-      sentAsDrafted: decision === "sent" ? row.sent_digest === row.draft_digest : null,
+      // Sent means the owner pressed Send; a message whose kind was switched off by then never left, so it is no draft "sent as drafted".
+      sentAsDrafted: decision === "sent" && db.prepare("SELECT 1 FROM peer_messages WHERE pairing_id = ? AND direction = 'out' AND message_id = ?").get(pairingId, String(row.message_id)) !== undefined ? row.sent_digest === row.draft_digest : null,
     };
   });
   return { cardsAnswered: cards.filter((c) => c.decision !== null && c.decision !== "closed_by_end").length, cards };

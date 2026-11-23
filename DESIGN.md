@@ -2,7 +2,7 @@
 version: alpha
 name: Botbench
 # Generated: everything from here to the closing line is web/vendor/design-system/themes/botbench.design-tokens.md
-# (the design system 0.11.2, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
+# (the design system 0.11.4, Botbench theme), unchanged but for the name above. Do not edit it here. After a sync, copy that file over this block again.
 colors:
   accent: "#1C1C1E"
   accent-hover: "#3A3A3C"

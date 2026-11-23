@@ -5,9 +5,10 @@ import path from "node:path";
 import { test } from "node:test";
 import { inspect } from "node:util";
 import { fingerprintOf, publicKeyProblem, verifySignature, WORKBENCH_KEY_FILE, workbenchKey } from "../../src/peers/key.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 function tempHome(t: { after(fn: () => void): void }): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-key-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-key-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

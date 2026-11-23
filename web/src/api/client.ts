@@ -1057,7 +1057,17 @@ export type LogRule =
   /** A fixed reply or notice sent to a paired workbench without asking. */
   | "peer_protocol"
   /** What the listener for paired workbenches refused, at most one entry a minute, with how many. */
-  | "peer_refused";
+  | "peer_refused"
+  /** A question or an answer to or from a paired workbench. */
+  | "peer_message"
+  /** A question or an answer not sent or not taken, because its kind is switched off for that workbench. */
+  | "peer_kind_refused"
+  /** An agent drafted a message to a paired workbench; counted before anything else is decided. */
+  | "peer_send_attempt"
+  /** An agent's draft refused without a card: its run had sent its most messages to other workbenches. */
+  | "peer_send_over_limit"
+  /** The owner changed what a paired workbench may send or receive. */
+  | "peer_settings";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {
@@ -1085,6 +1095,20 @@ export const grantStanding = (id: number): Promise<{ approval: Approval; grant: 
 /** The standing permissions in force, and after how many approvals a card offers one. */
 export const listGrants = (): Promise<{ grants: StandingGrant[]; offerStandingAfter: number }> => request("GET", "/api/grants", undefined, 30_000);
 export const revokeGrant = (id: number): Promise<{ revoked: StandingGrant }> => request("POST", `/api/grants/${id}/revoke`, {}, 30_000);
+/** What a command would get in one mode, as the permission check answers it (src/approvals/preview.ts). `words` is the server's own line. */
+export interface ModePreview {
+  mode: RunMode;
+  verdict: "allow" | "ask" | "refuse";
+  rule: string;
+  /** The always-ask rule that names the command, when one does. */
+  floor?: string;
+  /** The listed command or Always allow that lets it run. */
+  grant?: { kind: "preapproved" | "standing"; command: string };
+  words: string;
+}
+/** What `command` would get in Manual, Semi-autonomous and Fully autonomous in a task of the repository at `path`. It changes nothing. */
+export const previewCommand = (path: string, command: string): Promise<{ repository: string; command: string; modes: ModePreview[] }> =>
+  request("GET", `/api/permissions/preview?path=${encodeURIComponent(path)}&command=${encodeURIComponent(command)}`, undefined, 30_000);
 /** One page of the action log, newest first: the entries older than `before`, or the newest. `older` says whether more remain. */
 export const getActionLog = (limit: number, before?: number): Promise<{ entries: LogEntry[]; older: boolean }> =>
   request("GET", `/api/action-log?limit=${limit}${before === undefined ? "" : `&before=${before}`}`, undefined, 30_000);
@@ -1281,3 +1305,27 @@ export const signOutDevice = (id: number): Promise<unknown> => request("POST", `
 export const signOutOtherDevices = (): Promise<unknown> => request("POST", "/api/devices/sign-out-others", {}, 10_000);
 /** A new one-time code for adding a device, which replaces the last one; 8 symbols, and when it stops working. */
 export const newPairingCode = (): Promise<{ code: string; expiresAt: string }> => request("POST", "/api/devices/pairing", {}, 10_000);
+
+/** When Botbench updates to a new release: on the owner's tap, or by itself. */
+export type UpdateMode = "tap" | "auto";
+/** How updating to a release is going (src/update.ts). */
+export interface UpdateState {
+  kind: "idle" | "waiting" | "updating" | "failed" | "restart_needed" | "restarting" | "updated";
+  version: string | null;
+  message: string | null;
+  at: string;
+}
+/** The running version, the latest release the last check found, and how an update is going. */
+export interface UpdateStatus {
+  version: string;
+  checking: boolean;
+  checkedAt: string | null;
+  checkProblem: string | null;
+  latest: { version: string; tag: string; summary: string; url: string | null } | null;
+  available: boolean;
+  mode: UpdateMode;
+  state: UpdateState;
+}
+export const getUpdate = (): Promise<UpdateStatus> => request("GET", "/api/update", undefined, 30_000);
+export const startUpdate = (): Promise<UpdateStatus> => request("POST", "/api/update", {}, 30_000);
+export const setUpdateMode = (mode: UpdateMode): Promise<UpdateStatus> => request("PUT", "/api/update", { mode }, 30_000);

@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryClaims, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, silenceLimitMs, usageLimitWaitMs } from "../src/config.ts";
+import { removedAtEnd } from "./support/repo.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const files = { defaults: path.join(dir, "botbench.config.json"), local: path.join(dir, "botbench.local.json") };
   fs.writeFileSync(files.defaults, typeof defaults === "string" ? defaults : JSON.stringify(defaults));
@@ -32,7 +33,7 @@ test("the shipped defaults load: port 4780, loopback only, every role on a known
 
 test("protected paths: this repository protects test/recordings/; a list at the top and one per repository are merged", (t) => {
   assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).protectedPaths, ["test/recordings/"]);
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-"));
+  const repo = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const config = loadConfig(configFiles(t, { ...BASE, protectedPaths: ["test/recordings/", "LICENSE"], repositories: { [repo]: { protectedPaths: ["docs/adr/", "LICENSE"] } } }));
   assert.deepEqual(repositoryProtectedPaths(config, repo), ["test/recordings/", "LICENSE", "docs/adr/"]);
@@ -237,7 +238,7 @@ test("the mode a new run is given is manual as shipped, the owner may set semi o
 });
 
 test("a repository's setup and check commands are each a command, or a command with its own time limit in seconds; the limit is 10 minutes when none is given", (t) => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  const repo = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-"))));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const config = loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { setup: ["npm ci", { command: "make deps", timeoutSeconds: 90 }], checks: [{ command: "npm test" }] } } }));
   assert.deepEqual(repositoryCommands(config, repo), {
@@ -259,7 +260,7 @@ test("a repository's setup and check commands are each a command, or a command w
 });
 
 test("a repository's allowed hosts are plain host names its commands may reach; anything else is refused, naming the repository, the setting and the value", (t) => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  const repo = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-"))));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const config = loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { allowedHosts: ["registry.npmjs.org", "github.com"] } } }));
   assert.deepEqual(repositoryHosts(config, repo), ["registry.npmjs.org", "github.com"]);
@@ -279,7 +280,7 @@ test("a repository's allowed hosts are plain host names its commands may reach; 
 });
 
 test("a repository may name the remote and base branch of its pull requests; origin and the default branch otherwise; anything that could read as an option or is Botbench's own branch is refused", (t) => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  const repo = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-"))));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   assert.deepEqual(repositoryDelivery(loadConfig(configFiles(t, { ...BASE, repositories: { [repo]: { remote: "upstream", baseBranch: "release/1.2" } } })), repo), { remote: "upstream", baseBranch: "release/1.2" });
   assert.deepEqual(repositoryDelivery(loadConfig(configFiles(t, BASE)), repo), { remote: "origin", baseBranch: null });
@@ -295,7 +296,7 @@ test("a repository may name the remote and base branch of its pull requests; ori
 });
 
 test("claiming issues is off for a repository unless its settings say true, and only true or false is taken", (t) => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-")));
+  const repo = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-"))));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   assert.equal(repositoryClaims(loadConfig(configFiles(t, BASE)), repo), false);
   assert.equal(repositoryClaims(loadConfig({ defaults: DEFAULT_CONFIG_FILE }), repo), false, "off as shipped");

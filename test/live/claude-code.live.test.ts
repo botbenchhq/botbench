@@ -9,6 +9,7 @@ import { ClaudeCodeDriver, OUTLIVING_TOOLS } from "../../src/drivers/claude-code
 import { DriverUnavailableError, type DriverSession } from "../../src/drivers/contract.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { openStore } from "../../src/store/db.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 // These tests start the real Claude Code on the owner's login. Every prompt is
 // tiny and asks for the cheapest model. Run with `npm run test:live`.
@@ -18,7 +19,7 @@ const TURN_TIMEOUT = 120_000;
 
 function tempDir(t: TestContext, prefix: string): string {
   // The real path: Claude Code keys its sessions by the resolved working directory.
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), prefix))));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

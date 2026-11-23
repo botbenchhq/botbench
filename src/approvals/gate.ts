@@ -99,6 +99,11 @@ export interface FloorSettings {
   /** Botbench's data directory, which the floor guards. */
   dataDir?: string;
   extra?: readonly FloorEntry[];
+  /**
+   * How the floor follows the links in a full path. Left out, as the broker leaves it, they are followed on disk (`real`).
+   * Only the Permissions screen's check (preview.ts) sets it, for a task's copy that does not exist yet.
+   */
+  followLinks?: (absolute: string) => string;
 }
 
 export type GateVerdict =
@@ -259,7 +264,7 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
   const { command } = input;
   if (typeof command !== "string" || command === "") return { verdict: "ask", why: "unknown" };
   if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
-  const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
+  const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real: settings.followLinks ?? real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
   // What runs without asking: a confined command with nothing beside it that could take it out, unless the owner asked
   // to be asked before every command of a manual run (a run left without a mode is manual).
   const everyCommand = request.askEveryCommand === true && (request.mode ?? "manual") === "manual";
@@ -302,7 +307,7 @@ function escalationVerdict(request: GateRequest, settings: FloorSettings): GateV
   if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
   // Codex runs every command as `/bin/zsh -lc '<command>'` (docs/security/codex-app-server-check.md): the floor reads
   // what that shell is handed, so that its rule names what the command does rather than the wrapper every one has.
-  const rule = floor(CODEX_SHELL.exec(command)?.[1] ?? command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
+  const rule = floor(CODEX_SHELL.exec(command)?.[1] ?? command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real: settings.followLinks ?? real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
   return rule === null || rule === NOT_PLAIN ? { verdict: "ask", why: "escalation" } : { verdict: "ask", floor: rule, why: "escalation" };
 }
 

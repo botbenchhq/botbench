@@ -13,100 +13,12 @@ import { workbenchKey } from "../../src/peers/key.ts";
 import { INVITE_PREFIX, proveRequest, readInvite } from "../../src/peers/pair-wire.ts";
 import { newPairingKey } from "../../src/peers/pairings.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
+import { JSON_TYPE, live, logOf, pairingOf, pairingsOf, until, workbench } from "../support/two-workbenches.ts";
 
 // Two Botbench installations on this Mac (ADR 0004 decision 13): two real processes, each with its own data folder,
 // owner port and peer listener on 127.0.0.1 at ports the system chose, and one temporary git repository with a bare
 // remote both copies use. Nothing is faked: the pairing goes over real HTTP between the two processes, and the
 // restarts are real stops and starts of a process with its store on disk.
-
-const ENTRY = fileURLToPath(new URL("../support/peer-botbench.ts", import.meta.url));
-const JSON_TYPE = { "content-type": "application/json" };
-
-async function freePort(): Promise<number> {
-  const probe = net.createServer().listen(0, "127.0.0.1");
-  await once(probe, "listening");
-  const port = (probe.address() as net.AddressInfo).port;
-  probe.close();
-  await once(probe, "close");
-  return port;
-}
-
-interface Workbench {
-  name: string;
-  home: string;
-  repo: string;
-  peerAddress: string;
-  /** Everything every start of this installation wrote, stdout and stderr. */
-  output: () => string;
-  start(inviteLifeMs?: number): Promise<void>;
-  stop(): Promise<void>;
-  api(method: string, route: string, body?: unknown): Promise<{ status: number; body: any }>;
-}
-
-async function workbench(t: { after(fn: () => unknown): void }, dir: string, name: string, repo: string): Promise<Workbench> {
-  const home = path.join(dir, `${name}-home`);
-  const [ownerPort, peerPort] = [await freePort(), await freePort()];
-  const settings = path.join(dir, `${name}.local.json`);
-  fs.writeFileSync(settings, JSON.stringify({ port: ownerPort, listen: ["127.0.0.1"], workbench: name, peers: { listen: { address: "127.0.0.1", port: peerPort } } }));
-  let child: ChildProcess | null = null;
-  let output = "";
-  let cookie = "";
-  t.after(() => void child?.kill("SIGKILL"));
-  const w: Workbench = {
-    name,
-    home,
-    repo,
-    peerAddress: `127.0.0.1:${peerPort}`,
-    output: () => output,
-    async start(inviteLifeMs) {
-      const proc = spawn(process.execPath, [ENTRY, JSON.stringify({ home, settings, ...(inviteLifeMs === undefined ? {} : { inviteLifeMs }) })], { stdio: ["ignore", "pipe", "pipe"] });
-      child = proc;
-      const exited = once(proc, "exit");
-      proc.stderr!.setEncoding("utf8").on("data", (chunk: string) => (output += chunk));
-      let mine = "";
-      await new Promise<void>((resolve, reject) => {
-        proc.stdout!.setEncoding("utf8").on("data", (chunk: string) => {
-          output += chunk;
-          mine += chunk;
-          if (mine.includes("ready ")) resolve();
-        });
-        void exited.then(() => reject(new Error(`${name} exited before it was ready: ${output}`)));
-      });
-      const signedIn = await fetch(`http://127.0.0.1:${ownerPort}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token: fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim() }) });
-      assert.equal(signedIn.status, 200);
-      cookie = signedIn.headers.get("set-cookie")!.split(";")[0]!;
-    },
-    async stop() {
-      const proc = child;
-      if (proc === null) return;
-      child = null;
-      const exited = once(proc, "exit");
-      proc.kill("SIGTERM");
-      const [code] = await exited;
-      assert.equal(code, 0, `${name} stopped cleanly: ${output}`);
-    },
-    async api(method, route, body) {
-      const res = await fetch(`http://127.0.0.1:${ownerPort}${route}`, { method, headers: { ...JSON_TYPE, cookie }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-      return { status: res.status, body: await res.json() };
-    },
-  };
-  return w;
-}
-
-async function until<T>(what: string, check: () => Promise<T | undefined | null | false>, ms = 45_000): Promise<T> {
-  const began = Date.now();
-  for (;;) {
-    const value = await check();
-    if (value) return value;
-    if (Date.now() - began > ms) throw new Error(`Gave up waiting for ${what}.`);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
-
-const pairingsOf = async (w: Workbench): Promise<any[]> => (await w.api("GET", "/api/peers/pairings")).body.pairings;
-const live = async (w: Workbench): Promise<any> => (await pairingsOf(w)).find((p) => p.state !== "ended");
-const pairingOf = async (w: Workbench, id: string): Promise<any> => (await pairingsOf(w)).find((p) => p.id === id);
-const logOf = async (w: Workbench): Promise<{ rule: string; command: string; detail: string }[]> => (await w.api("GET", "/api/action-log?limit=200")).body.entries;
 
 test("two workbenches pair over their listeners, and every way it can go wrong or end is held", { timeout: 300_000 }, async (t) => {
   const dir = tempDir("botbench-two-");

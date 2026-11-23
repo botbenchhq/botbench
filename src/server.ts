@@ -19,7 +19,7 @@ import type { SignInDefinition } from "./drivers/sign-in.ts";
 import { removeLeftoverReviewFolders } from "./drivers/cli-sandbox.ts";
 import type { Driver } from "./drivers/contract.ts";
 import { GROK, GrokDriver } from "./drivers/grok.ts";
-import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
+import { agentName, IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { defaultMode } from "./engine/modes.ts";
 import { createDictation, type DictationOptions } from "./dictation/dictation.ts";
 import { createDeliveries } from "./engine/delivery.ts";
@@ -36,7 +36,9 @@ import { createContainers } from "./engine/containers.ts";
 import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
 import { moveOldHome } from "./store/move-home.ts";
+import { createDrafts } from "./peers/drafts.ts";
 import { createPeerLink, type PeerLink } from "./peers/service.ts";
+import { createUpdates, GIT_URL, RELEASES_URL, SERVICE_LABEL, type UpdateOptions } from "./update.ts";
 
 export interface BotbenchServer {
   /** The port actually bound, which differs from the configured one when that is 0. */
@@ -107,6 +109,23 @@ export interface StartOptions {
   watchGh?: RunGh;
   /** How long an invite to pair lives; 15 minutes, its most, unless a test asks for less. */
   peerInviteLifeMs?: number;
+  /**
+   * Where Botbench looks for releases and fetches them, and the service it restarts through (src/update.ts). Left out,
+   * it does not look for releases at all: only the entry point below turns that on, so no test reaches GitHub.
+   */
+  updates?: UpdateOptions;
+  /** The installation's checkout an update moves; this checkout when left out. */
+  installDir?: string;
+}
+
+/**
+ * Whether a restart now would interrupt work: a task building, checking or being reviewed, a task queued to start, a
+ * run being planned, or a chat answering. An update waits until none is (src/update.ts).
+ */
+export function workUnderWay(db: DatabaseSync, turns: { anyRunning(): boolean }, chat: { anyRunning(): boolean }): boolean {
+  if (db.prepare("SELECT 1 FROM tasks WHERE status IN ('queued', 'building', 'verifying', 'reviewing') LIMIT 1").get() !== undefined) return true;
+  if (db.prepare("SELECT 1 FROM runs WHERE status = 'planning' LIMIT 1").get() !== undefined) return true;
+  return turns.anyRunning() || chat.anyRunning();
 }
 
 
@@ -200,7 +219,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     onTaskChange: stream.announceTask,
     onPassed: (taskId) => void tasks.reconsider(taskId),
   });
-  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), execution: (repo) => repositoryExecution(config, repo), containers, protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
+  // An agent's drafts to a paired workbench, and what a builder is told of one (src/peers/drafts.ts).
+  const drafts = createDrafts({ db, config });
+  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), execution: (repo) => repositoryExecution(config, repo), containers, protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, peerMessages: {
+      promptFor: (task, fresh) => drafts.promptFor(task, fresh),
+      takeDrafts: (task, attemptId, texts) => (task.runId === null ? Promise.resolve() : drafts.takeDrafts({ agent: agentName(task.builderAgent ?? CLAUDE_CODE), taskId: task.id, runId: task.runId, repo: task.repo, attemptId }, texts)),
+    }, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
@@ -238,9 +262,10 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // The issue watch (engine/watch.ts): each watched repository's labelled open issues, listed with the owner's gh at its
   // interval and proposed on Work. It reads only; a run starts only when the owner presses Start and submits the composer.
   const watch = startWatch({ db, config, run: options.watchGh ?? runGh, onProposed: () => push.issueProposed(), onChange: stream.announceWatch });
+  const updates = createUpdates({ db, home, installDir: options.installDir ?? ROOT, busy: () => workUnderWay(db, turns, chat), notifyUpdated: (version) => push.updated(version), options: options.updates ?? null });
   // Pairing with another workbench (src/peers/): its listener starts after the owner's, and only when the settings name one.
   const peerLink: PeerLink = createPeerLink({ db, home, config, ...(options.peerInviteLifeMs === undefined ? {} : { inviteLifeMs: options.peerInviteLifeMs }) });
-  const ctx = { peerLink, db, home, config, driver, reviewers, builders,agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { peerLink, updates, db, home, config, driver, reviewers, builders,agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs, pairingLifetimeMs: options.pairingLifetimeMs });
@@ -266,6 +291,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     await Promise.all([...servers.map(stop), peerLink.close()]);
     // A poll under way writes its issues to the store when it ends: its timers stop and it is waited for first.
     await watch.close();
+    // An update under way finishes the step it is on: a checkout is never left half moved.
+    await updates.close();
     // Sessions write to the database as they stop, so they are closed before it.
     // A check together ending now may still ask the tasks to look at its task again, so it stops first.
     await checkTogether.close();
@@ -319,7 +346,9 @@ if (runDirectly) {
   const { home } = settings.homes;
   // An installation from before the rename is moved into place before anything opens it; a failure stops the start.
   await moveOldHome({ ...settings.homes, log });
-  const server = await startServer({ config: { ...config, port: settings.port ?? config.port }, home });
+  // Botbench looks for its own releases on GitHub (src/update.ts) unless BOTBENCH_UPDATES=off.
+  const updates = process.env.BOTBENCH_UPDATES === "off" ? undefined : { releasesUrl: RELEASES_URL, gitUrl: GIT_URL, serviceLabel: SERVICE_LABEL };
+  const server = await startServer({ config: { ...config, port: settings.port ?? config.port }, home, ...(updates === undefined ? {} : { updates }) });
   for (const address of server.addresses) {
     console.log(`Botbench is listening on http://${address.includes(":") ? `[${address}]` : address}:${server.port}`);
   }
