@@ -681,6 +681,8 @@ export interface PeerPullRequest {
   branch: string;
   closes: number[];
   files: string[];
+  /** The commit its branch points at on the remote; null when the remote did not list it. */
+  head: string | null;
 }
 /** Another workbench's pushed branch with no pull request yet. */
 export interface PeerBranch {
@@ -701,6 +703,57 @@ export type PeersView =
 /** The view for each repository the owner has used. Reading it never holds up anything else. */
 export const getPeers = async (): Promise<PeersView[]> => (await request<{ views: PeersView[] }>("GET", "/api/peers", undefined, 90_000)).views;
 export const getPeersOf = async (repo: string): Promise<PeersView> => (await request<{ view: PeersView }>("GET", `/api/peers?path=${encodeURIComponent(repo)}`, undefined, 90_000)).view;
+
+/** One command run on a merge with another workbench's pull request. */
+export type CombinedCommand = Omit<Evidence, "round">;
+/** Whether a check together still stands on the commits it ran on (src/engine/combined.ts). Only "current" counts. */
+export type CombinedFreshness =
+  | { state: "current" }
+  | { state: "stale"; taskMoved: boolean; pullRequestMoved: boolean; taskNow: string | null; pullRequestNow: string | null }
+  | { state: "closed" }
+  | { state: "unknown"; problem: string };
+/** One check of a task together with another workbench's open pull request, as stored. Its workbench and branch are outside text. */
+export interface CombinedCheck {
+  id: number;
+  pullRequest: number;
+  workbench: string;
+  peerBranch: string;
+  peerCommit: string | null;
+  taskCommit: string;
+  outcome: "passed" | "failed" | "conflict" | "not_run";
+  conflicts: string[];
+  problem: string | null;
+  startedAt: string;
+  endedAt: string;
+  commands: CombinedCommand[];
+  freshness: CombinedFreshness;
+}
+/** Another workbench's open pull request this task can be checked together with, and the files both change. */
+export interface CheckTogetherOffer {
+  number: number;
+  title: string;
+  url: string;
+  workbench: string;
+  head: string | null;
+  overlaps: string[];
+}
+export interface CheckTogetherView {
+  /** The owner requires checking together on this repository. */
+  required: boolean;
+  /** The pull request a check together runs with now, or null. */
+  running: number | null;
+  /** Newest first. */
+  checks: CombinedCheck[];
+  offers: CheckTogetherOffer[];
+  /** With the setting on: the overlapping pull requests that still have no passing, current check together. */
+  waitingOn: number[];
+  /** With the setting on: why it cannot be met now when no pull request can be named (the list could not be read, or may be cut). */
+  undetermined: string | null;
+  viewProblem: string | null;
+}
+export const getCheckTogether = (taskId: number): Promise<CheckTogetherView> => request("GET", `/api/tasks/${taskId}/check-together`, undefined, 90_000);
+export const startCheckTogether = (taskId: number, pullRequest: number): Promise<{ running: number }> => request("POST", `/api/tasks/${taskId}/check-together`, { pullRequest }, 90_000);
+export const setCheckTogetherRequired = (path: string, required: boolean): Promise<{ path: string; required: boolean }> => request("PUT", "/api/repos/check-together", { path, required }, 30_000);
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
 /** One row of the board: a planned run, or a task started on its own (a run of one). */
 export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };

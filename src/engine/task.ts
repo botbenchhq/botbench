@@ -366,6 +366,8 @@ export interface Tasks {
    * its turn, from where it was. Throws a TaskError (404, 409) for a task that does not exist or cannot be resumed.
    */
   resume(id: number): Task;
+  /** A blocker of a fully autonomous run's task was cleared: its mode looks at it again. Resolves once it has. */
+  reconsider(taskId: number): Promise<void>;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /**
@@ -395,6 +397,12 @@ export interface TasksOptions {
   reviewLimitMs?: number;
   /** How long a builder may send nothing before it is stopped (engine/silence.ts); 10 minutes when left out, and 0 for no limit. */
   silenceLimitMs?: number;
+  /**
+   * The check-together gate a fully autonomous run's accept passes through (engine/combined.ts): with the owner's
+   * "require checking together" on, it waits while an overlapping open pull request of another workbench has no
+   * passing, current check together. None when left out.
+   */
+  checkTogether?: { gate(task: Task, files: readonly string[], head: string | null): Promise<{ ok: true } | { ok: false; why: string }> };
   /** Called when a transcript event was stored. */
   onEvent: () => void;
   /** Called after each state a task reaches, and after evidence is added to it. */
@@ -594,7 +602,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it waits for
    * the owner with a plain line saying why.
    */
-  const handOver = async (task: Task, from: "building" | "verifying" | "reviewing", change: TaskChange): Promise<void> => {
+  const handOver = async (task: Task, from: "building" | "verifying" | "reviewing" | "awaiting_decision", change: TaskChange): Promise<void> => {
     // A build that changed nothing never gets here (`verify`); rounds of fixes that undid every change of the build would.
     // Changes that cannot be read are taken as none, which a fully autonomous run never accepts.
     // Read at the commit Botbench recorded, the one the mode's accept requires the branch to hold, never the copy's HEAD.
@@ -605,7 +613,13 @@ export function createTasks(options: TasksOptions): Tasks {
       const guarded = scope.filter((f) => f.protected).map((f) => f.path);
       return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? change : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` });
     }
-    const verdict = files.length === 0 ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null, scope);
+    let verdict = files.length === 0 ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null, scope);
+    // On a repository whose owner requires checking together, every open pull request of another workbench that
+    // changes one of these files must have a passing check together at both current heads (engine/combined.ts).
+    if (verdict.accept && options.checkTogether !== undefined) {
+      const together = await options.checkTogether.gate(getTask(db, task.id) ?? task, files, head);
+      if (!together.ok) verdict = { accept: false, why: `It needs your review: ${together.why}` };
+    }
     const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why });
     if (ready === null || !verdict.accept) return;
     try {
@@ -1269,5 +1283,21 @@ export function createTasks(options: TasksOptions): Tasks {
     await Promise.all([chain, ...stopping]);
   };
 
-  return { start, buildRun, stopRun, resume, idle, close };
+  /**
+   * A blocker of a task was cleared (a check together passed, engine/combined.ts): a task of a fully autonomous run that
+   * is still ready for review is looked at again by its mode, exactly as when it first got there, and accepted when it
+   * now qualifies. Any other task is left as it is. Waited for by `idle` and `close`.
+   */
+  const reconsider = (taskId: number): Promise<void> => {
+    const task = getTask(db, taskId);
+    if (closed || task === null || task.status !== "awaiting_decision" || runModeOf(db, task.runId) !== "full") return Promise.resolve();
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    const done: Promise<void> = handOver(task, "awaiting_decision", { note: "a check together passed; the run's mode looked at the task again" })
+      .catch(report(`Looking again at task ${taskId}`))
+      .finally(() => stopping.delete(done));
+    stopping.add(done);
+    return done;
+  };
+
+  return { start, buildRun, stopRun, resume, reconsider, idle, close };
 }

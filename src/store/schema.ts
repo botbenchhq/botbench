@@ -1468,4 +1468,71 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // Checking a task together with another workbench's open pull request (engine/combined.ts, Peers P4). One row per
+    // check, written once with everything it found: the two head commits it ran on, whether they merged and, when not,
+    // the files in conflict, and each setup and check command run on the merge with its output. Both tables are
+    // append-only: a result is never changed, only followed by a newer one.
+    //
+    // "Require checking together" for a repository is a list of the owner's changes, append-only, the latest in force.
+    // Every row is the owner's (`set_by`): nothing else writes this table (the API's owner-only route does).
+    name: "combined_checks",
+    sql: `
+CREATE TABLE combined_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  pull_request INTEGER NOT NULL CHECK (pull_request BETWEEN 1 AND 2147483647),
+  workbench TEXT NOT NULL,
+  peer_branch TEXT NOT NULL,
+  peer_commit TEXT CHECK (peer_commit IS NULL OR length(peer_commit) IN (40, 64)),
+  task_commit TEXT NOT NULL CHECK (length(task_commit) IN (40, 64)),
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'conflict', 'not_run')),
+  conflicts TEXT NOT NULL DEFAULT '[]',
+  problem TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  CHECK (outcome = 'not_run' OR peer_commit IS NOT NULL),
+  CHECK (outcome <> 'not_run' OR problem IS NOT NULL)
+);
+CREATE INDEX combined_checks_task ON combined_checks (task_id, id);
+CREATE TABLE combined_check_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  combined_check_id INTEGER NOT NULL REFERENCES combined_checks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  position INTEGER NOT NULL,
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL
+);
+CREATE INDEX combined_check_commands_check ON combined_check_commands (combined_check_id, id);
+CREATE TRIGGER combined_checks_no_update BEFORE UPDATE ON combined_checks
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_checks_no_delete BEFORE DELETE ON combined_checks
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_check_commands_no_update BEFORE UPDATE ON combined_check_commands
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_check_commands_no_delete BEFORE DELETE ON combined_check_commands
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+
+CREATE TABLE combined_requirements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_path TEXT NOT NULL,
+  required INTEGER NOT NULL CHECK (required IN (0, 1)),
+  set_by TEXT NOT NULL CHECK (set_by = 'owner'),
+  set_at TEXT NOT NULL
+);
+CREATE INDEX combined_requirements_repo ON combined_requirements (repo_path, id);
+CREATE TRIGGER combined_requirements_no_update BEFORE UPDATE ON combined_requirements
+BEGIN SELECT RAISE(ABORT, 'the owner''s changes to require checking together are append-only'); END;
+CREATE TRIGGER combined_requirements_no_delete BEFORE DELETE ON combined_requirements
+BEGIN SELECT RAISE(ABORT, 'the owner''s changes to require checking together are append-only'); END;
+`,
+  },
 ];

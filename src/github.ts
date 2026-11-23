@@ -377,6 +377,11 @@ export interface GitHub {
   issue(repo: RepoRef, number: number): Promise<IssueView>;
   /** The repository's latest pull requests in every state, open, closed and merged, read only (engine/peers.ts). */
   pullRequests(repo: RepoRef): Promise<PullRequestPage>;
+  /**
+   * The repository's open pull requests only, read only: for checking together (engine/combined.ts), when the page of
+   * every state is full and may have left out an older open one. `full` says this page may be cut too.
+   */
+  openPullRequests(repo: RepoRef): Promise<PullRequestPage>;
 }
 
 /** The GitHub Botbench uses: the owner's `gh`, run by `run`. */
@@ -400,5 +405,9 @@ export function createGitHub(run: RunGh = runGh, cwd = process.cwd()): GitHub {
       return { ...view, authorRelation: parseIssueRelation(await ok(ghArgs.issueApi(repo, number)), repo, number) };
     },
     pullRequests: async (repo) => parsePullRequestPage(await ok(ghArgs.prListOpen(repo, "all")), repo),
+    openPullRequests: async (repo) => {
+      const page = parsePullRequestPage(await ok(ghArgs.prListOpen(repo, "open")), repo);
+      return { pullRequests: page.pullRequests.filter((pr) => pr.state === "OPEN"), full: page.full };
+    },
   };
 }
