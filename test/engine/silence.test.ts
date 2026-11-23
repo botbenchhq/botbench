@@ -326,7 +326,6 @@ test("a builder whose command runs quietly for many times the silence limit, wit
 test("a command past its own time limit is still stopped: once that limit has passed the silence limit counts again, and the task says which command ran and for how long", WITHIN, async (t) => {
   const limitMs = await limitFor(400);
   const pids = tempDir("botbench-silence-pids-");
-  t.after(() => fs.rmSync(pids, { recursive: true, force: true }));
   // The call is given its own limit of one silence limit; the command would sleep ten minutes.
   const e = await line(t, buildReplayDriver(["ask"], { run: { timeoutMs: limitMs } }), limitMs, { files: { "README.md": "# Sample\n", "other.sh": `sleep 600 & echo $! > '${pids}/sleep'\nwait\n` } });
   allowAll(t, e);
