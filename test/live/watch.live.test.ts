@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { test } from "node:test";
 import { ghArgs, parseApiHead, parseIssueView, parseWatchedIssues, runGh, WATCH_LIMIT } from "../../src/github.ts";
+import { checkRecording } from "../support/recording-check.ts";
 import { captureArgs, WATCH_CAPTURE_FILE, WATCH_REPO, type WatchCapture } from "../support/replay-watch.ts";
 
 // The one live read of a watched repository (issue #73), against the owner's own repository jon-lange/botbench, read
@@ -52,9 +53,14 @@ test("live: the owner's gh lists the open issues carrying a label with Botbench'
       label,
       outputs: { labelled: { args: listArgs, result: labelled }, issue: { args: args.issue, result: issue }, issueApi: { args: args.issueApi, result: issueApi }, head: { args: args.head, result: head } },
     };
+    // Only the head of the `gh api -i` answer is kept: the watch reads its status and rate-limit lines, never its body,
+    // which describes the repository and carries a short-lived clone token for a private one.
+    const headOnly = head.stdout.split(/\r?\n\r?\n/)[0]!;
+    capture.outputs.head.result = { ...head, stdout: `${headOnly}\r\n\r\n` };
     const text = JSON.stringify(capture, null, 2);
-    assert.doesNotMatch(text, /gh[opsu]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}/, "no token in the capture");
+    assert.doesNotMatch(text, /gh[opsu]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|temp_clone_token\\?":\\?"[A-Z0-9]{8,}/, "no token in the capture");
     assert.ok(!text.includes(os.homedir()), "no path in the owner's home folder in the capture");
+    checkRecording(text.split("\n"));
     fs.writeFileSync(WATCH_CAPTURE_FILE, `${text}\n`);
   }
 });
