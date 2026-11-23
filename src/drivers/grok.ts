@@ -117,6 +117,19 @@ const shorten = (text: string, max = 500): string => (text.length > max ? `${tex
  * A reader for one turn of `grok -p … --output-format streaming-json`. The reply comes in pieces and is given as one
  * text when the turn ends. A tool offered to the model, or a tool call, stops the turn.
  */
+/** The tools xAI runs on its own servers, by the variant Grok reports. Nothing else counts, whatever it claims. */
+const BACKEND_VARIANTS: ReadonlySet<string> = new Set(["XSearch"]);
+
+/**
+ * Whether a tool call is a search run by xAI's servers and not a tool on this Mac: Grok marks it `backend: true` with
+ * a known variant, and its name is none of the tools this driver turns off.
+ */
+function isBackendSearch(name: string, rawInput: unknown): boolean {
+  if (!isObject(rawInput) || rawInput.backend !== true) return false;
+  if (typeof rawInput.variant !== "string" || !BACKEND_VARIANTS.has(rawInput.variant)) return false;
+  return !GROK_TOOLS.includes(name);
+}
+
 export function grokReader(): (line: string) => LineResult {
   let reply = "";
   const none: LineResult = { events: [], stop: null };
@@ -132,7 +145,7 @@ export function grokReader(): (line: string) => LineResult {
     switch (parsed.type) {
       case "available_commands": {
         const tools = Array.isArray(parsed.tools) ? parsed.tools.filter((t): t is string => typeof t === "string") : [];
-        return tools.length === 0 ? none : { events: [], stop: `Stopped: Grok offered its model a tool (${shorten(tools.join(", "), 200)}), and a reviewer gets none in Botbench. Update Botbench for this Grok.` };
+        return tools.length === 0 ? none : { events: [], stop: `Stopped: Grok offered its model a tool (${shorten(tools.join(", "), 200)}), and Botbench gives it none here. Update Botbench for this Grok.` };
       }
       case "text":
         reply += str(parsed.data) ?? "";
@@ -140,7 +153,9 @@ export function grokReader(): (line: string) => LineResult {
       case "tool_call": {
         const name = str(parsed.toolName) ?? "unknown";
         const event: DriverEvent = { type: "tool_call", id: str(parsed.toolCallId) ?? "", name, input: parsed.rawInput ?? null };
-        return { events: [event], stop: `Stopped: Grok tried to use a tool (${name}), and a reviewer gets none in Botbench.` };
+        // A search xAI runs on its own servers touches nothing on this Mac: it is recorded and the turn goes on.
+        if (isBackendSearch(name, parsed.rawInput)) return { events: [event], stop: null };
+        return { events: [event], stop: `Stopped: Grok tried to use a tool (${name}), and Botbench gives it none here.` };
       }
       case "tool_call_update": {
         const output = parsed.rawOutput ?? parsed.content ?? null;
