@@ -9,8 +9,10 @@ import { RESTART_STOPPED } from "../../src/engine/recover.ts";
 import { setChatWebAccess } from "../../src/approvals/web-access.ts";
 import { parseIssueView } from "../../src/github.ts";
 import { capIssue, storeIssue } from "../../src/engine/intake.ts";
-import { taskReview } from "../../src/engine/review.ts";
-import { MAX_REVIEW_DIFF, parseVerdict, PLANNER, IMPLEMENTER, REVIEWER, reviewerPrompt, roleProblem, sameModelProblem, type PlanTask } from "../../src/engine/roles.ts";
+import { runReview, taskReview, type Review } from "../../src/engine/review.ts";
+import { now } from "../../src/store/db.ts";
+import { commitsDiff } from "../../src/worktrees.ts";
+import { MAX_REVIEW_PARTS, parseVerdict, REVIEW_PART_CHARS, splitDiff, PLANNER, IMPLEMENTER, REVIEWER, reviewerPrompt, roleProblem, sameModelProblem, type PlanTask } from "../../src/engine/roles.ts";
 import { createRun, createRuns, getRun, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, type Tasks } from "../../src/engine/task.ts";
@@ -18,7 +20,7 @@ import { openStore } from "../../src/store/db.ts";
 import { buildReplayDriver, type BuildReplay } from "../support/replay-build.ts";
 import { ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../support/replay-issue.ts";
 import { reviewReplayDriver, type ReviewReplay, type ReviewSession } from "../support/replay-review.ts";
-import { initRepo, tempDir } from "../support/repo.ts";
+import { initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
 
 // The review station (U20, in part): after the checks, a run's reviewer reads the task's diff and its critique is stored
@@ -138,7 +140,7 @@ test("R5: after the checks, Codex reads the task's title, criteria and diff, and
   assert.match(prompt, /Add a greeting file/);
   assert.match(prompt, /- hello\.txt holds the word hi/);
   assert.match(prompt, /\+\+\+ b\/hello\.txt\n@@ -0,0 \+1 @@\n\+hi/, "the real diff from the base commit to the task's branch");
-  assert.match(prompt, /Every file the task's work changed, 1 file:\n<changed-files>\n- hello\.txt\n<\/changed-files>/, "the files read from the real branch");
+  assert.match(prompt, /Every file the task's work changed, 1 file, with the lines each added and removed:\n<changed-files>\n- hello\.txt \(1 line added, 0 lines removed\)\n<\/changed-files>/, "the files read from the real branch, with their sizes");
 
   const review = taskReview(e.db, id)!;
   assert.equal(review.agent, "codex");
@@ -185,15 +187,85 @@ test("a reviewer still working when its time limit passes is stopped and recorde
   assert.equal(e.reviewer.closed(), 1);
 });
 
-test("a diff longer than the reviewer is sent is cut, and the prompt and the stored review say so", { skip: NO_SANDBOX }, async (t) => {
-  const e = await line(t, "review", { setup: [cmd(`awk 'BEGIN { for (i = 0; i < 4000; i++) print "line number " i " of a long file" }' > long.txt`)], checks: [] });
-  const id = await builtTask(e);
-  const prompt = e.reviewer.prompts[0]!;
-  const review = taskReview(e.db, id)!;
-  assert.equal(review.diffCut, true);
-  assert.ok(review.diffChars > MAX_REVIEW_DIFF);
-  assert.match(prompt, new RegExp(`The diff is ${review.diffChars} characters long and was cut after the first ${MAX_REVIEW_DIFF}\\.`));
-  assert.ok(prompt.length < MAX_REVIEW_DIFF + 5_000);
+/**
+ * A task at the review station whose branch adds hello.txt and a long.txt of `lines` lines, committed in a real
+ * temporary repository and stored in a real database, reviewed by `runReview` itself with `session` replayed. No
+ * builder, broker or check runs, so these need no sandbox of their own.
+ */
+async function reviewLong(t: T, session: ReviewSession, lines: number, o: { limitMs?: number } = {}): Promise<{ db: DatabaseSync; review: Review; reviewer: ReviewReplay; diff: string }> {
+  const dir = tempDir("botbench-review-parts-");
+  const db = openStore(path.join(dir, "home"));
+  t.after(() => {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const repo = path.join(dir, "repo");
+  const base = initRepo(repo);
+  write(repo, "hello.txt", "hi\n");
+  write(repo, "long.txt", Array.from({ length: lines }, (_, i) => `line number ${i} of a long file\n`).join(""));
+  const head = ownerCommit(repo, "the task's work");
+  const at = now();
+  const taskId = Number(db.prepare("INSERT INTO tasks (repo_path, prompt, status, worktree_path, base_commit, head_commit, created_at, updated_at) VALUES (?, 'p', 'reviewing', ?, ?, ?, ?, ?)").run(repo, repo, base, head, at, at).lastInsertRowid);
+  const reviewer = reviewReplayDriver(session);
+  const review = await runReview({ db, driver: reviewer, model: "gpt-6-luna", taskId, task: ONE[0]!, worktree: repo, baseCommit: base, headCommit: head, confinement: { dataDir: path.join(dir, "home"), allowedHosts: ["example.com"] }, ...o });
+  return { db, review, reviewer, diff: await commitsDiff({ path: repo, baseCommit: base, headCommit: head }) };
+}
+/** The parts of a diff as the reviewer's prompt holds them, in order. */
+const sentParts = (prompt: string): string[] => [...prompt.matchAll(/<diff part="\d+ of \d+">\n([\s\S]*?)\n<\/diff>/g)].map((m) => m[1]!);
+
+test("a diff longer than the old cut of 60,000 characters is sent whole, in parts in order after the file list with sizes, and stored as not cut with the verdict of the reply", async (t) => {
+  const { db, review, reviewer, diff } = await reviewLong(t, "review", 4_000);
+  assert.ok(diff.length > 60_000, `a diff of ${diff.length} characters`);
+  // The reviewer started read-only and reaches no host, whatever the repository allows.
+  assert.equal(reviewer.started[0]!.readOnly, true);
+  assert.deepEqual(reviewer.started[0]!.confinement.allowedHosts, []);
+  assert.equal(reviewer.prompts.length, 1, "one message, the one a Codex session takes");
+  const prompt = reviewer.prompts[0]!;
+  const parts = sentParts(prompt);
+  assert.deepEqual(parts, splitDiff(diff));
+  assert.ok(parts.length > 1 && parts.length <= MAX_REVIEW_PARTS, `${parts.length} parts`);
+  assert.equal(parts.join(""), diff, "every part reached the reviewer, in order: together they are the whole diff");
+  for (const part of parts) assert.ok(part.length <= REVIEW_PART_CHARS);
+  const list = prompt.indexOf("<changed-files>\n- hello.txt (1 line added, 0 lines removed)\n- long.txt (4000 lines added, 0 lines removed)\n</changed-files>");
+  assert.ok(list > 0 && list < prompt.indexOf("<diff"), "the file list with sizes comes before any diff text");
+  assert.match(prompt, new RegExp(`Below is all of it, in ${parts.length} parts\\.`));
+  assert.ok(prompt.endsWith(`That was part ${parts.length} of ${parts.length}, the last: you have the whole diff, ${diff.length} characters. Now reply, once, in the form above.`));
+  assert.doesNotMatch(prompt, /saw only part|was left out/);
+
+  assert.deepEqual([review.outcome, review.diffCut, review.diffChars], ["reviewed", false, diff.length]);
+  assert.deepEqual(review.diffSent, { parts: parts.length, chars: diff.length });
+  assert.equal(review.verdict, "concerns", "read from the reply to the message that held the last part");
+  assert.match(review.text, /^Verdict: concerns\nFindings:\n- calc\.py:2:/);
+  assert.equal(db.prepare("SELECT diff_cut FROM reviews WHERE id = ?").get(review.id)!.diff_cut, 0);
+});
+
+test("only a diff longer than the most parts is cut: the prompt says how much was sent, and the stored review says it was cut", async (t) => {
+  // About 33 characters a line: more than MAX_REVIEW_PARTS parts of REVIEW_PART_CHARS.
+  const { db, review, reviewer, diff } = await reviewLong(t, "review", Math.ceil((MAX_REVIEW_PARTS * REVIEW_PART_CHARS) / 30));
+  const prompt = reviewer.prompts[0]!;
+  const parts = sentParts(prompt);
+  const sent = parts.join("").length;
+  assert.equal(parts.length, MAX_REVIEW_PARTS);
+  assert.equal(parts.join(""), diff.slice(0, sent), "the parts sent are the diff's start, in order");
+  assert.deepEqual([review.outcome, review.diffCut, review.diffChars], ["reviewed", true, diff.length]);
+  assert.equal(db.prepare("SELECT diff_cut FROM reviews WHERE id = ?").get(review.id)!.diff_cut, 1);
+  assert.ok(diff.length > sent);
+  assert.match(prompt, new RegExp(`It is too long to send whole: below are its first ${MAX_REVIEW_PARTS} parts, ${sent} characters, of the \\d+ parts it makes\\.`));
+  assert.ok(prompt.endsWith(`That was part ${MAX_REVIEW_PARTS} of ${MAX_REVIEW_PARTS}, the last one sent: you have the first ${sent} of the diff's ${diff.length} characters, and the rest was left out. Read the rest from the files if you need it, and say in your findings that you saw only part of it. Now reply, once, in the form above.`));
+  assert.deepEqual(review.diffSent, { parts: MAX_REVIEW_PARTS, chars: sent });
+});
+
+test("a reviewer sent a diff in parts that fails, or runs out of time, leaves the failed or timed-out review with its problem and no text", async (t) => {
+  const failed = await reviewLong(t, "signed-out", 4_000);
+  assert.ok(sentParts(failed.reviewer.prompts[0]!).length > 1);
+  assert.deepEqual([failed.review.outcome, failed.review.verdict, failed.review.text, failed.review.diffCut], ["failed", null, "", false]);
+  assert.match(failed.review.problem!, /^Codex could not review this task: .*401 Unauthorized/);
+
+  const late = await reviewLong(t, "hang", 4_000, { limitMs: 300 });
+  assert.ok(sentParts(late.reviewer.prompts[0]!).length > 1);
+  assert.deepEqual([late.review.outcome, late.review.verdict, late.review.text], ["timed_out", null, ""]);
+  assert.match(late.review.problem!, /did not finish within 0\.3 seconds and was stopped/);
+  assert.equal(late.reviewer.closed(), 1);
 });
 
 test("a run without a reviewer, and a task started on its own, are not reviewed", { skip: NO_SANDBOX }, async (t) => {
@@ -302,7 +374,7 @@ test("the review's verdict is read only from its first line in the asked form", 
   assert.equal(parseVerdict("**Verdict: concerns**\nFindings:\n- a.ts:3: off by one"), "concerns");
   assert.equal(parseVerdict("I think it looks right.\nVerdict: concerns"), null);
   assert.equal(parseVerdict(""), null);
-  const prompt = reviewerPrompt({ task: ONE[0]!, files: [], diff: "", cut: null });
+  const prompt = reviewerPrompt({ task: ONE[0]!, files: [], diff: "" });
   assert.match(prompt, /\(The task changed no file\.\)/);
   assert.match(prompt, /Verdict: looks right\nChecked:\n/);
 });

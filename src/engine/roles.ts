@@ -226,27 +226,108 @@ export function sameModelProblem(builder: RoleChoice, reviewer: RoleChoice): str
     : null;
 }
 
-/** The most of a task's diff a reviewer is sent; the rest is left out and the prompt says so. */
-export const MAX_REVIEW_DIFF = 60_000;
+/** The most of a task's diff one part of a review holds. */
+export const REVIEW_PART_CHARS = 60_000;
+/** The most parts a reviewer is sent: a diff longer than they hold is the only one cut, and the prompt says so. */
+export const MAX_REVIEW_PARTS = 6;
 
 /**
- * What a reviewer is sent: the task's title and acceptance criteria and its diff as data between marked lines, and the
- * one short form its reply takes. `files` is every file the work changed, listed in full even when the diff is cut, with
- * the request to flag any that does not belong to the task. `cut` gives how much of a longer diff was left out.
- * `tools: false` is for a reviewer started with no tools, which sees only what it is sent. `copy`: where the task's copy
- * is, for a reviewer with tools, which may work in it or in a folder of its own. `webSearch`: the reviewer's own web
- * search is on.
+ * A diff in parts of at most `size` characters, in order: joined, they are the diff exactly. A part ends where a file's
+ * diff ends when the next file's fits in a part of its own; otherwise at the end of a line, and only a line longer than
+ * a part is split inside it.
  */
-export function reviewerPrompt(o: { task: PlanTask; files: readonly string[]; diff: string; cut: { shown: number; total: number } | null; tools?: boolean; copy?: string; webSearch?: boolean; previous?: PreviousReview }): string {
+export function splitDiff(diff: string, size = REVIEW_PART_CHARS): string[] {
+  const parts: string[] = [];
+  let part = "";
+  const flush = (): void => {
+    if (part !== "") parts.push(part);
+    part = "";
+  };
+  for (const file of diff.split(/(?=^diff --git )/m)) {
+    if (part.length + file.length > size && file.length <= size) flush();
+    for (const line of file.split(/(?<=\n)/)) {
+      for (let at = 0; at < line.length; at += size) {
+        const piece = line.slice(at, at + size);
+        if (part.length + piece.length > size) flush();
+        part += piece;
+      }
+    }
+  }
+  flush();
+  return parts;
+}
+
+/** What of a task's diff a reviewer is sent: its first MAX_REVIEW_PARTS parts of the `all` it makes, and whether any was left out. */
+export function reviewDiff(diff: string): { parts: string[]; all: number; total: number; sent: number; cut: boolean } {
+  const all = splitDiff(diff);
+  const parts = all.slice(0, MAX_REVIEW_PARTS);
+  const sent = parts.reduce((n, part) => n + part.length, 0);
+  return { parts, all: all.length, total: diff.length, sent, cut: sent < diff.length };
+}
+
+/** A changed file as the reviewer's list gives it: its path and size. */
+export interface ReviewedFile {
+  path: string;
+  added: number;
+  removed: number;
+  binary: boolean;
+}
+
+const lineCount = (n: number): string => (n === 1 ? "1 line" : `${n} lines`);
+const fileLine = (file: ReviewedFile): string => `- ${file.path} (${file.binary ? "binary" : `${lineCount(file.added)} added, ${lineCount(file.removed)} removed`})`;
+
+/** The sentence after the last part of a review's diff: how much of the diff the reviewer has. `sentOfDiff` reads it back. */
+function lastPartWords(sent: ReturnType<typeof reviewDiff>, tools: boolean): string {
+  const n = sent.parts.length;
+  return sent.cut
+    ? `That was part ${n} of ${n}, the last one sent: you have the first ${sent.sent} of the diff's ${sent.total} characters, and the rest was left out. ${tools ? "Read the rest from the files if you need it, and say" : "Say"} in your findings that you saw only part of it. Now reply, once, in the form above.`
+    : `That was part ${n} of ${n}, the last: you have the whole diff, ${sent.total} characters. Now reply, once, in the form above.`;
+}
+
+/**
+ * How much of its diff a review's prompt sent, read from the sentence after its last part (`lastPartWords`); null for a
+ * prompt with none (an empty diff, or a review from before diffs were sent in parts). Only the text after the prompt's
+ * last `</diff>` is read, and a diff cannot close its own part (`inDiff`), so that text is Botbench's own.
+ */
+export function sentOfDiff(prompt: string): { parts: number; chars: number } | null {
+  const end = prompt.lastIndexOf("</diff>");
+  if (end < 0) return null;
+  const match = /^\nThat was part (\d+) of \d+, the last(?: one sent: you have the first (\d+) of|: you have the whole diff, (\d+) characters)/.exec(prompt.slice(end + "</diff>".length));
+  return match ? { parts: Number(match[1]), chars: Number(match[2] ?? match[3]) } : null;
+}
+
+/** Text set apart as a part of a diff: whatever in it would open or close a part is changed so that it cannot, and nothing else is (no trimming). */
+const inDiff = (label: string, text: string): string => `<diff${label}>\n${escapeTag("diff", text)}\n</diff>`;
+
+/** `text` with whatever would open or close a `<tag>` block changed so that it cannot. Its length is kept. */
+const escapeTag = (tag: string, text: string): string => text.replace(new RegExp(`<(/?)(${tag})`, "gi"), "‹$1$2");
+
+/**
+ * What a reviewer is sent: the task's title and acceptance criteria, every changed file with its size, then the whole
+ * diff as data in numbered parts of at most REVIEW_PART_CHARS characters, and the one short form its reply takes, written
+ * once after the last part. `files` is listed in full even when the diff is cut, with the request to flag any that does
+ * not belong to the task. Only a diff longer than MAX_REVIEW_PARTS parts is cut, and the prompt then says how much was
+ * sent. Every reviewer Botbench has takes one message per session (src/drivers/one-turn.ts), so the parts go in order in
+ * that one message. `tools: false` is for a reviewer started with no tools, which sees only what it is sent: it is sent
+ * every part too. `copy`: where the task's copy is, for a reviewer with tools, which may work in it or in a folder of its
+ * own. `webSearch`: the reviewer's own web search is on.
+ */
+export function reviewerPrompt(o: { task: PlanTask; files: readonly ReviewedFile[]; diff: string; tools?: boolean; copy?: string; webSearch?: boolean; previous?: PreviousReview }): string {
   const tools = o.tools !== false;
-  const files = o.files.length === 0 ? "(none)" : o.files.map((file) => `- ${file}`).join("\n");
+  const files = o.files.length === 0 ? "(none)" : o.files.map(fileLine).join("\n");
   const where =
     o.copy === undefined
       ? "Your working folder is the task's copy of the repository at the task's branch."
       : `The task's copy of the repository, at the task's branch, is the folder ${o.copy}; it may be your working folder or beside it.`;
   const network = o.webSearch === true ? "your commands reach no network, though you may use your own web search" : "your commands reach no network";
-  const diff = o.diff.trim() === "" ? "(The task changed no file.)" : o.diff;
-  const cut = o.cut === null ? "" : `\nThe diff is ${o.cut.total} characters long and was cut after the first ${o.cut.shown}. ${tools ? "Read the rest from the files if you need it, and say" : "Say"} in your findings that you saw only part of it.`;
+  const sent = reviewDiff(o.diff);
+  const n = sent.parts.length;
+  const diff =
+    o.diff.trim() === ""
+      ? `The diff of the task's work, from the commit it started from to its branch:\n${inDiff("", "(The task changed no file.)")}`
+      : `The diff of the task's work, from the commit it started from to its branch, is ${sent.total} characters long. ${sent.cut ? `It is too long to send whole: below are its first ${n} parts, ${sent.sent} characters, of the ${sent.all} parts it makes.` : `Below is all of it, in ${n === 1 ? "1 part" : `${n} parts`}.`}${n === 1 ? "" : " Each part goes on from the one before exactly where it stopped, even inside a line: read them in order, as one diff, and read every part before you reply."}
+${sent.parts.map((part, i) => inDiff(` part="${i + 1} of ${n}"`, part)).join("\n")}
+${lastPartWords(sent, tools)}`;
   const again = o.previous === undefined ? "" : `\n\n${againWords(o.previous)}`;
   return `You review one task of a software factory for its owner. Another agent built it; you do not change it.
 
@@ -270,13 +351,10 @@ The task:
 ${taskPrompt(o.task)}
 </task>${again}
 
-Every file the task's work changed, ${o.files.length === 1 ? "1 file" : `${o.files.length} files`}:
+Every file the task's work changed, ${o.files.length === 1 ? "1 file" : `${o.files.length} files`}, with the lines each added and removed:
 ${dataBlock("changed-files", files)}
 
-The diff of the task's work, from the commit it started from to its branch:${cut}
-<diff>
-${diff}
-</diff>`;
+${diff}`;
 }
 
 /** The verdict a review gave in the asked form: its first line "Verdict: looks right" or "Verdict: concerns". Null for any other reply. */
@@ -291,8 +369,7 @@ export function parseVerdict(reply: string): "looks_right" | "concerns" | null {
  * changed so that it cannot: the text can neither end its block early nor start a new one.
  */
 export function dataBlock(tag: string, text: string): string {
-  const escaped = text.replace(new RegExp(`<(/?)(${tag})`, "gi"), "‹$1$2");
-  return `<${tag}>\n${escaped.trim()}\n</${tag}>`;
+  return `<${tag}>\n${escapeTag(tag, text).trim()}\n</${tag}>`;
 }
 
 /** The most of a review or of the builder's reply that is passed on to the other model. */
