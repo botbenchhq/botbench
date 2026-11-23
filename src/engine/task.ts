@@ -6,6 +6,7 @@ import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from
 import { summarize } from "../approvals/gate.ts";
 import { insertPreapproved, realRepo } from "../approvals/grants.ts";
 import { allowedHostsFor, outsideTextPrompt, runIssue } from "./intake.ts";
+import { learningsSection } from "./learnings.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
@@ -415,10 +416,14 @@ export function createTasks(options: TasksOptions): Tasks {
   const silenceLimit = options.silenceLimitMs ?? SILENCE_LIMIT_MS;
   /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
-  /** A builder's first prompt: the task's own, then, for a run started from an issue, the issue as outside text. */
+  /**
+   * A builder's first prompt: the task's own, then the repository's notes in docs/solutions/ when it has any
+   * (engine/learnings.ts), then, for a run started from an issue, the issue as outside text.
+   */
   const builderPrompt = (task: Task): string => {
     const issue = runIssue(db, task.runId);
-    return issue === null ? task.prompt : `${task.prompt}\n\n${outsideTextPrompt(issue)}`;
+    const learnings = learningsSection(task.repo);
+    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
   };
   /** Whether the builder's driver runs every shell command confined: only then may a command run without asking. */
   const confined = driver.capabilities.confinedCommands === true;
