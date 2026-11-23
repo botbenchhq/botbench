@@ -2,9 +2,7 @@ import { useContext, type ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
 import { trayShows } from "./approval-tray.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
-import darkMark from "../brand/mark-dark.svg";
-import lightMark from "../brand/mark-light.svg";
-import { useAppearance } from "../app/appearance.ts";
+import { Mark } from "../brand/mark.tsx";
 import { Icon, type IconName } from "./icon.tsx";
 
 /**
@@ -28,8 +26,6 @@ export type ScreenName = "turn" | "work";
  * shows: when it shows every one waiting, the tray keeps only its live line.
  */
 export function Frame({ current, banner, fill = false, back, actions, showing = [], children }: { current: ScreenName | null; banner?: ReactNode; fill?: boolean; back?: { href: string; label: string }; actions?: ReactNode; showing?: readonly number[]; children: ReactNode }) {
-  // The mark drawn for the page's surface: the dark-surface variant in dark mode, the light-surface one in light.
-  const { drawn } = useAppearance();
   // The tray takes a row of the header only while it has something to say. Its live region stays in the page either way.
   const { pending, problem } = useContext(ApprovalsContext);
   const tray = trayShows({ pending, showing, problem });
@@ -38,8 +34,8 @@ export function Frame({ current, banner, fill = false, back, actions, showing = 
       <header className="ds-app-header ds-app-header--sticky">
         {back === undefined ? (
           <a className="ds-app-header__name" href="#/turn">
-            {/* Decorative: the word beside it is the name. */}
-            <img src={drawn === "light" ? lightMark : darkMark} alt="" width={20} height={20} />
+            {/* Decorative: the word beside it is the name. The mark takes the text colour, so it follows the mode. */}
+            <Mark />
             Botbench
           </a>
         ) : (

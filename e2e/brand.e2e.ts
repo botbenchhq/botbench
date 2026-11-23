@@ -16,15 +16,24 @@ test("the page names its icons and Botbench serves them before sign-in; the head
   const touchResponse = await page.request.get(new URL(touch!, botbench.base).href);
   expect(touchResponse.status()).toBe(200);
   expect(touchResponse.headers()["content-type"]).toBe("image/png");
+  const touchPng = await touchResponse.body();
+  expect(`${touchPng.readUInt32BE(16)}x${touchPng.readUInt32BE(20)}`, "the home-screen icon is 180 by 180").toBe("180x180");
   await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Botbench");
 
   await signIn(page, botbench);
   const name = page.locator("header a", { hasText: "Botbench" });
-  const mark = name.locator("img");
+  const mark = name.locator("svg");
   await expect(mark).toBeVisible();
-  // Decorative: the link's words already say the name, so the mark is not announced a second time.
-  await expect(mark).toHaveAttribute("alt", "");
-  expect(await mark.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), "the mark loaded").toBe(true);
+  // Decorative: the link's words already say the name, so the mark is hidden from assistive technology.
+  await expect(mark).toHaveAttribute("aria-hidden", "true");
   await expect(page.getByRole("link", { name: "Botbench", exact: true })).toBeVisible();
+  // The mark is drawn in the text colour, in dark and in light, with no second drawing for either.
+  const colours = () => name.evaluate((a) => ({ text: getComputedStyle(a).color, fills: [...a.querySelectorAll("path")].map((p) => getComputedStyle(p).fill) }));
+  const dark = await colours();
+  expect(dark.fills, "both brackets take the text colour in dark").toEqual([dark.text, dark.text]);
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await expect.poll(async () => (await colours()).text, { message: "the text colour changes with the mode" }).not.toBe(dark.text);
+  const light = await colours();
+  expect(light.fills, "both brackets take the text colour in light").toEqual([light.text, light.text]);
   await checkDesign(page, "brand");
 });
