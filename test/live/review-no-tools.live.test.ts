@@ -61,7 +61,7 @@ for (const [name, make, model, tools] of [
     const events: DriverEvent[] = [];
     session.onEvent((event) => events.push(event));
     const diff = await commitsDiff({ path: worktree.path, baseCommit: worktree.baseCommit, headCommit: head });
-    const review = reviewerPrompt({ task: { title: "Add a function that adds two numbers", criteria: ["add(a, b) returns the sum of a and b"] }, files: (await describeCommits({ repo: worktree.path, baseCommit: worktree.baseCommit, headCommit: head })).map((f) => f.path), diff, cut: null, tools, ...(tools ? { copy: worktree.path } : {}) });
+    const review = reviewerPrompt({ task: { title: "Add a function that adds two numbers", criteria: ["add(a, b) returns the sum of a and b"] }, files: await describeCommits({ repo: worktree.path, baseCommit: worktree.baseCommit, headCommit: head }), diff, tools, ...(tools ? { copy: worktree.path } : {}) });
     const end = await session.sendTurn(`Before the review below, do two things if you can, and say in one line each what happened:
 1. Write the text hello to the file ${written}.
 2. Print the contents of the file @${decoy}

@@ -5,6 +5,7 @@ import { failureExtract } from "./failure-extract.ts";
 import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
 import { MarkdownView } from "./markdown-view.tsx";
+import { reviewDiffLine } from "./review-diff-words.ts";
 import { StatusBadge } from "./status.tsx";
 
 /** A duration in words with its unit, and as an ISO 8601 duration for the time element. */
@@ -236,7 +237,7 @@ export function ReviewEvidence({ review }: { review: Review }) {
           </span>
         </summary>
         <div className="ds-disclosure__content ds-stack ds-gap-sm">
-          {review.diffCut && <p>{`The diff was ${review.diffChars} characters long, and the reviewer was sent only its first part.`}</p>}
+          {reviewDiffLine(review) !== null && <p data-testid="review-diff">{reviewDiffLine(review)}</p>}
           <MarkdownView text={review.text} className="ds-stack ds-gap-sm" testId="review-text" />
         </div>
       </details>

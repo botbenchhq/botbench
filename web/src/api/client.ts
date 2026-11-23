@@ -189,6 +189,8 @@ export interface Review {
   problem: string | null;
   diffChars: number;
   diffCut: boolean;
+  /** How many parts of the diff the reviewer was sent and the characters they held; null when it was sent none, or for a review from before parts. */
+  diffSent: { parts: number; chars: number } | null;
   startedAt: string;
   endedAt: string;
   durationMs: number;
