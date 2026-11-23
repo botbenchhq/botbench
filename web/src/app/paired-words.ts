@@ -1,4 +1,5 @@
 import type { PairingFriction, PeerCard, PeerMessage, ThreadFriction } from "../api/client.ts";
+import { clock, counted, duration, type Where } from "./format.ts";
 
 /*
  * The words and the order of things on the paired-workbench screens (Peers P5): a thread's messages with their state,
@@ -6,26 +7,13 @@ import type { PairingFriction, PeerCard, PeerMessage, ThreadFriction } from "../
  * workbench wrote is passed through as it is: the screens show it as plain text.
  */
 
-/** A length of time as a person says it: "less than a minute", "1 minute", "12 minutes", "3 hours", "2 days". */
-export function spanWords(ms: number): string {
-  const minutes = Math.floor(Math.max(0, ms) / 60_000);
-  const unit = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
-  if (minutes < 1) return "less than a minute";
-  if (minutes < 120) return unit(minutes, "minute");
-  if (minutes < 48 * 60) return unit(Math.floor(minutes / 60), "hour");
-  return unit(Math.floor(minutes / (24 * 60)), "day");
-}
-
-/** A clock time in this device's own time, "14:32". */
-export const clockOf = (iso: string): string => {
-  const at = new Date(iso);
-  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-};
+/** A wait as a person says it: "less than a minute", "12 minutes", "3 hours". */
+const span = (ms: number): string => duration(ms, "words").words;
 
 /** What an open invite says about its life: "It works once, until 14:32." or, once past, that it has expired. */
-export function inviteLife(expiresAt: string, now: number = Date.now()): { open: boolean; words: string } {
+export function inviteLife(expiresAt: string, now: number = Date.now(), where: Where = {}): { open: boolean; words: string } {
   if (Date.parse(expiresAt) <= now) return { open: false, words: "This invite has expired and can no longer be used. Make a new invite to pair." };
-  return { open: true, words: `It works once, until ${clockOf(expiresAt)}. Withdraw it if you passed it to the wrong person.` };
+  return { open: true, words: `It works once, until ${clock(expiresAt, where)}. Withdraw it if you passed it to the wrong person.` };
 }
 
 /** One row of a thread: a message that was sent or received, or a draft that waits for the owner's Send. */
@@ -93,13 +81,13 @@ export interface FrictionWords {
 /** A pairing's or a thread's friction record (`GET /api/peers/friction`), as three plain lines with real counts. */
 export function frictionWords(record: Pick<PairingFriction | ThreadFriction, "cardsAnswered" | "waitsMs"> & { cards: readonly { sentAsDrafted: boolean | null }[] }): FrictionWords {
   const n = record.cardsAnswered;
-  const answered = n === 0 ? "No card answered yet." : `${n} ${n === 1 ? "card" : "cards"} answered by you.`;
+  const answered = n === 0 ? "No card answered yet." : `${counted(n, "card", "cards")} answered by you.`;
   const mid = median(record.waitsMs);
   const longest = record.waitsMs.length === 0 ? null : Math.max(...record.waitsMs);
-  const waited = mid === null ? "No wait to count yet." : record.waitsMs.length === 1 ? `It waited ${spanWords(mid)} for you.` : `They waited ${spanWords(mid)} for you in the middle, ${spanWords(longest!)} at most.`;
+  const waited = mid === null ? "No wait to count yet." : record.waitsMs.length === 1 ? `It waited ${span(mid)} for you.` : `They waited ${span(mid)} for you in the middle, ${span(longest!)} at most.`;
   const sent = record.cards.filter((c) => c.sentAsDrafted !== null);
   const exact = sent.filter((c) => c.sentAsDrafted === true).length;
-  const asDrafted = sent.length === 0 ? "No draft by an agent sent yet." : `${exact} of ${sent.length} ${sent.length === 1 ? "draft" : "drafts"} sent exactly as drafted.`;
+  const asDrafted = sent.length === 0 ? "No draft by an agent sent yet." : `${exact} of ${counted(sent.length, "draft", "drafts")} sent exactly as drafted.`;
   return { answered, waited, asDrafted };
 }
 

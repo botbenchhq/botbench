@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, sendTaskNote, type TaskDetail } from "../api/client.ts";
 import { Alert } from "./header.tsx";
 import { NOTE_ABOUT, NOTE_ABOUT_READY, NOTE_HEADING, NOTE_LABEL, NOTE_NOT_DELIVERED, NOTE_REPLACED, NOTE_SEND, NOTE_SENDING, NOTE_WAITING, NOTE_WAITING_LABEL, NOTE_WAITING_ROUND, notDeliveredLine, noteRefused } from "./task-note-words.ts";
@@ -17,6 +18,7 @@ export function TaskNote({ task, onChanged, onSignedOut }: { task: Pick<TaskDeta
   const [refused, setRefused] = useState<string | null>(null);
   const send = (event: FormEvent): void => {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setRefused(null);
     sendTaskNote(task.id, text).then(
@@ -79,9 +81,9 @@ export function TaskNote({ task, onChanged, onSignedOut }: { task: Pick<TaskDeta
               </p>
             </div>
             <div className="ds-cluster">
-              <button type="submit" aria-busy={busy} disabled={busy} className="ds-button">
-                {busy ? NOTE_SENDING : NOTE_SEND}
-              </button>
+              <BusyButton type="submit" busy={busy} busyLabel={NOTE_SENDING}>
+                {NOTE_SEND}
+              </BusyButton>
             </div>
           </form>
         </section>

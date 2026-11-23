@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, getCheckTogether, setCheckTogetherRequired, startCheckTogether, type CheckTogetherView, type CombinedCheck } from "../api/client.ts";
 import { checkButton, commitsLine, othersCodeLine, outcomeLine, requirementLine, staleLine } from "../app/check-together.ts";
 import { CommandEvidence } from "./evidence.tsx";
@@ -19,7 +20,8 @@ export function CheckTogether({ taskId, repo, ready, onSignedOut }: { taskId: nu
   const id = useId();
   const [view, setView] = useState<CheckTogetherView | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [asking, setAsking] = useState(false);
+  // What is being sent: "required", or the number of the pull request a check is started with. Its button is busy; the others wait.
+  const [asking, setAsking] = useState<"required" | number | null>(null);
 
   const failed = useCallback(
     (err: unknown): void => {
@@ -43,13 +45,13 @@ export function CheckTogether({ taskId, repo, ready, onSignedOut }: { taskId: nu
 
   const check = (number: number): void => {
     setProblem(null);
-    setAsking(true);
-    startCheckTogether(taskId, number).then(load, failed).finally(() => setAsking(false));
+    setAsking(number);
+    startCheckTogether(taskId, number).then(load, failed).finally(() => setAsking(null));
   };
   const changeRequired = (required: boolean): void => {
     setProblem(null);
-    setAsking(true);
-    setCheckTogetherRequired(repo, required).then(load, failed).finally(() => setAsking(false));
+    setAsking("required");
+    setCheckTogetherRequired(repo, required).then(load, failed).finally(() => setAsking(null));
   };
 
   return (
@@ -58,9 +60,9 @@ export function CheckTogether({ taskId, repo, ready, onSignedOut }: { taskId: nu
       <p>Botbench merges this task's work with another workbench's open pull request in a temporary copy, runs this repository's setup commands and checks there, then removes the copy. Nothing is pushed or merged anywhere else.</p>
       <p data-testid="check-together-required">{requirementLine(view)}</p>
       <div className="ds-cluster ds-gap-sm">
-        <button type="button" className="ds-button ds-button--small" disabled={asking} onClick={() => changeRequired(!view.required)}>
+        <BusyButton size="small" busy={asking === "required"} busyLabel="Saving" disabled={asking !== null && asking !== "required"} onClick={() => changeRequired(!view.required)}>
           {view.required ? "Stop requiring it on this repository" : "Require it on this repository"}
-        </button>
+        </BusyButton>
       </div>
       {problem !== null && (
         <Alert tone="error" role="alert">
@@ -92,13 +94,13 @@ export function CheckTogether({ taskId, repo, ready, onSignedOut }: { taskId: nu
                   </span>
                   <span className="ds-list__secondary">
                     <span data-ds-content="">{offer.workbench}</span>
-                    {offer.overlaps.length === 0 ? " · changes none of this task's files" : ` · also changes ${offer.overlaps.length === 1 ? "1 of this task's files" : `${offer.overlaps.length} of this task's files`}`}
+                    {offer.overlaps.length === 0 ? " · changes none of this task's files" : ` · also changes ${offer.overlaps.length} of this task's files`}
                   </span>
                 </span>
               </div>
-              <button type="button" data-testid="check-together-start" className="ds-button ds-button--small" disabled={asking || view.running !== null} onClick={() => check(offer.number)}>
+              <BusyButton data-testid="check-together-start" size="small" busy={asking === offer.number} busyLabel={`Starting the check with pull request #${offer.number}`} disabled={(asking !== null && asking !== offer.number) || view.running !== null} onClick={() => check(offer.number)}>
                 {checkButton(offer.number)}
-              </button>
+              </BusyButton>
             </li>
           ))}
         </ul>

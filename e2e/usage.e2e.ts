@@ -7,6 +7,7 @@ import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
 import { checkDesign, expect, openFromSettings, signIn, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
+import { dayAndClock } from "../web/src/app/format.ts";
 
 // The Usage screen at a phone's size, against a real Botbench process. No model turn is started. The turns it shows were
 // stored the way the driver stores them: the usage events are the ones a real Claude Code run produced (the recording
@@ -42,7 +43,8 @@ test("with no replies stored, Usage says so in words", async ({ page, dir }) => 
   }
 });
 
-test("with replies stored, Usage shows this week, each agent and model, and each run, from the stored numbers", async ({ page, dir }) => {
+/** Two real replies stored before Botbench starts: one for a task that failed, so nothing is started for it, and one for a chat. */
+function stored(dir: string) {
   const recording = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "test", "recordings", "planner-plans.json"), "utf8")) as { turns: { events: DriverEvent[] }[] };
   const usage = recording.turns.flatMap((turn) => turn.events).filter((event): event is Extract<DriverEvent, { type: "usage" }> => event.type === "usage");
   expect(usage.length).toBeGreaterThanOrEqual(2);
@@ -63,7 +65,11 @@ test("with replies stored, Usage shows this week, each agent and model, and each
   store(built, first);
   store(attempt("claude-haiku-5-5"), second);
   db.close();
+  return { home, first, second };
+}
 
+test("with replies stored, Usage shows this week, each agent and model, and each run, from the stored numbers", async ({ page, dir }) => {
+  const { home, first, second } = stored(dir);
   const botbench = await startBotbench({ home });
   try {
     const foreign = watchRequests(page, botbench);
@@ -92,4 +98,31 @@ test("with replies stored, Usage shows this week, each agent and model, and each
   } finally {
     await botbench.stop();
   }
+});
+
+test.describe("for a reader in Germany whose device is on Tokyo time", () => {
+  test.use({ locale: "de-DE", timezoneId: "Asia/Tokyo" });
+
+  test("Usage groups its numbers as Germany does and names the week's start on the device's own clock, in English words", async ({ page, dir }) => {
+    const { home, first, second } = stored(dir);
+    const botbench = await startBotbench({ home });
+    try {
+      await open(page, botbench);
+      const input = (u: typeof first): number => u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens;
+      const total = input(first) + input(second);
+      // A number that has something to group, written with Germany's full stop.
+      expect(total).toBeGreaterThanOrEqual(1000);
+      const grouped = total.toLocaleString("de-DE");
+      expect(grouped).toContain(".");
+      await expect(page.getByTestId("usage-week")).toContainText(`${grouped} tokens`);
+      // The week's start as the server stored it, shown on Tokyo's clock: an English month, a 24-hour clock.
+      const report = (await (await page.request.get(`${botbench.base}/api/usage`)).json()) as { since: string };
+      const since = dayAndClock(report.since, { locale: "de-DE", timeZone: "Asia/Tokyo" });
+      expect(since).toMatch(/^\d{1,2} [A-Z][a-z]+ at \d\d:\d\d$/);
+      expect(since).not.toBe(dayAndClock(report.since, { locale: "de-DE", timeZone: "Pacific/Honolulu" }));
+      await expect(page.getByTestId("usage-week")).toContainText(`Since ${since}, from every agent`);
+    } finally {
+      await botbench.stop();
+    }
+  });
 });

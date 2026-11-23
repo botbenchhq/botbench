@@ -1,4 +1,5 @@
 import type { PeersView } from "../api/client.ts";
+import { ago, counted, duration } from "./format.ts";
 
 /*
  * What the composer and the task screen say about other workbenches' work on the same repository (Peers P2). Each
@@ -55,16 +56,6 @@ export function claimNotice(o: { claimIssues: boolean; delivery: "branch" | "pul
   return issue === null ? "" : ` When the run starts, Botbench pushes two empty branches to the remote so that other workbenches see you started on issue #${issue}; they are deleted if the run ends without a pull request.`;
 }
 
-/** How long ago `startedAt` was, from `now`: "less than a minute ago", "1 minute ago", "12 minutes ago", "3 hours ago", "2 days ago". */
-export function agoWords(startedAt: string, now: number): string {
-  const minutes = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 60_000));
-  const unit = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"} ago`;
-  if (minutes < 1) return "less than a minute ago";
-  if (minutes < 120) return unit(minutes, "minute");
-  if (minutes < 48 * 60) return unit(Math.floor(minutes / 60), "hour");
-  return unit(Math.floor(minutes / (24 * 60)), "day");
-}
-
 /** How long a claim may say nothing of its work before the screens say its workbench may have stopped: a workbench at work on it says so every 10 minutes (src/engine/claim-branch.ts WORKED_EVERY_MS). */
 export const QUIET_CLAIM_MS = 25 * 60_000;
 
@@ -75,13 +66,13 @@ export const QUIET_CLAIM_MS = 25 * 60_000;
 export function claimWords(c: Extract<PeersView, { state: "ready" }>["claims"][number], now: number): { lead: string; tail: string } {
   if (c.pullRequest !== null) return { lead: `has pull request #${c.pullRequest} open for`, tail: "" };
   const started = "started on";
-  const ago = agoWords(c.startedAt, now);
-  if (c.takenOverBy !== null) return { lead: started, tail: ` ${ago}; ${c.takenOverBy} took it over` };
+  const since = ago(c.startedAt, now);
+  if (c.takenOverBy !== null) return { lead: started, tail: ` ${since}; ${c.takenOverBy} took it over` };
   const quiet = now - Date.parse(c.workedAt);
-  if (quiet >= QUIET_CLAIM_MS) return { lead: started, tail: ` ${ago} and has shown no work on it for ${agoWords(c.workedAt, now).replace(/ ago$/, "")}: it may have stopped, or be waiting for its owner` };
+  if (quiet >= QUIET_CLAIM_MS) return { lead: started, tail: ` ${since} and has shown no work on it for ${duration(quiet, "words").words}: it may have stopped, or be waiting for its owner` };
   // A claim that has said nothing since it was made says only when it started.
-  if (Date.parse(c.workedAt) - Date.parse(c.startedAt) < 60_000) return { lead: started, tail: ` ${ago}` };
-  return { lead: started, tail: ` ${ago}; it last worked on it ${agoWords(c.workedAt, now)}` };
+  if (Date.parse(c.workedAt) - Date.parse(c.startedAt) < 60_000) return { lead: started, tail: ` ${since}` };
+  return { lead: started, tail: ` ${since}; it last worked on it ${ago(c.workedAt, now)}` };
 }
 
 /**
@@ -162,7 +153,7 @@ export function overlapLines(view: PeersView | null, taskFiles: readonly string[
   return view.pullRequests.flatMap((pr) => {
     const both = pr.files.filter((f) => ours.has(f)).sort();
     if (both.length === 0) return [];
-    const named = both.length > MAX_FILES ? [...both.slice(0, MAX_FILES), `${both.length - MAX_FILES} more ${both.length - MAX_FILES === 1 ? "file" : "files"}`] : both;
+    const named = both.length > MAX_FILES ? [...both.slice(0, MAX_FILES), counted(both.length - MAX_FILES, "more file", "more files")] : both;
     return [`${pr.workbench}'s open pull request #${pr.number} also changes ${list(named)}, so the two may conflict when both are merged.`];
   });
 }

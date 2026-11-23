@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, cancelConnect, disconnectAgent, getConnect, sendConnectCode, startConnect, type ConnectState } from "../api/client.ts";
 import { ConfirmAction } from "./confirm.tsx";
 import { CopyField } from "./decision.tsx";
 import { Alert } from "./header.tsx";
 import { Icon } from "./icon.tsx";
+import { clock } from "../app/format.ts";
 
 const active = (state: ConnectState["state"]): boolean => state === "starting" || state === "waiting" || state === "checking";
-const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** Where the link goes, as the reader can check it before following it: the host, and the path when it is short. */
 function place(url: string): string {
@@ -59,6 +60,7 @@ function PasteCode({ driver, disabled, onState }: { driver: string; disabled: bo
   const [problem, setProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const send = (): void => {
+    if (sending) return;
     setSending(true);
     setProblem(null);
     sendConnectCode(driver, code).then(
@@ -86,9 +88,9 @@ function PasteCode({ driver, disabled, onState }: { driver: string; disabled: bo
         )}
       </div>
       <div>
-        <button type="submit" className="ds-button" disabled={disabled || sending || code.trim() === ""} aria-busy={sending}>
+        <BusyButton type="submit" busy={sending} busyLabel="Sending" disabled={disabled || code.trim() === ""}>
           Send code
-        </button>
+        </BusyButton>
       </div>
     </form>
   );
@@ -200,7 +202,7 @@ export function ConnectSheet({ driver, product, state, onState, onClose }: { dri
           <p className="ds-spinner" role="status">
             {flow === "checking" ? `Checking the sign-in with ${product}` : "Waiting for you to sign in"}
           </p>
-          {state.expiresAt !== null && <p className="ds-device-code__note">Botbench stops waiting at {timeOf(state.expiresAt)}.</p>}
+          {state.expiresAt !== null && <p className="ds-device-code__note">Botbench stops waiting at {clock(state.expiresAt)}.</p>}
         </div>
       </div>
     );
@@ -288,7 +290,7 @@ export function AgentConnection({ agent, product, installed, supported, signedIn
   if (signedIn) {
     return (
       <>
-        <ConfirmAction label="Disconnect" opener={{ small: true, name: `Disconnect ${product}` }} title={`Disconnect ${product}?`} confirmLabel="Disconnect" cancelLabel="Keep connected" disabled={busy} losing testId={`disconnect-${agent}`} onConfirm={disconnect}>
+        <ConfirmAction label="Disconnect" opener={{ small: true, name: `Disconnect ${product}`, object: product }} title={`Disconnect ${product}?`} confirmLabel="Disconnect" cancelLabel="Keep connected" disabled={false} busy={busy} busyLabel="Disconnecting" losing testId={`disconnect-${agent}`} onConfirm={disconnect}>
           {connect.keptByBotbench ? (
             <>Botbench removes the sign-in it keeps for {product} in its own folder. {product} is then not connected in Botbench until you connect it again. {product} in a terminal or its app, signed in on its own, is not changed.</>
           ) : (

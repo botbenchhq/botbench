@@ -1,26 +1,27 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
+import { takesItsPlace } from "./focus-after.ts";
 import { ApiError, editMemoryNote, forgetMemoryNote, getMemory, type MemoryList, type MemoryNote } from "../api/client.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert } from "../components/header.tsx";
+import { fullDate, number as grouped } from "./format.ts";
 
 /** The note being edited: what the owner typed, the version it was read at, and why it was not saved. */
 type Editing = { id: number; text: string; hash: string; saving: boolean; problem: string | null; now: string | null };
 
-const when = (ts: string): string => new Date(ts).toLocaleString();
-
 /** One note at rest: its text, when it was saved or edited, and Edit and Forget. Its text is always a React child, never markup. */
-function NoteRow({ note, number, busy, onEdit, onForget }: { note: MemoryNote; number: number; busy: boolean; onEdit: () => void; onForget: () => void }) {
+function NoteRow({ note, number, locked, forgetting, onEdit, onForget }: { note: MemoryNote; number: number; /** Another note is being edited or forgotten. */ locked: boolean; /** This note is being forgotten: Forget is busy and keeps the focus. */ forgetting: boolean; onEdit: () => void; onForget: () => void }) {
   return (
     <>
       <span className="ds-editable-list__text ds-stack ds-gap-xs">
         <span data-ds-content="">{note.text}</span>
-        <span className="ds-settings-row__description">{note.editedAt === null ? `Saved ${when(note.savedAt)}` : `Edited ${when(note.editedAt)}`}</span>
+        <span className="ds-settings-row__description">{note.editedAt === null ? `Saved ${fullDate(note.savedAt)}` : `Edited ${fullDate(note.editedAt)}`}</span>
       </span>
       <span className="ds-editable-list__actions">
-        <button type="button" data-memory-edit={note.id} disabled={busy} data-ds-content-label="" aria-label={`Edit note ${number}: ${note.text}`} onClick={onEdit} className="ds-button ds-button--quiet ds-button--small">
+        <button type="button" data-memory-edit={note.id} disabled={locked || forgetting} data-ds-content-label="" aria-label={`Edit note ${number}: ${note.text}`} onClick={onEdit} className="ds-button ds-button--quiet ds-button--small">
           Edit
         </button>
-        <ConfirmAction label="Forget" opener={{ small: true, name: `Forget note ${number}: ${note.text}` }} title="Forget this note?" confirmLabel="Forget" cancelLabel="Keep it" disabled={busy} losing testId={`memory-forget-${note.id}`} onConfirm={onForget}>
+        <ConfirmAction label="Forget" opener={{ small: true, name: `Forget note ${number}: ${note.text}`, object: `note ${number}: ${note.text}`, theirs: true }} title="Forget this note?" confirmLabel="Forget" cancelLabel="Keep it" disabled={locked} busy={forgetting} busyLabel="Forgetting" losing testId={`memory-forget-${note.id}`} onConfirm={onForget}>
           <p>Botbench removes it from memory and keeps no copy there. Agents are no longer given it. Chats and runs that already had it keep their words.</p>
         </ConfirmAction>
       </span>
@@ -43,7 +44,7 @@ function NoteEditor({ editing, number, max, onChange, onSave, onCancel }: { edit
       <div className="ds-field">
         <label htmlFor={`${id}-text`} className="ds-field__label">{`Note ${number}`}</label>
         <input ref={input} data-testid="memory-note-text" id={`${id}-text`} type="text" autoComplete="off" maxLength={max} readOnly={editing.saving} value={editing.text} onChange={(e) => onChange(e.currentTarget.value)} aria-invalid={editing.problem !== null || undefined} aria-describedby={described} className="ds-field__control" />
-        <p id={`${id}-about`} className="ds-field__description">{`One line, at most ${max.toLocaleString("en")} characters.`}</p>
+        <p id={`${id}-about`} className="ds-field__description">{`One line, at most ${grouped(max)} characters.`}</p>
         {editing.now !== null && (
           <p id={`${id}-now`} data-ds-content="" className="ds-field__description">
             {`The note now: ${editing.now}`}
@@ -56,9 +57,9 @@ function NoteEditor({ editing, number, max, onChange, onSave, onCancel }: { edit
         )}
       </div>
       <div className="ds-editable-list__editor-actions">
-        <button type="submit" aria-busy={editing.saving} className="ds-button ds-button--small">
-          {editing.saving ? "Saving note" : "Save note"}
-        </button>
+        <BusyButton type="submit" size="small" busy={editing.saving} busyLabel="Saving note">
+          Save note
+        </BusyButton>
         <button type="button" disabled={editing.saving} onClick={onCancel} className="ds-button ds-button--quiet ds-button--small">
           Cancel
         </button>
@@ -78,8 +79,11 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
   const [list, setList] = useState<MemoryList | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [forgetting, setForgetting] = useState(false);
-  const [focusEdit, setFocusEdit] = useState<number | null>(null);
+  /** The id of the note being forgotten. */
+  const [forgetting, setForgetting] = useState<number | null>(null);
+  /** Where the focus goes once the list is drawn again: a note's Edit button, or the heading when no note is left. */
+  const [focusEdit, setFocusEdit] = useState<number | "heading" | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const group = useRef<HTMLDivElement>(null);
 
   const failed = (what: string) => (err: unknown): void => {
@@ -97,8 +101,10 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
   // After Save or Cancel, the focus goes back to the row's Edit button.
   useEffect(() => {
     if (focusEdit === null) return;
-    group.current?.querySelector<HTMLButtonElement>(`[data-memory-edit="${focusEdit}"]`)?.focus();
     setFocusEdit(null);
+    // Only a focus that went with the editor or the row is placed; one the owner moved elsewhere meanwhile stays.
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    (focusEdit === "heading" ? heading.current : group.current?.querySelector<HTMLButtonElement>(`[data-memory-edit="${focusEdit}"]`))?.focus();
   }, [focusEdit, list, editing]);
 
   const close = (noteId: number): void => {
@@ -106,7 +112,7 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
     setFocusEdit(noteId);
   };
   const save = (): void => {
-    if (editing === null) return;
+    if (editing === null || editing.saving) return;
     if (editing.text.trim() === "") return setEditing({ ...editing, problem: "Write the note, or cancel to keep it as it was. To remove it, use Forget." });
     const sent = editing;
     setEditing({ ...sent, saving: true, problem: null });
@@ -134,19 +140,19 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
     );
   };
   const forget = (note: MemoryNote): void => {
-    setForgetting(true);
+    setForgetting(note.id);
     setProblem(null);
     const at = notes.findIndex((n) => n.id === note.id);
     forgetMemoryNote(note.id, note.hash).then(
       (found) => {
         setList(found);
-        setForgetting(false);
-        // The focus goes to the Edit button of the note that took its place, or of the one before it when it was last.
-        const next = found.notes[at] ?? found.notes[at - 1];
-        if (next !== undefined) setFocusEdit(next.id);
+        setForgetting(null);
+        // The focus goes to the Edit button of the note that took its place, or of the one before it when it was last,
+        // or to the heading when no note is left.
+        setFocusEdit(takesItsPlace(found.notes, at)?.id ?? "heading");
       },
       (err: unknown) => {
-        setForgetting(false);
+        setForgetting(null);
         failed("The note was not forgotten.")(err);
         void load();
       },
@@ -156,11 +162,11 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
   const notes = list?.notes ?? [];
   return (
     <div ref={group} data-testid="memory-settings" className="ds-settings-row__group" role="group" aria-labelledby={`${id}-heading`}>
-      <h2 className="ds-settings-row__heading" id={`${id}-heading`}>
+      <h2 ref={heading} tabIndex={-1} className="ds-settings-row__heading" id={`${id}-heading`}>
         Memory
       </h2>
       <p className="ds-settings-row__description">
-        {`Start a chat message with "Remember:" or "Remember that" and Botbench keeps the rest of it as a note, in your words. Every agent of a later chat, and the planner and builder of a later run, is given your notes. Botbench keeps them on this Mac, in its data folder, and never adds them to a repository. An agent given them sends them to its provider with the rest of its prompt, as it does your messages.${list === null ? "" : ` At most ${list.maxNoteChars.toLocaleString("en")} characters a note, and ${list.maxKb} KB in all.`}`}
+        {`Start a chat message with "Remember:" or "Remember that" and Botbench keeps the rest of it as a note, in your words. Every agent of a later chat, and the planner and builder of a later run, is given your notes. Botbench keeps them on this Mac, in its data folder, and never adds them to a repository. An agent given them sends them to its provider with the rest of its prompt, as it does your messages.${list === null ? "" : ` At most ${grouped(list.maxNoteChars)} characters a note, and ${list.maxKb} KB in all.`}`}
       </p>
       {problem !== null && (
         <Alert tone="error" role="alert">
@@ -183,7 +189,7 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
                   {editing?.id === note.id ? (
                     <NoteEditor editing={editing} number={i + 1} max={list.maxNoteChars} onChange={(text) => setEditing({ ...editing, text })} onSave={save} onCancel={() => close(note.id)} />
                   ) : (
-                    <NoteRow note={note} number={i + 1} busy={forgetting || editing !== null} onEdit={() => setEditing({ id: note.id, text: note.text, hash: note.hash, saving: false, problem: null, now: null })} onForget={() => forget(note)} />
+                    <NoteRow note={note} number={i + 1} locked={editing !== null || (forgetting !== null && forgetting !== note.id)} forgetting={forgetting === note.id} onEdit={() => setEditing({ id: note.id, text: note.text, hash: note.hash, saving: false, problem: null, now: null })} onForget={() => forget(note)} />
                   )}
                 </li>
               ))}

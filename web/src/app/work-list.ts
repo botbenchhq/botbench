@@ -1,6 +1,7 @@
 import type { BoardGroup, BoardItem } from "../api/client.ts";
 import { runWord } from "../components/run-status.ts";
 import { statusWord } from "../components/task-status.ts";
+import { counted, number, plural } from "./format.ts";
 
 /*
  * What the column of chats and work beside a wide screen lists and says, decided without a browser
@@ -49,8 +50,6 @@ export function matching(rows: readonly WorkRow[], query: string): WorkRow[] {
   return words === "" ? [...rows] : rows.filter((r) => r.title.toLowerCase().includes(words));
 }
 
-const counted = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
-
 /** "2 runs and 3 tasks", "1 task", "1 chat, 1 run and 2 tasks": what the listed rows are, by kind. */
 function kinds(rows: readonly WorkRow[]): string {
   const parts = [
@@ -67,7 +66,7 @@ export function countLine(list: WorkRows, query: string, shown: number): string 
   const words = query.trim();
   // Only Finished is cut short by the board, so what is left out is always the oldest finished work.
   const left = list.total - list.rows.length;
-  if (words === "") return left > 0 ? `${kinds(list.rows)}. The ${left} oldest finished ${left === 1 ? "one is" : "are"} not listed.` : kinds(list.rows);
+  if (words === "") return left > 0 ? `${kinds(list.rows)}. The ${number(left)} oldest finished ${plural(left, "one is", "are")} not listed.` : kinds(list.rows);
   if (shown === 0) return `None of ${list.rows.length} match "${words}"`;
   return `${shown} of ${list.rows.length} match "${words}"`;
 }

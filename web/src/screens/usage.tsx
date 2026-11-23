@@ -2,20 +2,17 @@ import { Fragment, useEffect, useState } from "react";
 import { ApiError, getUsage, type UsageAgent, type UsageReport, type UsageRun, type UsageScope, type UsageTotals } from "../api/client.ts";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { useModelNames } from "../components/model-picker.tsx";
+import { agentName } from "../app/chat.ts";
+import { counted, dayAndClock, number } from "../app/format.ts";
 
 /*
  * Usage: which agents did work, and how much, in words and numbers. Tokens only: Botbench stores no dollar amount, and
- * Botbench does not know a sign-in's limit, so there is no meter. Numbers are grouped by thousands and carry their unit.
+ * Botbench does not know a sign-in's limit, so there is no meter. Numbers are grouped as the reader's locale groups them
+ * and carry their unit (app/format.ts).
  */
 
-const number = (n: number): string => n.toLocaleString("en-US");
-const replies = (n: number): string => `${number(n)} ${n === 1 ? "reply" : "replies"}`;
-const tokens = (n: number): string => `${number(n)} ${n === 1 ? "token" : "tokens"}`;
-const when = (iso: string): string => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-
-/** The product names of the agents Botbench has; an agent not listed is shown by its own id. */
-const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "gemini-cli": "Gemini CLI", grok: "Grok", antigravity: "Antigravity" };
-const agentName = (driver: string): string => AGENT_NAMES[driver] ?? driver;
+const replies = (n: number): string => counted(n, "reply", "replies");
+const tokens = (n: number): string => counted(n, "token", "tokens");
 
 const COST_WORDS = {
   subscription: "Signed in with a subscription. It has no dollar amount, so none is shown.",
@@ -104,7 +101,7 @@ function RunTable({ runs }: { runs: UsageReport["runs"] }) {
           ))}
         </tbody>
       </table>
-      <p data-testid="usage-runs-count">{runs.total > runs.items.length ? `Showing the ${number(runs.items.length)} most recent of ${number(runs.total)} runs that used an agent.` : `${number(runs.total)} ${runs.total === 1 ? "run" : "runs"} used an agent.`}</p>
+      <p data-testid="usage-runs-count">{runs.total > runs.items.length ? `Showing the ${number(runs.items.length)} most recent of ${number(runs.total)} runs that used an agent.` : `${counted(runs.total, "run", "runs")} used an agent.`}</p>
     </>
   );
 }
@@ -167,7 +164,7 @@ export function Usage({ onSignedOut }: { onSignedOut: () => void }) {
                 <div className="ds-stat">
                   <p className="ds-stat__label">Replies</p>
                   <p className="ds-stat__value">{replies(report.week.turns)}</p>
-                  <p className="ds-stat__context">{`Since ${when(report.since)}, from every agent`}</p>
+                  <p className="ds-stat__context">{`Since ${dayAndClock(report.since)}, from every agent`}</p>
                 </div>
                 <div className="ds-stat">
                   <p className="ds-stat__label">Input</p>

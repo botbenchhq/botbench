@@ -3,6 +3,7 @@ import { Approval as ApprovalView, type ApprovalFact, visibleText } from "../../
 import { answerApproval, answerQuestion, ApiError, grantStanding, type Approval } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ConfirmAction } from "./confirm.tsx";
+import { counted, number, plural } from "../app/format.ts";
 import { approvalWords, directoryWords, placeWords } from "./tool-summary.ts";
 
 /** The tray's last "open" a card has answered by taking the focus. Kept across screens, so one open moves the focus once. */
@@ -16,7 +17,7 @@ let focusedFor = 0;
 export const visible = (text: string): string => visibleText(text);
 
 /** A count as it is said: "once", "3 times". */
-export const times = (n: number): string => (n === 1 ? "once" : `${n} times`);
+export const times = (n: number): string => (n === 1 ? "once" : counted(n, "time", "times"));
 
 
 /** Which step of the work asks, in the words of the steps: Plan, Build, Review. Any other name is shown as it is. */
@@ -39,19 +40,19 @@ export function ApprovalTray({ here, peerCards = 0 }: { here: boolean; peerCards
     <div data-testid="approval-tray" aria-live="polite" aria-atomic="true" className="ds-pending-tray">
       {here ? (
         // The card on this screen shows the request: the tray would say it again, so only a screen reader hears it, once.
-        <span className="ds-visually-hidden">{pending!.length === 1 ? "An approval is waiting on this screen." : `${pending!.length} approvals are waiting on this screen.`}</span>
+        <span className="ds-visually-hidden">{plural(pending!.length, "An approval is waiting on this screen.", `${number(pending!.length)} approvals are waiting on this screen.`)}</span>
       ) : oldest === undefined && peerCards > 0 ? (
         // No approval waits, but a card about the paired workbench's messages does: it leads Work's Needs you.
         <a href="#/work" className="ds-pending-tray__link" data-testid="tray-peer-cards">
           <span className="ds-pending-tray__count">{peerCards}</span>
-          {peerCards === 1 ? " message with the paired workbench waits for you. Open it." : " messages with the paired workbench wait for you. Open them."}
+          {plural(peerCards, " message with the paired workbench waits for you. Open it.", " messages with the paired workbench wait for you. Open them.")}
         </a>
       ) : oldest === undefined ? (
         pending === null && problem !== null && <span className="ds-pending-tray__text">{problem}</span>
       ) : (
         <a href={oldest.chat ? "#/turn" : oldest.taskId === null ? `#/runs/${oldest.runId}` : `#/tasks/${oldest.taskId}`} onClick={open} className="ds-pending-tray__link">
           <span className="ds-pending-tray__count">{pending!.length}</span>
-          {pending!.length === 1 ? " approval is waiting. Open it." : " approvals are waiting. Open the oldest."}
+          {plural(pending!.length, " approval is waiting. Open it.", " approvals are waiting. Open the oldest.")}
         </a>
       )}
     </div>
@@ -193,7 +194,7 @@ function QuestionCard({ approval, question, more, on, onSignedOut }: { approval:
       {approval.outsideText && approval.askedBy?.by !== "peer" && <p data-testid="approval-outside">This question comes from a run that read a GitHub issue, which people outside this project wrote. Answer it as you would answer them.</p>}
       {approval.outsideText && approval.askedBy?.by === "peer" && <p data-testid="approval-outside">{`This question comes from work given a message from ${approval.askedBy.peerName === null ? "the paired workbench" : `${approval.askedBy.peerName}'s workbench`}, which another person wrote. Answer it as you would answer them.`}</p>}
       {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks this question again.</p>}
-      {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
+      {more > 0 && <p>{`${counted(more, "more request", "more requests")} of this task ${plural(more, "waits", "wait")} behind this one.`}</p>}
       {problem !== null && (
         <p role="alert" className="ds-approval__error">
           {problem}
@@ -377,7 +378,7 @@ function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approva
       {approval.outsideText && approval.askedBy?.by !== "peer" && <p data-testid="approval-outside">This request comes from a run that read a GitHub issue, which people outside this project wrote. Check the command for anything the issue might have led to.</p>}
       {approval.outsideText && approval.askedBy?.by === "peer" && <p data-testid="approval-outside">{`This request comes from work given a message from ${approval.askedBy.peerName === null ? "the paired workbench" : `${approval.askedBy.peerName}'s workbench`}, which another person wrote. Check the command for anything the message might have led to.`}</p>}
       {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
-      {more > 0 && <p>{more === 1 ? `1 more request of this ${of} waits behind this one.` : `${more} more requests of this ${of} wait behind this one.`}</p>}
+      {more > 0 && <p>{`${counted(more, "more request", "more requests")} of this ${of} ${plural(more, "waits", "wait")} behind this one.`}</p>}
       {offer !== undefined && (
         <div data-testid="standing-offer" className="ds-stack ds-gap-sm">
           <p>{`You have allowed this command ${times(offer.approvals)}. Always allow would cover this exact command, in the ${stepWord(offer.role)} step, from this folder, in this repository. You confirm it first.`}</p>

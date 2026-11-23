@@ -21,19 +21,20 @@ import {
   type PeerMessage,
   type PeerOverview,
 } from "../api/client.ts";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert } from "../components/header.tsx";
 import { NewQuestion } from "../components/new-question.tsx";
 import { RepoChoice } from "../components/repo-choice.tsx";
 import { PeerChangesContext } from "./approvals.tsx";
 import { PeerCardsContext } from "./peer-cards.tsx";
-import { clockOf, frictionWords, inviteLife, pairingCards, threadHref, threadsOf } from "./paired-words.ts";
+import { clock, counted, fullDate } from "./format.ts";
+import { frictionWords, inviteLife, pairingCards, threadHref, threadsOf } from "./paired-words.ts";
 
 /** The settings file's words for turning pairing on, as the server's own refusal says them (src/peers/service.ts). */
 export const LISTEN_SETTING = '"peers": { "listen": { "address": "127.0.0.1", "port": 4790 } }';
 
 const words = (what: string, err: unknown): string => (err instanceof ApiError ? `${what} ${err.message}` : `${what} Botbench could not be reached.`);
-const dateOf = (iso: string): string => new Date(iso).toLocaleString();
 
 /** One fact of the pairing: its label, then its value, which is the other workbench's words when `theirs`. */
 function Fact({ label, mono = false, theirs = false, testId, children }: { label: string; mono?: boolean; theirs?: boolean; testId?: string; children: ReactNode }) {
@@ -66,7 +67,8 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
   const id = useId();
   const [repo, setRepo] = useState<string | null>(null);
   const [made, setMade] = useState<{ id: string; invite: string; repository: string; expiresAt: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  // What is being sent: "make", or the id of the invite being withdrawn. Its button is busy; the others wait.
+  const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -80,7 +82,7 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
   };
   const make = (): void => {
     if (repo === null) return;
-    setBusy(true);
+    setBusy("make");
     setProblem(null);
     makeInvite(repo)
       .then((invite) => {
@@ -88,17 +90,17 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
         setCopied("");
         onChanged();
       }, failed("No invite was made."))
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
   const withdraw = (inviteId: string): void => {
-    setBusy(true);
+    setBusy(inviteId);
     setProblem(null);
     withdrawInvite(inviteId)
       .then(() => {
         if (made?.id === inviteId) setMade(null);
         onChanged();
       }, failed("The invite was not withdrawn."))
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
   const copy = (): void => {
     if (made === null) return;
@@ -126,9 +128,9 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
       {shown === null && <RepoChoice label="The repository to pair on" value={repo} onChange={setRepo} onSignedOut={onSignedOut} />}
       {shown === null && (
         <div className="ds-cluster">
-          <button type="button" className="ds-button" aria-describedby={`${id}-about`} disabled={busy || repo === null} onClick={make}>
+          <BusyButton aria-describedby={`${id}-about`} busy={busy === "make"} busyLabel="Making an invite" disabled={repo === null || (busy !== null && busy !== "make")} onClick={make}>
             Make an invite
-          </button>
+          </BusyButton>
         </div>
       )}
       {shown !== null && life !== null && (
@@ -155,11 +157,11 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
           <p data-testid="invite-life">{life.words}</p>
           <div className="ds-cluster">
             {life.open ? (
-              <button type="button" className="ds-button" disabled={busy} onClick={() => withdraw(shown.id)}>
+              <BusyButton busy={busy === shown.id} busyLabel="Withdrawing" disabled={busy !== null && busy !== shown.id} onClick={() => withdraw(shown.id)}>
                 Withdraw
-              </button>
+              </BusyButton>
             ) : (
-              <button type="button" className="ds-button" disabled={busy} onClick={() => setMade(null)}>
+              <button type="button" className="ds-button" disabled={busy !== null} onClick={() => setMade(null)}>
                 Make a new invite
               </button>
             )}
@@ -170,7 +172,7 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
         <div key={open.id} className="ds-settings-row" data-testid="open-invite">
           <div className="ds-settings-row__text">
             <p className="ds-settings-row__label">An invite is open</p>
-            <p className="ds-settings-row__description">{`Until ${clockOf(open.expiresAt)}. Botbench shows an invite only once, when it is made.`}</p>
+            <p className="ds-settings-row__description">{`Until ${clock(open.expiresAt)}. Botbench shows an invite only once, when it is made.`}</p>
             <dl className="ds-key-value">
               <Fact label="To pair on" mono theirs>
                 {open.repository}
@@ -178,9 +180,9 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
             </dl>
           </div>
           <div className="ds-settings-row__control">
-            <button type="button" className="ds-button" disabled={busy} onClick={() => withdraw(open.id)}>
+            <BusyButton busy={busy === open.id} busyLabel="Withdrawing" disabled={busy !== null && busy !== open.id} onClick={() => withdraw(open.id)}>
               Withdraw
-            </button>
+            </BusyButton>
           </div>
         </div>
       ))}
@@ -206,7 +208,7 @@ function Paste({ onPaired, onSignedOut }: { onPaired: () => void; onSignedOut: (
     setProblem(words(what, err));
   };
   const check = (): void => {
-    if (repo === null || text.trim() === "") return;
+    if (busy || repo === null || text.trim() === "") return;
     setBusy(true);
     setProblem(null);
     pasteInvite(text.trim(), repo)
@@ -250,9 +252,9 @@ function Paste({ onPaired, onSignedOut }: { onPaired: () => void; onSignedOut: (
           </div>
           <RepoChoice label="Your copy of the repository" value={repo} onChange={setRepo} onSignedOut={onSignedOut} />
           <div className="ds-cluster">
-            <button type="submit" className="ds-button" disabled={busy || repo === null || text.trim() === ""}>
+            <BusyButton type="submit" busy={busy} busyLabel="Checking" disabled={repo === null || text.trim() === ""}>
               Check the invite
-            </button>
+            </BusyButton>
           </div>
         </form>
       ) : (
@@ -274,9 +276,9 @@ function Paste({ onPaired, onSignedOut }: { onPaired: () => void; onSignedOut: (
           </dl>
           <p>{`Confirm sends ${pasted.name}'s workbench this workbench's name, address and key, and nothing else. Nothing more is sent until ${pasted.name} confirms your fingerprint too.`}</p>
           <div className="ds-cluster ds-gap-sm">
-            <button type="button" className="ds-button" aria-busy={busy || undefined} disabled={busy} onClick={confirm}>
+            <BusyButton busy={busy} busyLabel="Confirming" onClick={confirm}>
               Confirm
-            </button>
+            </BusyButton>
             <button type="button" className="ds-button" disabled={busy} onClick={() => setPasted(null)}>
               Cancel
             </button>
@@ -300,7 +302,8 @@ function Kinds({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut: () => 
   const changes = useContext(PeerChangesContext);
   const [kinds, setKinds] = useState<KindSettings | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // The switch whose change is being sent, as "send-question": it stays enabled and keeps the focus; the others wait.
+  const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
     getPeerKinds(pairing.id).then(
@@ -317,9 +320,10 @@ function Kinds({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut: () => 
   const name = pairing.peer.name;
   const change = (direction: "send" | "receive", kind: MessageKind, allowed: boolean): void => {
     // The switch moves at once, as the design system's switch does; a refusal puts it back and says so.
+    if (busy !== null) return;
     const before = kinds;
     if (kinds !== null) setKinds({ ...kinds, [direction]: { ...kinds[direction], [kind]: allowed } });
-    setBusy(true);
+    setBusy(`${direction}-${kind}`);
     setProblem(null);
     setPeerKind(pairing.id, direction, kind, allowed)
       .then(setKinds, (err: unknown) => {
@@ -327,7 +331,7 @@ function Kinds({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut: () => 
         setKinds(before);
         setProblem(words(`It was not changed, and is still ${before?.[direction][kind] ? "on" : "off"}.`, err));
       })
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
   const row = (direction: "send" | "receive", kind: MessageKind) => {
     const key = `${id}-${direction}-${kind}`;
@@ -352,7 +356,7 @@ function Kinds({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut: () => 
         </div>
         <div className="ds-settings-row__control">
           <div className="ds-select">
-            <select data-testid={`kind-${direction}-${kind}`} className="ds-field__control ds-select__control" id={key} value={kinds === null ? "" : kinds[direction][kind] ? "on" : "off"} disabled={kinds === null || busy} aria-describedby={`${key}-about`} onChange={(e) => change(direction, kind, e.currentTarget.value === "on")}>
+            <select data-testid={`kind-${direction}-${kind}`} className="ds-field__control ds-select__control" id={key} value={kinds === null ? "" : kinds[direction][kind] ? "on" : "off"} disabled={kinds === null || (busy !== null && busy !== `${direction}-${kind}`)} aria-busy={busy === `${direction}-${kind}` || undefined} aria-describedby={`${key}-about`} onChange={(e) => change(direction, kind, e.currentTarget.value === "on")}>
               {kinds === null && <option value="">Checking</option>}
               <option value="on">On</option>
               <option value="off">Off</option>
@@ -421,7 +425,7 @@ function Conversations({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut
                   <span data-ds-content="" className="ds-list__primary">
                     {t.first}
                   </span>
-                  <span className="ds-list__secondary">{`${t.rows.length} ${t.rows.length === 1 ? "message" : "messages"}${t.waiting ? " · Waits for you" : ""} · ${t.rows.at(-1)!.state}`}</span>
+                  <span className="ds-list__secondary">{`${counted(t.rows.length, "message", "messages")}${t.waiting ? " · Waits for you" : ""} · ${t.rows.at(-1)!.state}`}</span>
                 </span>
               </a>
             </li>
@@ -441,18 +445,19 @@ function Conversations({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut
 
 /** The pairing in force, or on its way: its facts, the fingerprints, the owner's steps, and End pairing. */
 function PairingView({ pairing, onChanged, onSignedOut }: { pairing: Pairing; onChanged: () => void; onSignedOut: () => void }) {
-  const [busy, setBusy] = useState(false);
+  // The step being sent: its button is busy and keeps the focus; the others wait.
+  const [busy, setBusy] = useState<"confirm" | "refuse" | "end" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const name = pairing.peer.name;
-  const step = (what: string, run: () => Promise<unknown>) => (): void => {
-    setBusy(true);
+  const step = (which: "confirm" | "refuse" | "end", what: string, run: () => Promise<unknown>) => (): void => {
+    setBusy(which);
     setProblem(null);
     run()
       .then(onChanged, (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setProblem(words(what, err));
       })
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
   return (
     <div className="ds-stack ds-gap-md" data-testid="pairing" data-state={pairing.state}>
@@ -466,19 +471,19 @@ function PairingView({ pairing, onChanged, onSignedOut }: { pairing: Pairing; on
         <Fact label="Repository" mono theirs testId="pairing-repository">
           {pairing.repository}
         </Fact>
-        <Fact label={pairing.state === "in_force" ? "Paired since" : "Asked"}>{dateOf(pairing.createdAt)}</Fact>
+        <Fact label={pairing.state === "in_force" ? "Paired since" : "Asked"}>{fullDate(pairing.createdAt)}</Fact>
       </dl>
       <Fingerprints peer={pairing.peer} own={pairing.ownFingerprint} />
       {pairing.state === "waiting_for_owner" && (
         <div className="ds-stack ds-gap-sm">
           <p>{`Ask ${name} to read out the fingerprint their screen shows for their workbench. Confirm only if it is the one above; ${name} checks yours the same way.`}</p>
           <div className="ds-cluster ds-gap-sm">
-            <button type="button" className="ds-button" disabled={busy} onClick={step("Nothing was confirmed.", () => confirmPairing(pairing.id))}>
+            <BusyButton busy={busy === "confirm"} busyLabel="Confirming" disabled={busy !== null && busy !== "confirm"} onClick={step("confirm", "Nothing was confirmed.", () => confirmPairing(pairing.id))}>
               Confirm
-            </button>
-            <button type="button" className="ds-button" disabled={busy} onClick={step("Nothing was refused.", () => refusePairing(pairing.id))}>
+            </BusyButton>
+            <BusyButton busy={busy === "refuse"} busyLabel="Refusing" disabled={busy !== null && busy !== "refuse"} onClick={step("refuse", "Nothing was refused.", () => refusePairing(pairing.id))}>
               Refuse
-            </button>
+            </BusyButton>
           </div>
         </div>
       )}
@@ -496,7 +501,7 @@ function PairingView({ pairing, onChanged, onSignedOut }: { pairing: Pairing; on
           <p className="ds-settings-row__description">{`${name}'s workbench can no longer send you messages, and nothing more is sent to it.`}</p>
         </div>
         <div className="ds-settings-row__control">
-          <ConfirmAction label="End pairing" title={`End pairing with ${name}?`} confirmLabel="End pairing" cancelLabel="Keep the pairing" disabled={busy} losing testId="end-pairing-dialog" onConfirm={step("The pairing did not end.", () => endPairing(pairing.id))}>
+          <ConfirmAction label="End pairing" title={`End pairing with ${name}?`} confirmLabel="End pairing" cancelLabel="Keep the pairing" disabled={busy !== null && busy !== "end"} busy={busy === "end"} busyLabel="Ending pairing" losing testId="end-pairing-dialog" onConfirm={step("end", "The pairing did not end.", () => endPairing(pairing.id))}>
             <p>{`${name}'s workbench can no longer send you messages, and nothing more is sent to it. To work together again, one of you sends a new invite.`}</p>
           </ConfirmAction>
         </div>
@@ -571,7 +576,7 @@ export function PairedSettings({ onSignedOut }: { onSignedOut: () => void }) {
       {overview !== null && overview.listening !== null && live === null && (
         <>
           {ended !== null && (
-            <p data-testid="pairing-ended">{`The pairing with ${ended.peer.name} ended${ended.endedAt === null ? "" : ` on ${dateOf(ended.endedAt)}`}. Its messages are refused, and nothing more is sent to it. To work together again, one of you sends a new invite.`}</p>
+            <p data-testid="pairing-ended">{`The pairing with ${ended.peer.name} ended${ended.endedAt === null ? "" : ` on ${fullDate(ended.endedAt)}`}. Its messages are refused, and nothing more is sent to it. To work together again, one of you sends a new invite.`}</p>
           )}
           <p className="ds-settings-row__description">{`The first version pairs with one workbench at a time, on one repository. Both workbenches' listeners must be on this Mac's loopback address or a private network; this one listens on ${overview.listening}.`}</p>
           {overview.fingerprint !== null && (

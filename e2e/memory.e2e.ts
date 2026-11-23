@@ -62,14 +62,32 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("Botbench removes it from memory and keeps no copy there. Agents are no longer given it. Chats and runs that already had it keep their words.");
     await checkDesign(page, "settings, memory, forget this note?");
+    // While the request is held, the pressed button says Forgetting and still names its note, is busy, stays enabled and keeps the focus the closing dialog gave back to it.
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(/\/api\/memory\/\d+$/, async (route) => {
+      if (route.request().method() === "DELETE") await held;
+      await route.continue();
+    });
     await dialog.getByRole("button", { name: "Forget" }).click();
+    const forgetting = rows.first().getByRole("button", { name: "Forgetting note 1: run npm run lint before committing", exact: true });
+    await expect(forgetting).toHaveAttribute("aria-busy", "true");
+    await expect(forgetting).toBeEnabled();
+    await expect(forgetting).toBeFocused();
+    await expect(memory.getByRole("button", { name: /^Forget note 2: / })).toBeDisabled();
+    await checkDesign(page, "settings, memory, forgetting a note");
+    release();
     await expect(rows).toHaveCount(1);
+    await page.unroute(/\/api\/memory\/\d+$/);
+    await expect(memory.getByRole("button", { name: /^Edit note 1: the staging database/ })).toBeFocused();
     expect(fs.existsSync(file)).toBe(false);
     for (const name of fs.readdirSync(memoryFolder(home))) expect(fs.readFileSync(path.join(memoryFolder(home), name), "utf8")).not.toContain("npm run lint");
 
     await memory.getByRole("button", { name: /^Forget note 1: / }).click();
     await page.getByTestId(/^memory-forget-/).getByRole("button", { name: "Forget" }).click();
     await expect(memory.getByText("No notes yet")).toBeVisible();
+    // No note is left to take the focus: the section's heading has it.
+    await expect(memory.getByRole("heading", { name: "Memory" })).toBeFocused();
     await checkDesign(page, "settings, memory, no notes");
   } finally {
     await botbench.stop();

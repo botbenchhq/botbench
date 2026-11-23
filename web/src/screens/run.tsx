@@ -15,7 +15,8 @@ import { cancelStatement } from "../app/row-menu.ts";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { runSentence, runTaskNote } from "../components/run-status.ts";
+import { runSentence, runTaskNote, tasksWord } from "../components/run-status.ts";
+import { counted, fullDate } from "../app/format.ts";
 import { offersMerge, statusLook, statusWord, waitingForWords, waitingWords } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
@@ -24,9 +25,6 @@ import { RunTimeline } from "../components/run-timeline.tsx";
 import { StricterMode } from "../components/mode-change.tsx";
 
 const UNDO_SECONDS = 10;
-/** When something happened, as the run's history says it. */
-const when = (iso: string): string => new Date(iso).toLocaleString();
-const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 /** Which row of the plan is being edited: one of its tasks by position from 0, or a new one at the end. */
 type Editing = PlanEdit & { problem: { title?: string; criteria?: string; save?: string } };
 /** A task that was just deleted and can still be put back. */
@@ -366,7 +364,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
     <Transcript events={shown} working={working} modelName={nameOf} promptBy="Botbench, to Claude Code" folded={!planning} />
   );
   const cancel = run !== null && (planning || gate || building) && (
-    <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null} losing testId="cancel-run" onConfirm={() => decide("cancel")}>
+    <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null && busy !== "cancel"} busy={busy === "cancel"} busyLabel="Cancelling" losing testId="cancel-run" onConfirm={() => decide("cancel")}>
       <p>{cancelStatement(run.status, run.plan.length)}</p>
     </ConfirmAction>
   );
@@ -443,7 +441,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   <dd className="ds-key-value__value">
                     <ul data-testid="run-mode-changes" className="ds-stack ds-gap-xs">
                       {run.modeChanges.map((change) => (
-                        <li key={change.at + change.to}>{`${when(change.at)}: ${change.words}`}</li>
+                        <li key={change.at + change.to}>{`${fullDate(change.at)}: ${change.words}`}</li>
                       ))}
                     </ul>
                   </dd>
@@ -648,7 +646,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
             <p className="ds-toast__message">
               <span className="ds-toast__label">Done:</span> {`Task ${deleted.at + 1} deleted from the plan.`}
               <span className="ds-visually-hidden">{` You have ${UNDO_SECONDS} seconds to undo.`}</span>
-              {!deleted.undoing && <span aria-hidden="true" className="ds-undo-toast__countdown">{` ${deleted.left} ${deleted.left === 1 ? "second" : "seconds"} left to undo`}</span>}
+              {!deleted.undoing && <span aria-hidden="true" className="ds-undo-toast__countdown">{` ${counted(deleted.left, "second", "seconds")} left to undo`}</span>}
             </p>
             <button type="button" aria-busy={deleted.undoing} onClick={undo} className="ds-button ds-button--small ds-toast__action">
               {deleted.undoing ? "Putting the task back" : "Undo"}
