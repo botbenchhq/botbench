@@ -11,7 +11,7 @@ import type { StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, type Tasks } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
-import { loadPlanRecording, planReplayDriver, THREE_TASKS } from "../support/replay-plan.ts";
+import { loadPlanRecording, NO_TASKS, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
 import { reviewReplayDriver } from "../support/replay-review.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
@@ -32,9 +32,10 @@ interface Line {
   builder: BuildReplay;
   tasks: Tasks;
   runs: Runs;
+  planner: PlanReplay;
 }
 
-async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCommand[]; reviewer?: boolean; setup?: string; protectedPaths?: string[] } = {}): Promise<Line> {
+async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCommand[]; reviewer?: boolean; hold?: readonly number[]; planner?: readonly number[]; setup?: string; protectedPaths?: string[] } = {}): Promise<Line> {
   const dir = tempDir("botbench-modes-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -42,13 +43,13 @@ async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCom
   const base = initRepo(repo);
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
-  const builder = buildReplayDriver(script);
+  const builder = buildReplayDriver(script, o.hold === undefined ? {} : { hold: o.hold });
   const reviewers = o.reviewer ? { codex: reviewReplayDriver("review") } : {};
   const checks = o.checks ?? [cmd("test -f hello.txt")];
   const repoCommands = () => ({ setup: [cmd(o.setup ?? "printf 'hi\\n' > hello.txt")], checks });
   const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", reviewers, repoCommands, ...(o.protectedPaths ? { protectedPaths: () => o.protectedPaths! } : {}), onEvent: () => {}, onTaskChange: () => {} });
-  // The planner is a replayed real planner session that gave a plan of three tasks.
-  const planner = planReplayDriver(loadPlanRecording(), [THREE_TASKS]);
+  // The planner is a replayed real planner session that gave a plan of three tasks (or the turns the test names).
+  const planner = planReplayDriver(loadPlanRecording(), o.planner ?? [THREE_TASKS]);
   const runs = createRuns({ db, home, driver: planner, broker, model: "haiku", implementerModel: "haiku", reviewers, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();
@@ -57,7 +58,7 @@ async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCom
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  return { db, repo, base, broker, builder, tasks, runs };
+  return { db, repo, base, broker, builder, tasks, runs, planner };
 }
 
 /** A run of one task in `mode`, its plan stored without a planner, approved the way its mode approves it. */
@@ -100,7 +101,8 @@ test("manual: the same command asks the owner, as it always did", { skip: NO_SAN
 
 test("fully autonomous: building starts without the owner approving the plan, and each task whose checks pass is accepted without the owner, keeping its branch", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done", "done"]);
-  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "full" });
+  // Not kept to one task, which a fully autonomous run is unless the owner says otherwise.
+  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "full", oneTask: false });
   assert.equal(run.mode, "full");
   await e.runs.idle();
   await e.tasks.idle();
@@ -158,6 +160,57 @@ test("fully autonomous: a dangerous command is refused without asking anyone, th
   const told = e.db.prepare("SELECT payload FROM events WHERE type = 'permission_resolved'").all().map((row) => JSON.parse(String(row.payload)));
   assert.deepEqual(told.map((event) => event.decision), ["denied"]);
   assert.equal(task.reason, "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
+  assert.equal(taskDecision(e.db, id), null);
+  // It is on the safety floor, so it still blocks the accept.
+  assert.deepEqual(refused.map((entry) => entry.refusal), ["floor"]);
+});
+
+/**
+ * A run of one task in `mode` whose builder's replayed turn is held at its start, while the test puts `requests` to the
+ * real broker as that attempt's CLI would put them when its hook never reported the call (so the request cannot be
+ * tied to a checked call, the one way a confined command is still refused). Then the turn goes on and the task ends.
+ */
+async function heldTask(e: Line, requests: readonly { command: string; input: Record<string, unknown> }[]): Promise<number> {
+  const run = createRun(e.db, { repo: e.repo, prompt: "Add a file", baseCommit: e.base, mode: "full" });
+  const stored = storePlan(e.db, run.id, ONE);
+  const id = e.runs.approve(stored.id, stored.planVersion).tasks[0]!.id;
+  await e.builder.held(0);
+  const attemptId = Number(e.db.prepare("SELECT MAX(id) AS id FROM attempts").get()!.id);
+  for (const [i, r] of requests.entries()) {
+    const answer = await e.broker.request({ taskId: id, attemptId, role: "implementer", tool: "Bash", command: r.command, input: r.input, reason: null, toolCallId: `toolu_unreported_${i}` });
+    assert.equal(answer.decision, "decline", r.command);
+    assert.notEqual(answer.refused, null, r.command);
+  }
+  e.builder.release(0);
+  await e.tasks.idle();
+  return id;
+}
+
+test("fully autonomous: a harmless refused command no longer blocks the accept; it is still recorded, in words, and named in the accept's reasons", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done"], { hold: [0] });
+  const id = await heldTask(e, [{ command: "ls src", input: { command: "ls src", description: "List the sources" } }]);
+  const task = getTask(e.db, id)!;
+  assert.equal(task.status, "accepted", task.reason ?? "");
+  assert.equal(listApprovals(e.db).length, 0, "nobody was asked");
+  const refused = actionLog(e.db, id).filter((entry) => entry.rule === "mode_refused");
+  assert.deepEqual(refused.map((entry) => [entry.command, entry.refusal]), [["ls src", "read_only"]]);
+  // Activity shows the entry with this line under "Refused without asking: fully autonomous".
+  assert.match(refused[0]!.detail!, / It only reads files in the task's copy, so it does not stop the task being accepted\.$/);
+  const decision = taskDecision(e.db, id)!;
+  assert.equal(decision.decidedBy, "mode");
+  assert.equal(decision.reasons, "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src) was not on the always-ask list and would not have reached outside the task's copy.");
+});
+
+test("fully autonomous: beside a harmless refusal, an unconfined one still blocks the accept and is the one named", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done"], { hold: [0] });
+  const id = await heldTask(e, [
+    { command: "ls src", input: { command: "ls src" } },
+    { command: "npm test", input: { command: "npm test" } },
+  ]);
+  const task = getTask(e.db, id)!;
+  assert.equal(task.status, "awaiting_decision");
+  assert.deepEqual(actionLog(e.db, id).filter((entry) => entry.rule === "mode_refused").map((entry) => entry.refusal), ["read_only", "unconfined"]);
+  assert.equal(task.reason, "It needs your review: Botbench refused something an agent asked to do during this task (npm test).");
   assert.equal(taskDecision(e.db, id), null);
 });
 
@@ -230,4 +283,60 @@ test("only a fully autonomous run's task, whose checks passed, can be decided by
     () => e.db.prepare("INSERT INTO decisions (task_id, decided_by, decision, branch, branch_name, head_commit, leftovers, decided_at, reasons) VALUES (?, 'mode', 'accept', 'kept', 'b', NULL, '[]', 'now', 'r')").run(id),
     /only a fully autonomous run decides without the owner/,
   );
+});
+
+// Keep it to one task. The planner is the replayed real planner session; its turn of three tasks stands for a planner
+// that planned several when asked for one.
+const MERGED = {
+  title: "Add a greeting file; Add a farewell file; Describe both files in the README",
+  criteria: ["hello.txt exists at the top of the repository", "hello.txt holds the single line hi", "bye.txt exists at the top of the repository", "README.md names hello.txt", "README.md names bye.txt"],
+};
+
+test("kept to one task, fully autonomous by default: the planner is told one task, a plan of three is sent back once, still three is merged by Botbench, and that one task is built and accepted", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done"], { planner: [THREE_TASKS, THREE_TASKS] });
+  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "full" });
+  assert.equal(run.oneTask, true, "on by default in fully autonomous");
+  await e.runs.idle();
+  await e.tasks.idle();
+  // Told one task, then sent back once with the plan's count, and nothing more.
+  assert.equal(e.planner.prompts.length, 2);
+  assert.match(e.planner.prompts[0]!, /- Exactly 1 task: the owner chose to keep this run to one task/);
+  assert.doesNotMatch(e.planner.prompts[0]!, /Between 1 and 20 tasks/);
+  assert.match(e.planner.prompts[1]!, /^Botbench could not accept that plan: the owner chose to keep this run to one task, and the plan holds 3 tasks\./);
+  // Merged: the titles joined in order, the criteria one after another; one task built from it.
+  const tasks = runTasks(e.db, run.id);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0]!.prompt, `${MERGED.title}\n\nAcceptance criteria:\n${MERGED.criteria.map((c) => `- ${c}`).join("\n")}`);
+  assert.equal(e.builder.prompts.length, 1, "one build");
+  assert.equal(tasks[0]!.status, "accepted", tasks[0]!.reason ?? "");
+  const events = e.db.prepare("SELECT detail FROM run_events WHERE run_id = ? ORDER BY id").all(run.id).map((row) => String(row.detail));
+  assert.ok(events.includes("plan of 1 task; This run is kept to one task. Claude Code planned 3 tasks even when asked again for one, so Botbench joined them into one task: their titles in order, and all of their criteria."), events.join("\n"));
+});
+
+test("kept to one task in a manual run: a send-back answered with no plan merges the plan of three, which waits for the owner as one task with the reason", async (t) => {
+  const e = await line(t, [], { planner: [THREE_TASKS, NO_TASKS] });
+  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "manual", oneTask: true });
+  await e.runs.idle();
+  assert.equal(e.planner.prompts.length, 2, "sent back once");
+  const waiting = getRun(e.db, run.id)!;
+  assert.equal(waiting.status, "awaiting_plan_approval");
+  assert.match(waiting.reason ?? "", /^This run is kept to one task\. Claude Code planned 3 tasks even when asked again for one, so Botbench joined them/);
+  const plan = e.db.prepare("SELECT title, criteria FROM plan_tasks WHERE run_id = ?").all(run.id).map((row) => ({ title: String(row.title), criteria: JSON.parse(String(row.criteria)) }));
+  assert.deepEqual(plan, [MERGED]);
+  // The owner cannot make it several again: the edit is refused and the plan is as it was.
+  assert.throws(() => e.runs.editPlan(run.id, [MERGED, { title: "Another", criteria: ["It exists"] }], waiting.planVersion), (err: unknown) => err instanceof RunError && err.status === 400 && err.message === "This run is kept to one task, so its plan holds exactly 1 task; this one holds 2 tasks. Put the work in one task.");
+  assert.equal(Number(e.db.prepare("SELECT COUNT(*) AS n FROM plan_tasks WHERE run_id = ?").get(run.id)!.n), 1);
+});
+
+test("not kept to one task: a manual run takes the plan of three as it is, and its planner was told it may plan up to 20", async (t) => {
+  const e = await line(t, [], { planner: [THREE_TASKS] });
+  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "manual" });
+  assert.equal(run.oneTask, false, "off by default outside fully autonomous");
+  await e.runs.idle();
+  assert.equal(e.planner.prompts.length, 1);
+  assert.match(e.planner.prompts[0]!, /Between 1 and 20 tasks/);
+  assert.equal(Number(e.db.prepare("SELECT COUNT(*) AS n FROM plan_tasks WHERE run_id = ?").get(run.id)!.n), 3);
+  // Chosen when the run starts and never changed.
+  assert.throws(() => e.db.prepare("UPDATE runs SET one_task = 1 WHERE id = ?").run(run.id), /chosen when it starts and never changed/);
+  await assert.rejects(e.runs.start({ repo: e.repo, prompt: "Add a file", oneTask: "yes" }), /"oneTask" must be true \(keep the run to one task\) or false\./);
 });
