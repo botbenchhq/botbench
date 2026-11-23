@@ -101,26 +101,43 @@ let held: HandOff | null = null;
 /** Keep the note for the composer, which takes it once. Nothing leaves the device. */
 export function handOff(given: HandOff, storage: () => HandOffStorage = tabStorage): void {
   held = given;
+  let kept: HandOffStorage;
   try {
-    storage().setItem(HAND_OFF_KEY, JSON.stringify(given));
+    kept = storage();
   } catch {
     // Private browsing may refuse storage; `held` still carries it within this page.
+    return;
+  }
+  // An older note is never left behind: it goes first, and again if this one could not be written (storage full).
+  try {
+    kept.removeItem(HAND_OFF_KEY);
+    kept.setItem(HAND_OFF_KEY, JSON.stringify(given));
+  } catch {
+    try {
+      kept.removeItem(HAND_OFF_KEY);
+    } catch {
+      // Nothing more can be done with this storage; `held` carries the note within this page.
+    }
   }
 }
 
-/** The note handed to the composer, once: whatever kept it, it is gone after this is read. */
+/**
+ * The note handed to the composer, once: whatever kept it, it is gone after this is read. The one held in this page is
+ * the newest and wins; the stored one counts only after a reload, when nothing is held.
+ */
 export function takeHandOff(storage: () => HandOffStorage = tabStorage): HandOff | null {
-  let found: HandOff | null = held;
+  const inPage = held;
   held = null;
+  let stored: HandOff | null = null;
   try {
     const kept = storage();
     const raw = kept.getItem(HAND_OFF_KEY);
     kept.removeItem(HAND_OFF_KEY);
-    if (raw !== null) found = readHandOff(raw);
+    if (raw !== null) stored = readHandOff(raw);
   } catch {
     // No storage: what was held in this page stands.
   }
-  return found;
+  return inPage ?? stored;
 }
 
 /** A stored hand-off, each part checked: anything that is not one is none. */

@@ -81,5 +81,13 @@ test("the note handed to the composer is taken exactly once, with storage refuse
     assert.deepEqual(takeHandOff(storage), given);
     assert.equal(tab.getItem("botbench.runNote"), null);
     assert.equal(takeHandOff(storage), null);
+
+    // An older note left in the tab's storage (its newer write refused) never wins over the newer one held in this
+    // page, and is removed with it.
+    handOff(given);
+    tab.setItem("botbench.runNote", JSON.stringify({ source: { kind: "task", id: 12 }, note: "An older note.", repo: REPO }));
+    assert.deepEqual(takeHandOff(storage), given);
+    assert.equal(tab.getItem("botbench.runNote"), null);
+    assert.equal(takeHandOff(storage), null);
   }
 });
