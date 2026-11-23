@@ -19,16 +19,17 @@ const STATUS_WORD: Record<TaskStatus, string> = {
 };
 
 /**
- * A task waiting for a usage limit, in words, with the time it tries again in this device's own time and as its locale
- * writes a clock and a day: "at 14:30" the same day, with the day named on another. Without a time, only the wait; once
- * the time has come, that it is trying now.
+ * A task waiting for a usage limit, in words, with the time it tries again in this device's own time: "at 14:30" the same
+ * day, with the day named on another. Without a time, only the wait; once the time has come, that it is trying now.
+ * The clock is in the server's fixed form, not the reader's region's, because the server's own restart line
+ * ("Botbench restarted at 14:02 …") is shown on the same screens (app/format.ts).
  */
 export function waitingWords(retryAt: string | null, now = new Date(), where: Where = {}): string {
   const base = "Waiting for a usage limit to reset.";
   const at = retryAt === null ? Number.NaN : Date.parse(retryAt);
   if (!Number.isFinite(at)) return base;
   if (at <= now.getTime()) return `${base} It is trying again now.`;
-  return `${base} It will try again ${sameDay(at, now, where) ? `at ${clock(at, where)}` : `on ${dayAndClock(at, { ...where, weekday: true })}`}.`;
+  return `${base} It will try again ${sameDay(at, now, where) ? `at ${clock(at, { ...where, serverForm: true })}` : `on ${dayAndClock(at, { ...where, serverForm: true, weekday: true })}`}.`;
 }
 
 /** Whether the task stands still until the owner answers a request of its agent. */

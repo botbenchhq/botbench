@@ -1,5 +1,5 @@
 import { agentName } from "../app/chat.ts";
-import { counted, duration } from "../app/format.ts";
+import { counted, duration, number, plural } from "../app/format.ts";
 import type { ChecksMark, CommandList, Evidence, Refinement, Review } from "../api/client.ts";
 import { roundLabel } from "./command-rounds.ts";
 import { failureExtract } from "./failure-extract.ts";
@@ -18,7 +18,7 @@ export function MachineChecksNote({ rows }: { rows: readonly Evidence[] }) {
   if (machine.length === 0) return null;
   return (
     <div data-testid="machine-checks" className="ds-stack ds-gap-xs">
-      <p>{machine.length === 1 ? "One check needs more than a check's sandbox gives, so Botbench ran it itself, after the others:" : `${machine.length} checks need more than a check's sandbox gives, so Botbench ran them itself, after the others:`}</p>
+      <p>{plural(machine.length, "One check needs more than a check's sandbox gives, so Botbench ran it itself, after the others:", `${number(machine.length)} checks need more than a check's sandbox gives, so Botbench ran them itself, after the others:`)}</p>
       <ul className="ds-list ds-list--dense">
         {machine.map((row) => (
           <li key={row.id} className="ds-list__row">

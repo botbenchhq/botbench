@@ -138,8 +138,9 @@ test("a task waiting for a usage limit says so in plain words, naming the time i
   assert.equal(statusSentence(waiting, at(22, 9, 5), GB), "Waiting for a usage limit to reset. It will try again at 14:30.");
   // Another day is named.
   assert.equal(statusSentence({ ...waiting, retryAt: at(24, 8, 0).toISOString() }, at(22, 9, 5), GB), "Waiting for a usage limit to reset. It will try again on Tuesday 24 November at 08:00.");
-  // The clock, the day's order and the day itself are the reader's: twelve hours in the United States, and already tomorrow in Tokyo.
-  assert.match(statusSentence(waiting, at(22, 9, 5), { locale: "en-US", timeZone: "Europe/London" }), /^Waiting for a usage limit to reset\. It will try again at 2:30\sPM\.$/u);
+  // The clock keeps the server's form for every reader, as the server's own restart line beside it does; the time zone is the reader's, where it is already tomorrow in Tokyo.
+  for (const locale of ["en-US", "de-DE", "ar-EG"]) assert.equal(statusSentence(waiting, at(22, 9, 5), { locale, timeZone: "Europe/London" }), "Waiting for a usage limit to reset. It will try again at 14:30.", locale);
+  assert.equal(statusSentence({ ...waiting, retryAt: at(24, 8, 0).toISOString() }, at(22, 9, 5), { locale: "en-US", timeZone: "Europe/London" }), "Waiting for a usage limit to reset. It will try again on Tuesday 24 November at 08:00.");
   assert.equal(statusSentence({ ...waiting, retryAt: at(22, 16, 30).toISOString() }, at(22, 9, 5), { locale: "en-GB", timeZone: "Asia/Tokyo" }), "Waiting for a usage limit to reset. It will try again on Monday 23 November at 01:30.");
   // The time has come and the task is being started again.
   assert.equal(statusSentence(waiting, at(22, 14, 31), GB), "Waiting for a usage limit to reset. It is trying again now.");

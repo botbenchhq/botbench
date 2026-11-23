@@ -1,7 +1,7 @@
 import type { AuthorRelation } from "../../../src/github.ts";
 import type { Proposal, WatchStatus } from "../api/client.ts";
 import { folderName } from "./composer.ts";
-import { clock } from "./format.ts";
+import { clock, number, plural } from "./format.ts";
 
 /*
  * The words of the issue watch on Work and in Settings (src/engine/watch.ts), decided without a browser. A proposal's
@@ -47,7 +47,7 @@ export function watchStateWords(s: Pick<WatchStatus, "state" | "checkedAt">): st
 
 /** What a watched repository's row in Settings says about it, the label's warning included. */
 export function watchAbout(s: Pick<WatchStatus, "label" | "intervalMinutes" | "repository">): string {
-  const every = s.intervalMinutes === 1 ? "every minute" : `every ${s.intervalMinutes} minutes`;
+  const every = `every ${plural(s.intervalMinutes, "minute", `${number(s.intervalMinutes)} minutes`)}`;
   return `Botbench looks ${every} for open issues${s.repository === null ? "" : ` of ${s.repository}`} with the label ${s.label}, and shows each new one on Work for you to start or dismiss. It never starts a run by itself. The label is what makes an issue a proposal, but it is not a reason to trust one: anyone with triage access to the repository can apply it. Each proposal says who wrote the issue, its text is treated as outside text, and a run from it is never fully autonomous.`;
 }
 

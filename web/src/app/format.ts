@@ -2,25 +2,64 @@
  * How the screens write a number, a date, a clock, a duration and a counted noun: the one owner of each rule. Pure, so
  * the tests read it without a browser (test/format.test.ts).
  *
- * The interface's words are English and stay English. The digits, the order of a date and the kind of clock are the
- * reader's own: every function formats with the browser's locale and time zone unless it is given others, which only
- * the tests do.
+ * The interface's words are English and stay English, a day's and a month's name and the digits included. The
+ * grouping of a number, the order of a date and the kind of clock are those of the reader's region: every function
+ * formats in English as it is written where the browser's language is from ("fr-FR" reads as "en-FR": "Tuesday 24
+ * November", "14:30", "12 345,5"), in the browser's time zone, unless it is given others, which only the tests do.
+ *
+ * One form does not follow the region. The server writes a clock into some of its sentences in a fixed form
+ * ("Botbench restarted at 14:02", "on Monday 23 November at 14:02": src/engine/task.ts `clockWords`), and a sentence of
+ * the client's shown beside one must not disagree with it. `serverForm` gives that form (a 24-hour clock, the day before
+ * the month), still in the reader's time zone. It is used by the sentence of a task waiting for a usage limit
+ * (components/task-status.ts `waitingWords`), on the task and on its run's row, and by nothing else.
+ *
+ * What is deliberately not here:
+ * - a choice between two sentences that say different things, not a noun's number: "It waited … for you." or "They
+ *   waited … in the middle, … at most." (app/paired-words.ts), "Claude Code only" or a list (app/handoff-words.ts
+ *   `orderWords`), characters for a one-line command and lines for a longer one (screens/task.tsx), a list of one
+ *   item or of several joined with "and", and "once" for a count of 1 (components/approval-card.tsx `times`);
+ * - `noteTooLong` (app/run-source.ts), which repeats the server's own sentence, digit for digit, so that the composer
+ *   and the server refuse a note in the same words;
+ * - `limitName` (app/composer.ts), an approval time limit named by its largest whole unit ("1 hour", "1 day"), which
+ *   `duration(…, "words")` does not say ("60 minutes", "24 hours").
  */
 
-/** Whose conventions to format with. Left out, the browser's own locale and time zone. */
+/**
+ * Whose conventions to format with. Left out, the browser's own: `locale` is a reader's language tag ("de-DE"), of
+ * which only the region is used, and `timeZone` an IANA zone.
+ */
 export interface Where {
   locale?: string | undefined;
   timeZone?: string | undefined;
 }
 
+/** A clock or a day in the form the server writes them, whatever the reader's region: "14:02", "Monday 23 November". */
+export type Clocked = Where & { serverForm?: boolean };
+
+/** The form of the server's own clock sentences: English with a 24-hour clock and the day before the month. */
+const SERVER_FORM = "en-GB";
+
+/** English as it is written in the region of a language tag: "de-DE" and "de" give "en-DE", "en-US" itself; "en" when the tag names no region or is not one. */
+export function englishOf(tag: string | undefined): string {
+  try {
+    const region = tag === undefined ? undefined : new Intl.Locale(tag).maximize().region;
+    return region === undefined ? "en" : `en-${region}`;
+  } catch {
+    return "en";
+  }
+}
+
+/** The locale to format with: English, in the region of the locale given or of the browser's language. */
+const localeOf = (where: Clocked): string => (where.serverForm === true ? SERVER_FORM : englishOf(where.locale ?? (typeof navigator === "undefined" ? undefined : navigator.language)));
+
 /** An instant as the screens hold one: the stored ISO text, milliseconds, or a Date. */
 export type Instant = string | number | Date;
 
 const dateOf = (at: Instant): Date => (at instanceof Date ? at : new Date(at));
-const shaped = (at: Instant, where: Where, shape: Intl.DateTimeFormatOptions): string => new Intl.DateTimeFormat(where.locale, { ...shape, timeZone: where.timeZone }).format(dateOf(at));
+const shaped = (at: Instant, where: Clocked, shape: Intl.DateTimeFormatOptions): string => new Intl.DateTimeFormat(localeOf(where), { ...shape, timeZone: where.timeZone }).format(dateOf(at));
 
-/** A number with the reader's grouping and decimal mark: "1,234,567", or "1.234.567" for a German reader. */
-export const number = (n: number, where: Where = {}): string => new Intl.NumberFormat(where.locale).format(n);
+/** A number with the grouping and decimal mark of the reader's region: "1,234,567", or "1.234.567" for a reader in Germany. */
+export const number = (n: number, where: Where = {}): string => new Intl.NumberFormat(localeOf(where)).format(n);
 
 /** The noun for a count: `one` for exactly 1, `many` for every other count, 0 included. */
 export const plural = (count: number, one: string, many: string): string => (count === 1 ? one : many);
@@ -28,14 +67,14 @@ export const plural = (count: number, one: string, many: string): string => (cou
 /** A count with its noun: "1 task", "0 tasks", "12,345 tokens". */
 export const counted = (count: number, one: string, many: string, where: Where = {}): string => `${number(count, where)} ${plural(count, one, many)}`;
 
-/** A time of day: "14:30", or "2:30 PM" where the reader's locale uses a twelve-hour clock. */
-export const clock = (at: Instant, where: Where = {}): string => shaped(at, where, { timeStyle: "short" });
+/** A time of day: "14:30", or "2:30 PM" where the reader's region uses a twelve-hour clock; always "14:30" in the server's form. */
+export const clock = (at: Instant, where: Clocked = {}): string => shaped(at, where, { timeStyle: "short" });
 
 /** A day and its clock, without the year: "24 November at 08:05"; with `weekday`, "Tuesday 24 November at 08:05". */
-export const dayAndClock = (at: Instant, where: Where & { weekday?: boolean } = {}): string =>
+export const dayAndClock = (at: Instant, where: Clocked & { weekday?: boolean } = {}): string =>
   `${shaped(at, where, { ...(where.weekday === true ? { weekday: "long" } : {}), day: "numeric", month: "long" })} at ${clock(at, where)}`;
 
-/** A date with its year and the clock to the second, as the reader's locale writes them: "24/11/2026, 08:05:09". */
+/** A date with its year and the clock to the second, as the reader's region writes them: "24/11/2026, 08:05:09". */
 export const fullDate = (at: Instant, where: Where = {}): string => shaped(at, where, { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
 
 /** Whether two instants fall on the same calendar day where the reader is. */
@@ -62,10 +101,9 @@ export function duration(ms: number, style: DurationStyle, where: Where = {}): {
     if (minutes < 48 * 60) return { words: counted(Math.floor(minutes / 60), "hour", "hours", where), iso: `PT${Math.floor(minutes / 60)}H` };
     return { words: counted(Math.floor(minutes / (24 * 60)), "day", "days", where), iso: `P${Math.floor(minutes / (24 * 60))}D` };
   }
-  if (style === "units" && length < 1000) {
-    const whole = Math.round(length);
-    return { words: `${whole} ms`, iso: `PT${whole / 1000}S` };
-  }
+  // Whole milliseconds under a second; 999.5 ms and more is a second, never "1000 ms".
+  const whole = Math.round(length);
+  if (style === "units" && whole < 1000) return { words: `${whole} ms`, iso: `PT${whole / 1000}S` };
   if (style === "units" && length < 10_000) {
     const s = Math.round(length / 100) / 10;
     return { words: `${number(s, where)} s`, iso: `PT${s}S` };

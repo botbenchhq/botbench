@@ -1,18 +1,52 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ago, clock, counted, dayAndClock, duration, fullDate, number, plural, sameDay } from "../web/src/app/format.ts";
+import { ago, clock, counted, dayAndClock, duration, englishOf, fullDate, number, plural, sameDay } from "../web/src/app/format.ts";
 
 // The one place the screens format a number, a date, a clock, a duration and a counted noun (web/src/app/format.ts).
-// Every instant here is fixed and every call names its locale and its time zone, so nothing depends on this machine.
+// Every instant here is fixed and every call names its reader's locale and time zone, so nothing depends on this machine.
 
 const US = { locale: "en-US", timeZone: "UTC" };
 const GB = { locale: "en-GB", timeZone: "UTC" };
 const DE = { locale: "de-DE", timeZone: "UTC" };
+const FR = { locale: "fr-FR", timeZone: "UTC" };
+const EG = { locale: "ar-EG", timeZone: "UTC" };
 const AT = "2026-11-24T08:05:09.000Z";
 /** The space before AM and PM is a plain one in one version of the locale data and a narrow no-break one in another: read as a plain one. */
 const plain = (words: string): string => words.replace(/\s/gu, " ");
 
-test("a number is grouped the way the reader's locale groups it", () => {
+test("the words are English wherever the reader is: only the region of their language is used", () => {
+  assert.equal(englishOf("en-US"), "en-US");
+  assert.equal(englishOf("de-DE"), "en-DE");
+  // A language with no region named is read as where it is mostly spoken.
+  assert.equal(englishOf("de"), "en-DE");
+  assert.equal(englishOf("fr-FR"), "en-FR");
+  assert.equal(englishOf("ar-EG"), "en-EG");
+  // No tag, or text that is not one: plain English.
+  assert.equal(englishOf(undefined), "en");
+  assert.equal(englishOf("not a locale"), "en");
+  // A French reader's day and month are in English, in the French order, with the French clock and grouping.
+  assert.equal(dayAndClock(AT, { ...FR, weekday: true }), "Tuesday 24 November at 08:05");
+  assert.equal(fullDate(AT, FR), "24/11/2026, 08:05:09");
+  assert.equal(plain(number(12345.5, FR)), "12 345,5");
+  assert.equal(plain(counted(12345, "token", "tokens", FR)), "12 345 tokens");
+  // A reader in Egypt gets Latin digits and English words, with the twelve-hour clock used there.
+  assert.equal(number(12345.5, EG), "12,345.5");
+  assert.equal(plain(clock("2026-11-24T14:30:00.000Z", EG)), "2:30 PM");
+  assert.equal(plain(dayAndClock(AT, { ...EG, weekday: true })), "Tuesday, November 24 at 8:05 AM");
+  assert.equal(plain(fullDate(AT, EG)), "11/24/2026, 8:05:09 AM");
+  for (const where of [FR, EG, DE]) assert.match(`${fullDate(AT, where)} ${dayAndClock(AT, { ...where, weekday: true })} ${number(1234567.5, where)}`, /^[\x20-\x7e\u00a0\u202f]+$/, where.locale);
+});
+
+test("the server's form is a 24-hour clock and the day before the month whatever the reader's region, in the reader's time zone", () => {
+  for (const where of [US, GB, DE, FR, EG]) {
+    assert.equal(clock("2026-11-24T14:30:00.000Z", { ...where, serverForm: true }), "14:30", where.locale);
+    assert.equal(clock(AT, { ...where, serverForm: true }), "08:05", where.locale);
+    assert.equal(dayAndClock(AT, { ...where, serverForm: true, weekday: true }), "Tuesday 24 November at 08:05", where.locale);
+  }
+  assert.equal(clock(AT, { locale: "en-US", timeZone: "Asia/Tokyo", serverForm: true }), "17:05");
+});
+
+test("a number is grouped the way the reader's region groups it", () => {
   assert.equal(number(0, US), "0");
   assert.equal(number(999, US), "999");
   assert.equal(number(1234567, US), "1,234,567");
@@ -50,7 +84,7 @@ test("a clock is the reader's own: twelve hours where they are used, twenty-four
 test("a day and clock names the day in the reader's order, with the weekday when asked, and no year", () => {
   assert.equal(dayAndClock(AT, GB), "24 November at 08:05");
   assert.equal(plain(dayAndClock(AT, US)), "November 24 at 8:05 AM");
-  assert.equal(dayAndClock(AT, DE), "24. November at 08:05");
+  assert.equal(dayAndClock(AT, DE), "24 November at 08:05");
   assert.equal(dayAndClock(AT, { ...GB, weekday: true }), "Tuesday 24 November at 08:05");
   assert.equal(plain(dayAndClock(AT, { ...US, weekday: true })), "Tuesday, November 24 at 8:05 AM");
   // Late in the evening in Honolulu it is still the day before.
@@ -60,9 +94,9 @@ test("a day and clock names the day in the reader's order, with the weekday when
 test("a full date is the date with its year and the clock to the second, as the reader's locale writes them", () => {
   assert.equal(plain(fullDate(AT, US)), "11/24/2026, 8:05:09 AM");
   assert.equal(fullDate(AT, GB), "24/11/2026, 08:05:09");
-  assert.equal(fullDate(AT, DE), "24.11.2026, 08:05:09");
-  // What the screens showed before this module: the browser's own default for a date and time.
-  for (const where of [US, GB, DE]) assert.equal(fullDate(AT, where), new Date(AT).toLocaleString(where.locale, { timeZone: where.timeZone }));
+  assert.equal(fullDate(AT, DE), "24/11/2026, 08:05:09");
+  // For an English reader it is what the screens showed before this module: the browser's own default for a date and time.
+  for (const where of [US, GB]) assert.equal(fullDate(AT, where), new Date(AT).toLocaleString(where.locale, { timeZone: where.timeZone }));
   assert.equal(fullDate(AT, { locale: "en-GB", timeZone: "Pacific/Auckland" }), "24/11/2026, 21:05:09");
 });
 
@@ -98,6 +132,10 @@ test("a duration with spelled units is what the checks show, with its ISO 8601 v
   assert.deepEqual(units(0), { words: "0 ms", iso: "PT0S" });
   assert.deepEqual(units(38), { words: "38 ms", iso: "PT0.038S" });
   assert.deepEqual(units(999), { words: "999 ms", iso: "PT0.999S" });
+  // Never "1000 ms": half a millisecond short of a second is a second.
+  assert.deepEqual(units(999.4), { words: "999 ms", iso: "PT0.999S" });
+  assert.deepEqual(units(999.5), { words: "1 s", iso: "PT1S" });
+  assert.deepEqual(units(999.9), { words: "1 s", iso: "PT1S" });
   assert.deepEqual(units(1000), { words: "1 s", iso: "PT1S" });
   assert.deepEqual(units(2440), { words: "2.4 s", iso: "PT2.4S" });
   assert.deepEqual(units(9960), { words: "10 s", iso: "PT10S" });

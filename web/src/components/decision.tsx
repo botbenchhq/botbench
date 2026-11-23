@@ -7,6 +7,7 @@ import { Icon } from "./icon.tsx";
 import { LOOKS } from "./looks.ts";
 import { StatusBadge } from "./status.tsx";
 import { offersMerge } from "./task-status.ts";
+import { number, plural } from "../app/format.ts";
 
 /** Put `value` on the clipboard; resolves with whether it was, in words. */
 export function copyWords(value: string, refused = "Not copied: this browser refused. Select the text to copy it."): Promise<string> {
@@ -279,7 +280,7 @@ export function DecisionOutcome({ decision, repo, merge, compact = false, pushed
       <span data-ds-content="">{decision.note}</span>
     </p>
   );
-  const removed = decision.leftovers.length === 0 ? null : `The ${decision.leftovers.length === 1 ? "file" : `${decision.leftovers.length} files`} the checks left ${decision.leftovers.length === 1 ? "was" : "were"} removed with the task's copy: ${decision.leftovers.join(", ")}.`;
+  const removed = decision.leftovers.length === 0 ? null : `The ${plural(decision.leftovers.length, "file", `${number(decision.leftovers.length)} files`)} the checks left ${plural(decision.leftovers.length, "was", "were")} removed with the task's copy: ${decision.leftovers.join(", ")}.`;
   if (compact) {
     if (decision.decision !== "accept" || !merge) return noted;
     return (
