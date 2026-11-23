@@ -82,9 +82,10 @@ test("bullet and numbered lists keep each item's own marker, and a new kind of m
       kind: "list",
       ordered: false,
       items: [
-        { marker: "", children: [text("one")] },
-        { marker: "", children: [{ kind: "strong", children: [text("two")] }] },
-        { marker: "", children: [text("three\nmore of three")] },
+        // A list row draws no mark of its own, so every bullet item shows a bullet, whichever marker it was written with.
+        { marker: "• ", children: [text("one")] },
+        { marker: "• ", children: [{ kind: "strong", children: [text("two")] }] },
+        { marker: "• ", children: [text("three\nmore of three")] },
       ],
     },
     {
@@ -98,7 +99,7 @@ test("bullet and numbered lists keep each item's own marker, and a new kind of m
     },
   ]);
   assert.deepEqual(parseMarkdown("- a\n1. b"), [
-    { kind: "list", ordered: false, items: [{ marker: "", children: [text("a")] }] },
+    { kind: "list", ordered: false, items: [{ marker: "• ", children: [text("a")] }] },
     { kind: "list", ordered: true, items: [{ marker: "1. ", children: [text("b")] }] },
   ]);
   // A number inside a sentence that happens to start a line is not a list.
@@ -110,6 +111,12 @@ test("headings, quotes, tables, rules, links and images are shown as the text th
   for (const source of other) {
     assert.deepEqual(parseMarkdown(source), [para(text(source))], source);
   }
+  // A heading, a quote or a table row is kept whole as written, markers and code included, and ends a list.
+  for (const source of ["# **heading** `x`", "> **quoted** - a", "| **a** | `b` |", "## _h_\n> *q*"]) {
+    assert.deepEqual(parseMarkdown(source), [para(text(source))], source);
+  }
+  assert.deepEqual(parseMarkdown("# **h**\nthen **b**"), [para(text("# **h**\nthen "), { kind: "strong", children: [text("b")] })]);
+  assert.deepEqual(parseMarkdown("- a\n# **h**"), [{ kind: "list", ordered: false, items: [{ marker: "• ", children: [text("a")] }] }, para(text("# **h**"))]);
 });
 
 test("a javascript: link is plain text and makes no link; an image is plain text and loads nothing", () => {
@@ -117,6 +124,10 @@ test("a javascript: link is plain text and makes no link; an image is plain text
   assert.deepEqual(parseMarkdown(source), [para(text(source))]);
   // Markers outside a link are still drawn; only the link's own text is kept as written.
   assert.deepEqual(parseMarkdown("**a** [*b*](c) _d_"), [para({ kind: "strong", children: [text("a")] }, text(" [*b*](c) "), { kind: "em", children: [text("d")] })]);
+  // Code inside a link is part of the link, shown as written; a link or a tag written as code stays code.
+  assert.deepEqual(parseMarkdown("[a `b`](x) and ![`c`](d)"), [para(text("[a `b`](x) and ![`c`](d)"))]);
+  assert.deepEqual(parseMarkdown("`[a](b)` and `<div>` and [`x`"), [para({ kind: "code", text: "[a](b)" }, text(" and "), { kind: "code", text: "<div>" }, text(" and ["), { kind: "code", text: "x" })]);
+  assert.deepEqual(parseMarkdown("[a `](` b](x)"), [para(text("[a `](` b](x)"))]);
   // Brackets with no link after them are only brackets.
   assert.deepEqual(parseMarkdown("[**a**] b"), [para(text("["), { kind: "strong", children: [text("a")] }, text("] b"))]);
 });
@@ -126,6 +137,8 @@ test("raw HTML is literal text, never an element", () => {
   for (const source of ["<script>alert(1)</script>", '<img src=x onerror="alert(1)">', "<div>\n**x**\n</div>", "</p> *a*", 'a <img alt="**x**" src=y> and <b title=_t_>'] ) {
     assert.deepEqual(parseMarkdown(source), [para(text(source))], source);
   }
+  // An HTML block runs to the next blank line: a list marker or a fence inside it is text too.
+  assert.deepEqual(parseMarkdown("<div>\n- x\n```\n# h\n</div>\n\n- y"), [para(text("<div>\n- x\n```\n# h\n</div>")), { kind: "list", ordered: false, items: [{ marker: "• ", children: [text("y")] }] }]);
   assert.deepEqual(parseMarkdown("a <b>**bold**</b> b"), [para(text("a <b>"), { kind: "strong", children: [text("bold")] }, text("</b> b"))]);
 });
 

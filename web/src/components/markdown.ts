@@ -17,10 +17,15 @@ export type Inline =
   | { kind: "em"; children: Inline[] };
 
 export interface ListItem {
-  /** A numbered item's own number and mark as written, with its space ("3. "); a bullet item's is empty. */
+  /**
+   * What the row shows before the item, as a list row draws no mark of its own: a numbered item's number and mark as
+   * written, with its space ("3. "); a bullet item's is a bullet ("• "), whichever of - * + it was written with.
+   */
   marker: string;
   children: Inline[];
 }
+
+const BULLET_MARK = "• ";
 
 export type Block = { kind: "paragraph"; children: Inline[] } | { kind: "code"; text: string } | { kind: "list"; ordered: boolean; items: ListItem[] };
 
@@ -34,6 +39,8 @@ const NUMBERED = /^[ \t]*(\d{1,9})([.)])[ \t]+(\S.*)$/;
 /** A thematic break (---, * * *) is not supported, so it must not be read as a bullet item either. */
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const HTML_BLOCK = /^ {0,3}<[A-Za-z/!?]/;
+/** A heading, a quote or a table row: not supported, so the whole line is kept as written, markers inside it included. */
+const LITERAL_LINE = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|\|)/;
 
 /** The fence a line opens, or null. A backtick fence's info string may hold no backtick, so ```a``` stays inline code. */
 function fenceOpened(line: string): string | null {
@@ -48,13 +55,26 @@ export function parseMarkdown(source: string): Block[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
   // Kept from narrowing to null, as flush() sets them back from inside a closure.
-  let paragraph = null as string[] | null;
+  // A paragraph is a run of chunks: lines drawn with the inline subset, and lines kept as written.
+  let paragraph = null as { literal: boolean; lines: string[] }[] | null;
   let list = null as { ordered: boolean; items: { marker: string; lines: string[] }[] } | null;
+  const addLine = (line: string, literal: boolean) => {
+    paragraph ??= [];
+    const last = paragraph.at(-1);
+    if (last?.literal === literal) last.lines.push(line);
+    else paragraph.push({ literal, lines: [line] });
+  };
   const flush = () => {
     if (paragraph !== null) {
-      const whole = paragraph.join("\n");
-      // A paragraph that starts with a tag is an HTML block, which this subset does not draw: it is kept as written.
-      blocks.push({ kind: "paragraph", children: HTML_BLOCK.test(whole) ? [{ kind: "text", text: whole }] : parseInline(whole) });
+      const pieces: Piece[] = [];
+      paragraph.forEach((chunk, i) => {
+        if (i > 0) pieces.push({ kind: "text", text: "\n" });
+        const whole = chunk.lines.join("\n");
+        if (chunk.literal) pieces.push({ kind: "text", text: whole });
+        // One push at a time: spreading a very long paragraph's nodes into push() would overflow the stack.
+        else for (const node of parseInline(whole)) pieces.push(node);
+      });
+      blocks.push({ kind: "paragraph", children: finish(pieces) });
     }
     if (list !== null) blocks.push({ kind: "list", ordered: list.ordered, items: list.items.map((i) => ({ marker: i.marker, children: parseInline(i.lines.join("\n")) })) });
     paragraph = null;
@@ -77,6 +97,20 @@ export function parseMarkdown(source: string): Block[] {
       flush();
       continue;
     }
+    if (paragraph === null && HTML_BLOCK.test(line)) {
+      // An HTML block, which this subset does not draw: every line up to a blank one is kept as written, so a list
+      // marker or a fence inside it is text too.
+      flush();
+      const body = [line];
+      while (i + 1 < lines.length && lines[i + 1]!.trim() !== "") body.push(lines[++i]!);
+      blocks.push({ kind: "paragraph", children: [{ kind: "text", text: body.join("\n") }] });
+      continue;
+    }
+    if (LITERAL_LINE.test(line)) {
+      if (list !== null) flush();
+      addLine(line, true);
+      continue;
+    }
     if (!RULE.test(line)) {
       const bullet = BULLET.exec(line);
       const numbered = bullet === null ? NUMBERED.exec(line) : null;
@@ -85,13 +119,13 @@ export function parseMarkdown(source: string): Block[] {
         const ordered = numbered !== null;
         if (paragraph !== null || (list !== null && list.ordered !== ordered)) flush();
         list ??= { ordered, items: [] };
-        list.items.push(numbered !== null ? { marker: `${numbered[1]}${numbered[2]} `, lines: [numbered[3]!] } : { marker: "", lines: [bullet![1]!] });
+        list.items.push(numbered !== null ? { marker: `${numbered[1]}${numbered[2]} `, lines: [numbered[3]!] } : { marker: BULLET_MARK, lines: [bullet![1]!] });
         continue;
       }
     }
     // A line under an item, without a blank line between, goes on with that item.
     if (list !== null) list.items.at(-1)!.lines.push(line.trimStart());
-    else (paragraph ??= []).push(line);
+    else addLine(line, false);
   }
   flush();
   return blocks;
@@ -145,19 +179,23 @@ function codeSpans(text: string, escaped: Set<number>): { start: number; end: nu
 }
 
 /**
- * The stretches of text[from, to) that are links, images or HTML tags, which this subset does not draw: each is shown
- * as written, so no marker inside one is drawn either. In order and apart; a link inside a link is part of the outer.
- * One pass: brackets are matched with a stack, and the next ")" or ">" is found by a search that only moves forward.
+ * The stretches of a text that are links, images or HTML tags, which this subset does not draw: each is shown as
+ * written, so no marker or code span inside one is drawn either. In order and apart; a link inside a link is part of
+ * the outer. A code span that starts outside any of them is passed over whole, so `<div>` and `[a](b)` written as code
+ * stay code. One pass: brackets are matched with a stack, and the next ")" or ">" is found by a search that only moves
+ * forward.
  */
-function literalStretches(text: string, from: number, to: number): { start: number; end: number }[] {
+function literalStretches(text: string, spans: { start: number; end: number }[]): { start: number; end: number }[] {
+  const to = text.length;
+  const spanEnd = new Map(spans.map((s) => [s.start, s.end]));
   const out: { start: number; end: number }[] = [];
   const brackets: number[] = [];
   // Where the last search for each character ended (`to` when there is none left), so no stretch is searched twice.
   const found = { ")": -1, ">": -1 };
   const next = (ch: ")" | ">", after: number) => {
     if (found[ch] < after) {
-      let j = Math.max(after, found[ch] + 1);
-      while (j < to && text[j] !== ch) j++;
+      let j = after;
+      while (j < to && text[j] !== ch) j = spanEnd.get(j) ?? j + 1;
       found[ch] = j;
     }
     return found[ch] >= to ? -1 : found[ch];
@@ -166,14 +204,19 @@ function literalStretches(text: string, from: number, to: number): { start: numb
     while (out.length > 0 && out.at(-1)!.start >= start) out.pop();
     out.push({ start, end });
   };
-  for (let i = from; i < to; i++) {
+  for (let i = 0; i < to; i++) {
+    const end = spanEnd.get(i);
+    if (end !== undefined) {
+      i = end - 1;
+      continue;
+    }
     const ch = text[i];
     if (ch === "[") brackets.push(i);
     else if (ch === "]" && brackets.length > 0) {
       const open = brackets.pop()!;
       const close = text[i + 1] === "(" ? next(")", i + 2) : -1;
       if (close === -1) continue;
-      add(open > from && text[open - 1] === "!" ? open - 1 : open, close + 1);
+      add(open > 0 && text[open - 1] === "!" ? open - 1 : open, close + 1);
       i = close;
     } else if (ch === "<" && /[A-Za-z/!?]/.test(text[i + 1] ?? "")) {
       const close = next(">", i + 1);
@@ -272,10 +315,17 @@ function parseInline(text: string): Inline[] {
     else if (canOpen) openers.push(closer);
   };
 
+  // A code span inside a link is part of the link, shown as written; the stretches and the spans left never overlap.
+  const allSpans = codeSpans(text, escaped);
+  const literal = literalStretches(text, allSpans);
+  let s = 0;
+  const spans = allSpans.filter((span) => {
+    while (s < literal.length && literal[s]!.end <= span.start) s++;
+    return !(s < literal.length && literal[s]!.start <= span.start);
+  });
+  let r = 0;
   let at = 0;
   const plainUntil = (end: number) => {
-    const literal = literalStretches(text, at, end);
-    let r = 0;
     for (let i = at; i < end; ) {
       const ch = text[i]!;
       const stretch = literal[r];
@@ -302,7 +352,7 @@ function parseInline(text: string): Inline[] {
     }
     at = end;
   };
-  for (const span of codeSpans(text, escaped)) {
+  for (const span of spans) {
     plainUntil(span.start);
     flushText();
     let code = text.slice(span.start + span.open, span.end - span.open).replace(/\n/g, " ");

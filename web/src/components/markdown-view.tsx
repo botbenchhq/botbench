@@ -42,7 +42,7 @@ function BlockView({ block }: { block: Block }) {
           </div>
         </li>
       ));
-      // A list row draws no bullet or number of its own, so a numbered item shows the number it was written with.
+      // A list row draws no bullet or number of its own, so each item shows its marker: a bullet, or its own number.
       return block.ordered ? <ol className="ds-list ds-list--dense">{rows}</ol> : <ul className="ds-list ds-list--dense">{rows}</ul>;
     }
   }
