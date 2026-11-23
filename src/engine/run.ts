@@ -20,6 +20,8 @@ import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
 import { learningsSection } from "./learnings.ts";
+import { messageIssue, takeOverGiven, type ClaimName } from "./claim-branch.ts";
+import { ownWorkbenches } from "../workbench.ts";
 
 /*
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
@@ -190,7 +192,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -203,6 +205,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
         .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
+    // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
+    for (const c of o.takeOver ?? []) db.prepare("INSERT INTO claim_takeovers (run_id, branch, holder, issue, started_at, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, c.branch, c.workbench, c.issue, c.startedAt, at);
     insertEvent(db, id, at, "planning", null);
     return getRun(db, id)!;
   });
@@ -335,13 +339,13 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
  * not started are cancelled in one write; the task being built, if any, is stopped by the build line, which then
  * records it. Tasks that have finished are left as they are, with their branches.
  */
-export function cancelRun(db: DatabaseSync, runId: number): Run {
+export function cancelRun(db: DatabaseSync, runId: number, by = "cancelled by the owner"): Run {
   return transaction(db, () => {
     const run = known(db, runId);
     if (run.status === "cancelled") throw new RunError(409, `Run ${run.id} was already cancelled.`);
     if (run.status === "failed") throw new RunError(409, `Run ${run.id} failed, so there is nothing to cancel.`);
     if (run.status === "awaiting_decision" || run.status === "done") throw new RunError(409, `Run ${run.id}'s tasks have all been built, so there is nothing left to cancel.`);
-    writeRun(db, runId, "cancelled", { detail: "cancelled by the owner" });
+    writeRun(db, runId, "cancelled", { detail: by });
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id").all(runId)) {
       moveTaskIn(db, Number(row.id), "cancelled", { reason: "The run was cancelled before this task started." });
     }
@@ -460,6 +464,8 @@ export interface StartRun {
   issue?: unknown;
   /** Keep the run to one task: true or false; left out, on in a fully autonomous run and off in any other. */
   oneTask?: unknown;
+  /** Other workbenches' old claims on the run's issue the owner chose to take over, by branch (engine/claim-branch.ts); left out for none. */
+  takeOver?: unknown;
 }
 
 export interface Runs {
@@ -471,7 +477,7 @@ export interface Runs {
   /** Send the plan as it stands back to the planner with the owner's feedback. The run is planning until the planner answers. */
   requestChanges(id: number, feedback: unknown, planVersion: unknown): Run;
   /** Cancel a run that is planning, waits for approval or is building. A planner or a builder at work is stopped. */
-  cancel(id: number): Run;
+  cancel(id: number, by?: string): Run;
   /** Resolves when no planner is at work and nothing is being recovered. */
   idle(): Promise<void>;
   /** Stop the planner at work and leave no CLI process and no planning worktree behind. */
@@ -834,10 +840,17 @@ export function createRuns(options: RunsOptions): Runs {
     if (issueChoice !== null && issue === null) throw new RunError(400, "There is no issue read with that number. Look the issue up again.");
     if (issue !== null && issue.repoPath !== realRepo(repo)) throw new RunError(400, `That issue was read for another repository (${issue.repoPath}), not ${repo}. Look it up again for this one.`);
     if (issue !== null && mode === "full") throw new RunError(400, OUTSIDE_NOT_FULL);
+    // A claim taken over is another workbench's, on this run's issue, and old enough by its name (engine/claims.ts).
+    let takeOver: ClaimName[];
+    try {
+      takeOver = takeOverGiven(input.takeOver, { issue: issue?.number ?? messageIssue(hasPrompt ? (input.prompt as string) : null), own: ownWorkbenches(db), now: Date.now() });
+    } catch (err) {
+      throw new RunError(400, words(err));
+    }
     if (mode === "full") fullyAutonomousUsable(repo);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -879,8 +892,8 @@ export function createRuns(options: RunsOptions): Runs {
     return run;
   };
 
-  const cancel = (id: number): Run => {
-    const run = cancelRun(db, id);
+  const cancel = (id: number, by?: string): Run => {
+    const run = cancelRun(db, id, by);
     // Stops the builder at work, or its setup command; the build line then commits what it did and records it cancelled.
     void options.line.stopRun(id).catch(report(`Stopping the build of run ${id}`));
     // A request of its planner or of its builders that waits for the owner has nobody to answer to any more.

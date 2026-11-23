@@ -158,7 +158,9 @@ export type LogRule =
   /** A web tool of a task or a run was refused without asking, because the owner's setting Web access is Off. */
   | "web_refused"
   /** One of the CLI's own bookkeeping tools (its to-do list, loading a tool) ran without asking, in any mode. */
-  | "bookkeeping";
+  | "bookkeeping"
+  /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
+  | "issue_claim";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
