@@ -1791,4 +1791,71 @@ CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.check
 BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
 `,
   },
+  {
+    // A question an agent puts to the owner (src/approvals/question.ts) is an approval of its own kind: `question` holds
+    // the one question as its card shows it (JSON: its text, header and two to four choices), and `answer` the owner's
+    // own text, at most 2000 characters, once. A question belongs to a task or a run's planner, never to a chat; it ends
+    // answered (status `allowed`, with its answer) or superseded, never declined, and an answer stored for a parked one
+    // is stored with its text. The action log gains `owner_answered` (the owner's answer, in `detail`) and
+    // `question_unasked` (a fully autonomous run's question, which nobody was asked: the question in `command`, what the
+    // agent was told in `detail`, written in one row). A check cannot be altered in place, so the action log is made
+    // again with every row kept, ids included, and its indexes and triggers put back.
+    name: "questions",
+    sql: `
+ALTER TABLE approvals ADD COLUMN question TEXT CHECK (question IS NULL OR json_valid(question));
+ALTER TABLE approvals ADD COLUMN answer TEXT CHECK (answer IS NULL OR length(answer) BETWEEN 1 AND 2000);
+CREATE TRIGGER approvals_question_asked BEFORE INSERT ON approvals
+WHEN NEW.answer IS NOT NULL OR (NEW.question IS NOT NULL AND NEW.chat = 1)
+BEGIN SELECT RAISE(ABORT, 'a question is first written unanswered, and never for a chat'); END;
+CREATE TRIGGER approvals_question_fixed BEFORE UPDATE OF question ON approvals
+BEGIN SELECT RAISE(ABORT, 'what a question asks cannot be changed'); END;
+CREATE TRIGGER approvals_answer_once BEFORE UPDATE OF answer ON approvals
+WHEN OLD.answer IS NOT NULL OR OLD.question IS NULL OR NEW.answer IS NULL
+BEGIN SELECT RAISE(ABORT, 'a question is answered once, and only a question has an answer'); END;
+CREATE TRIGGER approvals_question_outcome BEFORE UPDATE OF status ON approvals
+WHEN OLD.question IS NOT NULL AND (NEW.status = 'declined' OR (NEW.status = 'allowed' AND NEW.answer IS NULL))
+BEGIN SELECT RAISE(ABORT, 'a question ends answered or superseded'); END;
+CREATE TRIGGER approvals_question_stored BEFORE UPDATE OF stored_decision ON approvals
+WHEN OLD.question IS NOT NULL AND (NEW.stored_decision IS NOT 'allow' OR NEW.answer IS NULL)
+BEGIN SELECT RAISE(ABORT, 'the answer to a parked question is stored with its text'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_questions;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_questions ORDER BY id;
+DROP TABLE action_log_before_questions;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

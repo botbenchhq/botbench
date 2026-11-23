@@ -1,0 +1,128 @@
+{
+  "about": "A real Claude Code session, recorded through Botbench's driver, permission check and broker by test/support/capture-question.ts, as a task's builder is driven. The CLI was asked to put one question to its user with AskUserQuestion. `finding` is what arrived: the tool's name and the input of the can_use_tool control request, as the driver read it into its permission_request event. The script answered through the broker with `answer`, and `events` is the whole attempt as Botbench stored it, the answer and the turn that went on with it included.",
+  "cli": "2.1.322 (Claude Code)",
+  "model": "haiku",
+  "recordedAt": "2026-11-23T09:39:59.896Z",
+  "prompt": "Before you do anything else, use your AskUserQuestion tool exactly once to ask me one question: \"Which greeting should I use?\", with exactly two options, labelled \"Hello\" and \"Hi\". Do not use any other tool. Once I have answered, reply with only the label of the option I chose.",
+  "finding": {
+    "controlRequest": "can_use_tool",
+    "tool": "AskUserQuestion",
+    "input": {
+      "questions": [
+        {
+          "question": "Which greeting should I use?",
+          "header": "Greeting",
+          "options": [
+            {
+              "label": "Hello",
+              "description": "Use the greeting \"Hello\"."
+            },
+            {
+              "label": "Hi",
+              "description": "Use the greeting \"Hi\"."
+            }
+          ],
+          "multiSelect": false
+        }
+      ]
+    }
+  },
+  "answer": "Hi",
+  "events": [
+    {
+      "type": "user_prompt",
+      "text": "Before you do anything else, use your AskUserQuestion tool exactly once to ask me one question: \"Which greeting should I use?\", with exactly two options, labelled \"Hello\" and \"Hi\". Do not use any other tool. Once I have answered, reply with only the label of the option I chose."
+    },
+    {
+      "type": "session_started",
+      "resumeCursor": "4ed127f7-2b8e-4fe8-a4a0-38fdc09d9952",
+      "model": "claude-haiku-5-5",
+      "keySource": "none"
+    },
+    {
+      "type": "tool_call",
+      "id": "toolu_017BPgtrohhRE5S4uH6sZHmh",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Which greeting should I use?",
+            "header": "Greeting",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "Hello",
+                "description": "Use the greeting \"Hello\"."
+              },
+              {
+                "label": "Hi",
+                "description": "Use the greeting \"Hi\"."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "rate_limit",
+      "limited": false,
+      "status": "allowed",
+      "resetsAt": "2026-11-26T23:00:00.000Z"
+    },
+    {
+      "type": "permission_request",
+      "id": "0d2e2146-9fd6-44a3-be37-cb7c981d372c",
+      "toolCallId": "toolu_017BPgtrohhRE5S4uH6sZHmh",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Which greeting should I use?",
+            "header": "Greeting",
+            "options": [
+              {
+                "label": "Hello",
+                "description": "Use the greeting \"Hello\"."
+              },
+              {
+                "label": "Hi",
+                "description": "Use the greeting \"Hi\"."
+              }
+            ],
+            "multiSelect": false
+          }
+        ]
+      },
+      "reason": null
+    },
+    {
+      "type": "permission_resolved",
+      "id": "0d2e2146-9fd6-44a3-be37-cb7c981d372c",
+      "toolCallId": "toolu_017BPgtrohhRE5S4uH6sZHmh",
+      "decision": "answered",
+      "note": "Hi"
+    },
+    {
+      "type": "tool_result",
+      "id": "toolu_017BPgtrohhRE5S4uH6sZHmh",
+      "output": "Your questions have been answered: \"Which greeting should I use?\"=\"Hi\". You can now continue with these answers in mind.",
+      "isError": false
+    },
+    {
+      "type": "text",
+      "text": "Hi"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 4,
+      "outputTokens": 155,
+      "cacheReadTokens": 24440,
+      "cacheWriteTokens": 9869
+    },
+    {
+      "type": "turn_ended",
+      "reason": "completed",
+      "detail": null
+    }
+  ]
+}
