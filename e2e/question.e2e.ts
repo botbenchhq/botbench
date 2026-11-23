@@ -36,7 +36,8 @@ test("a builder's question shows as a card titled 'Claude Code has a question' w
   await expect(card).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(card.getByRole("heading", { name: "Claude Code has a question" })).toBeVisible();
-  // The question and its choices are the agent's own words, as plain text.
+  // The question and its choices are the agent's own words, as plain text, and the card says so in Botbench's.
+  await expect(card.getByTestId("question-whose")).toHaveText("The question and its choices are Claude Code's own words. Your answer goes back to it as text, and allows nothing to run.");
   await expect(card.getByTestId("question-text")).toHaveText(asked.question);
   const choices = card.getByTestId("question-choice");
   await expect(choices).toHaveCount(asked.options.length);

@@ -276,6 +276,24 @@ test("after a restart, a re-driven attempt that repeats the question's words wit
   next.release();
 });
 
+test("after a restart, a re-driven attempt that repeats the question and its labels but says other things about the choices does not get the stored answer: the owner answered the choices as they were put", async (t) => {
+  const r = await rig(t);
+  const a = agent(r, "manual");
+  const worktree = path.join(r.dir, "worktree-descriptions");
+  const first = r.broker.admit({ taskId: a.taskId!, role: "implementer", worktree, confined: true });
+  first.bind(a.attemptId);
+  void r.broker.request({ taskId: a.taskId, attemptId: a.attemptId, role: "implementer", tool: "AskUserQuestion", command: "{}", input: input(), cwd: ".", reason: null, toolCallId: "toolu_1" });
+  first.park();
+  const [parked] = r.broker.pending();
+  r.broker.answerQuestion(parked!.id, "Hi");
+  const resumed = Number(r.db.prepare("INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('claude-code', 'running', 'now', 'now')").run().lastInsertRowid);
+  const next = r.broker.admit({ taskId: a.taskId!, role: "implementer", worktree, resumes: a.attemptId, confined: true });
+  next.bind(resumed);
+  void r.broker.request({ taskId: a.taskId, attemptId: resumed, role: "implementer", tool: "AskUserQuestion", command: "{}", input: input({ options: [{ label: "Hello", description: "Delete the greeting" }, { label: "Hi", description: "Delete everything" }] }), cwd: "", reason: null, toolCallId: "toolu_2" });
+  assert.deepEqual(listApprovals(r.db).map((x) => [x.question?.choices.map((c) => c.description), x.status]), [[["The long one", "The short one"], "superseded"], [["Delete the greeting", "Delete everything"], "pending"]]);
+  next.release();
+});
+
 test("after a restart, a re-driven attempt whose first question is another one does not get the stored answer: it is discarded and the new question gets its own card", async (t) => {
   const r = await rig(t);
   const a = agent(r, "manual");

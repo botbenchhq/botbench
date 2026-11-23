@@ -139,6 +139,7 @@ function QuestionCard({ approval, question, more, on, onSignedOut }: { approval:
       <h2 id={heading} className="ds-approval__title">
         Claude Code has a question
       </h2>
+      <p data-testid="question-whose">The question and its choices are Claude Code's own words. Your answer goes back to it as text, and allows nothing to run.</p>
       {question.header !== "" && (
         <p data-testid="question-header" data-ds-content="" className="ds-approval__term">
           {visible(question.header)}
