@@ -12,3 +12,14 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/*
+ * bb-row-press (web/design-gaps.json): a list row's link whose long press opens the row's More menu. A phone's own
+ * long press on a link (its preview, its callout and selecting the row's words) would open on top of the menu, so it
+ * is switched off on that link only. Nothing is drawn: the row looks as the design system draws it.
+ */
+.bb-row-press {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}

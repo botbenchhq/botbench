@@ -13,6 +13,7 @@ import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
+import { TaskNote } from "../components/task-note.tsx";
 import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
@@ -94,7 +95,12 @@ function Counts({ file }: { file: FileChange }) {
   );
 }
 
-export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () => void }) {
+/** `discard`: the owner chose Discard from the task's More menu on Work, so its confirmation opens once the task is read. */
+export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; discard?: boolean; onSignedOut: () => void }) {
+  // The address goes back to the task's own, so a reload or Back does not ask again.
+  useEffect(() => {
+    if (discard) window.history.replaceState(null, "", `#/tasks/${id}`);
+  }, [discard, id]);
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
@@ -179,7 +185,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   };
   // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
   // While a request waits, its card says so: the transcript is still live, with no line of its own ("").
-  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
+  // Its last message's turn has not ended: with the owner's note sent as the next message, that is the note's.
+  const lastSent = shown.findLastIndex((e) => e.type === "user_prompt");
+  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
@@ -293,6 +301,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 </ol>
               )
             )}
+
+            <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />
 
             {task.filesProblem !== null && (
               <Alert tone="error" role="alert">
@@ -413,7 +423,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
 
             {task.decision?.decision === "accept" && <PullRequestSection taskId={task.id} view={task.pullRequest} target={task.pullRequestTarget} onChanged={load} onSignedOut={onSignedOut} />}
 
-            <DiscardSection task={task} onDiscarded={load} onSignedOut={onSignedOut} />
+            <DiscardSection task={task} startOpen={discard} onDiscarded={load} onSignedOut={onSignedOut} />
 
             {task.status === "awaiting_decision" && (
               <section aria-labelledby="decide-heading" className="ds-stack ds-gap-sm">

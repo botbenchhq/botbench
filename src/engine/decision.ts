@@ -328,7 +328,7 @@ async function keepLearning(db: DatabaseSync, task: Task, note: string): Promise
  */
 
 /** The states a task ends in without ever being ready for review. */
-const ENDED_UNREVIEWED: ReadonlySet<TaskStatus> = new Set(["failed", "interrupted", "cancelled"]);
+export const ENDED_UNREVIEWED: ReadonlySet<TaskStatus> = new Set(["failed", "interrupted", "cancelled"]);
 
 /** The rule a discard is logged under. */
 const DISCARDED = "owner_discarded" as const;

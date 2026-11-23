@@ -82,7 +82,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
   const signals = [...(timeoutMs === undefined ? [] : [AbortSignal.timeout(timeoutMs)]), ...(giveUp ? [giveUp] : [])];
   const res = await fetch(path, {
     method,
@@ -402,6 +402,10 @@ export interface TaskSummary {
   pullRequest: PullRequestView;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
+  /** The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of another. */
+  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean } | null;
+  /** The latest note, when it was not delivered, with why. */
+  undeliveredNote: { id: number; text: string; sentAt: string; reason: string } | null;
   /** The mode of its run; manual for a task started on its own. */
   mode: RunMode;
   /** What the refine loop came to, and how many reviews and rounds of fixes there were. */
@@ -516,6 +520,14 @@ export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftove
 export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
 /** Take up a stopped task again. Refused (409, with the reason) for a task in any other state. */
 export const resumeTask = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/resume`, {}, 30_000);
+/** A note as the server stored it. */
+export interface TaskNote {
+  id: number;
+  text: string;
+  state: "waiting" | "delivered" | "replaced" | "not_delivered";
+}
+/** The owner's note for a building task's builder; the answer says which waiting note it replaced, if one waited. */
+export const sendTaskNote = (id: number, text: string): Promise<{ note: TaskNote; replaced: TaskNote | null }> => request("POST", `/api/tasks/${id}/notes`, { text }, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
@@ -680,6 +692,28 @@ export interface WorkbenchSetting {
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
 
+/** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
+export interface MemoryNote {
+  id: number;
+  text: string;
+  hash: string;
+  savedAt: string;
+  editedAt: string | null;
+}
+
+/** The notes in memory, newest first, with the caps of one note and of the whole store. */
+export interface MemoryList {
+  notes: MemoryNote[];
+  maxNoteChars: number;
+  maxKb: number;
+}
+
+export const getMemory = (): Promise<MemoryList> => request("GET", "/api/memory", undefined, 30_000);
+/** Refused with 409 when the note changed since `hash` was read; nothing is overwritten then. */
+export const editMemoryNote = async (id: number, text: string, hash: string): Promise<MemoryNote> => (await request<{ note: MemoryNote }>("PUT", `/api/memory/${id}`, { text, hash }, 30_000)).note;
+/** The notes as they are after the forget. Refused with 409 when the note changed since `hash` was read. */
+export const forgetMemoryNote = (id: number, hash: string): Promise<MemoryList> => request("DELETE", `/api/memory/${id}`, { hash }, 30_000);
+
 /** Another workbench's open pull request on a repository's remote. Its title, branch, files and workbench are outside text. */
 export interface PeerPullRequest {
   workbench: string;
@@ -763,17 +797,46 @@ export const getCheckTogether = (taskId: number): Promise<CheckTogetherView> => 
 export const startCheckTogether = (taskId: number, pullRequest: number): Promise<{ running: number }> => request("POST", `/api/tasks/${taskId}/check-together`, { pullRequest }, 90_000);
 export const setCheckTogetherRequired = (path: string, required: boolean): Promise<{ path: string; required: boolean }> => request("PUT", "/api/repos/check-together", { path, required }, 30_000);
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
-/** One row of the board: a planned run, or a task started on its own (a run of one). */
-export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };
-export type BoardGroupName = "needs-you" | "running" | "finished";
-/** One group of the board: its real count, and its items (Finished sends only its newest). */
+/** What a run's or a task's More menu offers besides Open and Hide, read as things are now. */
+export interface RowMenuFacts {
+  /** Its branch, while git still has it; for a run, only when it has exactly one. */
+  branch: string | null;
+  /** Its pull request, while it is open; for a run, only when it has exactly one. */
+  pullRequest: { number: number; url: string } | null;
+}
+/** A chat as the Work list shows it: named by its first attempt. */
+export interface ChatItem {
+  id: number;
+  /** The owner's name for it, else the first line of its first message. */
+  title: string;
+  /** Whether the title is one the owner gave it. */
+  named: boolean;
+  agents: string[];
+  /** Its attempts, oldest first: what the Chat screen shows as this chat. */
+  attempts: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+/** One row of the board: a planned run, a task started on its own (a run of one), or a chat. */
+export type BoardItem =
+  | ({ kind: "run"; cancellable: boolean } & RunSummary & RowMenuFacts)
+  | ({ kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; discardable: boolean; createdAt: string; updatedAt: string } & RowMenuFacts)
+  | ({ kind: "chat" } & ChatItem);
+export type BoardGroupName = "needs-you" | "running" | "finished" | "chats";
+/** One group of the board: its real count, and its items (Finished and Chats send only their newest). */
 export interface BoardGroup {
   name: BoardGroupName;
   total: number;
   items: BoardItem[];
 }
-/** The board's groups in order, the one that needs the owner first, each newest change first. */
-export const getBoard = async (): Promise<BoardGroup[]> => (await request<{ groups: BoardGroup[] }>("GET", "/api/board", undefined, 30_000)).groups;
+/** The board's groups in order, the one that needs the owner first, each newest change first; with `hidden`, only the rows hidden from it. `hidden` counts the hidden rows. */
+export const getBoard = (hidden = false): Promise<{ groups: BoardGroup[]; hidden: number }> => request("GET", hidden ? "/api/board?hidden=1" : "/api/board", undefined, 30_000);
+/** Hide a row from the Work list, or show it there again. Nothing of the run, task or chat is changed. */
+export const setRowHidden = (kind: BoardItem["kind"], id: number, hidden: boolean): Promise<{ kind: string; id: number; hidden: boolean }> => request("POST", hidden ? "/api/board/hide" : "/api/board/show", { kind, id }, 30_000);
+/** A chat as the Chat screen opens it. */
+export const getChat = (id: number): Promise<ChatItem> => request("GET", `/api/chats/${id}`, undefined, 30_000);
+/** Give a chat a name of the owner's; an empty one gives it back its first message. */
+export const renameChat = (id: number, title: string): Promise<ChatItem> => request("POST", `/api/chats/${id}/rename`, { title }, 30_000);
 export const getRun = (id: number): Promise<RunDetail> => request("GET", `/api/runs/${id}`, undefined, 30_000);
 /** The whole plan as it should be: how a task is edited, added and deleted. */
 export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Promise<RunDetail> => request("PATCH", `/api/runs/${id}/plan`, { planVersion, tasks }, 30_000);
@@ -873,7 +936,9 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
-  | "sandboxed";
+  | "sandboxed"
+  /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
+  | "memory";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

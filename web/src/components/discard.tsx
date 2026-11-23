@@ -12,7 +12,7 @@ const ENDED: Partial<Record<TaskDetail["status"], string>> = { failed: "failed",
  * separate copy of the project and Botbench's branch. Such a task was never ready for review, so nothing is decided.
  * Shown while something is left, also after a discard that could not finish; once nothing is, that it was discarded.
  */
-export function DiscardSection({ task, onDiscarded, onSignedOut }: { task: TaskDetail; onDiscarded: () => void; onSignedOut: () => void }) {
+export function DiscardSection({ task, startOpen = false, onDiscarded, onSignedOut }: { task: TaskDetail; startOpen?: boolean; onDiscarded: () => void; onSignedOut: () => void }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const ended = ENDED[task.status];
@@ -53,7 +53,7 @@ export function DiscardSection({ task, onDiscarded, onSignedOut }: { task: TaskD
         </Alert>
       )}
       <div className="ds-cluster">
-        <ConfirmAction label={busy ? "Discarding" : "Discard"} title="Discard what this task left?" confirmLabel="Discard" cancelLabel="Keep them" disabled={busy} losing testId="discard" onConfirm={send}>
+        <ConfirmAction label={busy ? "Discarding" : "Discard"} title="Discard what this task left?" confirmLabel="Discard" cancelLabel="Keep them" disabled={busy} losing testId="discard" startOpen={startOpen} onConfirm={send}>
           <p>{`This removes ${left.join(" and ")}. The work on ${remains.branch ? "the branch" : "it"} is gone for good. Nothing is merged or pushed.`}</p>
           {remains.files.length > 0 && (
             <>

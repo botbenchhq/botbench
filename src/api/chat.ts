@@ -7,10 +7,12 @@ import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { makeReviewFolder } from "../drivers/cli-sandbox.ts";
 import { DriverUnavailableError, type Driver, type DriverSession } from "../drivers/contract.ts";
 import type { DriverEvent } from "../drivers/events.ts";
+import { captureNote, MemoryError, memorySection, rememberedNote } from "../engine/memory.ts";
 import { REVIEW_LIMIT_MS } from "../engine/review.ts";
 import { agentName, chatPrompt, comparePrompt, type ChatEntry } from "../engine/roles.ts";
 import { checkRepository, TaskError } from "../engine/task.ts";
 import { now, transaction } from "../store/db.ts";
+import { recordChat } from "../engine/chats.ts";
 import { sharedGitDir } from "../worktrees.ts";
 import { SCRATCH_DIR, TurnError, type Turns } from "./turns.ts";
 
@@ -30,6 +32,10 @@ import { SCRATCH_DIR, TurnError, type Turns } from "./turns.ts";
  * are read back as its conversation, so nothing a task or a review wrote is ever passed on. The owner's device keeps
  * which attempts make up the chat on screen, as before. Nothing an agent writes is run: it is shown as text and passed
  * on as data.
+ *
+ * Memory (engine/memory.ts, ADR 0006): the owner's new message, when it starts "Remember:" or "Remember that", saves
+ * the rest of it as a note before it is sent. Nothing else here is ever saved. Every agent asked is given the notes,
+ * as data, before the conversation.
  */
 
 /** The most agents one message is sent to. */
@@ -290,7 +296,7 @@ export function createChat(o: ChatOptions): Chat {
     }
   };
 
-  const send: Chat["send"] = async ({ message, conversation, agents, compare, repository: attached }) => {
+  const sendOnce: Chat["send"] = async ({ message, conversation, agents, compare, repository: attached }) => {
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
     if (agents.length < 1 || agents.length > MAX_ASKED) throw new TurnError(400, `Ask between 1 and ${MAX_ASKED} agents.`);
     if (new Set(agents.map((a) => a.agent)).size !== agents.length) throw new TurnError(400, "Each agent can be asked once per message.");
@@ -305,10 +311,26 @@ export function createChat(o: ChatOptions): Chat {
       repository = await chatRepository(attached, o.home);
     }
 
-    // A message to Claude Code alone, while it is the only agent that has answered since its last reply, continues its own session.
+    // The owner's own message, and only it, may save a note to memory (engine/memory.ts): never a request to compare,
+    // never an agent's reply in the conversation, which is not read here.
+    const remembered = compare === undefined ? rememberedNote(message) : null;
+    const remember = (): void => {
+      if (remembered === null) return;
+      try {
+        captureNote(db, o.home, remembered);
+      } catch (err) {
+        if (err instanceof MemoryError) throw new TurnError(err.status, `${err.message} Nothing was sent.`);
+        throw err;
+      }
+    };
+
+    // A message to Claude Code alone, while it is the only agent that has answered since its last reply, continues its
+    // own session. A new chat when there are notes in memory, or one being saved now, is given them as any agent is:
+    // through the conversation Botbench sends, below.
     if (compare === undefined && agents.length === 1 && agents[0]!.agent === CLAUDE_CODE) {
       const continues = claudeContinues(db, conversation);
-      if (continues !== null) {
+      if (continues !== null && !(continues === undefined && (remembered !== null || memorySection(o.home) !== undefined))) {
+        remember();
         const started = await o.turns.start(message, continues, agents[0]!.model, (attemptId) => join(attemptId, null));
         join(started.attemptId, null);
         return [{ ...started, agent: CLAUDE_CODE, model: agents[0]!.model ?? null, roundId: null }];
@@ -336,9 +358,12 @@ export function createChat(o: ChatOptions): Chat {
       round = { kind: "compare", message: compared.message, compares: compare };
     } else {
       const history = chatHistory(db, conversation);
+      // Read once the note this message saves is in memory (below), so the agents are given it too.
+      let memory: string | undefined | null = null;
       prompt = (agent) => {
         const tools = agent === CLAUDE_CODE || driverOf(agent)!.capabilities.chatTools === true;
-        return chatPrompt({ history, message, tools, ...(repository === null ? {} : { repository: repository.path }) }).prompt;
+        if (memory === null) memory = memorySection(o.home);
+        return chatPrompt({ history, message, tools, memory, ...(repository === null ? {} : { repository: repository.path }) }).prompt;
       };
       round = { kind: "ask", message, compares: null };
     }
@@ -348,9 +373,17 @@ export function createChat(o: ChatOptions): Chat {
     const down = probes.findIndex((p) => p.problem !== null);
     if (down !== -1) throw new TurnError(409, `${agentName(agents[down]!.agent)} cannot answer now: ${probes[down]!.problem} Nothing was sent.`);
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
+    remember();
 
     const roundId = Number(db.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES (?, ?, ?, ?)").run(round.kind, round.message, round.compares, now()).lastInsertRowid);
     return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt(agent)) : askOne(driverOf(agent)!, model ?? null, roundId, prompt(agent), repository))));
+  };
+
+  /** Send, then record which chat the replies belong to, so the chat is a row of the Work list (engine/chats.ts). */
+  const send: Chat["send"] = async (o) => {
+    const replies = await sendOnce(o);
+    recordChat(db, o.conversation, replies.map((reply) => reply.attemptId));
+    return replies;
   };
 
   const interrupt = async (attemptId: number): Promise<boolean> => {
