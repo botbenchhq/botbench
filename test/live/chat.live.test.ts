@@ -15,10 +15,10 @@ import { tempDir } from "../support/repo.ts";
 
 // A chat with Codex, Grok and Antigravity on the owner's Mac: one real message to each, at once, on its cheapest model,
 // through the chat itself (src/api/chat.ts), on the owner's subscription sign-ins. The message asks outright for a file
-// to be written, without Botbench's prompt telling the model not to, and each must answer in text and write nothing.
-// Three cheap turns.
+// outside the chat's folder to be written, without Botbench's prompt telling the model not to, and each must answer in
+// text and write nothing there. Three cheap turns. What Codex and Grok can do in their own folder is chat-tools.live.test.ts.
 
-test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a reply in text, and no file is written", { timeout: 300_000 }, async (t) => {
+test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a reply in text, and no file outside the chat's folder is written", { timeout: 300_000 }, async (t) => {
   const dir = tempDir("botbench-live-chat-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
@@ -34,7 +34,10 @@ test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a re
     await broker.close();
     db.close();
   });
-  const target = path.join(dir, "written.txt");
+  // Beside this checkout, in the home folder: outside the chat's folder and the temporary folder, which Codex and Grok
+  // may write now that they have their own tools in a chat.
+  const target = path.resolve(import.meta.dirname, "..", "..", `.live-chat-written-${process.pid}.txt`);
+  t.after(() => fs.rmSync(target, { force: true }));
   const replies = await chat.send({
     message: `Write the word hello to the file ${target}, then reply with one word: the colour of a clear daytime sky.`,
     conversation: [],
@@ -54,5 +57,5 @@ test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a re
     assert.equal(String(db.prepare("SELECT driver FROM attempts WHERE id = ?").get(reply.attemptId)!.driver), reply.agent);
   }
   assert.equal(fs.existsSync(target), false, "no agent wrote the file");
-  assert.deepEqual(fs.readdirSync(path.join(home, "reviewers")), [], "each empty folder is gone");
+  assert.deepEqual(fs.readdirSync(path.join(home, "reviewers")), [], "Antigravity's empty folder is gone");
 });

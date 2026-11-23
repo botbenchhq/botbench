@@ -89,6 +89,27 @@ test("the host proxy lets a connection through to an allowed name only, never on
   assert.match(await ask("GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"), /^HTTP\/1\.1 403/, "a plain request");
 });
 
+test("a provider's proxy lets through its domain and the names under it, and nothing that only looks like them", async (t) => {
+  // `.invalid` never resolves: an allowed name gets past the list and fails to resolve (502); a refused one is 403.
+  const proxy = await startHostProxy([], ["botbench-provider.invalid"]);
+  t.after(() => proxy.close());
+  const status = (host: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const socket = net.connect(proxy.port, "127.0.0.1", () => socket.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`));
+      let answer = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        answer += chunk;
+        if (answer.includes("\r\n")) (resolve(answer.split("\r\n")[0]!), socket.destroy());
+      });
+      socket.on("error", reject);
+      socket.on("end", () => resolve(answer.split("\r\n")[0] ?? ""));
+    });
+  assert.match(await status("botbench-provider.invalid"), /^HTTP\/1\.1 502/, "the domain itself");
+  assert.match(await status("api.botbench-provider.invalid"), /^HTTP\/1\.1 502/, "a name under it");
+  for (const host of ["xbotbench-provider.invalid", "botbench-provider.invalid.example.com", "example.com", "localhost"]) assert.match(await status(host), /^HTTP\/1\.1 403/, host);
+});
+
 test("a vendor sign-in folder the environment moved elsewhere is unreadable too, and so is Botbench's data folder under its old name", () => {
   const paths = unreadablePaths({ dataDir: "/data", env: { CLAUDE_CONFIG_DIR: "/opt/claude-config", CODEX_HOME: "/opt/codex-home", OTHER: "/opt/other" } });
   assert.ok(paths.includes("/opt/claude-config") && paths.includes("/opt/codex-home") && !paths.includes("/opt/other"));

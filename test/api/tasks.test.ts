@@ -347,7 +347,7 @@ test("a task or a run asked of another agent than Claude Code is refused, before
   ] as const) {
     const res = await post(base, headers, route, body);
     assert.equal(res.status, 400, route);
-    assert.match(String(res.body.error), /^Only Claude Code can work in a repository\. Codex, Grok and Antigravity answer in a chat with no repository, from the conversation alone\.$/);
+    assert.match(String(res.body.error), /^Only Claude Code can work on a repository as a task\. Codex and Grok can read a repository in a chat without changing it; Antigravity answers in a chat from the conversation alone\.$/);
   }
   assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n), 0);
   assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM runs").get()!.n), 0);

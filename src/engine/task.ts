@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import { insertPreapproved, realRepo } from "../approvals/grants.ts";
+import { chatWebAccess } from "../approvals/web-access.ts";
 import { allowedHostsFor, outsideTextPrompt, runIssue } from "./intake.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
@@ -562,7 +563,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const done = await runReview({
       db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, round, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
       ...(before === undefined ? {} : { previous: { round, review: before.text, reasons: parseRefineReply(lastFix?.reply ?? "")?.notAddressed ?? null } }),
-      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
+      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, webSearch: chatWebAccess(db) === "allow", ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
     });
     options.onTaskChange(getTask(db, task.id)!);
     if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });

@@ -22,6 +22,8 @@ export interface Offered {
   problem: string | null;
   version: string | null;
   state: string;
+  /** What it can do in a chat, in the server's words (src/api/chat.ts, chatScopeWords); null for Claude Code, or when an older check kept none. */
+  chat: string | null;
 }
 
 /** An agent's state in a word or two, from its check: what its own program reported (Settings shows the same words). */
@@ -35,7 +37,7 @@ export function agentState(agent: Pick<AgentState, "problem" | "installed" | "su
 
 export function chatOffer(agents: readonly AgentState[]): Offered[] {
   const rank = (agent: string): number => (ORDER.includes(agent) ? ORDER.indexOf(agent) : ORDER.length);
-  return [...agents].sort((a, b) => rank(a.agent) - rank(b.agent)).map((a) => ({ agent: a.agent, name: agentName(a.agent), problem: a.problem, version: a.version, state: agentState(a) }));
+  return [...agents].sort((a, b) => rank(a.agent) - rank(b.agent)).map((a) => ({ agent: a.agent, name: agentName(a.agent), problem: a.problem, version: a.version, state: agentState(a), chat: typeof a.chat === "string" ? a.chat : null }));
 }
 
 /** The agents last checked, as this device kept them: read part by part; anything else is nothing known. */
@@ -49,9 +51,9 @@ export function readKnownAgents(raw: string | null): Offered[] | null {
   if (!Array.isArray(parsed)) return null;
   const kept = parsed.flatMap((a: unknown): Offered[] => {
     if (typeof a !== "object" || a === null) return [];
-    const { agent, problem, version, state } = a as Record<string, unknown>;
+    const { agent, problem, version, state, chat } = a as Record<string, unknown>;
     if (typeof agent !== "string" || agent === "" || !(problem === null || typeof problem === "string")) return [];
-    return [{ agent, name: agentName(agent), problem, version: typeof version === "string" ? version : null, state: typeof state === "string" ? state : problem === null ? "Available" : "Unavailable" }];
+    return [{ agent, name: agentName(agent), problem, version: typeof version === "string" ? version : null, state: typeof state === "string" ? state : problem === null ? "Available" : "Unavailable", chat: typeof chat === "string" ? chat : null }];
   });
   return kept.length > 0 ? kept : null;
 }
@@ -68,6 +70,8 @@ export interface AgentRow {
   version: string | null;
   problem: string | null;
   disabled: boolean;
+  /** What it can do in a chat, in the server's words; null while nothing is known, and for Claude Code. */
+  chat: string | null;
 }
 
 export interface AgentList {
@@ -95,7 +99,7 @@ export function agentList(o: { known: readonly Offered[] | null; checking: boole
   const rows = agents.map((agent): AgentRow => {
     const found = known.find((k) => k.agent === agent);
     const name = agentName(agent);
-    const row = (state: string | null, problem: string | null, disabled: boolean): AgentRow => ({ agent, name, label: state === null ? name : `${name}: ${state}`, state, version: found?.version ?? null, problem, disabled });
+    const row = (state: string | null, problem: string | null, disabled: boolean): AgentRow => ({ agent, name, label: state === null ? name : `${name}: ${state}`, state, version: found?.version ?? null, problem, disabled, chat: found?.chat ?? null });
     if (o.inRepository && agent !== CLAUDE) return row("Chat only", null, true);
     if (found === undefined) return row(unknownState, null, false);
     return found.problem !== null ? row(found.state, found.problem, false) : row(null, null, false);

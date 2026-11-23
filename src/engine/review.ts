@@ -116,6 +116,11 @@ export interface ReviewOptions {
   headCommit: string;
   /** What the reviewer's commands are kept from; it reaches no host whatever the repository allows. */
   confinement: Confinement;
+  /**
+   * The reviewer's own web search, which its provider runs on its own servers (Codex, Grok): on when the owner's "Web
+   * access in chat" is Allow, since a reviewer cannot ask. Its commands reach no network either way.
+   */
+  webSearch?: boolean;
   limitMs?: number;
   /** Aborted when the run is cancelled or Botbench stops: the review is stopped. */
   signal?: AbortSignal;
@@ -152,7 +157,9 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
   }
   diffChars = diff.length;
   diffCut = diff.length > MAX_REVIEW_DIFF;
-  const prompt = reviewerPrompt({ task: o.task, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null, tools: o.driver.capabilities.tools !== false, ...(o.previous ? { previous: o.previous } : {}) });
+  const tools = o.driver.capabilities.tools !== false;
+  const webSearch = tools && o.webSearch === true;
+  const prompt = reviewerPrompt({ task: o.task, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null, tools, ...(tools ? { copy: o.worktree, webSearch } : {}), ...(o.previous ? { previous: o.previous } : {}) });
 
   if (o.signal?.aborted) {
     outcome = "stopped";
@@ -161,7 +168,7 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
   }
   let session: DriverSession;
   try {
-    session = await o.driver.startAttempt({ db: o.db, cwd: o.worktree, readOnly: true, confinement: { ...o.confinement, allowedHosts: [] }, ...(o.model === null ? {} : { model: o.model }) });
+    session = await o.driver.startAttempt({ db: o.db, cwd: o.worktree, readOnly: true, confinement: { ...o.confinement, allowedHosts: [] }, ...(webSearch ? { webSearch } : {}), ...(o.model === null ? {} : { model: o.model }) });
   } catch (err) {
     problem = `${name} could not review this task: ${err instanceof DriverUnavailableError ? err.probe.problem ?? err.message : words(err)}`;
     return store();

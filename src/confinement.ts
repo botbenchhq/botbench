@@ -156,14 +156,17 @@ function local(address: string): boolean {
  * Botbench's own proxy for the setup and check commands of a repository that allows hosts. It opens a tunnel
  * (HTTP CONNECT) to an allowed host name only, on any port, and to nothing that resolves to this machine; it answers
  * anything else with 403. It listens on the loopback address, which a confined command may reach.
- * It filters by the name the command asks for and does not look inside the encrypted connection.
+ * It filters by the name the command asks for and does not look inside the encrypted connection. `domains` also allows
+ * every name under each of them (`x.ai` allows `api.x.ai`): for a vendor CLI's own provider, whose hosts the vendor
+ * may change (src/drivers/cli-sandbox.ts).
  */
-export function startHostProxy(hosts: readonly string[]): Promise<{ port: number; close(): Promise<void> }> {
-  const allowed = new Set(hosts);
+export function startHostProxy(hosts: readonly string[], domains: readonly string[] = []): Promise<{ port: number; close(): Promise<void> }> {
+  const exact = new Set(hosts);
+  const allowed = { has: (host: string): boolean => exact.has(host) || domains.some((domain) => host === domain || host.endsWith(`.${domain}`)) };
   const sockets = new Set<net.Socket>();
   const server = http.createServer((_req, res) => {
     res.writeHead(403, { "content-type": "text/plain" });
-    res.end("Botbench's proxy only opens tunnels (CONNECT) to the hosts this repository allows.\n");
+    res.end("Botbench's proxy only opens tunnels (CONNECT) to the hosts it allows.\n");
   });
   const refuse = (socket: net.Socket, why: string): void => {
     socket.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\n\r\n${why}\n`);
@@ -175,7 +178,7 @@ export function startHostProxy(hosts: readonly string[]): Promise<{ port: number
     const match = /^([^:\s]+):(\d{1,5})$/.exec(req.url ?? "");
     const host = match?.[1]?.toLowerCase() ?? "";
     const port = Number(match?.[2]);
-    if (!match || !allowed.has(host) || port < 1 || port > 65535) return refuse(socket, `${req.url ?? ""} is not a host this repository allows.`);
+    if (!match || !allowed.has(host) || port < 1 || port > 65535) return refuse(socket, `${req.url ?? ""} is not a host Botbench allows here.`);
     void dns.lookup(host, { all: true }).then(
       (addresses) => {
         // Connect to the address that was checked, so the name cannot point somewhere else in between.
@@ -218,7 +221,7 @@ function quoted(place: string): string {
 }
 
 /** Every folder above `place`, up to the root. */
-function ancestors(place: string): string[] {
+export function ancestors(place: string): string[] {
   const found: string[] = [];
   for (let at = path.dirname(place); ; at = path.dirname(at)) {
     found.push(at);

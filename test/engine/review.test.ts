@@ -94,6 +94,8 @@ test("R5: after the checks, Codex reads the task's title, criteria and diff, and
   assert.deepEqual(started.confinement.allowedHosts, []);
   assert.ok(started.confinement.gitDir, "the repository's git folder is named, to be read and never written");
   assert.equal(started.model, "gpt-6-luna");
+  // Its own web search, which OpenAI runs, as "Web access in chat" allows it (Allow until the owner changes it).
+  assert.equal(started.webSearch, true);
 
   const prompt = e.reviewer.prompts[0]!;
   assert.match(prompt, /Add a greeting file/);
