@@ -222,9 +222,11 @@ export interface Remembered {
   /** The reviewer's select value: "" for Off. */
   review: string;
   delivery: Delivery;
+  /** Whether a run builds on its planning model; false when a build model of its own was chosen (the model itself is kept by its picker). */
+  sameBuild: boolean;
 }
 
-export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" };
+export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch", sameBuild: true };
 
 export const writeRemembered = (r: Remembered): string => JSON.stringify(r);
 
@@ -245,6 +247,7 @@ export function readRemembered(raw: string | null): Remembered {
     mode: rememberedMode(r.mode),
     review: typeof r.review === "string" ? r.review : DEFAULTS.review,
     delivery: r.delivery === "branch" || r.delivery === "pull_request" ? r.delivery : DEFAULTS.delivery,
+    sameBuild: typeof r.sameBuild === "boolean" ? r.sameBuild : DEFAULTS.sameBuild,
   };
 }
 

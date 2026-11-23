@@ -141,6 +141,27 @@ for (const [size, viewport] of [["390", { width: 390, height: 844 }], ["1280", {
         await closeContext(page);
         await expect(page.getByTestId("composer-mode")).toHaveText("Mode: Manual.");
         expect(await runs(page, botbench), "still nothing was sent").toBe(4);
+
+        // A Fully autonomous that can start here is back as it was on reopen, and goes out as full only when Send is pressed.
+        await choose(page, "Mode", "Fully autonomous");
+        await closeContext(page);
+        await page.reload();
+        await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe what to plan");
+        await expect(page.getByTestId("composer-mode")).toHaveText("Mode: Fully autonomous.");
+        await messageBox(page).fill("Add a CSV export");
+        await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+        expect(await runs(page, botbench), "opening the composer sent nothing").toBe(4);
+        // The request Send makes is read and then not let through, so no planner starts in a test with no model turn.
+        const sent: unknown[] = [];
+        await page.route("**/api/runs", (route) => {
+          if (route.request().method() !== "POST") return route.continue();
+          sent.push(route.request().postDataJSON());
+          return route.abort();
+        });
+        await page.getByRole("button", { name: "Send" }).click();
+        await expect.poll(() => sent.length).toBe(1);
+        expect(sent[0]).toMatchObject({ repo: seeded.checked, prompt: "Add a CSV export", mode: "full", delivery: "pull_request" });
+        expect(await runs(page, botbench)).toBe(4);
       });
     });
   }

@@ -184,7 +184,7 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
   const [chosenOneTask, setChosenOneTask] = useState<boolean | null>(null);
   const [specPath, setSpecPath] = useState("");
-  const [sameBuild, setSameBuild] = useState(true);
+  const [sameBuild, setSameBuild] = useState(remembered.sameBuild);
   const models = useModelChoice(onSignedOut);
   const buildModels = useModelChoice(onSignedOut, "botbench.buildModel");
   // Only a run has a reviewer: the agents are asked once a run is being set up.
@@ -211,8 +211,8 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
 
   useEffect(() => {
     if (repo.kind === "needed") return;
-    saveComposer(writeRemembered({ repo, kind, mode: chosenMode, review: review.value, delivery }));
-  }, [repo, kind, chosenMode, review.value, delivery]);
+    saveComposer(writeRemembered({ repo, kind, mode: chosenMode, review: review.value, delivery, sameBuild }));
+  }, [repo, kind, chosenMode, review.value, delivery, sameBuild]);
   // Coming from New task or New run, the address goes back to the composer's own, so a reload keeps what was chosen since.
   useEffect(() => {
     if (start !== null) window.history.replaceState(null, "", "#/turn");
