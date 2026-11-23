@@ -74,7 +74,7 @@ test("another workbench's claim branch is read as a claim from its name alone; t
     [{ branch: "botbench/bob/run-3/issue-82-at-20261122T210530123Z" }, { branch: "botbench/alice/run-1/issue-82-at-20261122T210530123Z" }, { branch: "botbench/carol/run-2/issue-82-at-20261322T210530123Z" }, { branch: "botbench/dave/run-2/issue-0-at-20261122T210530123Z" }],
     new Set(["alice"]),
   );
-  assert.deepEqual(work.claims, [{ workbench: "bob", branch: "botbench/bob/run-3/issue-82-at-20261122T210530123Z", issue: 82, startedAt: "2026-11-22T21:05:30.123Z" }]);
+  assert.deepEqual(work.claims, [{ workbench: "bob", branch: "botbench/bob/run-3/issue-82-at-20261122T210530123Z", issue: 82, startedAt: "2026-11-22T21:05:30.123Z", workedAt: "2026-11-22T21:05:30.123Z", takenOverBy: null, pullRequest: null }]);
   assert.deepEqual(work.branches.map((b) => b.branch), ["botbench/carol/run-2/issue-82-at-20261322T210530123Z", "botbench/dave/run-2/issue-0-at-20261122T210530123Z"], "a name that is not a real claim (month 13, issue 0) is only a pushed branch");
 });
 
@@ -90,4 +90,31 @@ test("an open pull request carries the head its branch has on the remote, as git
   const head = "0123456789abcdef0123456789abcdef01234567";
   const work = otherWork([listed(3, "botbench/bob/run-1/task-1"), listed(4, "botbench/bob/run-2/task-2")], [{ branch: "botbench/bob/run-1/task-1", commit: head }], new Set(["alice"]));
   assert.deepEqual(work.pullRequests.map((pr) => [pr.number, pr.head]), [[3, head], [4, null]]);
+});
+
+test("a claim another workbench took over reads as taken over; one whose run has its pull request open reads as that pull request; signs of work give the time and are not listed", () => {
+  const C = "1".repeat(40);
+  const B = "2".repeat(40);
+  const own = new Set(["alice"]);
+  const cClaim = "botbench/exp-c/run-3/issue-4-at-20261123T111603365Z";
+  const bClaim = "botbench/exp-b/run-7/issue-4-at-20261123T121654000Z";
+  const branches = [
+    { branch: "botbench/claims/issue-4", commit: C },
+    { branch: cClaim, commit: C },
+    { branch: "botbench/exp-c/run-3/issue-4-worked-at-20261123T112603365Z", commit: C },
+    // A sign at another commit than its claim's says nothing of it.
+    { branch: "botbench/exp-c/run-3/issue-4-worked-at-20261123T115603365Z", commit: B },
+    { branch: bClaim, commit: B },
+    { branch: "botbench/exp-b/run-7/task-12", commit: "3".repeat(40) },
+  ];
+  const pr: ListedPullRequest = { number: 31, title: "Accept plus addresses", url: "https://github.com/o/r/pull/31", state: "OPEN", headRefName: "botbench/exp-b/run-7/task-12", closes: [], files: [] };
+  const work = otherWork([pr], branches, own);
+  assert.deepEqual(work.claims.map((c) => [c.branch, c.workedAt, c.takenOverBy, c.pullRequest]), [
+    [bClaim, "2026-11-23T12:16:54.000Z", null, 31],
+    [cClaim, "2026-11-23T11:26:03.365Z", "exp-b", null],
+  ]);
+  assert.deepEqual(work.branches, [], "signs of work and a branch with a pull request are not listed as pushed branches");
+  // A later claim less than an hour after it is not a take-over (only an hour-old claim can be taken over).
+  const early = otherWork([], [{ branch: "botbench/claims/issue-4", commit: C }, { branch: cClaim, commit: C }, { branch: "botbench/exp-b/run-7/issue-4-at-20261123T111703365Z", commit: B }], own);
+  assert.deepEqual(early.claims.map((c) => c.takenOverBy), [null, null]);
 });

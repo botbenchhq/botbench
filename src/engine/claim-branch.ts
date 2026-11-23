@@ -61,11 +61,48 @@ export function parseClaimBranch(branch: string): ClaimName | null {
   if (run === null || m === null) return null;
   const issue = Number(m[1]);
   if (issue > MAX_ISSUE_NUMBER) return null;
-  const [y, mo, d, h, mi, s, ms] = m.slice(2).map(Number) as [number, number, number, number, number, number, number];
-  const at = new Date(Date.UTC(y, mo - 1, d, h, mi, s, ms));
-  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== mo - 1 || at.getUTCDate() !== d || at.getUTCHours() !== h || at.getUTCMinutes() !== mi || at.getUTCSeconds() !== s) return null;
-  return { branch, workbench: parsed.workbench, run: Number(run[1]), issue, startedAt: at.toISOString() };
+  const at = utcStamp(m.slice(2).map(Number) as Stamp);
+  if (at === null) return null;
+  return { branch, workbench: parsed.workbench, run: Number(run[1]), issue, startedAt: at };
 }
+
+/**
+ * A claim's sign of work, `botbench/<workbench>/run-<run>/issue-<issue>-worked-at-<YYYYMMDD>T<HHMMSSmmm>Z`: a branch at the
+ * claim's own commit whose name says when the claiming workbench last worked on the run (engine/claims.ts `worked`).
+ * Read, like the claim, from `git ls-remote` alone: the time is the claiming workbench's own clock, as its claim's is.
+ */
+export function workedBranchName(workbench: string, runId: number, issue: number, at: Date): string {
+  const stamp = at.toISOString().replace(/[-:.]/g, "");
+  return `botbench/${workbench}/run-${runId}/issue-${issue}-worked-at-${stamp}`;
+}
+
+/** A sign of work's last part, as `workedBranchName` writes it. */
+const WORKED_PART = /^issue-([1-9]\d{0,9})-worked-at-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})Z$/;
+
+/** The parts of a sign of work's name (its time as `startedAt` is read for a claim: when the work was), or null for any other branch. */
+export function parseWorkedBranch(branch: string): ClaimName | null {
+  const parsed = parseTaskBranch(branch);
+  if (parsed === null || parsed.prefix !== "botbench" || parsed.workbench === null) return null;
+  const run = /^run-([1-9]\d{0,9})$/.exec(parsed.run);
+  const m = WORKED_PART.exec(parsed.task);
+  if (run === null || m === null) return null;
+  const at = utcStamp(m.slice(2).map(Number) as Stamp);
+  const issue = Number(m[1]);
+  return at === null || issue > MAX_ISSUE_NUMBER ? null : { branch, workbench: parsed.workbench, run: Number(run[1]), issue, startedAt: at };
+}
+
+type Stamp = [number, number, number, number, number, number, number];
+/** The ISO time of a branch name's stamp, or null when it is not a real UTC time. */
+function utcStamp([y, mo, d, h, mi, s, ms]: Stamp): string | null {
+  const at = new Date(Date.UTC(y, mo - 1, d, h, mi, s, ms));
+  return at.getUTCFullYear() !== y || at.getUTCMonth() !== mo - 1 || at.getUTCDate() !== d || at.getUTCHours() !== h || at.getUTCMinutes() !== mi || at.getUTCSeconds() !== s ? null : at.toISOString();
+}
+
+/** How often a workbench says again that it is working on a claimed issue, while its run is going. */
+export const WORKED_EVERY_MS = 10 * 60_000;
+
+/** The run part every branch of one run shares: `botbench/<workbench>/run-<run>/`. */
+export const runPrefix = (claim: Pick<ClaimName, "workbench" | "run">): string => `botbench/${claim.workbench}/run-${claim.run}/`;
 
 /**
  * The issue numbers a message names, best effort: "#59", "Issue #59", "(#60)"; not a page anchor, an entity, a word with

@@ -252,13 +252,18 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   });
   const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
   const dictation = createDictation({ home, ...dictationOptions });
+  // Claims a stopped Botbench left on the remote for runs that ended without a pull request are released now, and the
+  // claim of every run still going is read again. Before the deliveries are taken up again: each delivery waits behind
+  // its run's reading, so nothing of a run whose claim was taken over is pushed (engine/claims.ts).
+  claims.recover();
   const deliveries = createDeliveries({ db, config, github, onTaskChange: (task) => {
       stream.announceTask(task);
       // A delivery that failed may leave its run with no pull request on its way: its claim is released then.
       if (task.runId !== null) claims.runChanged({ id: task.runId });
     }, claims });
-  // Claims a stopped Botbench left on the remote for runs that ended without a pull request are released now.
-  claims.recover();
+  // While a run plans or builds, its claim says so again on the remote (at most every WORKED_EVERY_MS per run).
+  const working = setInterval(() => claims.worked(), 60_000);
+  working.unref();
   // The issue watch (engine/watch.ts): each watched repository's labelled open issues, listed with the owner's gh at its
   // interval and proposed on Work. It reads only; a run starts only when the owner presses Start and submits the composer.
   const watch = startWatch({ db, config, run: options.watchGh ?? runGh, onProposed: () => push.issueProposed(), onChange: stream.announceWatch });
@@ -287,6 +292,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
+    clearInterval(working);
     stream.close();
     await Promise.all([...servers.map(stop), peerLink.close()]);
     // A poll under way writes its issues to the store when it ends: its timers stop and it is waited for first.

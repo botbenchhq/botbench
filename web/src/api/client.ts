@@ -853,12 +853,19 @@ export interface PeerBranch {
   workbench: string;
   branch: string;
 }
-/** Another workbench's claim on an issue: it started a run on it at `startedAt` (a UTC minute) and has no pull request yet. */
+/**
+ * Another workbench's claim on an issue: it started a run on it at `startedAt` (a UTC minute) and last said it worked on
+ * it at `workedAt`; `takenOverBy` names the workbench that took it over, and `pullRequest` the claiming run's open pull
+ * request, if any (src/engine/peers.ts).
+ */
 export interface PeerClaim {
   workbench: string;
   branch: string;
   issue: number;
   startedAt: string;
+  workedAt: string;
+  takenOverBy: string | null;
+  pullRequest: number | null;
 }
 /** What other workbenches have in flight on one repository's remote, or why that cannot be read now. `repository` is the shared one, host/owner/name. */
 export type PeersView =
