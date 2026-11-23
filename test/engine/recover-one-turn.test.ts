@@ -37,9 +37,15 @@ function realGroup(t: T): number {
   return pgid;
 }
 
+/**
+ * A moment ago: recovery takes up only rows from before its start (`created_at < began`), and a row written in the same
+ * millisecond as that start would be read as this start's own. A second is well inside the slack a CLI's start is given.
+ */
+const justBefore = (): string => new Date(Date.now() - 1000).toISOString();
+
 /** The rows a one-turn session writes once its CLI is started and the prompt is sent: a running attempt with its group, the prompt, what came back so far. */
 function oneTurnAttempt(db: DatabaseSync, o: { driver: string; pgid: number | null; createdAt?: string; chat?: string }): number {
-  const at = o.createdAt ?? now();
+  const at = o.createdAt ?? justBefore();
   const id = Number(db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES (?, NULL, NULL, 'running', ?, ?, ?)").run(o.driver, o.pgid, at, at).lastInsertRowid);
   const record = (event: DriverEvent): void => void db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, ?, ?)").run(id, now(), event.type, JSON.stringify(event));
   record({ type: "user_prompt", text: "[From Botbench] framed prompt" });
@@ -93,7 +99,6 @@ test("a chat turn and a review turn cut off by a restart: their CLI groups are s
   assert.deepEqual(chatHistory(db, [chat]), [{ from: "owner", text: "Name a colour" }, { from: "Grok (its default model)", text: "Blue. It is" }]);
   // The screens show the detail as it is stored, by the same words.
   assert.equal(SHOWN, RESTART_STOPPED);
-  db.close();
 
   // A further start adds nothing: the attempts no longer run.
   const third = await startAgain(t, dir);
@@ -136,7 +141,7 @@ test("an attempt that ended in the ordinary way gets no stopped event: one whose
   const over = oneTurnAttempt(before, { driver: "grok", pgid: null, chat: "Name a colour" });
   before.prepare("UPDATE attempts SET status = 'failed' WHERE id = ?").run(over);
   // A session that had reported itself and been sent nothing: it had no turn to cut off.
-  const at = now();
+  const at = justBefore();
   const unsent = Number(before.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', NULL, 'c', 'running', NULL, ?, ?)").run(at, at).lastInsertRowid);
   const started: DriverEvent = { type: "session_started", resumeCursor: "c", model: null, keySource: null };
   before.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 0, ?, ?, ?)").run(unsent, at, started.type, JSON.stringify(started));

@@ -334,7 +334,8 @@ test("a chat turn a restart cut off is served, after the next start, as stopped 
   const home = path.join(dir, "home");
   // What the last Botbench left of a Codex chat turn it was killed in: the attempt still running, the prompt, part of a reply.
   const before = openStore(home);
-  const at = now();
+  // A moment ago: recovery takes up only rows from before its start, and one from the same millisecond would be read as its own.
+  const at = new Date(Date.now() - 1000).toISOString();
   const attempt = Number(before.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('codex', NULL, NULL, 'running', NULL, ?, ?)").run(at, at).lastInsertRowid);
   const round = Number(before.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES ('ask', 'Name a colour', NULL, ?)").run(at).lastInsertRowid);
   before.prepare("INSERT INTO chat_attempts (attempt_id, round_id, created_at) VALUES (?, ?, ?)").run(attempt, round, at);
