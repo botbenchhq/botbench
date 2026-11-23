@@ -116,17 +116,22 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   await shot(page, "u16-settings.png");
 });
 
-test("Appearance: Light changes the page, its browser bar and its logo, is remembered on this device and drawn before the client starts; Match device follows the device; Dark is the default", async ({ page, botbench }) => {
+test("Appearance: Light changes the page, its browser bar and its logo (which follows the text colour), is remembered on this device and drawn before the client starts; Match device follows the device; Dark is the default", async ({ page, botbench }) => {
   await signIn(page, botbench);
   const root = page.locator("html");
   const bar = page.locator('meta[name="theme-color"]');
-  const mark = page.getByRole("banner").locator("img");
+  const mark = page.getByRole("banner").locator("svg[aria-hidden=\"true\"]").first();
+  const markFill = () => mark.evaluate((svg) => getComputedStyle(svg.querySelector("path")!).fill);
+  const nameColour = () => page.locator(".ds-app-header__name").evaluate((a) => getComputedStyle(a).color);
   // The default: dark, said on the root, never left out: without the attribute the page's color-scheme stays light and
   // native controls and scrollbars would be drawn for a light page.
   await expect(root).toHaveAttribute("data-theme", "dark");
   expect(await root.evaluate((el) => getComputedStyle(el).colorScheme)).toBe("dark");
   await expect(bar).toHaveAttribute("content", THEME_COLOR.dark);
-  await expect(mark).toHaveAttribute("src", /mark-dark/);
+  expect(await markFill(), "the mark is drawn in the text colour, dark").toBe(await nameColour());
+  const darkFill = await markFill();
+  // After a change of mode: the mark is in the text colour again, and it is no longer the dark mode's.
+  const followsText = async () => (await markFill()) === (await nameColour()) && (await markFill()) !== darkFill;
 
   await openSettings(page);
   const mode = page.getByLabel("Mode");
@@ -135,8 +140,7 @@ test("Appearance: Light changes the page, its browser bar and its logo, is remem
   await expect(root).toHaveAttribute("data-theme", "light");
   await expect(bar).toHaveCount(1);
   await expect(bar).toHaveAttribute("content", THEME_COLOR.light);
-  await expect(mark).toHaveAttribute("src", /mark-light/);
-  await expect.poll(() => mark.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), { message: "the light mark loaded" }).toBe(true);
+  await expect.poll(followsText, { message: "the mark is drawn in the light mode's text colour, not the dark mode's" }).toBe(true);
   expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(token("surface", "light"));
   expect(await root.evaluate((el) => getComputedStyle(el).colorScheme)).toBe("light");
   expect(await pageMode(page)).toBe("light");
@@ -166,11 +170,11 @@ test("Appearance: Light changes the page, its browser bar and its logo, is remem
   await page.getByLabel("Mode").selectOption("auto");
   await expect(root).toHaveAttribute("data-theme", "auto");
   await expect(bar).toHaveAttribute("content", THEME_COLOR.dark);
-  await expect(mark).toHaveAttribute("src", /mark-dark/);
+  await expect.poll(markFill, { message: "the mark follows the device back to dark" }).toBe(darkFill);
   expect(await pageMode(page)).toBe("dark");
   await page.emulateMedia({ colorScheme: "light" });
   await expect(bar).toHaveAttribute("content", THEME_COLOR.light);
-  await expect(mark).toHaveAttribute("src", /mark-light/);
+  await expect.poll(followsText, { message: "the mark follows the device to light" }).toBe(true);
   expect(await pageMode(page)).toBe("light");
   await checkDesign(page, "settings, match device, light");
 

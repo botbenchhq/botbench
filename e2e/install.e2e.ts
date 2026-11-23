@@ -33,13 +33,17 @@ test("the manifest and service worker pass Chrome's install checks, the worker r
   const manifest = (await cdp.send("Page.getAppManifest")) as { url: string; errors: unknown[]; data?: string };
   expect(manifest.url).toBe(`${botbench.base}/manifest.webmanifest`);
   expect(manifest.errors, "the manifest parses without errors").toEqual([]);
-  const parsed = JSON.parse(manifest.data ?? "{}") as { name?: string; display?: string; theme_color?: string; background_color?: string; icons?: { src: string; purpose: string }[] };
+  const parsed = JSON.parse(manifest.data ?? "{}") as { name?: string; display?: string; theme_color?: string; background_color?: string; icons?: { src: string; sizes: string; purpose: string }[] };
   expect(parsed).toMatchObject({ name: "Botbench", display: "standalone", theme_color: THEME_COLOR.dark, background_color: THEME_COLOR.dark });
   expect(parsed.icons?.map((icon) => `${icon.src} ${icon.purpose}`)).toEqual(["/icons/icon-192.png any", "/icons/icon-512.png any", "/icons/icon-maskable-192.png maskable", "/icons/icon-maskable-512.png maskable"]);
   for (const icon of parsed.icons ?? []) {
     const res = await page.request.get(new URL(icon.src, botbench.base).href);
     expect(res.status(), icon.src).toBe(200);
     expect(res.headers()["content-type"]).toBe("image/png");
+    // A real PNG at the size the manifest declares.
+    const png = await res.body();
+    expect(png.subarray(1, 4).toString("latin1"), `${icon.src} is a PNG`).toBe("PNG");
+    expect(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`, `${icon.src} is the size it declares`).toBe(icon.sizes);
   }
   // Chrome's own verdict on whether the page can be installed: no reason against it.
   const { installabilityErrors } = (await cdp.send("Page.getInstallabilityErrors")) as { installabilityErrors: { errorId: string }[] };
