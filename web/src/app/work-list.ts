@@ -58,7 +58,9 @@ function kinds(rows: readonly WorkRow[]): string {
 /** The search field's count line: how many rows are shown, in words, and of how many when a search narrows them. */
 export function countLine(list: WorkRows, query: string, shown: number): string {
   const words = query.trim();
-  if (words === "") return list.total > list.rows.length ? `The newest ${list.rows.length} of ${list.total} runs and tasks` : kinds(list.rows);
+  // Only Finished is cut short by the board, so what is left out is always the oldest finished work.
+  const left = list.total - list.rows.length;
+  if (words === "") return left > 0 ? `${kinds(list.rows)}. The ${left} oldest finished ${left === 1 ? "one is" : "are"} not listed.` : kinds(list.rows);
   if (shown === 0) return `None of ${list.rows.length} match "${words}"`;
   return `${shown} of ${list.rows.length} match "${words}"`;
 }

@@ -51,6 +51,8 @@ test("the count line says in words how many are shown, by kind, and of how many 
   assert.equal(countLine(list, "zebra", 0), 'None of 3 match "zebra"');
   assert.equal(countLine(workRows(groups([], [task(2, "Only one", "building", "2026-11-22T10:00:00Z")], [])), "", 1), "1 task");
   assert.equal(countLine(workRows(groups([run(1, "a", "2026-11-22T10:00:00Z"), run(2, "b", "2026-11-22T11:00:00Z")], [], [])), "", 2), "2 runs");
-  // Finished sends only its newest: the line says these are the newest, of the real count.
-  assert.equal(countLine(workRows(groups([], [], [task(4, "Old work", "failed", "2026-11-01T10:00:00Z")], 120)), "", 1), "The newest 1 of 120 runs and tasks");
+  // Finished sends only its newest: the line says how many of the oldest finished are left out, and nothing about the rest.
+  const cut = workRows(groups([], [task(5, "Older work at work", "building", "2026-10-01T10:00:00Z")], [task(4, "Old work", "failed", "2026-11-01T10:00:00Z")], 120));
+  assert.equal(countLine(cut, "", 2), "2 tasks. The 119 oldest finished are not listed.");
+  assert.equal(countLine(workRows(groups([], [], [task(4, "Old work", "failed", "2026-11-01T10:00:00Z")], 2)), "", 1), "1 task. The 1 oldest finished one is not listed.");
 });
