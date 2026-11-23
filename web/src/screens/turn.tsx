@@ -16,7 +16,8 @@ import { choiceName, modelName, useModelChoice } from "../components/model-picke
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
 import { useIssueChoice } from "../components/issue-choice.tsx";
 import { usePeersOf } from "../components/other-workbenches.tsx";
-import { issueWarnings } from "../app/peers.ts";
+import { agoWords, claimNotice, issueWarnings, oldClaims } from "../app/peers.ts";
+import { ConfirmAction } from "../components/confirm.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
@@ -108,6 +109,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
+  /** Other workbenches' old claims the owner confirmed taking over for the run about to start, by branch. */
+  const [takenOver, setTakenOver] = useState<string[]>([]);
   const startRef = useRef<Promise<{ attemptId: number; turn: number }[]> | null>(null);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -366,6 +369,9 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   };
   const chatting = !inRepository(repo);
   const peerWarnings = chatting ? [] : issueWarnings(peers, { attached: kind === "run" ? (issue.attached?.number ?? null) : null, message: prompt });
+  // A run may take over another workbench's claim on its issue once the claim is old (Peers P3); only those still offered are sent.
+  const offeredClaims = chatting || kind !== "run" ? [] : oldClaims(peers, { attached: issue.attached?.number ?? null, message: prompt });
+  const takeOver = takenOver.filter((branch) => offeredClaims.some((c) => c.branch === branch));
   // A chat whose agent cannot answer is blocked like one whose Claude Code cannot: the reason ends with the link to connect one.
   const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null, connect: true as const } : null);
   const askedCount = chatting && targets.ok ? targets.targets.length : 1;
@@ -431,7 +437,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const send = (): void => {
     if (starting || showStop) return;
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask });
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
     if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets) : undefined;
@@ -611,7 +617,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
                     ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
-                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
+                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
                 </p>
               )
             )}
@@ -699,6 +705,33 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
               {line}
             </p>
           ))}
+          {offeredClaims.map((c) =>
+            takeOver.includes(c.branch) ? (
+              <p key={c.branch} data-testid="peer-taken-over" className="ds-composer__reason">
+                <span data-ds-content="">{c.workbench}</span>
+                {`'s claim on issue #${c.issue} is taken over: your run goes ahead, and Botbench leaves its branches as they are.`}
+              </p>
+            ) : (
+              <ConfirmAction
+                key={c.branch}
+                label="Take over"
+                opener={{ small: true, name: `Take over ${c.workbench}'s claim on issue #${c.issue}` }}
+                title={`Take over ${c.workbench}'s claim?`}
+                confirmLabel="Take over"
+                cancelLabel={`Leave ${c.workbench}'s claim`}
+                disabled={starting}
+                testId="take-over-dialog"
+                onConfirm={() => setTakenOver((have) => [...have, c.branch])}
+              >
+                <p>
+                  <span data-ds-content="">{c.workbench}</span>
+                  {` started on issue #${c.issue} ${agoWords(c.startedAt, Date.now())} and has opened no pull request. Your run goes ahead as if `}
+                  <span data-ds-content="">{c.workbench}</span>
+                  {" had not started. Botbench leaves its branches on the remote as they are, and pushes only a branch of your own. If that workbench is still working on the issue, the two of you may do the same work twice."}
+                </p>
+              </ConfirmAction>
+            ),
+          )}
           {builder.state === "problem" && (
             // Asks the agent again, for real, once the owner has fixed what the reason names.
             <BusyButton variant="quiet" size="small" onClick={checkDriver}>

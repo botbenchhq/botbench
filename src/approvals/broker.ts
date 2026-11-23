@@ -160,11 +160,13 @@ export type LogRule =
   | "web_refused"
   /**
    * A tool call of an agent that cannot ask (Codex, Grok: capability `permissionRequests: false`), which ran without
-   * asking, kept only by its sandbox (threat model, B17). What the sandbox refused is in the agent's own transcript.
+   * asking, kept only by its sandbox (threat model, B18). What the sandbox refused is in the agent's own transcript.
    */
   | "sandboxed"
   /** One of the CLI's own bookkeeping tools (its to-do list, loading a tool) ran without asking, in any mode. */
-  | "bookkeeping";
+  | "bookkeeping"
+  /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
+  | "issue_claim";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -469,7 +471,7 @@ export function appendLog(db: DatabaseSync, e: LogWrite): void {
 
 /**
  * Write each tool call `session` reports to the action log, once per call, as one that ran without asking under the
- * agent's own sandbox (`sandboxed`): for an agent that cannot ask Botbench before it acts (B17), whose calls never pass
+ * agent's own sandbox (`sandboxed`): for an agent that cannot ask Botbench before it acts (B18), whose calls never pass
  * through the broker. `where` names the place its sandbox kept it to, in words for the log.
  */
 export function logSandboxedCalls(db: DatabaseSync, session: Pick<DriverSession, "attemptId" | "onEvent">, o: { agent: string; taskId: number | null; runId?: number | null; cwd: string; where: string }): () => void {

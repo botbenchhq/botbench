@@ -1387,9 +1387,159 @@ DROP TABLE owner_settings_before_actions;
 `,
   },
   {
-    // Codex and Grok have their own tools in a chat and a review and cannot ask before they act (threat model, B17):
+    // Claiming an issue on the shared remote (Peers P3, engine/claims.ts), step by step for a run, append-only: the
+    // commit Botbench made for the claim, stored before it is pushed (`claiming`), so a restart finds a push it never saw
+    // end; the branches pushed with it (`claimed`), a claim that could not be made or was not to be made, and why
+    // (`not_claimed`), a claim given up because another workbench holds the issue's lock (`withdrawn`, naming it), and
+    // when the run ended without a pull request, the branches deleted (`released`) or left on the remote and why
+    // (`kept`). A run claims at most once. `claim_takeovers`: another workbench's old claim the owner chose, after a confirm naming
+    // its holder, not to give way to; stored with the run, before its claim. The action log gains `issue_claim`, one
+    // entry per step that wrote to the remote or released a claim. A check cannot be altered in place, so the action
+    // log is made again with every row kept, ids included, and its indexes and triggers put back.
+    name: "issue_claims",
+    sql: `
+CREATE TABLE issue_claims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES runs (id),
+  step TEXT NOT NULL CHECK (step IN ('claiming', 'claimed', 'not_claimed', 'withdrawn', 'released', 'kept')),
+  issue INTEGER NOT NULL CHECK (issue >= 1),
+  remote TEXT,
+  branch TEXT,
+  commit_id TEXT,
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK ((step = 'not_claimed') OR (remote IS NOT NULL AND branch IS NOT NULL AND commit_id IS NOT NULL))
+);
+CREATE INDEX issue_claims_run ON issue_claims (run_id, id);
+CREATE UNIQUE INDEX issue_claims_once ON issue_claims (run_id) WHERE step IN ('claimed', 'not_claimed');
+CREATE TRIGGER issue_claims_no_update BEFORE UPDATE ON issue_claims
+BEGIN SELECT RAISE(ABORT, 'issue claims are append-only'); END;
+CREATE TRIGGER issue_claims_no_delete BEFORE DELETE ON issue_claims
+BEGIN SELECT RAISE(ABORT, 'issue claims are append-only'); END;
+
+CREATE TABLE claim_takeovers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES runs (id),
+  branch TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  issue INTEGER NOT NULL CHECK (issue >= 1),
+  started_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (run_id, branch)
+);
+CREATE TRIGGER claim_takeovers_no_update BEFORE UPDATE ON claim_takeovers
+BEGIN SELECT RAISE(ABORT, 'claim take-overs are append-only'); END;
+CREATE TRIGGER claim_takeovers_no_delete BEFORE DELETE ON claim_takeovers
+BEGIN SELECT RAISE(ABORT, 'claim take-overs are append-only'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_claims;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_claims ORDER BY id;
+DROP TABLE action_log_before_claims;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // Checking a task together with another workbench's open pull request (engine/combined.ts, Peers P4). One row per
+    // check, written once with everything it found: the two head commits it ran on, whether they merged and, when not,
+    // the files in conflict, and each setup and check command run on the merge with its output. Both tables are
+    // append-only: a result is never changed, only followed by a newer one.
+    //
+    // "Require checking together" for a repository is a list of the owner's changes, append-only, the latest in force.
+    // Every row is the owner's (`set_by`): nothing else writes this table (the API's owner-only route does).
+    name: "combined_checks",
+    sql: `
+CREATE TABLE combined_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  pull_request INTEGER NOT NULL CHECK (pull_request BETWEEN 1 AND 2147483647),
+  workbench TEXT NOT NULL,
+  peer_branch TEXT NOT NULL,
+  peer_commit TEXT CHECK (peer_commit IS NULL OR length(peer_commit) IN (40, 64)),
+  task_commit TEXT NOT NULL CHECK (length(task_commit) IN (40, 64)),
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'conflict', 'not_run')),
+  conflicts TEXT NOT NULL DEFAULT '[]',
+  problem TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  CHECK (outcome = 'not_run' OR peer_commit IS NOT NULL),
+  CHECK (outcome <> 'not_run' OR problem IS NOT NULL)
+);
+CREATE INDEX combined_checks_task ON combined_checks (task_id, id);
+CREATE TABLE combined_check_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  combined_check_id INTEGER NOT NULL REFERENCES combined_checks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  position INTEGER NOT NULL,
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL
+);
+CREATE INDEX combined_check_commands_check ON combined_check_commands (combined_check_id, id);
+CREATE TRIGGER combined_checks_no_update BEFORE UPDATE ON combined_checks
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_checks_no_delete BEFORE DELETE ON combined_checks
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_check_commands_no_update BEFORE UPDATE ON combined_check_commands
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_check_commands_no_delete BEFORE DELETE ON combined_check_commands
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+
+CREATE TABLE combined_requirements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_path TEXT NOT NULL,
+  required INTEGER NOT NULL CHECK (required IN (0, 1)),
+  set_by TEXT NOT NULL CHECK (set_by = 'owner'),
+  set_at TEXT NOT NULL
+);
+CREATE INDEX combined_requirements_repo ON combined_requirements (repo_path, id);
+CREATE TRIGGER combined_requirements_no_update BEFORE UPDATE ON combined_requirements
+BEGIN SELECT RAISE(ABORT, 'the owner''s changes to require checking together are append-only'); END;
+CREATE TRIGGER combined_requirements_no_delete BEFORE DELETE ON combined_requirements
+BEGIN SELECT RAISE(ABORT, 'the owner''s changes to require checking together are append-only'); END;
+`,
+  },
+  {
+    // Codex and Grok have their own tools in a chat and a review and cannot ask before they act (threat model, B18):
     // each tool call they report is logged as one that ran without asking under the agent's own sandbox (`sandboxed`),
-    // as every agent action that ran is logged. The check is made again as in the migration before.
+    // as every agent action that ran is logged. A check cannot be altered in place, so the action log is made again
+    // with every row kept, ids included, and its indexes and triggers put back.
     name: "sandboxed agent calls in the log",
     sql: `
 DROP TRIGGER action_log_no_update;
@@ -1404,7 +1554,7 @@ CREATE TABLE action_log (
   task_id INTEGER REFERENCES tasks (id),
   attempt_id INTEGER REFERENCES attempts (id),
   approval_id INTEGER REFERENCES approvals (id),
-  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'sandboxed')),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed')),
   tool TEXT NOT NULL,
   command TEXT NOT NULL,
   cwd TEXT NOT NULL,
@@ -1413,7 +1563,8 @@ CREATE TABLE action_log (
   run_id INTEGER REFERENCES runs (id),
   refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
   CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
-  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL)
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL)
 );
 INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
   SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_sandboxed ORDER BY id;

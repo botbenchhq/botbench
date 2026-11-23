@@ -63,14 +63,14 @@ test("a repository's settings are its configured pre-approved commands, found by
   const repo = repository(t);
   const other = repository(t);
   const { base, headers } = await start(t, repo, { [repo]: { preapproved: ["npm test", "sh make-marker.sh"], setup: ["npm ci"], checks: ["npm test"] } });
-  assert.deepEqual(await get(base, headers, settingsRoute(repo)), { status: 200, body: { path: repo, preapproved: ["npm test", "sh make-marker.sh"], hasChecks: true } });
-  assert.deepEqual(await get(base, headers, settingsRoute(`${repo}/`)), { status: 200, body: { path: repo, preapproved: ["npm test", "sh make-marker.sh"], hasChecks: true } });
+  assert.deepEqual(await get(base, headers, settingsRoute(repo)), { status: 200, body: { path: repo, preapproved: ["npm test", "sh make-marker.sh"], hasChecks: true, claimIssues: false } });
+  assert.deepEqual(await get(base, headers, settingsRoute(`${repo}/`)), { status: 200, body: { path: repo, preapproved: ["npm test", "sh make-marker.sh"], hasChecks: true, claimIssues: false } });
   // Through a link the repository is still the same one.
   const link = path.join(other, "link-to-repo");
   fs.symlinkSync(repo, link);
-  assert.deepEqual(await get(base, headers, settingsRoute(link)), { status: 200, body: { path: repo, preapproved: ["npm test", "sh make-marker.sh"], hasChecks: true } });
-  assert.deepEqual(await get(base, headers, settingsRoute(other)), { status: 200, body: { path: other, preapproved: [], hasChecks: false } });
-  assert.deepEqual(await get(base, headers, settingsRoute(path.join(repo, "missing"))), { status: 200, body: { path: path.join(repo, "missing"), preapproved: [], hasChecks: false } });
+  assert.deepEqual(await get(base, headers, settingsRoute(link)), { status: 200, body: { path: repo, preapproved: ["npm test", "sh make-marker.sh"], hasChecks: true, claimIssues: false } });
+  assert.deepEqual(await get(base, headers, settingsRoute(other)), { status: 200, body: { path: other, preapproved: [], hasChecks: false, claimIssues: false } });
+  assert.deepEqual(await get(base, headers, settingsRoute(path.join(repo, "missing"))), { status: 200, body: { path: path.join(repo, "missing"), preapproved: [], hasChecks: false, claimIssues: false } });
   for (const route of ["/api/repos/settings", "/api/repos/settings?path=relative/repo", "/api/repos/settings?path=", `${settingsRoute(repo)}&path=/x`, "/api/repos/settings?path=%2Fa%00b"]) {
     const res = await get(base, headers, route);
     assert.equal(res.status, 400, route);

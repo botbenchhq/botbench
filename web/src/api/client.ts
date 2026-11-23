@@ -482,6 +482,11 @@ export interface RepoSettings {
   preapproved: string[];
   /** Whether at least one check command is configured: a fully autonomous run needs one. */
   hasChecks: boolean;
+  /**
+   * Whether a run from an issue that opens pull requests first pushes a claim that other workbenches see (the setting
+   * `claimIssues`, src/engine/claims.ts); nothing is pushed for a run that keeps its work on this Mac.
+   */
+  claimIssues: boolean;
 }
 export const getRepoSettings = (path: string, giveUp: AbortSignal): Promise<RepoSettings> =>
   request("GET", `/api/repos/settings?path=${encodeURIComponent(path)}`, undefined, CHECK_REPO_LIMIT_MS, giveUp);
@@ -580,6 +585,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   outsideHosts: boolean;
   /** Those hosts, by name, for a run from an issue whose owner allowed them; empty for any other run. */
   issueHosts: string[];
+  /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
+  claim: { state: "claiming" | "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -608,9 +615,12 @@ export interface RunAnnouncement {
   status: RunStatus;
 }
 
-/** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask }, 30_000);
+/**
+ * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
+ * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
+ */
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -673,19 +683,79 @@ export interface PeerPullRequest {
   branch: string;
   closes: number[];
   files: string[];
+  /** The commit its branch points at on the remote; null when the remote did not list it. */
+  head: string | null;
 }
 /** Another workbench's pushed branch with no pull request yet. */
 export interface PeerBranch {
   workbench: string;
   branch: string;
 }
-/** What other workbenches have in flight on one repository's remote, or why that cannot be read now. */
+/** Another workbench's claim on an issue: it started a run on it at `startedAt` (a UTC minute) and has no pull request yet. */
+export interface PeerClaim {
+  workbench: string;
+  branch: string;
+  issue: number;
+  startedAt: string;
+}
+/** What other workbenches have in flight on one repository's remote, or why that cannot be read now. `repository` is the shared one, host/owner/name. */
 export type PeersView =
-  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; checkedAt: string }
+  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[]; checkedAt: string }
   | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
 /** The view for each repository the owner has used. Reading it never holds up anything else. */
 export const getPeers = async (): Promise<PeersView[]> => (await request<{ views: PeersView[] }>("GET", "/api/peers", undefined, 90_000)).views;
 export const getPeersOf = async (repo: string): Promise<PeersView> => (await request<{ view: PeersView }>("GET", `/api/peers?path=${encodeURIComponent(repo)}`, undefined, 90_000)).view;
+
+/** One command run on a merge with another workbench's pull request. */
+export type CombinedCommand = Omit<Evidence, "round">;
+/** Whether a check together still stands on the commits it ran on (src/engine/combined.ts). Only "current" counts. */
+export type CombinedFreshness =
+  | { state: "current" }
+  | { state: "stale"; taskMoved: boolean; pullRequestMoved: boolean; taskNow: string | null; pullRequestNow: string | null }
+  | { state: "closed" }
+  | { state: "unknown"; problem: string };
+/** One check of a task together with another workbench's open pull request, as stored. Its workbench and branch are outside text. */
+export interface CombinedCheck {
+  id: number;
+  pullRequest: number;
+  workbench: string;
+  peerBranch: string;
+  peerCommit: string | null;
+  taskCommit: string;
+  outcome: "passed" | "failed" | "conflict" | "not_run";
+  conflicts: string[];
+  problem: string | null;
+  startedAt: string;
+  endedAt: string;
+  commands: CombinedCommand[];
+  freshness: CombinedFreshness;
+}
+/** Another workbench's open pull request this task can be checked together with, and the files both change. */
+export interface CheckTogetherOffer {
+  number: number;
+  title: string;
+  url: string;
+  workbench: string;
+  head: string | null;
+  overlaps: string[];
+}
+export interface CheckTogetherView {
+  /** The owner requires checking together on this repository. */
+  required: boolean;
+  /** The pull request a check together runs with now, or null. */
+  running: number | null;
+  /** Newest first. */
+  checks: CombinedCheck[];
+  offers: CheckTogetherOffer[];
+  /** With the setting on: the overlapping pull requests that still have no passing, current check together. */
+  waitingOn: number[];
+  /** With the setting on: why it cannot be met now when no pull request can be named (the list could not be read, or may be cut). */
+  undetermined: string | null;
+  viewProblem: string | null;
+}
+export const getCheckTogether = (taskId: number): Promise<CheckTogetherView> => request("GET", `/api/tasks/${taskId}/check-together`, undefined, 90_000);
+export const startCheckTogether = (taskId: number, pullRequest: number): Promise<{ running: number }> => request("POST", `/api/tasks/${taskId}/check-together`, { pullRequest }, 90_000);
+export const setCheckTogetherRequired = (path: string, required: boolean): Promise<{ path: string; required: boolean }> => request("PUT", "/api/repos/check-together", { path, required }, 30_000);
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
 /** One row of the board: a planned run, or a task started on its own (a run of one). */
 export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };
@@ -796,6 +866,7 @@ export type LogRule =
   | "web_allowed"
   | "web_refused"
   | "bookkeeping"
+  | "issue_claim"
   | "sandboxed";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */

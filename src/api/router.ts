@@ -24,6 +24,9 @@ import { voiceRoutes } from "./voice.ts";
 import { issueRoutes } from "./issues.ts";
 import { peersRoutes } from "./peers.ts";
 import type { Peers } from "../engine/peers.ts";
+import type { CheckTogether } from "../engine/combined.ts";
+import { checkTogetherRoutes } from "./check-together.ts";
+import type { Claims } from "../engine/claims.ts";
 import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
 import type { Chat } from "./chat.ts";
@@ -59,6 +62,9 @@ export interface RouteContext {
   github: GitHub;
   /** Other workbenches' work on a repository's shared remote, read only. */
   peers: Peers;
+  /** Checking a task together with another workbench's open pull request, and the owner's setting that requires it. */
+  checkTogether: CheckTogether;
+  claims: Claims;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -146,6 +152,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
     return;
   }
   if (await turnRoutes(req, res, ctx, url)) return;
+  if (await checkTogetherRoutes(req, res, ctx, url)) return;
   if (await taskRoutes(req, res, ctx, url)) return;
   if (await runRoutes(req, res, ctx, url)) return;
   if (await issueRoutes(req, res, ctx, url)) return;

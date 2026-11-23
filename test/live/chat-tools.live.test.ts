@@ -158,7 +158,7 @@ test("LIVE: Codex in a chat, asked to write a file, read a decoy in the home fol
   const made = path.join(r.scratch, "made.txt");
   assert.equal(fs.existsSync(made) ? fs.readFileSync(made, "utf8").trim() : null, "hello", `the file in its own folder: ${seen}`);
   // A command Codex's sandbox refuses and that exits non-zero is reported by `codex exec` as no item at all (threat
-  // model, B17), so the decoy's read is proven by its text reaching nothing, not by a refused call.
+  // model, B18), so the decoy's read is proven by its text reaching nothing, not by a refused call.
   assert.equal(seen.includes(DECOY), false, "nothing of the decoy reached the agent or the transcript");
   assert.equal(searched(events), false, `no search with Web access Off: ${seen}`);
   const calls = events.filter((e): e is Extract<DriverEvent, { type: "tool_call" }> => e.type === "tool_call");
@@ -207,7 +207,7 @@ test("LIVE: Grok's commands, under the profile and proxy Botbench gives the whol
   assertRefused(rc, r, "Grok's commands");
   assert.equal(rc.xai, 0, `xAI is reached through the proxy: ${output}`);
   assert.notEqual(rc.proxied_other, 0, "any other host is refused by the proxy");
-  assert.equal(rc.grok_home, 0, "Grok's own folder is readable to its commands: its known limit (threat model, B17)");
+  assert.equal(rc.grok_home, 0, "Grok's own folder is readable to its commands: its known limit (threat model, B18)");
 });
 
 test("LIVE: Grok in a chat, asked to write a file, read a decoy in the home folder and search with Web access Off, writes the file and does neither of the others; each call it makes is in the action log", { timeout: 300_000, skip: GROK_SKIP }, async (t) => {
