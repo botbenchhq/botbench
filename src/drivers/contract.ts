@@ -33,6 +33,16 @@ export interface DriverCapabilities {
    * without changing it. Left out: in a chat it answers from the conversation alone, in a new empty folder.
    */
   chatTools?: boolean;
+  /**
+   * Why this CLI cannot build here right now, in words for the owner, for a CLI that can build only when its installed
+   * version can put its approval requests to Botbench (Codex). Left out: `edits` and `permissionRequests` say it all.
+   */
+  buildProblem?: string;
+  /**
+   * The CLI's permission requests are only ever to run something outside its own sandbox (Codex on `on-request`): what
+   * stays inside never asks. Such a CLI can build, but cannot plan, as a planner asks before every command it runs.
+   */
+  escalationsOnly?: boolean;
 }
 
 /** How the CLI is billed, taken from the CLI's own account of its login. */

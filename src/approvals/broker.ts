@@ -10,7 +10,7 @@ import { askEveryCommand, isRunMode, type RunMode } from "../engine/modes.ts";
 import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
 import type { FloorEntry } from "./floor.ts";
-import { askWords, fullAutonomyRefusal, gate, namesAFile, READ_ONLY_TOOLS, real, requestTarget, summarize, type AskWhy, type FloorSettings } from "./gate.ts";
+import { askWords, ESCALATION_REFUSED, fullAutonomyRefusal, gate, namesAFile, READ_ONLY_TOOLS, real, requestTarget, summarize, type AskWhy, type FloorSettings } from "./gate.ts";
 import { firstLine } from "../shorten.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
 import { answerProblem, AUTONOMOUS_ANSWER, parseStoredQuestion, QUESTION_TOOL, readQuestion, storedQuestion, type Question } from "./question.ts";
@@ -277,6 +277,11 @@ export interface ApprovalRequest {
   cwd?: string;
   reason: string | null;
   toolCallId: string;
+  /**
+   * The agent asks to run this outside its own sandbox (a Codex approval request, src/drivers/codex-app-server.ts). It
+   * is put to the owner every time, or refused in a fully autonomous run; no grant, mode or stored answer applies.
+   */
+  escalation?: boolean;
 }
 
 /** How a request ended. `approvalId` is null when no approval could be recorded. */
@@ -525,11 +530,16 @@ export function logSandboxedCalls(db: DatabaseSync, session: Pick<DriverSession,
   return session.onEvent((event) => {
     if (event.type !== "tool_call" || seen.has(event.id)) return;
     seen.add(event.id);
-    const input = event.input;
-    const named = typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
-    const command = typeof named?.command === "string" ? named.command : typeof named?.query === "string" ? named.query : JSON.stringify(input ?? null);
-    appendLog(db, { taskId: o.taskId, runId: o.runId ?? null, attemptId: session.attemptId, rule: "sandboxed", tool: shorten(event.name, 200), command: shorten(command, MAX_COMMAND), cwd: o.cwd, detail: `${o.agent} cannot ask you, so it ran this without asking, kept by its own sandbox to ${o.where}.` });
+    logSandboxedCall(db, event, { taskId: o.taskId, runId: o.runId ?? null, attemptId: session.attemptId, cwd: o.cwd, detail: `${o.agent} cannot ask you, so it ran this without asking, kept by its own sandbox to ${o.where}.` });
   });
+}
+
+/** Write one tool call an agent ran under its own sandbox, never put to the broker, to the action log (`sandboxed`). */
+export function logSandboxedCall(db: DatabaseSync, call: { name: string; input: unknown }, o: { taskId: number | null; runId?: number | null; attemptId: number; cwd: string; detail: string }): void {
+  const input = call.input;
+  const named = typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
+  const command = typeof named?.command === "string" ? named.command : typeof named?.query === "string" ? named.query : JSON.stringify(input ?? null);
+  appendLog(db, { taskId: o.taskId, runId: o.runId ?? null, attemptId: o.attemptId, rule: "sandboxed", tool: shorten(call.name, 200), command: shorten(command, MAX_COMMAND), cwd: o.cwd, detail: o.detail });
 }
 
 interface Ticket {
@@ -697,6 +707,7 @@ export function createBroker(options: {
     }
     const nobody = (reason: string, why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason, why } : { verdict: "ask", why });
     if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.chat !== (r.chat === true) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.", "unknown");
+    if (r.escalation === true) return escalationRequestVerdict(r, ticket, cwd, mode);
     if (BOOKKEEPING_TOOLS.has(r.tool)) return { verdict: "allow", rule: "bookkeeping" };
     if (WEB_TOOLS.has(r.tool)) {
       try {
@@ -759,6 +770,24 @@ export function createBroker(options: {
       // The gate could not be asked: nothing is allowed on it, and the owner decides, or nobody does.
       console.error(`The gate could not decide about a request of task ${r.taskId}: ${words(err)}`);
       return nobody("This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run.", "unknown");
+    }
+  };
+
+  /**
+   * The gate's word on a request to run outside the agent's sandbox: in a manual or semi-autonomous run the owner
+   * decides, every time, and in a fully autonomous one it is refused. The floor is read for a command so that the card,
+   * or the refusal, names its rule; nothing else is looked up. Anything that fails on the way asks, or refuses.
+   */
+  const escalationRequestVerdict = (r: ApprovalRequest, ticket: Ticket, cwd: string, mode: RunMode): RequestVerdict => {
+    try {
+      // The floor reads the shell command itself, not the card's text, which is the whole input when the request
+      // carries more than the command (network, more permissions).
+      const input = r.tool === "Bash" ? { command: isObject(r.input) && typeof r.input.command === "string" && r.input.command !== "" ? r.input.command : r.command } : isObject(r.input) ? r.input : {};
+      const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: path.resolve(ticket.worktree, cwd === "" ? "." : cwd), mode, escalation: true }, [], floorSettings);
+      return verdict.verdict === "allow" ? (mode === "full" ? { verdict: "refuse", reason: ESCALATION_REFUSED, why: "escalation" } : { verdict: "ask", why: "escalation" }) : verdict;
+    } catch (err) {
+      console.error(`The gate could not decide about an escalation of task ${r.taskId}: ${words(err)}`);
+      return mode === "full" ? { verdict: "refuse", reason: ESCALATION_REFUSED, why: "escalation" } : { verdict: "ask", why: "escalation" };
     }
   };
 
@@ -852,7 +881,8 @@ export function createBroker(options: {
     if (asked !== null && "problem" in asked) return deny(asked.problem);
     const question = asked as Question | null;
     // An attempt that resumes one from before a restart: the owner's stored answers to that attempt's requests are its to use.
-    if (ticket && ticket.resumes !== null && ticket.taskId !== null && ticket.taskId === r.taskId) {
+    // An escalation is never answered with an answer given before: it is asked afresh each time.
+    if (ticket && ticket.resumes !== null && ticket.taskId !== null && ticket.taskId === r.taskId && r.escalation !== true) {
       const carried = db.prepare(`SELECT ${APPROVAL_COLUMNS} WHERE a.task_id = ? AND a.attempt_id = ? AND a.status = 'pending' AND a.stored_decision IS NOT NULL ORDER BY a.id`).all(ticket.taskId, ticket.resumes).map(toApproval);
       // The same thing asked again: same role, tool, command and directory. A directory nobody reported is not known to be the same.
       // A question is the same when its text and its choices, labels and the agent's lines about them, in order, are: the
@@ -966,7 +996,8 @@ export function createBroker(options: {
       }
       return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, ...(standing ? { standing: { grantId: grant.id } } : { preapproved: { grantId: grant.id } }) });
     }
-    const always = verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null;
+    const escalation = r.escalation === true;
+    const always = [escalation ? "Codex asked to run this outside its sandbox." : null, verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null].filter((line) => line !== null).join(" ") || null;
     const asksBecause = askWords(verdict.why, { tool: r.tool, chat: ticket?.chat === true, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) });
     let target: string | null = null;
     try {
@@ -979,8 +1010,8 @@ export function createBroker(options: {
     try {
       id = transaction(db, () => {
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)")
-          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target);
+          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target, escalation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target, escalation ? 1 : 0);
         const approvalId = Number(inserted.lastInsertRowid);
         appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
@@ -1084,6 +1115,8 @@ export function createBroker(options: {
     if (approval.parkedAt !== null || approval.storedDecision !== null || !waiters.has(approval.id)) return "it was asked before Botbench restarted";
     // A grant for a tool's name would allow that tool with any input, and the floor reads command lines only.
     if (approval.tool !== "Bash") return "only a shell command can have one";
+    // What Codex asks to run outside its sandbox is asked every time; no grant would ever answer it.
+    if (db.prepare("SELECT escalation FROM approvals WHERE id = ?").get(approval.id)?.escalation !== 0) return "Codex asks to run it outside its sandbox, and that is asked every time";
     // A planner's request belongs to no task, and a planner is read-only: what it asks is asked every time.
     if (approval.taskId === null) return "only a task's request can have one";
     const ticket = [...tickets.values()].find((t) => t.attemptId === approval.attemptId);

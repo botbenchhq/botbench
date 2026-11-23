@@ -16,7 +16,7 @@ function agentRoles(ctx: RouteContext, agent: Driver): string[] {
   if (agent === ctx.driver) {
     if (roleProblem(PLANNER, agent.name, agent.capabilities) === null) roles.push("planner");
     if (roleProblem(IMPLEMENTER, agent.name, agent.capabilities) === null) roles.push("builder");
-  }
+  } else if (ctx.builders[agent.name] === agent && roleProblem(IMPLEMENTER, agent.name, agent.capabilities) === null) roles.push("builder");
   if (ctx.reviewers[agent.name] === agent && roleProblem(REVIEWER, agent.name, agent.capabilities) === null) roles.push("reviewer");
   return roles;
 }

@@ -93,8 +93,21 @@ export type Send =
   | { do: "focus" }
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
-  | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[] }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[] } & ({ prompt: string } | { specPath: string } | {}));
+  | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+
+/** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
+export type Builder = "codex";
+
+/** What the Builder view says of each choice (docs/product/voice.md). */
+export const BUILDER_WORDS = {
+  claude: "Works in its own sandbox and asks you before each command the safety rules name. It also plans a run.",
+  codex: "Works in its own sandbox, in the task's copy, with no network. It asks you each time it wants to run something outside that sandbox; a fully autonomous run refuses those. Claude Code still plans a run.",
+  hint: "It cannot be changed once the work starts. The reviewer must be a different model.",
+} as const;
+
+/** The Builder row's value. */
+export const builderName = (builder: Builder | null): string => (builder === "codex" ? "Codex" : "Claude Code");
 
 /**
  * Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens; `connect`
@@ -137,7 +150,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -150,11 +163,13 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
     return { do: "chat", prompt, model, ...read };
   }
   const repo = f.repo.path.trim();
-  if (f.kind === "task") return prompt === null ? { do: "focus" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
+  // Codex builds on its own default model: the models chosen here are Claude Code's, which still plans a run.
+  const codex = extras.builder === "codex";
+  if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
-  const build = f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
+  const build = codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
@@ -162,20 +177,22 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
  * do, mode and commands; a run adds its own settings. Come to start a task or a run (a repository needed), there is
  * nothing to read.
  */
-export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean }): Row[] {
+export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean }): Row[] {
   if (f.repo.kind === "none") return ["repository", "read", "models"];
   if (!inRepository(f.repo)) return ["repository", "models"];
   const run = f.kind === "run";
   return [
     "repository",
     "kind",
+    // Only when another agent than Claude Code can build now (Codex, once its check found it can).
+    ...(f.builderOffered === true ? (["builder"] as const) : []),
     // Only a repository whose remote is on GitHub has issues Botbench can read.
     ...(run && f.issueOffered === true ? (["issue"] as const) : []),
     ...(run ? (["spec"] as const) : []),

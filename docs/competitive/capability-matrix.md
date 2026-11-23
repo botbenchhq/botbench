@@ -8,13 +8,13 @@ Read the table with three cautions:
 
 - ● means the code exists, not that it is good or safe. OpenAgents has ● for bringing your own agents and runs every one of them with permissions bypassed.
 - Each project was rated by a different researcher against the same definitions. Treat a one-step difference between two projects as noise.
-- "Between owners" is rated generously. No project connects separately owned installations; a ● or ◐ there means several people on one shared server.
+- "Between owners" is rated generously. Connecting separately owned installations is not demonstrated in the projects and source reviewed; a ● or ◐ there means several people on one shared server.
 
 ## The workbench half
 
 | Project | Own agent CLIs and subscriptions | Models and providers | Tools and connectors | Isolation | Approvals | Remote and phone | Effort to first result |
 |---|---|---|---|---|---|---|---|
-| **Botbench today** | ● four vendors' CLIs on the owner's sign-ins; Claude Code and Codex send every permission request through the broker | ◐ what those CLIs offer; no API keys or local models by design | ◐ the CLI's own tools; no connector layer | ◐ own copy per task, commands confined by the macOS sandbox; the Claude Code and Codex processes are not, Grok's whole process is | ● broker, safety floor, deny on failure | ◐ browser on a private network; phone notifications not confirmed | Medium: macOS only, clone and build, about ten minutes |
+| **Botbench today** | ● four vendors' CLIs on the owner's sign-ins; Claude Code plans and builds and sends every permission request through the broker; Codex builds in its own sandbox and asks before anything outside it (since #162); Codex, Grok and Antigravity review and chat | ◐ what those CLIs offer; no API keys or local models by design | ◐ the CLI's own tools; no connector layer | ◐ own copy per task, commands confined by the macOS sandbox; the Claude Code process is not; Codex is held by its own sandbox profile and Grok by a sandbox around its whole process | ● broker, safety floor, deny on failure | ◐ browser on a private network; phone notifications not confirmed | Medium: macOS only, clone and build, about ten minutes |
 | **Botbench direction** | ● | ◐ | ◐ | ● container per task (#72) | ● | ● | Low |
 | OpenAgents | ● 26 adapters | ● | ● | – permissions bypassed, owner's folder | ◐ only if the agent chooses to ask | ◐ | Low |
 | Tutti (open repository) | ● | ● | ● | ◐ own copy only for parallel tasks | ● provider's approvals, no floor of its own | ● | Low |
@@ -61,7 +61,7 @@ Not rated on the same scale; each has a recommendation instead.
 
 ## What the matrix says
 
-- **Botbench stands out in two columns today.** Approvals: five others also rate ●, but as far as the source shows Botbench is the only one that drives the owner's CLIs with a safety floor on by default. Verification: checks kept as evidence. Paperclip and Agensh are the only others rated ● there; Tutti gates on the user's acceptance and rates ◐.
-- **No product studied connects separately owned installations today.** Botbench is ◐ through the repository; every other is one server, closed (Tutti), or absent. Agent Mesh plans federation between separately run control planes, and A2A exists for independent agents.
+- **Botbench stands out in two columns today.** Approvals: five others also rate ●, but driving the owner's CLIs with a safety floor on by default is not demonstrated in the projects and source reviewed outside Botbench. Verification: checks kept as evidence. Paperclip and Agensh are the only others rated ● there; Tutti gates on the user's acceptance and rates ◐.
+- **Connecting separately owned installations is not demonstrated in the projects and source reviewed.** Botbench is ◐ through the repository; every other is one server, closed (Tutti), or absent. Agent Mesh plans federation between separately run control planes, and A2A exists for independent agents. This describes these projects at the commits read, not the market.
 - **Botbench trails in four columns:** task coordination (no dependencies, one task at a time), memory scoping, identity for anyone but the owner, and effort to first result.
 - **Breadth is not a contest worth entering.** OpenAgents lists 26 CLI adapters; OpenMausBot has 31 built-in drivers, some of them model APIs rather than CLIs.
