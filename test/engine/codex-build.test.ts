@@ -7,7 +7,7 @@ import { actionLog, createBroker, listApprovals, type Broker } from "../../src/a
 import { ESCALATION_REFUSED, ESCALATION_WORDS } from "../../src/approvals/gate.ts";
 import { CODEX_CAPABILITIES } from "../../src/drivers/codex.ts";
 import { setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
-import { approvePlan, createRun, storePlan } from "../../src/engine/run.ts";
+import { approvePlan, createRun, createRuns, RunError, storePlan } from "../../src/engine/run.ts";
 import { createTasks, getTask, TaskError, type Task, type Tasks } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
@@ -94,6 +94,7 @@ test("Manual: Codex's escalation is one card saying it asks to run outside its s
     const [card] = listApprovals(e.db, "pending");
     assert.equal(card!.asksBecause, ESCALATION_WORDS);
     assert.match(card!.command, /touch .*\/outside\/landed-T1/);
+    assert.equal(card!.cwd, ".", "the folder Codex said it runs the command from, relative to the copy");
     // Until the owner answers, Codex has been told nothing.
     assert.equal(e.codex.transports[0]!.sent.some((m) => m.id === 0 && m.method === undefined), false);
     e.broker.answer(card!.id, answer);
@@ -134,6 +135,16 @@ test("with Ask before every command on, Codex is refused as a task's builder, sa
   assert.equal(e.tasks.builderProblem("codex", "semi"), null);
   assert.equal(e.tasks.builderProblem(null), null, "Claude Code asks before every command itself");
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n, 0);
+});
+
+test("a run started with Codex as its builder is stored with it, and its tasks are built by Codex", async (t) => {
+  const e = await line(t, [["inside"]]);
+  const runs = createRuns({ db: e.db, home: path.join(e.dir, "home"), driver: buildReplayDriver(["done"]), builders: { codex: e.codex }, broker: e.broker, line: e.tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
+  t.after(() => runs.close());
+  const run = await runs.start({ repo: e.repo, prompt: "Add hello.txt", builder: "codex", mode: "semi" });
+  assert.equal(run.buildAgent, "codex");
+  assert.equal(run.buildModel, null, "Codex builds on its own default unless a build model was chosen");
+  await assert.rejects(runs.start({ repo: e.repo, prompt: "Add hello.txt", builder: "grok", mode: "semi" }), (err: unknown) => err instanceof RunError && /Grok cannot build a task in Botbench/.test(err.message));
 });
 
 test("Codex is refused as a builder while its check has not found that it can build, and nothing is stored", async (t) => {

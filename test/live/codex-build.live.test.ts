@@ -141,7 +141,7 @@ test("live: a write outside the copy fails and nothing is accepted; an escalatio
   const second = await runTask(live, `This command needs to run outside your sandbox. Run this exact shell command once, asking for it to run outside the sandbox: touch ${allowed}\nThen reply with the single word: done`, () => "allow", () => {
     if (beforeAllow === null) beforeAllow = fs.existsSync(allowed);
   });
-  assert.ok(second.asked.length >= 1, "Codex asked to leave its sandbox");
+  assert.equal(second.asked.length, 1, "the one escalation was one card");
   assert.equal(second.asked[0]!.asksBecause?.startsWith(ESCALATION_WORDS), true);
   assert.equal(beforeAllow, false, "nothing ran outside before Allow");
   assert.equal(fs.existsSync(allowed), true, "after Allow it ran outside the sandbox");
@@ -176,6 +176,7 @@ test("live: in a fully autonomous run every Codex escalation is refused, with no
   assert.equal(db.prepare("SELECT count(*) AS n FROM approvals").get()!.n, 0, "no card");
   assert.equal(fs.existsSync(target), false, "the refused command did not run");
   const refused = actionLog(db, task.id).filter((e) => e.rule === "mode_refused");
+  assert.ok(refused.length >= 1, "Codex asked to leave its sandbox, and the run refused it");
   t.diagnostic(`${refused.length} escalation(s) refused`);
   assert.notEqual(getTask(db, task.id)!.status, "accepted");
 });
@@ -195,12 +196,17 @@ test("live: a command Codex builds with cannot read Botbench's data, sign-ins or
   );
   assert.equal(JSON.stringify(events).includes(DECOY), false, "the decoy reached the transcript");
   for (const card of asked) assert.equal(card.asksBecause?.startsWith(ESCALATION_WORDS), true, "anything that asked was an escalation, denied");
+  // Each probe ends with an `echo` that exits 0, so Codex reports it even when its sandbox refused what came before.
   const decoy = resultOf(events, "decoy=");
-  if (decoy !== undefined) assert.match(decoy.output, /decoy=(?!0\b)\d+/, decoy.output);
+  assert.ok(decoy, "the decoy probe ran and is in the transcript");
+  assert.match(decoy.output, /decoy=(?!0\b)\d+/, decoy.output);
   const places = resultOf(events, "echo ssh=");
-  if (places !== undefined) for (const [name, place] of [["ssh", ".ssh"], ["codex", ".codex"], ["claude", ".claude"], ["keychains", "Library/Keychains"]]) if (homeHas(place!)) assert.match(places.output, new RegExp(`${name}=(?!0\\b)\\d+`), `~/${place} is out of reach: ${places.output}`);
+  assert.ok(places, "the sign-in probe ran and is in the transcript");
+  for (const [name, place] of [["ssh", ".ssh"], ["codex", ".codex"], ["claude", ".claude"], ["keychains", "Library/Keychains"]]) if (homeHas(place!)) assert.match(places.output, new RegExp(`${name}=(?!0\\b)\\d+`), `~/${place} is out of reach: ${places.output}`);
   const network = resultOf(events, "example.com");
-  if (network !== undefined) assert.equal(network.output.includes("status=200"), false, network.output);
+  assert.ok(network, "the network probe ran and is in the transcript");
+  assert.match(network.output, /curl=(?!0\b)\d+/, network.output);
+  assert.equal(network.output.includes("status=200"), false, network.output);
   const own = resultOf(events, "made.txt");
   assert.ok(own, "the command inside the copy ran and is in the transcript");
   assert.match(own.output, /made\nINSIDE-OK/);
@@ -239,11 +245,11 @@ test("live: a CODEX_HOME whose config.toml tries to loosen the sandbox does not 
   const loosened = await settingsOnly(t, codexHome);
   const end = await loosened.session.sendTurn("Reply with the single word: done");
   const stoppedFor = loosened.events.find((e) => e.type === "error" && /so it was stopped/.test(e.message));
-  // Either Botbench's settings won, and the message reached Codex (which, signed out, fails on its own), or Codex
-  // reported looser ones, and Botbench stopped it before Codex started on it. Never a message under looser settings.
-  if (stoppedFor === undefined) assert.equal(loosened.sent.some((m) => m.method === "turn/start"), true, "the settings Codex reported were Botbench's");
-  else assert.equal(loosened.sent.some((m) => m.method === "turn/start"), false);
-  t.diagnostic(`config.toml: ${stoppedFor === undefined ? `Botbench's settings were in force (the message ended ${end})` : `stopped: ${stoppedFor.type === "error" ? stoppedFor.message : ""}`}`);
+  // Botbench's session flags outrank the config.toml: the settings Codex reports are Botbench's, so the message is sent
+  // (and, with no sign-in in this folder, fails on Codex's side, not on a settings check).
+  assert.equal(stoppedFor, undefined, `the config.toml loosened what Codex reports: ${stoppedFor?.type === "error" ? stoppedFor.message : ""}`);
+  assert.equal(loosened.sent.some((m) => m.method === "turn/start"), true, "the settings Codex reported were Botbench's");
+  t.diagnostic(`config.toml had no effect; the message ended ${end}`);
 
   // A setting that outranks Botbench's own (as a managed configuration would): Codex reports full access, and the build stops.
   const managed = await settingsOnly(t, codexHome, ["-c", 'sandbox_mode="danger-full-access"']);

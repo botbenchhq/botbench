@@ -837,7 +837,8 @@ export function createRuns(options: RunsOptions): Runs {
     if (input.buildModel !== undefined && input.buildModel !== null && modelNameProblem(input.buildModel) !== null) throw new RunError(400, `The build model is not a model name. ${modelNameProblem(input.buildModel)}`);
     // The builder: the main agent, or one the owner chose (Codex), which must be able to build now.
     const builderName = input.builder ?? null;
-    const cannot = options.line.builderProblem?.(builderName, mode) ?? (builderName === null ? null : `${agentName(builderName)} cannot build a run's tasks in Botbench.`);
+    // A line that can say why a builder cannot build decides; one that cannot accepts only the main agent.
+    const cannot = options.line.builderProblem !== undefined ? options.line.builderProblem(builderName, mode) : builderName === null ? null : `${agentName(builderName)} cannot build a run's tasks in Botbench.`;
     if (cannot !== null) throw new RunError(400, cannot);
     const builder = builderName === null ? driver : options.builders?.[builderName];
     if (builder === undefined) throw new RunError(400, `${agentName(builderName!)} cannot build a run's tasks in Botbench.`);

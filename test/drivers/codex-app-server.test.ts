@@ -97,7 +97,7 @@ test("Codex builds only once its probe found it can, and it never plans: it asks
 });
 
 /** The real session over the replayed shape, in a temporary store. */
-async function session(t: T, turns: readonly ShapeTurn[], o: { settings?: Record<string, unknown>; noSettings?: boolean; approvalTimeoutMs?: number } = {}) {
+async function session(t: T, turns: readonly ShapeTurn[], o: { settings?: Record<string, unknown>; noSettings?: boolean; settingsFirst?: boolean; approvalTimeoutMs?: number } = {}) {
   const dir = tempDir("botbench-codex-app-server-");
   const db = openStore(path.join(dir, "home"));
   const cwd = path.join(dir, "copy");
@@ -204,6 +204,11 @@ test("a looser sandbox reported before the message stops it before Codex starts 
   assert.ok(before.transport.stopped());
   const ended = before.events.at(-1)!;
   assert.match(ended.type === "turn_ended" ? (ended.detail ?? "") : "", /dangerFullAccess, looser than the workspace-write sandbox Botbench set, so it was stopped/);
+
+  // Looser settings reported before thread/start's answer are not hidden by that answer.
+  const first = await session(t, ["inside"], { settings: { ...loadShape().looserSettings, activePermissionProfile: { id: "botbench-build", extends: ":workspace" } }, settingsFirst: true });
+  assert.equal(await first.s.sendTurn("Run test.sh."), "error");
+  assert.equal(first.transport.sent.some((m) => m.method === "turn/start"), false);
 
   const silent = await session(t, ["inside"], { noSettings: true });
   assert.equal(await silent.s.sendTurn("Run test.sh."), "error");

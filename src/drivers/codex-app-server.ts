@@ -184,7 +184,8 @@ export function escalationOf(method: string, rpcId: string, params: Record<strin
   const item = str(params.itemId) ?? "";
   const toolCallId = `${item}${str(params.approvalId) ? `:${str(params.approvalId)}` : ""}` || `request-${rpcId}`;
   const reason = str(params.reason) === null || str(params.reason)!.trim() === "" ? null : shorten(str(params.reason)!.trim());
-  const base = { type: "permission_request" as const, id: `codex-${rpcId}`, toolCallId, reason, escalation: true as const };
+  const cwd = str(params.cwd);
+  const base = { type: "permission_request" as const, id: `codex-${rpcId}`, toolCallId, reason, escalation: true as const, ...(cwd !== null && path.isAbsolute(cwd) ? { cwd } : {}) };
   if (method === "item/commandExecution/requestApproval") {
     const command = str(params.command) ?? "";
     const extra = { ...(params.networkApprovalContext == null ? {} : { network: params.networkApprovalContext }), ...(params.additionalPermissions == null ? {} : { additionalPermissions: params.additionalPermissions }) };
@@ -380,7 +381,11 @@ export class CodexAppServerSession implements DriverSession {
     const thread = isObject(result.thread) ? str(result.thread.id) : null;
     if (thread === null) throw new Error("Codex did not start a thread for the build.");
     this.threadId = thread;
-    this.reported = { approvalPolicy: result.approvalPolicy, approvalsReviewer: result.approvalsReviewer, sandbox: result.sandbox, ...(result.activePermissionProfile === undefined ? {} : { profile: result.activePermissionProfile }), ...(this.reported?.profile === undefined ? {} : { profile: this.reported.profile }) };
+    // Settings Codex reported before this answer are checked too: when they are looser, they stay what is checked
+    // before the first message, so the answer cannot hide them.
+    const earlier = this.reported;
+    this.reported = { approvalPolicy: result.approvalPolicy, approvalsReviewer: result.approvalsReviewer, sandbox: result.sandbox, ...(result.activePermissionProfile === undefined ? {} : { profile: result.activePermissionProfile }), ...(earlier?.profile === undefined ? {} : { profile: earlier.profile }) };
+    if (earlier !== null && settingsProblem(earlier, this.cwd) !== null) this.reported = earlier;
     // The answer to thread/start does not name the permissions profile; Codex reports it with the thread's settings.
     if (this.reported.profile === undefined) {
       await new Promise<void>((resolve) => {

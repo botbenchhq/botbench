@@ -1088,7 +1088,7 @@ export function createTasks(options: TasksOptions): Tasks {
         asking.add(event.id);
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
-          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId, ...(event.escalation === true ? { escalation: true } : {}) })
+          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId, ...(event.escalation === true ? { escalation: true } : {}), ...(event.cwd !== undefined ? { cwd: path.relative(task.worktreePath!, event.cwd) || "." } : {}) })
           // A request the CLI has stopped waiting for has no one to tell.
           .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));

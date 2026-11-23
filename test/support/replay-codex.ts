@@ -57,7 +57,7 @@ export interface ReplayTransport extends AppServerTransport {
  * A transport that answers as the shape does. `turns` are the shape's turns for each turn/start, in order.
  * `settings` replaces the thread's reported settings (to report a looser one before the first turn); `noSettings` sends none.
  */
-export function replayTransport(o: { cwd: string; outside: string; turns: readonly ShapeTurn[]; settings?: Record<string, unknown>; noSettings?: boolean; threadStart?: Record<string, unknown> }): ReplayTransport {
+export function replayTransport(o: { cwd: string; outside: string; turns: readonly ShapeTurn[]; settings?: Record<string, unknown>; noSettings?: boolean; settingsFirst?: boolean; threadStart?: Record<string, unknown> }): ReplayTransport {
   const shape = filled(loadShape(), o);
   const sent: Record<string, unknown>[] = [];
   const lineListeners: ((line: string) => void)[] = [];
@@ -119,8 +119,10 @@ export function replayTransport(o: { cwd: string; outside: string; turns: readon
       if (typeof method === "string" && id !== undefined) {
         if (method === "initialize") return emit({ id, result: shape.initialize });
         if (method === "thread/start") {
+          // `settingsFirst`: the thread's settings are reported before thread/start is answered.
+          if (o.settingsFirst === true) emit({ method: "thread/settings/updated", params: { threadId, threadSettings: o.settings ?? shape.settings } });
           emit({ id, result: o.threadStart ?? shape.threadStart });
-          if (o.noSettings !== true) emit({ method: "thread/settings/updated", params: { threadId, threadSettings: o.settings ?? shape.settings } });
+          if (o.noSettings !== true && o.settingsFirst !== true) emit({ method: "thread/settings/updated", params: { threadId, threadSettings: o.settings ?? shape.settings } });
           return;
         }
         if (method === "turn/start") {

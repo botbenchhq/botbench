@@ -92,11 +92,13 @@ await session.close();
 db.close();
 
 const landed = { "landed-1": fs.existsSync(path.join(outside, "landed-1")), "landed-2": fs.existsSync(path.join(outside, "landed-2")), "hello.txt": fs.existsSync(path.join(worktree.path, "hello.txt")) };
+// Read before the folder is gone: the recording names it by both of its paths.
+const realDir = fs.realpathSync(dir);
 fs.rmSync(dir, { recursive: true, force: true });
 
 const PRIVATE = /^(account\/|remoteControl\/)/;
 const kept = lines.filter((l) => !(typeof l.message === "object" && l.message !== null && PRIVATE.test(String((l.message as Record<string, unknown>).method ?? ""))));
-const text = JSON.stringify(kept).replaceAll(fs.realpathSync(dir), "$TMP").replaceAll(dir, "$TMP").replaceAll(os.homedir(), "$HOME");
+const text = JSON.stringify(kept).replaceAll(realDir, "$TMP").replaceAll(dir, "$TMP").replaceAll(os.homedir(), "$HOME");
 const SECRET = /sk-[A-Za-z0-9]|eyJ[A-Za-z0-9_-]{10}|account[_-]?id|@[a-z0-9-]+\.[a-z]{2,}|bearer\s+[A-Za-z0-9]|refresh_token|access_token/i;
 if (text.includes(DECOY)) throw new Error("The decoy's text reached a recorded message: the sandbox did not keep it unreadable. Nothing was written.");
 const suspect = SECRET.exec(text);
