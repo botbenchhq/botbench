@@ -228,7 +228,8 @@ async function line(t: T, script: BuildTurn[], checks: StationCommand[], files?:
   const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(script);
-  const tasks = createTasks({ db: s.db, home: s.home, driver, broker, model: "haiku", repoCommands: () => ({ setup, checks }), onEvent: () => {}, onTaskChange: () => {} });
+  // A failing check here is about the decision; rounds of fixes for it are tested in check-fix.test.ts.
+  const tasks = createTasks({ db: s.db, home: s.home, driver, broker, model: "haiku", checkFixRounds: 0, repoCommands: () => ({ setup, checks }), onEvent: () => {}, onTaskChange: () => {} });
   const runs = createRuns({ db: s.db, home: s.home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();

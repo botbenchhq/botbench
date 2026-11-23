@@ -1,0 +1,50 @@
+✖ a failing check starts a round of fixes in the same copy and session, whose prompt holds the failing command and the end of its output as data, then the checks run again as a new round (192.748958ms)
+✔ a fix that makes the checks pass leads to the review, which reads the fixed work; the review loop's rounds are untouched (187.516125ms)
+✔ the rounds run out with the check still failing: the task goes on to the owner with its checks failed, saying so (173.58675ms)
+✔ the rounds run out on a reviewed run: the task goes on to its review with its checks failed (180.771875ms)
+✔ 2 rounds by default; a round that changes nothing ends the loop and the checks are not run again (205.571125ms)
+✔ a round of fixes that does not finish ends the loop, saying so (162.284209ms)
+✔ checks that pass the first time, and a repository with no checks, start no round of fixes (254.702125ms)
+✔ a run cancelled during a round of fixes for a failing check ends the task as cancelled, the round recorded as stopped (149.747416ms)
+✔ a restart during a round of fixes for a failing check takes the round up again, told so, without losing the rounds already used (205.928292ms)
+✔ rounds of fixes for a failing check are append-only, and a version of the work they made may have its checks recorded (25.18075ms)
+✔ the prompt bounds each failing command's output to its end, says how much was left out, and keeps it inside its marked lines (0.11925ms)
+✔ the line about the loop says how it ended, and nothing while the task is still at work or had no round (0.05125ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 11
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1880.253542
+
+✖ failing tests:
+
+test at test/engine/check-fix.test.ts:96:1
+✖ a failing check starts a round of fixes in the same copy and session, whose prompt holds the failing command and the end of its output as data, then the checks run again as a new round (192.748958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'verifying',
+      'verifying',
+      'building',
+      'building',
+  +   'building',
+      'verifying',
+      'verifying',
+      'awaiting_decision'
+    ]
+  
+      at TestContext.<anonymous> (file:///Users/jonlange/.botbench-dev2/worktrees/run-16/task-17/.scratch/test/engine/check-fix.test.ts:129:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'verifying', 'verifying', 'building', 'building', 'building', 'verifying', 'verifying', 'awaiting_decision' ],
+    expected: [ 'verifying', 'verifying', 'building', 'building', 'verifying', 'verifying', 'awaiting_decision' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

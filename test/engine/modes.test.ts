@@ -47,7 +47,8 @@ async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCom
   const reviewers = o.reviewer ? { codex: reviewReplayDriver("review") } : {};
   const checks = o.checks ?? [cmd("test -f hello.txt")];
   const repoCommands = () => ({ setup: [cmd(o.setup ?? "printf 'hi\\n' > hello.txt")], checks });
-  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", reviewers, repoCommands, ...(o.protectedPaths ? { protectedPaths: () => o.protectedPaths! } : {}), onEvent: () => {}, onTaskChange: () => {} });
+  // A failing check here is about the mode's accept; rounds of fixes for it are tested in check-fix.test.ts.
+  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", checkFixRounds: 0, reviewers, repoCommands, ...(o.protectedPaths ? { protectedPaths: () => o.protectedPaths! } : {}), onEvent: () => {}, onTaskChange: () => {} });
   // The planner is a replayed real planner session that gave a plan of three tasks (or the turns the test names).
   const planner = planReplayDriver(loadPlanRecording(), o.planner ?? [THREE_TASKS]);
   const runs = createRuns({ db, home, driver: planner, broker, model: "haiku", implementerModel: "haiku", reviewers, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });

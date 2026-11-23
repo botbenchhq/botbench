@@ -211,6 +211,21 @@ test("a fully autonomous run accepts when what was refused was harmless, and its
   });
 });
 
+test("every command a run refused is named in full, with no cut and no trailing ellipsis, however long the list", () => {
+  const long = Array.from({ length: 6 }, (_, i) => ({ command: `git push origin HEAD:refs/heads/botbench/some-long-branch-name-${i} --set-upstream --verbose`, kind: "floor" as const }));
+  const verdict = autoAccept({ checks: "passed", review: "none", refusals: long });
+  assert.equal(verdict.accept, false);
+  if (verdict.accept) return;
+  assert.ok(verdict.why.endsWith(`(${long.map((r) => r.command).join("; ")}).`), verdict.why);
+  assert.equal(verdict.why.includes("…"), false);
+  const harmless = Array.from({ length: 6 }, (_, i) => ({ command: `cat some/rather/long/path/to/a/file-number-${i}-that-was-read-outside-the-copy.txt`, kind: "read_only" as const }));
+  const accepted = autoAccept({ checks: "passed", review: "none", refusals: harmless });
+  assert.equal(accepted.accept, true);
+  if (!accepted.accept) return;
+  for (const r of harmless) assert.ok(accepted.reasons.includes(r.command), r.command);
+  assert.equal(accepted.reasons.includes("…"), false);
+});
+
 // A run that read outside text (a GitHub issue, engine/intake.ts): no pre-approved command and no standing permission
 // applies to it, in any mode; what a mode lets run because it is confined still runs; the floor still asks (or refuses).
 const standing = (words: string[]): Grant => ({ id: 8, kind: "standing", role: "implementer", repo: REPO, cwd: ".", words, runId: null, taskId: 3, createdAt: "2026-11-22T10:00:00.000Z" });

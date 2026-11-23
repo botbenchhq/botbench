@@ -105,14 +105,13 @@ export interface AcceptFacts {
   unexpectedFiles?: readonly string[];
 }
 
-const shorten = (s: string, max = 200): string => (s.length > max ? `${s.slice(0, max)}…` : s);
-
 /**
  * Whether a fully autonomous run accepts a task without the owner, from what is known of it: every check passed (so at
  * least one is set up), the review is satisfied or the run has none, nothing refused during the task blocks the
  * accept (`refusalBlocksAccept`: the safety rules, or a request that would have left the confinement), no changed file
  * is under a protected path, and every changed file is one the plan led one to expect (engine/scope.ts). Answers the
  * reasons it qualified, for the record, naming any refusal that did not block, or the plain reasons it needs the owner.
+ * Every refused command is named in full, never cut: the task screen shows these lines, and the owner judges by them.
  */
 export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string } | { accept: false; why: string } {
   const why: string[] = [];
@@ -122,12 +121,12 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   else if (facts.review === "unaccounted") why.push(`${NO_ACCOUNT}.`);
   else if (facts.review === "failed") why.push("The review did not finish.");
   const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
-  if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${shorten(blocking.join("; "))}).`);
+  if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${blocking.join("; ")}).`);
   if ((facts.protectedFiles?.length ?? 0) > 0) why.push(protectedWords(facts.protectedFiles!));
   if ((facts.unexpectedFiles?.length ?? 0) > 0) why.push(unexpectedWords(facts.unexpectedFiles!));
   if (why.length > 0) return { accept: false, why: `It needs your review: ${why.join(" ")}` };
   const review = facts.review === "satisfied" ? "the reviewer said it looks right and what it checked" : "this run has no reviewer";
   if (facts.refusals.length === 0) return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };
   const harmless = facts.refusals.map((refusal) => refusal.command);
-  return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and what Botbench refused (${shorten(harmless.join("; "))}) was not on the always-ask list and would not have reached outside the task's copy.` };
+  return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and what Botbench refused (${harmless.join("; ")}) was not on the always-ask list and would not have reached outside the task's copy.` };
 }

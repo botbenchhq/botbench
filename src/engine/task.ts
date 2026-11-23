@@ -17,6 +17,7 @@ import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
+import { checkFixesUsed, checkFixPrompt, checkFixRoundOf, DEFAULT_CHECK_FIX_ROUNDS, insertCheckFix, workVersion, type OpenCheckFix } from "./check-fix.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
@@ -47,7 +48,8 @@ export type ChecksMark = "passed" | "failed" | "none";
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
   building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled", "waiting_for_limit"],
-  verifying: ["verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
+  // To building: a check failed, and the builder is sent it for a round of fixes (engine/check-fix.ts).
+  verifying: ["verifying", "building", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
   // To itself: a fully autonomous run that could not accept the task records why it waits for the owner.
   awaiting_decision: ["awaiting_decision", "accepted", "rejected"],
@@ -436,6 +438,8 @@ export interface TasksOptions {
   silenceLimitMs?: number;
   /** How long a task waits after its builder's usage limit when the agent gives no reset time (engine/usage-limit.ts); 30 minutes when left out. */
   usageLimitWaitMs?: number;
+  /** The rounds of fixes for a failing check a task's builder gets on each version of its work (engine/check-fix.ts); 2 when left out, and 0 for none. */
+  checkFixRounds?: number;
   /**
    * The check-together gate a fully autonomous run's accept passes through (engine/combined.ts): with the owner's
    * "require checking together" on, it waits while an overlapping open pull request of another workbench has no
@@ -461,6 +465,7 @@ export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
   const silenceLimit = options.silenceLimitMs ?? SILENCE_LIMIT_MS;
   const usageLimitWait = options.usageLimitWaitMs ?? USAGE_LIMIT_WAIT_MS;
+  const checkFixCap = options.checkFixRounds ?? DEFAULT_CHECK_FIX_ROUNDS;
   /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
   /**
@@ -610,7 +615,80 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(task.id, "verifying", "the checks of this task ran");
       return void moveFrom(task.id, "verifying", "interrupted", { reason: "This task's checks were stopped before they finished. The work is committed to its branch." });
     }
+    // A check failed: while rounds of fixes for it are left, the builder is sent it before anything else happens.
+    if (ran.failed !== null) {
+      const used = checkFixesUsed(db, task.id);
+      if (used < checkFixCap && !closed && stopped?.aborted !== true && !cancelled(task)) return fixCheck(task, used + 1, stopped);
+      // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+      if (used > 0) return review(task, "verifying", { checks: "failed", note: `a check still failed after ${used} of ${checkFixCap} rounds of fixes for a failing check; the rounds ran out` }, stopped);
+    }
     await review(task, "verifying", { checks: ran.failed === null ? "passed" : "failed" }, stopped);
+  };
+
+  /**
+   * A round of fixes for a failing check (engine/check-fix.ts): the builder is started again in the task's copy, under
+   * the same admission, confinement and permission check as for its build, taking up its earlier session when it
+   * reported one, and sent the failing commands with the end of their output. Its turn is driven as a build's is; how
+   * it ended is recorded when it ends (`checkFixed`).
+   */
+  const fixCheck = async (task: Task, round: number, stopped?: AbortSignal): Promise<void> => {
+    // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+    const at = moveFrom(task.id, "verifying", "building", { note: `round ${round} of fixes for a failing check` });
+    if (at === null) return;
+    const open = checkFixRoundOf(db, at.id);
+    // The failing round is read back from the store, as a restart reads it; without one there is nothing to send.
+    if (open === null) return review(at, "building", { checks: "failed" }, stopped);
+    const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
+    const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const admission = admitBuilder(at);
+    let session: DriverSession;
+    try {
+      if (closed) throw new Error("Botbench is stopping.");
+      const gitDir = await sharedGitDir(at.repo);
+      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+    } catch (err) {
+      admission.release();
+      if (closed) return leave(at.id, "building", "this task's round of fixes for a failing check was being started");
+      return checkFixed(at, open, null, "error", "", `${agentName(driver.name)} could not be started for the round of fixes for a failing check: ${words(err)}`, stopped);
+    }
+    await drive(at, session, admission, await checkFixPromptFor(at, open, cursor === null), null, stopped, cursor !== null);
+  };
+
+  /**
+   * What the builder is sent for a round of fixes for a failing check. A builder that takes up its earlier session
+   * already has the task; one started without it is also given the task and the files its work changed. `again`: it
+   * was stopped while on this round, and is taken up again; the words say why.
+   */
+  const checkFixPromptFor = async (task: Task, open: OpenCheckFix, fresh: boolean, again: "restart" | "limit" | null = null): Promise<string> => {
+    let files: string[] = [];
+    if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
+    const issue = fresh ? runIssue(db, task.runId) : null;
+    const prompt = `${checkFixPrompt({ failed: open.failed, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
+    const note = again === "limit" ? LIMIT_ROUND_NOTE : "Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.";
+    return again !== null ? prompt.replace("[From Botbench, not from the owner] ", `[From Botbench, not from the owner] ${note}\n\n`) : prompt;
+  };
+
+  /**
+   * A round of fixes for a failing check ended, completed or failed: what the builder wrote is committed and the round
+   * is recorded. Work that changed has the checks run on it again, as a new round of evidence, and the loop goes on from
+   * there (`check`). A round that did not finish or changed nothing ends the loop: the task goes on to its review, or
+   * to the owner, with its checks failed, and the task's line about the loop says why (`checkFixLine`).
+   */
+  const checkFixed = async (task: Task, open: OpenCheckFix, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal): Promise<void> => {
+    const from = getTask(db, task.id)?.headCommit ?? task.headCommit!;
+    const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
+    const headCommit = (await commit(task))?.headCommit ?? null;
+    const changed = headCommit !== null && headCommit !== from;
+    const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes for a failing check ended with an error${detail === null ? "." : `: ${detail}`}`;
+    insertCheckFix(db, { taskId: task.id, checkRound: open.checkRound, afterFixes: workVersion(db, task.id), attemptId, outcome: end === "completed" ? "finished" : "failed", changed, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
+    options.onTaskChange(getTask(db, task.id)!);
+    if (headCommit === null) return;
+    // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+    if (end !== "completed") return review(task, "building", { headCommit, checks: "failed", note: "the round of fixes for a failing check did not finish; the checks were not run again" }, stopped);
+    // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+    if (!changed) return review(task, "building", { headCommit, checks: "failed", note: "the round of fixes for a failing check changed nothing; the checks were not run again" }, stopped);
+    await checkCommitted(task, headCommit, stopped);
   };
 
   /**
@@ -919,6 +997,8 @@ export function createTasks(options: TasksOptions): Tasks {
     let reply = "";
     // A task with a review whose round has no fixes yet is on a round of fixes (engine/refine.ts).
     const refineRound = refineRoundOf(db, id);
+    // One not on a round of fixes for a review, with a failed check no round has ended for, is on a round of fixes for that check.
+    const checkFix = refineRound === null ? checkFixRoundOf(db, id) : null;
     let sessionStarted = false;
     let parking = false;
     parkCurrent = () => void (parking = waitingOnApproval(db, id));
@@ -1044,6 +1124,7 @@ export function createTasks(options: TasksOptions): Tasks {
         const from = taskReviews(db, id).at(-1)?.headCommit ?? task.headCommit!;
         insertRefinement(db, { taskId: id, round: refineRound, attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled during this round of fixes.", fromCommit: from, headCommit: null, startedAt: now() });
       }
+      if (checkFix !== null) insertCheckFix(db, { taskId: id, checkRound: checkFix.checkRound, afterFixes: workVersion(db, id), attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled during this round of fixes for a failing check.", fromCommit: getTask(db, id)?.headCommit ?? task.headCommit!, headCommit: null, startedAt: now() });
       await finish(task, "cancelled", CANCELLED);
     }
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
@@ -1058,6 +1139,8 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
     else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, ownReply ?? reply, detail, stopped, fromSession);
+    // So does a round of fixes for a failing check (engine/check-fix.ts).
+    else if (checkFix !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await checkFixed(task, checkFix, session.attemptId, end, ownReply ?? reply, detail, stopped);
     else if (end === "completed") await verify(task, reply, stopped);
     // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
     else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");
@@ -1248,9 +1331,13 @@ export function createTasks(options: TasksOptions): Tasks {
       return finish(task, "interrupted", `Claude Code could not be started again for this task: ${words(err)} The work done up to then is committed.`);
     }
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
-    const reviewer = refineRoundOf(db, task.id) === null ? null : reviewAssignment(db, task.id)?.agent ?? null;
+    const onRefine = refineRoundOf(db, task.id) !== null;
+    const reviewer = onRefine ? reviewAssignment(db, task.id)?.agent ?? null : null;
+    // A round of fixes for a failing check is sent the failing check again, the same way.
+    const checkFix = onRefine ? null : checkFixRoundOf(db, task.id);
     const prompt =
       reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, by === "limit" ? "limit" : "restart")
+      : checkFix !== null ? await checkFixPromptFor(task, checkFix, cursor === null, by === "limit" ? "limit" : "restart")
       : cursor === null ? builderPrompt(task)
       : by === "limit" ? LIMIT_PROMPT
       : before === "changed nothing" ? CHANGED_NOTHING_PROMPT

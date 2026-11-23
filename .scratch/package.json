@@ -1,0 +1,25 @@
+{
+  "name": "@jon-lange/botbench",
+  "version": "0.1.0",
+  "description": "A self-hosted software factory that drives the AI coding CLIs you already pay for",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json && node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'",
+    "test:confined": "node test/run-confined.ts",
+    "test:live": "node --test 'test/live/**/*.live.test.ts'",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck",
+    "e2e": "node e2e/prepare.ts && playwright test --config e2e/playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
