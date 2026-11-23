@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { acceptByMode, decideTask } from "../../src/engine/decision.ts";
 import { messageIssue } from "../../src/engine/claim-branch.ts";
-import { MAX_BODY_FINDINGS, MAX_CREDIT_CHARS, MAX_CREDITS, pullRequestText } from "../../src/engine/delivery.ts";
+import { MAX_BODY_FINDINGS, MAX_CREDIT_CHARS, MAX_CREDITS, pullRequestText, referenceCredits } from "../../src/engine/delivery.ts";
 import { insertRefinement, loopRecord, outcomeLine } from "../../src/engine/refine.ts";
 import { approvePlan, createRun, storePlan } from "../../src/engine/run.ts";
 import { getTask, moveTask, type Task } from "../../src/engine/task.ts";
@@ -247,6 +247,15 @@ test("a round of fixes in a new session keeps the build session's credits, oldes
   r.review("looks_right", "Verdict: looks right\nChecked:\n- calc.py\nFindings:\n- none");
   const text = await accepted(r);
   assert.ok(text.includes("```text\napproach from paperclip build/first.ts\napproach from paperclip fix/second.ts\n```"));
+});
+
+test("a credit on a line of its own may name a root file; inside a sentence the path needs a slash or a dot", () => {
+  assert.deepEqual(referenceCredits(["Credits:\napproach from paperclip Makefile\n- approach from paperclip `Dockerfile`.\nThe approach from the start of it was plain.\nSee the approach from paperclip Makefile there, and approach from paperclip src/a.ts too."]), [
+    "approach from paperclip Makefile",
+    "approach from paperclip Dockerfile",
+    "approach from paperclip src/a.ts",
+  ]);
+  assert.deepEqual(referenceCredits(["approach from the start"]), ["approach from the start"], "a bare line of exactly that form is taken as the builder's credit");
 });
 
 test("no credits from the builder: no Reference credits section", async (t) => {

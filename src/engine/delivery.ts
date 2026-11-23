@@ -215,17 +215,29 @@ export const MAX_CREDIT_CHARS = 200;
 
 /**
  * The reference credits in a builder's text: each "approach from <project> <path>" it wrote (the form CLAUDE.md asks
- * for), once each, in order, as `approach from <project> <path>`, cut to MAX_CREDIT_CHARS. The path must hold a "/" or
- * a "." so a plain sentence ("approach from the start of it") is not taken for one. Data: shown only inside a fence.
+ * for), once each, in order, as `approach from <project> <path>`, cut to MAX_CREDIT_CHARS. A credit on a line of its
+ * own may name any path (Makefile); one inside a sentence must hold a "/" or a "." in its path, so a plain sentence
+ * ("approach from the start of it") is not taken for one. Data: shown only inside a fence.
  */
 export function referenceCredits(texts: readonly string[]): string[] {
   const found: string[] = [];
+  const add = (project: string, where: string): void => {
+    const line = `approach from ${project} ${where}`.slice(0, MAX_CREDIT_CHARS);
+    if (!found.includes(line)) found.push(line);
+  };
   for (const text of texts) {
-    for (const m of text.matchAll(/\bapproach from\s+`?([\w@][\w.@-]{0,80})`?\s+`?([\w.@/-]{1,300})`?/gi)) {
-      const where = m[2]!.replace(/[.:,;-]+$/, "");
-      if (!/[/.]/.test(where)) continue;
-      const line = `approach from ${m[1]} ${where}`.slice(0, MAX_CREDIT_CHARS);
-      if (!found.includes(line)) found.push(line);
+    for (const said of text.split("\n")) {
+      // A credit that is a line of its own, perhaps as a list item: any path, a root file such as Makefile too.
+      const whole = /^\s*(?:[-*]\s+)?approach from\s+`?([\w@][\w.@-]{0,80})`?\s+`?([\w.@/-]{1,300})`?[.:,;]?\s*$/i.exec(said);
+      if (whole !== null) {
+        add(whole[1]!, whole[2]!.replace(/[.:,;-]+$/, ""));
+        continue;
+      }
+      // One inside a sentence: its path must hold a "/" or a "." so prose is not taken for a credit.
+      for (const m of said.matchAll(/\bapproach from\s+`?([\w@][\w.@-]{0,80})`?\s+`?([\w.@/-]{1,300})`?/gi)) {
+        const where = m[2]!.replace(/[.:,;-]+$/, "");
+        if (/[/.]/.test(where)) add(m[1]!, where);
+      }
     }
   }
   return found;
