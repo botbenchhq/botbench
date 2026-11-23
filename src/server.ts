@@ -11,7 +11,7 @@ import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
 import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
-import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
+import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
 import { createConnect } from "./drivers/connect.ts";
@@ -114,7 +114,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     broker = createBroker({ db, home, onChange: (approval) => {
         stream.announceApproval(approval);
         push.approvalChanged(approval);
-      }, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config) });
+      }, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config),
+      // Only Claude Code's sessions save long output Botbench knows where to find (src/drivers/claude-code.ts).
+      sessionOutput: ({ driver: name, session, worktree }) => (name === CLAUDE_CODE ? toolResultsFolder({ cwd: worktree, session }) : null) });
   } catch (err) {
     stream.close();
     db.close();

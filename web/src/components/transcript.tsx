@@ -439,13 +439,14 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who }: {
         preapproved: "It was allowed without asking you: you listed this command when you started the task.",
         standing: "It was allowed without asking you: you chose Always allow for this command. Permissions lists it, and you can take it back there.",
         mode: "It ran without asking you: this run's mode lets a command run when it is kept away from your sign-ins and the network.",
+        files: "It ran without asking you: it reads or changes a file inside the task's copy, or reads output Claude Code saved for this task.",
         declined: "You denied it. It was not run.",
         denied: "Botbench denied it without asking you. It was not run.",
         cancelled: "The request ended without an answer. It was not run.",
       }[e.decision];
-      const label = { allowed: "Allowed", preapproved: "Allowed for this task", standing: "Always allowed", mode: "Allowed by the run's mode", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" }[e.decision];
-      // The owner's own answers and the two standing rules are decisions; a refusal by Botbench and a request nobody answered are not.
-      const icon = ({ allowed: "check", declined: "x", preapproved: "circle-check", standing: "circle-check", mode: "circle-check" } as const)[e.decision as "allowed" | "declined" | "preapproved" | "standing" | "mode"];
+      const label = { allowed: "Allowed", preapproved: "Allowed for this task", standing: "Always allowed", mode: "Allowed by the run's mode", files: "Allowed: the task's own files", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" }[e.decision];
+      // The owner's own answers and the standing rules are decisions; a refusal by Botbench and a request nobody answered are not.
+      const icon = ({ allowed: "check", declined: "x", preapproved: "circle-check", standing: "circle-check", mode: "circle-check", files: "circle-check" } as const)[e.decision as "allowed" | "declined" | "preapproved" | "standing" | "mode" | "files"];
       return (
         <Line kind={e.type} look={icon === undefined ? "refused" : "decision"} label={label} icon={icon}>
           <What call={story.calls.get(e.toolCallId)} fallback="The request" />

@@ -2,7 +2,7 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import { answerApproval, ApiError, grantStanding, type Approval } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ConfirmAction } from "./confirm.tsx";
-import { approvalWords } from "./tool-summary.ts";
+import { approvalWords, directoryWords, placeWords } from "./tool-summary.ts";
 
 /** The tray's last "open" a card has answered by taking the focus. Kept across screens, so one open moves the focus once. */
 let focusedFor = 0;
@@ -18,12 +18,6 @@ export function visible(text: string): string {
 /** A count as it is said: "once", "3 times". */
 export const times = (n: number): string => (n === 1 ? "once" : `${n} times`);
 
-/** Where the agent stood, in words. The path is relative to the task's own copy of the project. */
-function directoryWords(cwd: string): string {
-  if (cwd === ".") return "The top folder of the task's copy";
-  if (cwd === "") return "Not reported";
-  return cwd === ".." || cwd.startsWith("../") ? `${cwd} (outside the task's copy)` : `${cwd} (inside the task's copy)`;
-}
 
 /** Which step of the work asks, in the words of the steps: Plan, Build, Review. Any other name is shown as it is. */
 export function stepWord(role: string): string {
@@ -138,6 +132,7 @@ export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Ap
   const waiting = sending !== null || !settled;
   /** A tool that is not a shell command is said in words; what an allow lets run is one tap away. */
   const said = approvalWords(approval.tool, approval.command);
+  const place = placeWords(approval);
 
   return (
     <article ref={card} tabIndex={-1} data-testid="approval-card" data-approval-id={approval.id} aria-labelledby={heading} className="ds-approval">
@@ -160,9 +155,14 @@ export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Ap
         </>
       )}
       <ul className="ds-approval__facts">
-        <Fact term="Folder" testId="approval-directory">
-          {directoryWords(approval.cwd)}
+        <Fact term={place.term} testId="approval-directory">
+          {visible(place.words)}
         </Fact>
+        {approval.asksBecause !== null && (
+          <Fact term="Why it asks" testId="approval-why">
+            {approval.asksBecause}
+          </Fact>
+        )}
         {/* Which step asks matters only for a planner's request on its run's screen; a task's requests are all its builder's. */}
         {on === "run" && approval.taskId === null && (
           <Fact term="Step" testId="approval-role">
