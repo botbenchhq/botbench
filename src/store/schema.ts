@@ -2103,6 +2103,26 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
   {
+    // A run's mode can be made stricter while it works, never looser (#156): fully autonomous to semi-autonomous or
+    // manual, semi-autonomous to manual, and only while the run has not finished (done, cancelled or failed; the run
+    // of a single task, which has no state, stays manual). The same mode and any looser one are refused here as well as
+    // by the route. Each change is in the run's history as the owner's (`actor`), naming the mode before and after;
+    // such a row must name the mode the run has once it is written, so it is written after the change, in its write.
+    name: "stricter modes",
+    sql: `
+DROP TRIGGER runs_mode_fixed;
+CREATE TRIGGER runs_mode_stricter_only BEFORE UPDATE OF mode ON runs
+WHEN OLD.status IS NULL OR OLD.status IN ('done', 'cancelled', 'failed') OR NOT ((OLD.mode = 'full' AND NEW.mode IN ('semi', 'manual')) OR (OLD.mode = 'semi' AND NEW.mode = 'manual'))
+BEGIN SELECT RAISE(ABORT, 'a run''s mode can only be made stricter, and only while the run has not finished'); END;
+ALTER TABLE run_events ADD COLUMN actor TEXT CHECK (actor IS NULL OR actor = 'owner');
+ALTER TABLE run_events ADD COLUMN mode_from TEXT CHECK (mode_from IS NULL OR mode_from IN ('manual', 'semi', 'full'));
+ALTER TABLE run_events ADD COLUMN mode_to TEXT CHECK (mode_to IS NULL OR mode_to IN ('manual', 'semi', 'full'));
+CREATE TRIGGER run_events_mode_change BEFORE INSERT ON run_events
+WHEN (NEW.mode_from IS NULL) <> (NEW.mode_to IS NULL) OR (NEW.mode_to IS NOT NULL AND (NEW.actor IS NOT 'owner' OR NEW.mode_to IS NOT (SELECT mode FROM runs WHERE id = NEW.run_id)))
+BEGIN SELECT RAISE(ABORT, 'a change of mode is recorded as the owner''s, naming the mode the run now has'); END;
+`,
+  },
+  {
     // Updating Botbench to a published release (src/update.ts): the owner chooses in Settings whether it updates on a
     // tap (`tap`, also when never chosen) or by itself (`auto`). A check cannot be altered in place, so the table is
     // made again with every row kept.
