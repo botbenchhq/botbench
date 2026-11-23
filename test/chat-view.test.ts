@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentState, ChatRound, StoredEvent } from "../web/src/api/client.ts";
-import { chatOffer, chatTargets, chatView, readChatAgents, sendWords, type AttemptInfo } from "../web/src/app/chat.ts";
+import { agentAbout, agentList, defaultFirst, agentRowValue, chatOffer, chatTargets, chatView, chipWords, modelsShown, readChatAgents, readKnownAgents, sendWords, type AttemptInfo } from "../web/src/app/chat.ts";
 
 // Which agents a chat offers, what Send sends to whom, and how a chat with several agents reads, decided without a browser.
 
@@ -10,10 +10,10 @@ const all = [agent("claude-code"), agent("codex"), agent("grok", "Grok is signed
 
 test("every agent is offered for a chat, in a fixed order; one its own check finds unusable is listed with the reason, and cannot be chosen", () => {
   assert.deepEqual(chatOffer([all[3]!, all[2]!, all[1]!, all[0]!]), [
-    { agent: "claude-code", name: "Claude Code", problem: null },
-    { agent: "codex", name: "Codex", problem: null },
-    { agent: "grok", name: "Grok", problem: "Grok is signed out. Run `grok login` in a terminal." },
-    { agent: "antigravity", name: "Antigravity", problem: null },
+    { agent: "claude-code", name: "Claude Code", problem: null, version: "1", state: "Available" },
+    { agent: "codex", name: "Codex", problem: null, version: "1", state: "Available" },
+    { agent: "grok", name: "Grok", problem: "Grok is signed out. Run `grok login` in a terminal.", version: "1", state: "Signed out" },
+    { agent: "antigravity", name: "Antigravity", problem: null, version: "1", state: "Available" },
   ]);
 });
 
@@ -92,4 +92,92 @@ test("a compare request reads as the owner asking that agent to compare the answ
   const infos = new Map<number, AttemptInfo>([[20, { agent: "codex", model: "gpt-6-luna", round: { id: 9, kind: "compare", message: "Name a colour", compares: 7 } }]]);
   const view = chatView([ev(20, { type: "user_prompt", text: "[From Botbench, not from the owner] ..." }), ev(20, { type: "text", text: "They agree." })], infos, [20]);
   assert.equal(view.events[0]!.payload.type === "user_prompt" && view.events[0]!.payload.text, "Codex, compare the answers above: where they agree, where they differ, and which you would act on.");
+});
+
+// The Agent and model view: a row of agents (chips) that never scrolls away, then the chosen one's models. What it lists
+// in each state is decided here, without a browser.
+const rowsOf = (list: ReturnType<typeof agentList>) => list.rows.map((r) => [r.label, r.disabled]);
+
+test("with nothing known yet, every agent Botbench drives is in the row by name as being checked, with one line that says so", () => {
+  const list = agentList({ known: null, checking: true, failed: null, inRepository: false });
+  assert.equal(list.line, "Checking the agents.");
+  assert.deepEqual(rowsOf(list), [["Claude Code: Checking…", false], ["Codex: Checking…", false], ["Grok: Checking…", false], ["Antigravity: Checking…", false]]);
+  assert.deepEqual(list.several, { label: "Ask several", disabled: false, tickable: ["claude-code", "codex", "grok", "antigravity"] });
+  assert.equal(list.repository, false);
+});
+
+test("with a last check known, the row is drawn at once as it was, with no line, even while it is checked again", () => {
+  for (const checking of [false, true]) {
+    const list = agentList({ known: chatOffer(all.map((a) => ({ ...a, problem: null, signedIn: true }))), checking, failed: null, inRepository: false });
+    assert.equal(list.line, null);
+    assert.deepEqual(rowsOf(list), [["Claude Code", false], ["Codex", false], ["Grok", false], ["Antigravity", false]]);
+    assert.equal(list.several.disabled, false);
+  }
+});
+
+test("an agent its check finds unusable stays in the row, its state in words, and can be chosen to see why; it cannot be ticked under Ask several", () => {
+  const list = agentList({ known: chatOffer(all), checking: false, failed: null, inRepository: false });
+  assert.deepEqual(list.rows[2], { agent: "grok", name: "Grok", label: "Grok: Signed out", state: "Signed out", version: "1", problem: "Grok is signed out. Run `grok login` in a terminal.", disabled: false });
+  assert.deepEqual(list.several.tickable, ["claude-code", "codex", "antigravity"]);
+});
+
+test("a check that failed says so in words; the last known states stay, or, with none, the agents are listed as not checked", () => {
+  const kept = agentList({ known: chatOffer(all), checking: false, failed: "Botbench did not answer in time.", inRepository: false });
+  assert.equal(kept.line, "The agents could not be checked again: Botbench did not answer in time. Each shows what its last check found.");
+  assert.equal(kept.rows[2]!.label, "Grok: Signed out");
+  const none = agentList({ known: null, checking: false, failed: "Botbench could not be reached.", inRepository: false });
+  assert.equal(none.line, "The agents could not be checked: Botbench could not be reached. Claude Code can still be asked.");
+  assert.deepEqual(none.rows.map((r) => r.label), ["Claude Code: Not checked", "Codex: Not checked", "Grok: Not checked", "Antigravity: Not checked"]);
+});
+
+test("with a repository attached, the other agents and Ask several stay in the row as Chat only and cannot be chosen; the view offers to remove the repository", () => {
+  const list = agentList({ known: chatOffer(all), checking: false, failed: null, inRepository: true });
+  assert.deepEqual(rowsOf(list), [["Claude Code", false], ["Codex: Chat only", true], ["Grok: Chat only", true], ["Antigravity: Chat only", true]]);
+  assert.deepEqual([list.several.label, list.several.disabled], ["Ask several: Chat only", true]);
+  assert.equal(list.repository, true);
+  assert.deepEqual(rowsOf(agentList({ known: null, checking: true, failed: null, inRepository: true })).slice(1), [["Codex: Chat only", true], ["Grok: Chat only", true], ["Antigravity: Chat only", true]]);
+});
+
+test("over an agent's models: its version and its sign-in state in words", () => {
+  const [claude, , grok] = agentList({ known: chatOffer(all), checking: false, failed: null, inRepository: false }).rows;
+  assert.equal(agentAbout(claude!), "Version 1 · Signed in");
+  assert.equal(agentAbout(grok!), "Version 1 · Signed out");
+  assert.equal(agentAbout(agentList({ known: null, checking: true, failed: null, inRepository: false }).rows[1]!), "Checking…");
+});
+
+test("the agents last checked are read back from the device part by part; anything else is nothing known", () => {
+  assert.equal(readKnownAgents(null), null);
+  assert.equal(readKnownAgents("not json"), null);
+  assert.equal(readKnownAgents('{"agents":3}'), null);
+  assert.deepEqual(readKnownAgents(JSON.stringify([{ agent: "codex", name: "Codex", problem: null, version: "0.172.0", state: "Available" }, { agent: "grok", problem: "Signed out.", state: 3 }, { agent: 4 }])), [
+    { agent: "codex", name: "Codex", problem: null, version: "0.172.0", state: "Available" },
+    { agent: "grok", name: "Grok", problem: "Signed out.", version: null, state: "Unavailable" },
+  ]);
+});
+
+test("the chip names the model with the agent as its qualifier; an agent's own default is the agent's name alone", () => {
+  assert.deepEqual(chipWords("Claude Code's default", "Claude Code"), { value: "Claude Code", qualifier: null });
+  assert.deepEqual(chipWords("Codex's default", "Codex"), { value: "Codex", qualifier: null });
+  assert.deepEqual(chipWords("Haiku 5.5", "Claude Code"), { value: "Haiku 5.5", qualifier: "Claude Code" });
+  assert.deepEqual(chipWords("Ask several", "3 agents"), { value: "Ask several", qualifier: "3 agents" });
+});
+
+test("the Add context row for the agent names the agent, or how many are asked", () => {
+  assert.equal(agentRowValue({ kind: "one", agent: "claude-code" }), "Claude Code");
+  assert.equal(agentRowValue({ kind: "one", agent: "codex" }), "Codex");
+  assert.equal(agentRowValue({ kind: "several", agents: ["codex", "grok", "antigravity"] }), "3 agents");
+});
+
+test("an agent's models: its default first, then four more, the rest behind More models…, opened when the choice is among them", () => {
+  const ids = ["a", "b", "c", "d", "e", "f", "g"];
+  assert.deepEqual(modelsShown(ids, null), { first: ["a", "b", "c", "d"], rest: ["e", "f", "g"], restHoldsChoice: false });
+  assert.deepEqual(modelsShown(ids, "f"), { first: ["a", "b", "c", "d"], rest: ["e", "f", "g"], restHoldsChoice: true });
+  assert.deepEqual(modelsShown(["a", "b"], "b"), { first: ["a", "b"], rest: [], restHoldsChoice: false });
+});
+
+test("the agent's default model is first, under its own name with a default tag, and not listed again unless it is the one chosen", () => {
+  const models = [{ id: "opus", label: "Opus 5.5" }, { id: "fable", label: "Fable 5.2" }, { id: "haiku" }];
+  assert.deepEqual(defaultFirst("Claude Code", "Fable 5.2", models, null), { label: "Fable 5.2", models: [models[0], models[2]] });
+  assert.deepEqual(defaultFirst("Claude Code", "Fable 5.2", models, "fable"), { label: "Fable 5.2", models });
+  assert.deepEqual(defaultFirst("Codex", null, models, null), { label: "Codex's default", models });
 });

@@ -129,10 +129,27 @@ export interface AgentState extends Omit<DriverState, "driver"> {
   agent: string;
   roles: string[];
 }
-/** Each agent asks its own program, which can take a few seconds. */
-export const getAgents = async (): Promise<AgentState[]> => (await getAgentsAndCap()).agents;
-/** The agents, and how many rounds of fixes a run started now allows after a review with concerns. */
-export const getAgentsAndCap = (): Promise<{ agents: AgentState[]; maxRefineRounds: number }> => request("GET", "/api/agents", undefined, 30_000);
+/** The agents as their last check found them, when it ended, whether a new check is running, and the cap on rounds of fixes. */
+export interface AgentsAnswer {
+  agents: AgentState[];
+  checkedAt: string;
+  checking: boolean;
+  maxRefineRounds: number;
+}
+/** One request at a time, shared by every screen and picker that needs the agents; a failed one is asked again next time. */
+let askingAgents: Promise<AgentsAnswer> | null = null;
+/**
+ * The agents. Botbench answers from a check made in the last minute at once (each check runs every agent's own program,
+ * which takes seconds); `fresh` waits for a check that ends after the request, for a screen that must show the state now.
+ */
+export function getAgentsAndCap(fresh = false): Promise<AgentsAnswer> {
+  if (fresh) return request("GET", "/api/agents?fresh=1", undefined, 30_000);
+  askingAgents ??= request<AgentsAnswer>("GET", "/api/agents", undefined, 30_000).finally(() => {
+    askingAgents = null;
+  });
+  return askingAgents;
+}
+export const getAgents = async (fresh = false): Promise<AgentState[]> => (await getAgentsAndCap(fresh)).agents;
 /** The models a reviewer offers, as its program lists them or as the configuration does. */
 export const getAgentModels = (agent: string): Promise<ModelList> => request("GET", `/api/agents/${encodeURIComponent(agent)}/models`, undefined, 30_000);
 

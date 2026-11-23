@@ -68,11 +68,14 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       const billing: Record<string, BillingKind> = { [CLAUDE_CODE]: await ctx.turns.probe().then((probe) => probe.billing, () => "unknown" as const) };
       json(res, 200, usageReport(ctx.db, { now: Date.now(), drivers: Object.keys(ctx.config.drivers), billing }));
     } else if (method === "GET" && pathname === "/api/agents") {
-      // Each agent as it reports itself now, and the steps Botbench lets it work in.
-      const listed = [ctx.driver, ...Object.values(ctx.reviewers).filter((d): d is Driver => d !== undefined && d.name !== ctx.driver.name)];
-      const agents = await Promise.all(listed.map(async (agent) => ({ agent: agent.name, ...(await agent.probe()), roles: agentRoles(ctx, agent) })));
+      // Each agent as its last check found it (kept for a short time, src/api/agents.ts), and the steps Botbench lets it work in.
+      // "?fresh=1" waits for a check that ends after the request; otherwise a recent check answers at once.
+      const fresh = url.searchParams.get("fresh") === "1";
+      const check = fresh ? { ...(await ctx.agentChecks.fresh()), checking: false } : await ctx.agentChecks.read();
+      const byName = new Map([ctx.driver, ...Object.values(ctx.reviewers)].filter((d): d is Driver => d !== undefined).map((d) => [d.name, d]));
+      const agents = check.agents.map((a) => ({ ...a, roles: agentRoles(ctx, byName.get(a.agent)!) }));
       // With the cap on rounds of fixes a run started now gets, which New run shows beside Review.
-      json(res, 200, { agents, maxRefineRounds: maxRefineRounds(ctx.config) });
+      json(res, 200, { agents, checkedAt: check.checkedAt, checking: check.checking, maxRefineRounds: maxRefineRounds(ctx.config) });
     } else if (method === "GET" && /^\/api\/agents\/[a-z-]{1,40}\/models$/.test(pathname)) {
       const name = pathname.split("/")[3]!;
       const reviewer = Object.hasOwn(ctx.reviewers, name) ? ctx.reviewers[name] : undefined;
