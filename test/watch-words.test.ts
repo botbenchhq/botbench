@@ -18,7 +18,7 @@ test("a failed look names the repository, why, and when it tries again; what gh 
   const words = watchFailure({ path: "/Users/o/botbench", problem: "The gh tool is not signed in. Run gh auth login in a terminal on this Mac.", nextAt: "2026-11-23T10:15:00Z" });
   assert.equal(words.lead, "Botbench could not check the issues of botbench. The gh tool is not signed in. Run gh auth login in a terminal on this Mac.");
   // The time of day is this device's own way of writing it: 10:15, or 10:15 AM.
-  assert.match(words.after, /^It tries again at \d{1,2}:\d\d( [AP]M)?\.$/);
+  assert.match(words.after, /^It tries again at \d{1,2}:\d\d(\u00a0[AP]M)?\.$/);  // the no-break space Botbench writes before AM and PM
 });
 
 test("a proposal's second line keeps its author apart, as outside text; Start opens the composer on that proposal", () => {

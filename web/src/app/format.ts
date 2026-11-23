@@ -56,10 +56,45 @@ const localeOf = (where: Clocked): string => (where.serverForm === true ? SERVER
 export type Instant = string | number | Date;
 
 const dateOf = (at: Instant): Date => (at instanceof Date ? at : new Date(at));
-const shaped = (at: Instant, where: Clocked, shape: Intl.DateTimeFormatOptions): string => new Intl.DateTimeFormat(localeOf(where), { ...shape, timeZone: where.timeZone }).format(dateOf(at));
+
+/*
+ * A date or a clock is put together here from its parts (`formatToParts`), never taken as the engine's finished text:
+ * the commas and spaces an engine puts between the parts differ from one version of its locale data to the next
+ * ("Tuesday 24 November" in one, "Tuesday, 24 November" in another; a plain or a narrow no-break space before "PM"),
+ * and a sentence of Botbench's must read the same in every browser. From the engine come only what a region decides:
+ * the names, the digits and their padding, twelve or twenty-four hours, and which of the day and the month is first.
+ * Two things are still the engine's text, as a region's own convention: the marks inside a numeric date ("24/11/2026",
+ * "11/24/2026") and the grouping and decimal marks of a number, of which only a space is made one fixed character.
+ */
+
+/** The space Botbench writes where a line must not break: before AM or PM, and between a number's groups where a region groups with a space. */
+const NO_BREAK = "\u00a0";
+
+/** The parts of an instant in a shape, without the engine's own separators. */
+const partsOf = (at: Instant, where: Clocked, shape: Intl.DateTimeFormatOptions): Intl.DateTimeFormatPart[] =>
+  new Intl.DateTimeFormat(localeOf(where), { ...shape, timeZone: where.timeZone }).formatToParts(dateOf(at)).filter((part) => part.type !== "literal");
+
+/** A clock from its parts: "14:30", "2:30 PM", and with `seconds` "14:30:09". */
+function clockOf(at: Instant, where: Clocked, seconds: boolean): string {
+  const parts = partsOf(at, where, { timeStyle: seconds ? "medium" : "short" });
+  const of = (type: Intl.DateTimeFormatPartTypes): string | undefined => parts.find((part) => part.type === type)?.value;
+  const digits = [of("hour"), of("minute"), ...(seconds ? [of("second")] : [])].join(":");
+  const half = of("dayPeriod");
+  return half === undefined ? digits : `${digits}${NO_BREAK}${half}`;
+}
+
+/** A day from its parts, in the order the region gives them: "24 November", "Tuesday 24 November"; where the month is first, "November 24", "Tuesday, November 24". */
+function dayOf(at: Instant, where: Clocked, weekday: boolean): string {
+  const parts = partsOf(at, where, { ...(weekday ? { weekday: "long" as const } : {}), day: "numeric", month: "long" });
+  const named = parts.find((part) => part.type === "weekday")?.value;
+  const date = parts.filter((part) => part.type === "day" || part.type === "month");
+  const words = date.map((part) => part.value).join(" ");
+  if (named === undefined) return words;
+  return date[0]?.type === "month" ? `${named}, ${words}` : `${named} ${words}`;
+}
 
 /** A number with the grouping and decimal mark of the reader's region: "1,234,567", or "1.234.567" for a reader in Germany. */
-export const number = (n: number, where: Where = {}): string => new Intl.NumberFormat(localeOf(where)).format(n);
+export const number = (n: number, where: Where = {}): string => new Intl.NumberFormat(localeOf(where)).format(n).replace(/\s/gu, NO_BREAK);
 
 /** The noun for a count: `one` for exactly 1, `many` for every other count, 0 included. */
 export const plural = (count: number, one: string, many: string): string => (count === 1 ? one : many);
@@ -68,18 +103,18 @@ export const plural = (count: number, one: string, many: string): string => (cou
 export const counted = (count: number, one: string, many: string, where: Where = {}): string => `${number(count, where)} ${plural(count, one, many)}`;
 
 /** A time of day: "14:30", or "2:30 PM" where the reader's region uses a twelve-hour clock; always "14:30" in the server's form. */
-export const clock = (at: Instant, where: Clocked = {}): string => shaped(at, where, { timeStyle: "short" });
+export const clock = (at: Instant, where: Clocked = {}): string => clockOf(at, where, false);
 
 /** A day and its clock, without the year: "24 November at 08:05"; with `weekday`, "Tuesday 24 November at 08:05". */
-export const dayAndClock = (at: Instant, where: Clocked & { weekday?: boolean } = {}): string =>
-  `${shaped(at, where, { ...(where.weekday === true ? { weekday: "long" } : {}), day: "numeric", month: "long" })} at ${clock(at, where)}`;
+export const dayAndClock = (at: Instant, where: Clocked & { weekday?: boolean } = {}): string => `${dayOf(at, where, where.weekday === true)} at ${clock(at, where)}`;
 
 /** A date with its year and the clock to the second, as the reader's region writes them: "24/11/2026, 08:05:09". */
-export const fullDate = (at: Instant, where: Where = {}): string => shaped(at, where, { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+export const fullDate = (at: Instant, where: Where = {}): string =>
+  `${new Intl.DateTimeFormat(localeOf(where), { year: "numeric", month: "numeric", day: "numeric", timeZone: where.timeZone }).format(dateOf(at))}, ${clockOf(at, where, true)}`;
 
 /** Whether two instants fall on the same calendar day where the reader is. */
 export function sameDay(a: Instant, b: Instant, where: Where = {}): boolean {
-  const day = (at: Instant): string => shaped(at, { locale: "en", timeZone: where.timeZone }, { year: "numeric", month: "numeric", day: "numeric" });
+  const day = (at: Instant): string => partsOf(at, { locale: "en", timeZone: where.timeZone }, { year: "numeric", month: "numeric", day: "numeric" }).map((part) => part.value).join("-");
   return day(a) === day(b);
 }
 

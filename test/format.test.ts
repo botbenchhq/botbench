@@ -11,8 +11,8 @@ const DE = { locale: "de-DE", timeZone: "UTC" };
 const FR = { locale: "fr-FR", timeZone: "UTC" };
 const EG = { locale: "ar-EG", timeZone: "UTC" };
 const AT = "2026-11-24T08:05:09.000Z";
-/** The space before AM and PM is a plain one in one version of the locale data and a narrow no-break one in another: read as a plain one. */
-const plain = (words: string): string => words.replace(/\s/gu, " ");
+/** The no-break space Botbench itself writes before AM and PM and between a number's groups: one fixed character, whatever the engine's locale data has there. */
+const NB = String.fromCharCode(0xa0);
 
 test("the words are English wherever the reader is: only the region of their language is used", () => {
   assert.equal(englishOf("en-US"), "en-US");
@@ -27,13 +27,13 @@ test("the words are English wherever the reader is: only the region of their lan
   // A French reader's day and month are in English, in the French order, with the French clock and grouping.
   assert.equal(dayAndClock(AT, { ...FR, weekday: true }), "Tuesday 24 November at 08:05");
   assert.equal(fullDate(AT, FR), "24/11/2026, 08:05:09");
-  assert.equal(plain(number(12345.5, FR)), "12 345,5");
-  assert.equal(plain(counted(12345, "token", "tokens", FR)), "12 345 tokens");
+  assert.equal(number(12345.5, FR), `12${NB}345,5`);
+  assert.equal(counted(12345, "token", "tokens", FR), `12${NB}345 tokens`);
   // A reader in Egypt gets Latin digits and English words, with the twelve-hour clock used there.
   assert.equal(number(12345.5, EG), "12,345.5");
-  assert.equal(plain(clock("2026-11-24T14:30:00.000Z", EG)), "2:30 PM");
-  assert.equal(plain(dayAndClock(AT, { ...EG, weekday: true })), "Tuesday, November 24 at 8:05 AM");
-  assert.equal(plain(fullDate(AT, EG)), "11/24/2026, 8:05:09 AM");
+  assert.equal(clock("2026-11-24T14:30:00.000Z", EG), `2:30${NB}PM`);
+  assert.equal(dayAndClock(AT, { ...EG, weekday: true }), `Tuesday, November 24 at 8:05${NB}AM`);
+  assert.equal(fullDate(AT, EG), `11/24/2026, 8:05:09${NB}AM`);
   for (const where of [FR, EG, DE]) assert.match(`${fullDate(AT, where)} ${dayAndClock(AT, { ...where, weekday: true })} ${number(1234567.5, where)}`, /^[\x20-\x7e\u00a0\u202f]+$/, where.locale);
 });
 
@@ -69,11 +69,11 @@ test("a noun takes its number from the count, and a counted noun carries the gro
 });
 
 test("a clock is the reader's own: twelve hours where they are used, twenty-four elsewhere, in the zone asked for", () => {
-  assert.equal(plain(clock(AT, US)), "8:05 AM");
+  assert.equal(clock(AT, US), `8:05${NB}AM`);
   assert.equal(clock(AT, GB), "08:05");
   assert.equal(clock(AT, DE), "08:05");
   assert.equal(clock("2026-11-24T14:30:00.000Z", GB), "14:30");
-  assert.equal(plain(clock("2026-11-24T14:30:00.000Z", US)), "2:30 PM");
+  assert.equal(clock("2026-11-24T14:30:00.000Z", US), `2:30${NB}PM`);
   assert.equal(clock("2026-11-24T00:05:00.000Z", GB), "00:05");
   // The same instant in another zone is another clock, and a Date or a number of milliseconds is read like the text.
   assert.equal(clock(AT, { locale: "en-GB", timeZone: "Asia/Tokyo" }), "17:05");
@@ -83,20 +83,20 @@ test("a clock is the reader's own: twelve hours where they are used, twenty-four
 
 test("a day and clock names the day in the reader's order, with the weekday when asked, and no year", () => {
   assert.equal(dayAndClock(AT, GB), "24 November at 08:05");
-  assert.equal(plain(dayAndClock(AT, US)), "November 24 at 8:05 AM");
+  assert.equal(dayAndClock(AT, US), `November 24 at 8:05${NB}AM`);
   assert.equal(dayAndClock(AT, DE), "24 November at 08:05");
   assert.equal(dayAndClock(AT, { ...GB, weekday: true }), "Tuesday 24 November at 08:05");
-  assert.equal(plain(dayAndClock(AT, { ...US, weekday: true })), "Tuesday, November 24 at 8:05 AM");
+  assert.equal(dayAndClock(AT, { ...US, weekday: true }), `Tuesday, November 24 at 8:05${NB}AM`);
   // Late in the evening in Honolulu it is still the day before.
   assert.equal(dayAndClock(AT, { locale: "en-GB", timeZone: "Pacific/Honolulu", weekday: true }), "Monday 23 November at 22:05");
 });
 
 test("a full date is the date with its year and the clock to the second, as the reader's locale writes them", () => {
-  assert.equal(plain(fullDate(AT, US)), "11/24/2026, 8:05:09 AM");
+  assert.equal(fullDate(AT, US), `11/24/2026, 8:05:09${NB}AM`);
   assert.equal(fullDate(AT, GB), "24/11/2026, 08:05:09");
   assert.equal(fullDate(AT, DE), "24/11/2026, 08:05:09");
   // For an English reader it is what the screens showed before this module: the browser's own default for a date and time.
-  for (const where of [US, GB]) assert.equal(fullDate(AT, where), new Date(AT).toLocaleString(where.locale, { timeZone: where.timeZone }));
+  for (const where of [US, GB]) assert.equal(fullDate(AT, where).replace(/\s/gu, " "), new Date(AT).toLocaleString(where.locale, { timeZone: where.timeZone }).replace(/\s/gu, " "));
   assert.equal(fullDate(AT, { locale: "en-GB", timeZone: "Pacific/Auckland" }), "24/11/2026, 21:05:09");
 });
 
@@ -178,4 +178,26 @@ test("how long ago something was is its duration in words, counted from the time
   assert.equal(ago("2026-11-21T12:00:00.000Z", now), "2 days ago");
   // A time still to come (two clocks that disagree) is never a negative wait.
   assert.equal(ago("2026-11-23T12:05:00.000Z", now), "less than a minute ago");
+});
+
+test("a date and a clock are joined from their parts with Botbench's own punctuation, the same whatever separators an engine's locale data has", () => {
+  // The exact characters, for a reader in each of four regions: no comma after the weekday where the day is first, one
+  // where the month is first, a colon in every clock, and one no-break space before AM or PM.
+  const afternoon = "2026-11-24T14:05:09.000Z";
+  const expected: Record<string, { clock: string; day: string; named: string; full: string; number: string }> = {
+    "en-GB": { clock: "14:05", day: "24 November at 14:05", named: "Tuesday 24 November at 14:05", full: "24/11/2026, 14:05:09", number: "12,345.5" },
+    "en-US": { clock: `2:05${NB}PM`, day: `November 24 at 2:05${NB}PM`, named: `Tuesday, November 24 at 2:05${NB}PM`, full: `11/24/2026, 2:05:09${NB}PM`, number: "12,345.5" },
+    "de-DE": { clock: "14:05", day: "24 November at 14:05", named: "Tuesday 24 November at 14:05", full: "24/11/2026, 14:05:09", number: "12.345,5" },
+    "fr-FR": { clock: "14:05", day: "24 November at 14:05", named: "Tuesday 24 November at 14:05", full: "24/11/2026, 14:05:09", number: `12${NB}345,5` },
+  };
+  for (const [locale, want] of Object.entries(expected)) {
+    const where = { locale, timeZone: "UTC" };
+    assert.deepEqual({ clock: clock(afternoon, where), day: dayAndClock(afternoon, where), named: dayAndClock(afternoon, { ...where, weekday: true }), full: fullDate(afternoon, where), number: number(12345.5, where) }, want, locale);
+  }
+  // Nothing but these characters between the parts: no narrow no-break space, no comma the region's order does not call for.
+  for (const locale of Object.keys(expected)) {
+    const where = { locale, timeZone: "UTC" };
+    assert.doesNotMatch(`${clock(afternoon, where)} ${fullDate(afternoon, where)} ${number(1234567.5, where)}`, /[\u202f\u2009]/u, locale);
+    assert.equal(dayAndClock(afternoon, { ...where, weekday: true }).split(",").length - 1, locale === "en-US" ? 1 : 0, locale);
+  }
 });
