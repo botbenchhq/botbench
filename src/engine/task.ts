@@ -10,6 +10,7 @@ import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
+import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
@@ -678,7 +679,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let worktree: Worktree;
     try {
       // Under the task's own run: a run's tasks sit side by side, and a task started on its own is a run of one.
-      worktree = await createWorktree({ repo: queued.repo, home, run: queued.runId === null ? `run-${randomBytes(4).toString("hex")}` : `run-${queued.runId}`, task: `task-${id}`, ...(plan ? { commit: plan.baseCommit } : {}) });
+      worktree = await createWorktree({ repo: queued.repo, home, run: queued.runId === null ? `run-${randomBytes(4).toString("hex")}` : `run-${queued.runId}`, task: `task-${id}`, workbench: workbenchName(db), ...(plan ? { commit: plan.baseCommit } : {}) });
     } catch (err) {
       // Stopping meanwhile: the task is still queued, and the next start builds it.
       if (closed) return;

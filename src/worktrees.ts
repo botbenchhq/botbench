@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { parseTaskBranch, workbenchProblem } from "./workbench.ts";
 
 /** One task's separate copy of the repository: where it is, the branch it is on, and the commit it started from. */
 export interface Worktree {
@@ -25,9 +26,12 @@ export interface Work {
   files: FileChange[];
 }
 
+/**
+ * Every task branch starts with this. New ones are `botbench/<workbench>/<run>/<task>`; the forms from before
+ * workbenches had names (`botbench/<run>/<task>`) and from before the rename from Smelt (`smelt/<run>/<task>`) still
+ * work for the tasks that have them, and no new branch gets either (src/workbench.ts).
+ */
 export const BRANCH_PREFIX = "botbench/";
-/** Task branches made before the product was renamed from Smelt; their tasks still work, and no new branch gets this prefix. */
-const OLD_BRANCH_PREFIX = "smelt/";
 const AUTHOR_NAME = "Botbench";
 const AUTHOR_EMAIL = "botbench@localhost";
 /** Ids become a directory name and part of a branch name, so they are kept to letters, digits, "-" and "_". */
@@ -197,11 +201,13 @@ export async function sourceHead(repo: string): Promise<string> {
 }
 
 /**
- * Create a worktree for one task at `<home>/worktrees/<run>/<task>`, on a new branch `botbench/<run>/<task>` that starts at
- * `commit` (a run's base commit), or at the commit the repository's HEAD points at when none is given. Nothing in the
- * repository's own working folder, index or current branch is written.
+ * Create a worktree for one task at `<home>/worktrees/<run>/<task>`, on a new branch `botbench/<workbench>/<run>/<task>`
+ * that starts at `commit` (a run's base commit), or at the commit the repository's HEAD points at when none is given.
+ * Without a workbench the branch has the form made before workbenches had names, `botbench/<run>/<task>`: only tests of
+ * such older tasks leave it out. Nothing in the repository's own working folder, index or current branch is written.
  */
-export async function createWorktree(o: { repo: string; home: string; run: string; task: string; commit?: string }): Promise<Worktree> {
+export async function createWorktree(o: { repo: string; home: string; run: string; task: string; commit?: string; workbench?: string }): Promise<Worktree> {
+  if (o.workbench !== undefined && workbenchProblem(o.workbench) !== null) throw new Error(`Invalid workbench name ${JSON.stringify(o.workbench)}: ${workbenchProblem(o.workbench)}`);
   if (!SLUG.test(o.run)) throw new Error(`Invalid run id ${JSON.stringify(o.run)}: use 1 to 64 letters, digits, "-" or "_", starting with a letter or digit.`);
   if (!SLUG.test(o.task)) throw new Error(`Invalid task id ${JSON.stringify(o.task)}: use 1 to 64 letters, digits, "-" or "_", starting with a letter or digit.`);
   if (o.commit !== undefined) checkBase(o.commit);
@@ -222,7 +228,7 @@ export async function createWorktree(o: { repo: string; home: string; run: strin
   if (fs.existsSync(dir)) throw new Error(`The folder for the task's copy, ${dir}, already exists.`);
 
   // A name already in use, by an earlier run or anything else, is left alone: the new branch gets the next free name.
-  const wanted = `${BRANCH_PREFIX}${o.run}/${o.task}`;
+  const wanted = `${BRANCH_PREFIX}${o.workbench === undefined ? "" : `${o.workbench}/`}${o.run}/${o.task}`;
   let branch = wanted;
   for (let n = 2; await succeeds(repo, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]); n++) branch = `${wanted}-${n}`;
 
@@ -285,7 +291,7 @@ async function taskWorktree(dir: string): Promise<{ branch: string; commonDir: s
     unlessTimeout(err);
     throw new Error(`The copy at ${dir} is not on a branch, so it is not on its Botbench task branch.`, { cause: err });
   }
-  if (!branch.startsWith(BRANCH_PREFIX) && !branch.startsWith(OLD_BRANCH_PREFIX)) throw new Error(`The copy at ${dir} is on branch ${branch}, not on its Botbench task branch.`);
+  if (!isTaskBranch(branch)) throw new Error(`The copy at ${dir} is on branch ${branch}, not on its Botbench task branch.`);
   return { branch, commonDir: realPath(commonDir) };
 }
 
@@ -443,7 +449,8 @@ export async function branchCheckedOutAt(repo: string, branch: string): Promise<
   return at;
 }
 
-const isTaskBranch = (branch: string): boolean => (branch.startsWith(BRANCH_PREFIX) || branch.startsWith(OLD_BRANCH_PREFIX)) && !branch.includes("..") && !/[\s~^:?*[\\]/.test(branch);
+/** A branch in one of the task branch forms, and nothing else (src/workbench.ts). */
+const isTaskBranch = (branch: string): boolean => parseTaskBranch(branch) !== null;
 
 /** The commit a Botbench task branch points at, or null when the branch is not there. */
 export async function branchCommit(repo: string, branch: string): Promise<string | null> {
@@ -484,7 +491,7 @@ function checkRemote(name: string): void {
 }
 /** Only branches Botbench made itself under its current name are ever pushed. */
 function checkPushable(branch: string): void {
-  if (!isTaskBranch(branch) || !branch.startsWith(BRANCH_PREFIX)) throw new Error(`${branch} is not a branch Botbench made (its name starts with ${BRANCH_PREFIX}), so it is never pushed.`);
+  if (parseTaskBranch(branch)?.prefix !== "botbench") throw new Error(`${branch} is not a branch Botbench made (its name starts with ${BRANCH_PREFIX}), so it is never pushed.`);
 }
 
 /**
@@ -516,6 +523,27 @@ export async function remoteBranchCommit(repo: string, remote: string, branch: s
   const out = await git(path.resolve(repo), ["ls-remote", "--refs", remote, `refs/heads/${branch}`], GIT_NETWORK_LIMIT_MS);
   const line = out.split("\n").find((l) => l.endsWith(`\trefs/heads/${branch}`));
   return line === undefined ? null : line.split("\t")[0]!;
+}
+
+/** The time git gets to list a remote's task branches for the view of other workbenches' work, which never waits long. */
+const GIT_LIST_LIMIT_MS = 20_000;
+
+/**
+ * The task branches on `remote`, asked of the remote itself, read only:
+ * `git ls-remote --heads --refs <remote> refs/heads/botbench/*`. Only names in one of the task branch forms are kept
+ * (src/workbench.ts); each is outside text from whoever pushed it, and was checked against that pattern here.
+ */
+export async function remoteTaskBranches(repo: string, remote: string, limitMs = GIT_LIST_LIMIT_MS): Promise<{ branch: string; commit: string }[]> {
+  checkRemote(remote);
+  const out = await git(path.resolve(repo), ["ls-remote", "--heads", "--refs", remote, `refs/heads/${BRANCH_PREFIX}*`], limitMs);
+  const found: { branch: string; commit: string }[] = [];
+  for (const line of out.split("\n")) {
+    const [commit, ref] = line.split("\t");
+    if (commit === undefined || ref === undefined || !COMMIT_ID.test(commit) || !ref.startsWith("refs/heads/")) continue;
+    const branch = ref.slice("refs/heads/".length);
+    if (parseTaskBranch(branch)?.prefix === "botbench") found.push({ branch, commit });
+  }
+  return found;
 }
 
 /** Why a push was refused, in git's own words from its `--porcelain` lines; null when it says nothing of the kind. */

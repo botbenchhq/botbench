@@ -6,6 +6,7 @@ import { runFacts, runLook, runWord } from "../components/run-status.ts";
 import { StatusBadge } from "../components/status.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
+import { OtherWorkbenches } from "../components/other-workbenches.tsx";
 
 type Groups = BoardGroup[];
 
@@ -176,6 +177,7 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 </div>
               )}
             </div>
+            <OtherWorkbenches onSignedOut={onSignedOut} />
           </div>
         )}
       </Page>

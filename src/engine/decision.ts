@@ -3,6 +3,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { appendLog } from "../approvals/broker.ts";
 import { now, transaction } from "../store/db.ts";
+import { isOwnBranch, notOwnWords } from "../workbench.ts";
 import { branchCheckedOutAt, branchCommit, deleteTaskBranch, forgetMissingWorktree, leftoverFiles, removeWorktree } from "../worktrees.ts";
 import { getTask, moveTaskIn, settleRunIn, TaskError, words, type Task, type TaskStatus } from "./task.ts";
 
@@ -218,6 +219,8 @@ export async function acceptByMode(db: DatabaseSync, taskId: number, reasons: st
 async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, discard: boolean, confirmed: readonly string[], note: string | null, reasons?: string): Promise<{ task: Task; run: { id: number; status: string } | null }> {
   const dir = task.worktreePath!;
   const branch = task.branch!;
+  // Another workbench's branch is never decided on here: not kept, not deleted, not delivered.
+  if (!isOwnBranch(db, branch)) throw new TaskError(409, `${notOwnWords(branch)} Nothing was decided.`);
   // A copy that is already gone (removed by hand, or by a decision that failed after removing it) holds nothing to keep.
   const present = fs.existsSync(dir);
   let leftovers: string[];
@@ -361,6 +364,7 @@ export async function discardTask(db: DatabaseSync, input: DiscardInput): Promis
 async function discard(db: DatabaseSync, task: Task, confirmed: readonly string[]): Promise<Task> {
   const dir = task.worktreePath;
   const branch = task.branch;
+  if (branch !== null && !isOwnBranch(db, branch)) throw new TaskError(409, `${notOwnWords(branch)} Nothing was discarded.`);
   const present = dir !== null && fs.existsSync(dir);
   let at: string | null;
   let files: string[];

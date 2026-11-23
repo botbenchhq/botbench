@@ -77,11 +77,12 @@ test("a run shows its mode in the list and on its own screen, and no request cha
 
 test("Settings: the default mode is the settings file's until the owner picks one, which is kept; a value that is no mode is refused", async (t) => {
   const api = await start(t, { mode: "semi" });
-  assert.deepEqual((await call(api, "GET", "/api/settings")).body, { defaultMode: "semi" });
-  assert.deepEqual(await call(api, "PUT", "/api/settings", { defaultMode: "full" }), { status: 200, body: { defaultMode: "full" } });
-  assert.deepEqual((await call(api, "GET", "/api/settings")).body, { defaultMode: "full" });
+  assert.equal((await call(api, "GET", "/api/settings")).body.defaultMode, "semi");
+  const saved = await call(api, "PUT", "/api/settings", { defaultMode: "full" });
+  assert.deepEqual([saved.status, saved.body.defaultMode], [200, "full"]);
+  assert.equal((await call(api, "GET", "/api/settings")).body.defaultMode, "full");
   assert.equal((await call(api, "PUT", "/api/settings", { defaultMode: "yolo" })).status, 400);
-  assert.deepEqual((await call(api, "GET", "/api/settings")).body, { defaultMode: "full" });
+  assert.equal((await call(api, "GET", "/api/settings")).body.defaultMode, "full");
   // The default applies to a run that names no mode: here fully autonomous, which this repository cannot have.
   const res = await call(api, "POST", "/api/runs", { repo: api.repo, prompt: "Add a file" });
   assert.equal(res.status, 400);

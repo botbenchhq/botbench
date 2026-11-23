@@ -284,3 +284,8 @@ test("the cap on rounds of fixes after a review is 2 as shipped and when unset, 
     assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: bad } })), /"autonomy\.maxRefineRounds" must be a whole number from 0 to 5/, String(bad));
   }
 });
+
+test("the settings file may name the workbench; a name a git ref could not carry is refused, saying why", (t) => {
+  assert.equal(loadConfig(configFiles(t, BASE, { workbench: "jons-mac" })).workbench, "jons-mac");
+  for (const bad of ["Jons-Mac", "a/b", "../x", "", 3]) assert.throws(() => loadConfig(configFiles(t, BASE, { workbench: bad })), /"workbench" must be a workbench name\. A workbench name is 1 to 30 lowercase letters/, String(bad));
+});

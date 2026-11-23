@@ -12,6 +12,8 @@ import { MODES } from "../components/mode-choice.tsx";
 import { choiceName, modelName, useModelChoice } from "../components/model-picker.tsx";
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
 import { useIssueChoice } from "../components/issue-choice.tsx";
+import { usePeersOf } from "../components/other-workbenches.tsx";
+import { issueWarnings } from "../app/peers.ts";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
@@ -114,6 +116,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const repository = useRepository(inRepository(repo) ? repo.path.trim() : "", onSignedOut);
   // Only a run can start from an issue, and only in a usable repository whose remote is on GitHub.
   const issue = useIssueChoice(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", runWanted, onSignedOut);
+  // What other workbenches have in flight on the repository's remote: warnings only, never a reason Send waits.
+  const peers = usePeersOf(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", onSignedOut);
 
   useEffect(() => {
     if (repo.kind === "needed") return;
@@ -310,6 +314,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     issue: kind === "run" ? issue.attached : null,
   };
   const chatting = !inRepository(repo);
+  const peerWarnings = chatting ? [] : issueWarnings(peers, { attached: kind === "run" ? (issue.attached?.number ?? null) : null, message: prompt });
   const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null } : null);
   const askedCount = chatting && targets.ok ? targets.targets.length : 1;
   /** While a chat reply runs and the composer would send a chat, the button is Stop. */
@@ -603,6 +608,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
               {sendWords(askedCount).line}
             </p>
           )}
+          {peerWarnings.map((line) => (
+            <p key={line} data-testid="peer-warning" className="ds-composer__reason">
+              {line}
+            </p>
+          ))}
           {builder.state === "problem" && (
             // Asks the agent again, for real, once the owner has fixed what the reason names.
             <BusyButton variant="quiet" size="small" onClick={checkDriver}>

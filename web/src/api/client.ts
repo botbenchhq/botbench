@@ -610,6 +610,36 @@ export const lookUpIssue = async (repo: string, issue: string): Promise<IssuePre
 /** The mode a new run is given unless the owner chooses another in the composer. */
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
+/** This installation's workbench name, and whether the settings file sets it (then it is changed there, not here). */
+export interface WorkbenchSetting {
+  name: string;
+  setInFile: boolean;
+}
+export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
+export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
+
+/** Another workbench's open pull request on a repository's remote. Its title, branch, files and workbench are outside text. */
+export interface PeerPullRequest {
+  workbench: string;
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  closes: number[];
+  files: string[];
+}
+/** Another workbench's pushed branch with no pull request yet. */
+export interface PeerBranch {
+  workbench: string;
+  branch: string;
+}
+/** What other workbenches have in flight on one repository's remote, or why that cannot be read now. */
+export type PeersView =
+  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; checkedAt: string }
+  | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
+/** The view for each repository the owner has used. Reading it never holds up anything else. */
+export const getPeers = async (): Promise<PeersView[]> => (await request<{ views: PeersView[] }>("GET", "/api/peers", undefined, 90_000)).views;
+export const getPeersOf = async (repo: string): Promise<PeersView> => (await request<{ view: PeersView }>("GET", `/api/peers?path=${encodeURIComponent(repo)}`, undefined, 90_000)).view;
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
 /** One row of the board: a planned run, or a task started on its own (a run of one). */
 export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };

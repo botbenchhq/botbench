@@ -15,6 +15,7 @@ import { GROK, GROK_CAPABILITIES } from "./drivers/grok.ts";
 import { roleProblem } from "./engine/roles.ts";
 import { BRANCH_PREFIX, remoteNameProblem } from "./worktrees.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
+import { workbenchProblem } from "./workbench.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_CONFIG_FILE = path.join(ROOT, "botbench.config.json");
@@ -134,6 +135,11 @@ export interface Config {
   floor?: FloorConfig[];
   /** How trust is earned. */
   autonomy?: AutonomyConfig;
+  /**
+   * This installation's workbench name, which its new task branches carry (`botbench/<workbench>/run-N/task-M`). When
+   * absent, the name kept in the data folder: made once from the host name, changed in Settings (src/workbench.ts).
+   */
+  workbench?: string;
 }
 export interface AutonomyConfig {
   /** After the owner has allowed the same command this many times, its next card offers standing permission. A whole number of at least 1; 3 when absent. */
@@ -194,7 +200,8 @@ function validate(c: Json, where: string): Config {
   const fail = (message: string): never => {
     throw new Error(`${where}: ${message}`);
   };
-  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy } = c;
+  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy, workbench } = c;
+  if (workbench !== undefined && workbenchProblem(workbench) !== null) fail(`"workbench" must be a workbench name. ${workbenchProblem(workbench)}`);
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) fail(`"port" must be a whole number from 0 to 65535.`);
   if (!Array.isArray(listen) || listen.length === 0 || !listen.every((a) => typeof a === "string" && a !== "")) {
     fail(`"listen" must be a non-empty list of addresses.`);

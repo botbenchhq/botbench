@@ -22,6 +22,8 @@ import type { EventStream } from "./stream.ts";
 import { taskRoutes } from "./tasks.ts";
 import { voiceRoutes } from "./voice.ts";
 import { issueRoutes } from "./issues.ts";
+import { peersRoutes } from "./peers.ts";
+import type { Peers } from "../engine/peers.ts";
 import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
 import type { Chat } from "./chat.ts";
@@ -52,6 +54,8 @@ export interface RouteContext {
   deliveries: Deliveries;
   /** What Botbench asks of GitHub through the owner's gh: pull requests, and reading an issue. */
   github: GitHub;
+  /** Other workbenches' work on a repository's shared remote, read only. */
+  peers: Peers;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -143,6 +147,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await runRoutes(req, res, ctx, url)) return;
   if (await issueRoutes(req, res, ctx, url)) return;
   if (await settingsRoutes(req, res, ctx, url)) return;
+  if (await peersRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;

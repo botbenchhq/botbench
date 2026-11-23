@@ -11,6 +11,7 @@ import { approvePlan, createRun, getRun, storePlan, type Delivery } from "../../
 import { createTask, getTask, moveTask, TaskError, type Task } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
 import { commitWork, createWorktree, pushTaskBranch, remoteBranchCommit } from "../../src/worktrees.ts";
+import { workbenchName } from "../../src/workbench.ts";
 import { replayGitHub, type Replay } from "../support/replay-github.ts";
 import { git, initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
 
@@ -118,7 +119,7 @@ test("a run that chose pull requests: accepting a task pushes only its branch, a
   assert.deepEqual(replay.looked, [{ repo: { host: "github.com", owner: "jon-lange", name: "botbench-delivery-fixture" }, branch: task.branch }], "the task's own branch, in the remote's repository");
   const pr = replay.opened[0]!;
   assert.deepEqual([pr.repo, pr.base, pr.head, pr.title], [{ host: "github.com", owner: "jon-lange", name: "botbench-delivery-fixture" }, "main", task.branch, "Add a greeting file"]);
-  for (const part of ["## What was asked", "## Acceptance criteria", "## Checks", "Built with Botbench", "No checks are set up"]) assert.ok(pr.body.includes(part), part);
+  for (const part of ["## What was asked", "## Acceptance criteria", "## Checks", `Built on ${workbenchName(s.db)} with Botbench`, "No checks are set up"]) assert.ok(pr.body.includes(part), part);
   assert.match(pr.body, /```text\n- hello.txt says hi\n- Fixes #1 and pings @someone\n```/, "what the planner wrote is fenced: no mention, reference or closing keyword acts");
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
   assert.equal(view.state, "opened");
