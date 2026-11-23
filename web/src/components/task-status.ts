@@ -87,7 +87,9 @@ export function taskTitle(id: number, prompt: string | null): string {
   if (prompt === null || prompt.trim() === "") return `Task ${id}`;
   // The first line, whole up to 40 characters. A longer one is cut at the first word boundary at or after the 40th
   // character that has at least two words before it, so the title is never one word long; with none, it is whole.
-  const line = firstLine(prompt, Number.POSITIVE_INFINITY);
+  // A first line of one word is joined with the lines after it, so the title is not that word alone.
+  const first = firstLine(prompt, Number.POSITIVE_INFINITY);
+  const line = /\s/.test(first) ? first : prompt.trim().replace(/\s+/g, " ");
   const firstSpace = line.search(/\s/);
   if (firstSpace < 0) return line;
   for (let at = Math.max(TITLE_LEAST, firstSpace + 1); at < line.length; at++) {

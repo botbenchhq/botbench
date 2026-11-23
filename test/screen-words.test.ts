@@ -82,6 +82,10 @@ test("a task's title is never cut to one word: from 40 characters on it is cut a
   assert.equal(taskTitle(3, `${word}   must read`), `${word}   must…`);
   assert.equal(taskTitle(3, word), word);
   assert.equal(taskTitle(3, `${word} must`), `${word} must`);
+  // A first line of one word is not the title on its own when more words follow on the next lines: they are joined.
+  assert.equal(taskTitle(3, "Fix\n the login page"), "Fix the login page");
+  assert.equal(taskTitle(3, "Refactor:\n\nmove the session code into its own module, then test it"), "Refactor: move the session code into its…");
+  assert.equal(taskTitle(3, "Fix\n"), "Fix");
   // One long line with no later word boundary is shown whole rather than cut inside a word.
   assert.equal(taskTitle(3, `Rename ${"x".repeat(60)}`), `Rename ${"x".repeat(60)}`);
 });
