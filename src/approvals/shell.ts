@@ -71,6 +71,10 @@ export interface QuotedWord {
   live: string;
   from?: number;
   to?: number;
+  /** Every character of the word stood inside quotes, and none of it is a variable or a substitution: the shell hands it over as written. */
+  quoted?: boolean;
+  /** The word follows a redirection (`<`, `>`, `>>`, `<>`, `>&`, `&>`, `n>`, `<<<`, a here-document's delimiter): a place, not an argument. */
+  redirect?: boolean;
 }
 
 /** What separates the pieces of a command when it stands outside quotes. */
@@ -93,8 +97,21 @@ export function quotedPieces(command: string): { pieces: QuotedWord[][]; substit
   let piece: QuotedWord[] = [];
   let word: QuotedWord | null = null;
   let i = 0;
-  // Called with `i` at the first character the part takes and `end` at the last.
-  const add = (text: string, live: string, end = i): void => void (word = { text: (word?.text ?? "") + text, live: (word?.live ?? "") + live, from: word?.from ?? i, to: end + 1 });
+  /** A `<` or `>` stood since the last word: the next word is where it leads. */
+  let redirect = false;
+  // Called with `i` at the first character the part takes and `end` at the last; `inQuotes` when the part stood in quotes.
+  const add = (text: string, live: string, end = i, inQuotes = false): void => {
+    const started = word === null;
+    word = {
+      text: (word?.text ?? "") + text,
+      live: (word?.live ?? "") + live,
+      from: word?.from ?? i,
+      to: end + 1,
+      quoted: (word?.quoted ?? true) && inQuotes && !/[$`]/.test(live),
+      redirect: word?.redirect ?? redirect,
+    };
+    if (started) redirect = false;
+  };
   const endWord = (): void => {
     if (word !== null) piece.push(word);
     word = null;
@@ -111,7 +128,7 @@ export function quotedPieces(command: string): { pieces: QuotedWord[][]; substit
     if (c === "'") {
       const end = command.indexOf("'", i + 1);
       if (end === -1) return null;
-      add(command.slice(i + 1, end), "", end);
+      add(command.slice(i + 1, end), "", end, true);
       i = end;
     } else if (c === '"') {
       let text = "";
@@ -125,7 +142,7 @@ export function quotedPieces(command: string): { pieces: QuotedWord[][]; substit
         text += command[j]!;
       }
       if (j >= command.length) return null;
-      add(text, text, j);
+      add(text, text, j, true);
       i = j;
     } else if (c === "\\") {
       return null;
@@ -147,6 +164,7 @@ export function quotedPieces(command: string): { pieces: QuotedWord[][]; substit
       endPiece();
     } else if (c === " " || c === "\t" || c === "<" || c === ">") {
       endWord();
+      if (c === "<" || c === ">") redirect = true;
     } else if (PRINTABLE.test(c)) {
       add(c, c);
     } else {
@@ -181,7 +199,7 @@ const PIECE_ENDS = new Set([";", "&", "|", "(", ")", "\n"]);
  * text as it always did: a here-document with no end, a quote left open, a delimiter the shell builds, a backslash at the
  * end of the operator's line, ANSI-C quoting (`$'…'`), a control character other than a tab or a line break, and a
  * here-document in a command that also holds a comment, a substitution, a process substitution, a parameter expansion
- * in braces (`${…}`) or arithmetic (`((…))`, `$[…]`) (where `<<` may not be an operator, or the text may become words of another command).
+ * in braces (`${…}`), arithmetic (`((…))`, `$[…]`) or a bracket outside quotes (zsh reads `$a[1<<X]` as arithmetic) (where `<<` may not be an operator, or the text may become words of another command).
  * It reads `command` as given, before any backslash at the end of a line joins two lines: in a here-document the shell
  * does not join them, so the delimiter line is found where the shell finds it.
  */
@@ -220,7 +238,7 @@ export function hereDocuments(command: string): { command: string; bodies: HereD
       // A backslash at the end of the operator's line moves the text further down: not followed here.
       if (next === "\n" && pending.length > 0) return null;
       i += 2;
-    } else if (c === "`" || ((c === "$" || c === "<" || c === ">" || c === "=") && next === "(") || (c === "(" && next === "(") || (c === "$" && (next === "[" || next === "{"))) {
+    } else if (c === "`" || ((c === "$" || c === "<" || c === ">" || c === "=") && next === "(") || (c === "(" && next === "(") || (c === "$" && (next === "[" || next === "{")) || c === "[") {
       unsure = true;
       i += 2;
     } else if (c === "#" && wordStart(i)) {

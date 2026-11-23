@@ -60,6 +60,13 @@ interface Reading {
   /** The pieces whose first word, and git's subcommand, are checked for being built by the shell, read with their quotes where that reading is sure of itself (`shellNamesProgram`). */
   named: readonly (readonly QuotedWord[])[];
   plain: boolean;
+  /**
+   * Nothing before an `rm` of the command could have changed folder or put a link in place (a `cd`, `chdir`, a zsh
+   * folder named as a command, `ln -s`, `tar -x`, `git checkout`, code): every piece up to the last `rm` starts with
+   * `mkdir`, `rm` or `true`, no `rm` stands behind another program, and no here-document is read as commands. Only
+   * then may a glob of `rm` count as inside the worktree.
+   */
+  globsStay: boolean;
   raw: string;
   ctx: FloorContext;
 }
@@ -124,13 +131,14 @@ const optionShaped = (word: string): boolean => /^-[A-Za-z]+$|^--[a-z-]+$/.test(
  * only from a folder below its top). What `rm` is handed is then an entry of that folder, which `rm -r` deletes without
  * following it if it is a link. Not when the part could match `..` or `.` (it starts with `.` or a bracket), when another
  * part follows it (a link it matched would be followed), when a brace list, a variable or a substitution could put
- * anything there, or when a zsh glob qualifier, which can run code, may follow it (`*(e:…:)`).
+ * anything there, or when a zsh glob qualifier, which can run code, may follow it (`*(e:…:)`). Only when nothing before
+ * the `rm` could have moved the folder or put a link where it is (`globsStay`).
  */
 function globInsideWorktree(word: string, reading: Reading): boolean {
   const glob = word.search(/[*?[]/);
-  if (glob === -1 || /[{}$`\\]/.test(word) || /[^\s;&|<>()]\(/.test(reading.raw)) return false;
+  if (!reading.globsStay || glob === -1 || /[{}$`\\]/.test(word) || /[^\s;&|<>()]\(/.test(reading.raw)) return false;
   // A `cd` anywhere, also behind another word (`builtin cd ~ &&`, `if cd ~; then`), may have moved where the folder is.
-  if (reading.segments.some((segment) => segment.some((w) => oneOf("cd", "pushd", "popd")(program(w))))) return false;
+  if (reading.segments.some((segment) => segment.some((w) => oneOf("cd", "chdir", "pushd", "popd")(program(w))))) return false;
   const cut = word.lastIndexOf("/", glob);
   const last = word.slice(cut + 1);
   if (cut === 0 || last === "" || last.includes("/") || last.startsWith(".") || last.startsWith("[")) return false;
@@ -233,25 +241,24 @@ function fragmentPlace(word: string, reading: Reading): boolean {
 
 /**
  * Whether a piece of text a program reads as a script, a pattern or code (`texts`) names a guarded place. Such text is
- * no path for the shell, which neither globs nor expands it. A relative path in it is not read: in code and scripts
- * it is mostly text (`from "../../src/x.ts"`), and where a program does open it (`open('../x')`, sed's `w ../x`) it
- * lands relative to a folder the program may have changed; that is left to the sandbox, which keeps an agent's
- * commands from writing outside the copy and from reading the guarded folders and Botbench's data. What is read is
- * each word that starts with `/`, `~/` or `$HOME`: a full path a program may open (sed's `w` and `r`, an awk
- * redirection, `open('/…')`), and a glob in one as far as the glob may reach (`/Users/` then a star, then `.ssh`). The root
- * folder alone is not, as patterns and code spell it everywhere (`s/a/b/`, `a / b`, `//`, a comment's opening); `~` alone is awk's
- * match operator; `~name` is another user's home.
+ * no path for the shell, which neither globs nor expands it. Inside interpreter code and sed or awk scripts the floor
+ * reads only full paths written out literally: each word that starts with `/`, `~/` or `$HOME` (sed's `w` and `r`, an
+ * awk redirection, `open('/…')`), a glob in one counted as far as it may reach (`[`, `{`, `*`, `?`), and `~name`,
+ * another user's home. Relative paths (mostly text, `from "../../src/x.ts"`), the root folder alone (`s/a/b/`, `a / b`,
+ * `//`), a bare `~` (awk's match operator, `expanduser("~")`) and anything the code computes or reads at run time are
+ * left to the sandbox, which keeps an agent's commands from writing outside the copy and from reading the guarded
+ * folders and Botbench's data.
  */
 function textPlace(text: string, reading: Reading): boolean {
   const home = reading.ctx.home;
   return text
     .replace(/\$\{HOME\}|\$HOME\b/g, home)
-    .split(/[\s'"`(),;:=<>|&{}[\]]+/)
+    .split(/[\s'"`(),;:=<>|&]+/)
     .some((word) => {
       if (/^~[A-Za-z0-9_.-]+(?:\/|$)/.test(word)) return true;
       const written = word.startsWith("~/") ? path.join(home, word.slice(2)) : word.startsWith("/") ? word : null;
       if (written === null) return false;
-      const glob = written.search(/[*?]/);
+      const glob = written.search(/[*?[\]{}]/);
       if (glob !== -1) return path.resolve(written.slice(0, glob) || "/") !== "/" && reachesGuarded(written.slice(0, glob), reading);
       const full = path.resolve(written);
       return full !== "/" && guardedAt(full, reading.ctx);
@@ -441,11 +448,14 @@ interface TextSpec {
   file: string;
   /** Short options that take a value of another kind, as the next word when not joined to them (`grep -A 3`). */
   value: string;
+  /** Short options that take no value. A letter in none of these lists makes the reader give up on the piece. */
+  flags: string;
   /** Short options whose value, if any, is the rest of their word (perl's `-i.bak`, `-Mmodule`). */
   attached?: string;
   /** Short options followed by digits only (perl's `-0777`, `-l`). */
   digits?: string;
-  long: { code?: readonly string[]; file?: readonly string[]; value?: readonly string[] };
+  /** Long options, each spelled out in full: an abbreviation, or one not listed, makes the reader give up on the piece. */
+  long: { code?: readonly string[]; file?: readonly string[]; value?: readonly string[]; flags?: readonly string[]; /** Take a value only joined to them (`--context=3`). */ joined?: readonly string[] };
   /** The first operand is the text when no option gave it (`grep PATTERN`, `sed SCRIPT`, `awk PROGRAM`). */
   operand: boolean;
   /** The first option that gives the text ends the options (`python3 -c code args`). */
@@ -456,70 +466,102 @@ interface TextSpec {
   none?: readonly string[];
 }
 const GREP: TextSpec = {
-  code: "e", file: "f", value: "ABDdm", operand: true, matched: true,
-  long: { code: ["--regexp"], file: ["--file"], value: ["--after-context", "--before-context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from"] },
-};
-const AWK: TextSpec = { code: "", file: "fE", value: "Fv", operand: true, long: { file: ["--file", "--exec"], value: ["--assign", "--field-separator", "--include", "--load"] } };
-const TEXT_SPECS: Record<string, TextSpec> = {
-  grep: GREP, egrep: GREP, fgrep: GREP,
-  rg: {
-    code: "e", file: "f", value: "ABCEMTdgjmrt", operand: true, matched: true, none: ["--files", "--type-list"],
-    long: { code: ["--regexp"], file: ["--file"], value: ["--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--replace", "--pre", "--pre-glob", "--encoding", "--threads", "--max-columns", "--sort", "--sortr", "--ignore-file", "--colors", "--engine", "--path-separator", "--context-separator", "--field-match-separator", "--field-context-separator"] },
+  code: "e", file: "f", value: "ABCDdm", flags: "EFGHIJLMOPRSTUVZabchilnopqrsuvwxyz0123456789", operand: true, matched: true,
+  long: {
+    code: ["--regexp"], file: ["--file"],
+    value: ["--after-context", "--before-context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from"],
+    flags: ["--line-number", "--recursive", "--dereference-recursive", "--ignore-case", "--count", "--files-with-matches", "--files-without-match", "--invert-match", "--word-regexp", "--line-regexp", "--fixed-strings", "--extended-regexp", "--basic-regexp", "--perl-regexp", "--only-matching", "--no-filename", "--with-filename", "--quiet", "--silent", "--null", "--null-data", "--text", "--no-messages", "--byte-offset", "--line-buffered", "--initial-tab", "--no-index", "--cached", "--untracked", "--heading", "--break", "--full-name"],
+    joined: ["--context", "--color", "--colour"],
   },
-  sed: { code: "e", file: "f", value: "", operand: true, long: { code: ["--expression"], file: ["--file"], value: ["--line-length"] } },
-  awk: AWK, gawk: AWK, nawk: AWK, mawk: AWK,
-  node: { code: "ep", file: "", value: "rC", operand: false, once: true, long: { code: ["--eval", "--print"], value: ["--require", "--import", "--conditions", "--input-type", "--loader"] } },
-  perl: { code: "eE", file: "", value: "", attached: "iIMmxCdDFV", digits: "0l", operand: false, long: {} },
-  python: { code: "c", file: "m", value: "WX", operand: false, once: true, long: {} },
 };
+const AWK: TextSpec = { code: "e", file: "fE", value: "Fv", flags: "", operand: true, long: {} };
+/** The programs whose text arguments are read as text, by name. A `Map`, so that no name reaches an object's own properties (`constructor`). */
+const TEXT_SPECS: ReadonlyMap<string, TextSpec> = new Map([
+  ["grep", GREP], ["egrep", GREP], ["fgrep", GREP],
+  ["rg", {
+    code: "e", file: "f", value: "ABCEMTdgjmrt", flags: "FHILNOPSUVabchilnopqsuvwxz0.", operand: true, matched: true, none: ["--files", "--type-list"],
+    long: {
+      code: ["--regexp"], file: ["--file"],
+      value: ["--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--glob", "--iglob", "--type", "--type-not", "--replace", "--encoding", "--threads", "--max-columns", "--sort", "--sortr", "--engine"],
+      flags: ["--line-number", "--no-line-number", "--ignore-case", "--smart-case", "--case-sensitive", "--fixed-strings", "--word-regexp", "--line-regexp", "--count", "--count-matches", "--files-with-matches", "--files-without-match", "--invert-match", "--hidden", "--no-ignore", "--no-heading", "--heading", "--with-filename", "--no-filename", "--only-matching", "--multiline", "--json", "--vimgrep", "--follow", "--pcre2", "--null", "--quiet", "--text", "--trim", "--column", "--no-messages", "--stats", "--files", "--type-list"],
+      joined: ["--color", "--colour"],
+    },
+  }],
+  ["sed", { code: "e", file: "f", value: "", flags: "nEruszl", operand: true, long: { code: ["--expression"], file: ["--file"], flags: ["--quiet", "--silent", "--regexp-extended", "--separate", "--null-data", "--posix", "--debug", "--sandbox", "--unbuffered"], joined: ["--in-place"] } }],
+  ["awk", AWK], ["gawk", AWK], ["nawk", AWK], ["mawk", AWK],
+  ["node", { code: "ep", file: "", value: "rC", flags: "chiv", operand: false, once: true, long: { code: ["--eval", "--print"], value: ["--require", "--import", "--input-type"], flags: ["--no-warnings", "--no-deprecation", "--experimental-strip-types", "--experimental-vm-modules", "--enable-source-maps", "--trace-warnings"] } }],
+  ["perl", { code: "eE", file: "", value: "", flags: "acnpsStTuUvwWX", attached: "iIMmxCdDFV", digits: "0l", operand: false, long: {} }],
+  ["python", { code: "c", file: "m", value: "WX", flags: "bBdEhiIOPqsSuvxR", operand: false, once: true, long: {} }],
+]);
 
 /**
- * The words of a piece that its program reads as a search pattern, a sed or awk script, or code to run (`grep PATTERN`,
- * `grep -e PATTERN`, `git grep PATTERN`, `sed -i '' SCRIPT`, `awk PROGRAM`, `node -e CODE`, `perl -pi -e CODE`,
- * `python3 -c CODE`), each with whether it is only matched. An option whose value the reader does not know takes none,
- * so a value it should have skipped is taken for the pattern and the pattern for a path: a mistake towards reading more
- * words as paths. The program is the piece's first word after any variables it sets and the shell's own words (`do`,
- * `then`); behind another program (`xargs grep`) nothing is taken for text.
+ * The words of a piece that its program reads as a search pattern, a sed or awk script, or code to run (`grep 'PATTERN'`,
+ * `grep -e "PATTERN"`, `git grep '…'`, `sed -i '' 's/…/'`, `awk '…'`, `node -e '…'`, `perl -pi -e '…'`, `python3 -c
+ * '…'`), each with whether it is only matched. It reads little, so there is little to get wrong:
+ *   - a word is text only if all of it stood inside quotes, with no variable or substitution in it: an unquoted word
+ *     (`../.ssh/*`, `{a,b}`, `~`) is one the shell may still turn into paths, so it is read as one, whatever its place;
+ *   - a word after a redirection (`grep >>~/.zshrc '…'`) is a place, never an argument;
+ *   - the program is the piece's first word after the shell's own words (`do`, `then`); with a variable set in front
+ *     of it (`GREP_OPTIONS=… grep`), behind another program (`xargs grep`), or with an option the reader does not know
+ *     (an abbreviated `--rege`, a letter not listed), nothing in the piece is text;
+ *   - an operand is the pattern or script only when no option gives one anywhere in the piece, as options may follow
+ *     the operands (`grep ~ -r -e x`), and never for `rg --files`.
  */
 function textArguments(piece: readonly QuotedWord[]): { word: QuotedWord; matched: boolean }[] {
   let k = 0;
-  while (k < piece.length && (ASSIGNS.test(piece[k]!.text) || KEYWORDS.has(piece[k]!.text))) k++;
-  if (k >= piece.length) return [];
+  while (k < piece.length && KEYWORDS.has(piece[k]!.text) && piece[k]!.quoted !== true) k++;
+  if (k >= piece.length || ASSIGNS.test(piece[k]!.text)) return [];
   let name = program(piece[k]!.text);
+  // Redirections are no arguments of the program: what they name is read as a place.
+  let words = piece.slice(k + 1).filter((word) => word.redirect !== true);
   if (name === "git") {
     // git's subcommand: the first word after git's options, skipping the values of those that take one.
-    let s = k + 1;
-    while (s < piece.length && piece[s]!.text.startsWith("-")) s += GIT_VALUE_OPTIONS.has(piece[s]!.text) ? 2 : 1;
-    if (piece[s]?.text !== "grep") return [];
-    k = s;
+    let s = 0;
+    while (s < words.length && words[s]!.text.startsWith("-")) s += GIT_VALUE_OPTIONS.has(words[s]!.text) ? 2 : 1;
+    if (words[s]?.text !== "grep") return [];
+    words = words.slice(s + 1);
     name = "grep";
   }
-  const spec = TEXT_SPECS[/^python[0-9.]*$/.test(name) ? "python" : name];
+  const spec = TEXT_SPECS.get(/^python[0-9.]*$/.test(name) ? "python" : name);
   if (spec === undefined) return [];
   const found: { word: QuotedWord; matched: boolean }[] = [];
-  // A word the shell still expands (`grep "$(cmd)"`, a variable, a leading `~`) is no text: the shell runs or fills it first.
-  const take = (at: number): void => void (at < piece.length && !/[$`]/.test(piece[at]!.live) && !piece[at]!.text.startsWith("~") && found.push({ word: piece[at]!, matched: spec.matched === true }));
-  // The pattern or script may be given by an option after the operands (`grep ~ -r -e x`: grep, rg and GNU tools take
-  // options anywhere), and some options mean there is none (`rg --files`): then no operand is taken for it.
-  const later = piece.slice(k + 1).map((word) => word.text);
-  const optionGives = (word: string): boolean =>
-    word.startsWith("--") ? [...(spec.long.code ?? []), ...(spec.long.file ?? [])].includes(word.split("=", 1)[0]!) : word.startsWith("-") && [...word.slice(1)].some((ch) => spec.code.includes(ch) || spec.file.includes(ch));
-  let given = later.some(optionGives) || later.some((word) => spec.none?.includes(word.split("=", 1)[0]!) === true);
-  let i = k + 1;
-  for (; i < piece.length; i++) {
-    const word = piece[i]!.text;
+  const take = (at: number): void => void (at < words.length && words[at]!.quoted === true && found.push({ word: words[at]!, matched: spec.matched === true }));
+  const long = (word: string): string => word.split("=", 1)[0]!;
+  const known = [...(spec.long.code ?? []), ...(spec.long.file ?? []), ...(spec.long.value ?? []), ...(spec.long.flags ?? [])];
+  /** Whether each letter of a cluster of short options is known, up to the one whose value is the rest of the word. */
+  const shortKnown = (text: string): boolean => {
+    for (let c = 1; c < text.length; c++) {
+      const ch = text[c]!;
+      if (spec.code.includes(ch) || spec.file.includes(ch) || spec.value.includes(ch) || spec.attached?.includes(ch) || (ch === "i" && name === "sed")) return true;
+      if (spec.digits?.includes(ch)) while (/[0-9]/.test(text[c + 1] ?? "")) c++;
+      else if (!spec.flags.includes(ch)) return false;
+    }
+    return true;
+  };
+  // Every option of the piece, wherever it stands, must be one the reader knows exactly.
+  for (const { text } of words) {
+    if (text === "--") break;
+    if (!text.startsWith("-") || text === "-") continue;
+    if (text.startsWith("--") ? !known.includes(long(text)) && !(spec.long.joined?.includes(long(text)) && text.includes("=")) : !shortKnown(text)) return [];
+  }
+  const texts = words.map((word) => word.text);
+  const gives = (word: string): boolean =>
+    word.startsWith("--") ? [...(spec.long.code ?? []), ...(spec.long.file ?? [])].includes(long(word)) : word.startsWith("-") && [...word.slice(1)].some((ch) => spec.code.includes(ch) || spec.file.includes(ch));
+  let given = texts.some(gives) || texts.some((word) => spec.none?.includes(long(word)) === true);
+  let i = 0;
+  for (; i < words.length; i++) {
+    const word = words[i]!.text;
     if (word === "--") {
       i++;
       break;
     }
     if (!word.startsWith("-") || word === "-") break;
     if (word.startsWith("--")) {
-      const option = word.split("=", 1)[0]!;
+      const option = long(word);
       const joined = word.includes("=");
       if (spec.long.code?.includes(option)) {
         given = true;
-        if (joined) take(i);
-        else take(++i);
+        if (!joined) take(++i);
       } else if (spec.long.file?.includes(option)) {
         given = true;
         if (!joined) i++;
@@ -532,9 +574,8 @@ function textArguments(piece: readonly QuotedWord[]): { word: QuotedWord; matche
         const rest = word.slice(c + 1);
         if (spec.code.includes(ch)) {
           given = true;
-          // `-e CODE`, also behind other options of the same kind (`node -pe CODE`); else the code is joined to it (`-es/a/b/`).
+          // `-e CODE`, also behind other options of the same kind (`node -pe CODE`); code joined to it (`-es/a/b/`) is no quoted word.
           if ([...rest].every((r) => spec.code.includes(r))) take(++i);
-          else take(i);
           break;
         }
         if (spec.file.includes(ch)) {
@@ -554,7 +595,7 @@ function textArguments(piece: readonly QuotedWord[]): { word: QuotedWord; matche
         // sed's `-i`: GNU's takes a suffix joined to it, BSD's (macOS) the next word. Only a word shaped as a suffix
         // (`''`, `.bak`) is taken as one, so a script or a file is never skipped.
         if (ch === "i" && name === "sed") {
-          const next = piece[i + 1]?.text;
+          const next = words[i + 1]?.text;
           if (rest === "" && next !== undefined && /^(?:\.[^/]*)?$/.test(next)) i++;
           break;
         }
@@ -568,6 +609,11 @@ function textArguments(piece: readonly QuotedWord[]): { word: QuotedWord; matche
   if (!given && spec.operand) take(i);
   return found;
 }
+
+/** Programs and builtins that change what later programs see: variables, the environment, options, aliases, functions. */
+const SETS_THE_SHELL = new Set(["export", "declare", "typeset", "local", "readonly", "set", "setopt", "unsetopt", "shopt", "alias", "unalias", "unset", "hash", "enable", "disable", "source", ".", "eval", "emulate", "function"]);
+/** Programs that can neither change folder nor put a link in place, before an `rm` whose globs may stay inside the worktree. */
+const CANNOT_MOVE = new Set(["mkdir", "rm", "true"]);
 
 /** Interpreters a here-document can give code to: what the code runs is still read, and only full paths in it count as places. */
 const INTERPRETER = /^(?:python[0-9.]*|node|perl|ruby|php)$/;
@@ -615,7 +661,10 @@ function notPlainReading(given: string, ctx: FloorContext): Reading {
   // Not sure where its here-documents are: the whole text is read as commands and paths, as it always was.
   const command = joinLines(here?.command ?? given);
   const quoted = quotedPieces(command);
-  const args = here === null || quoted === null ? [] : quoted.pieces.flatMap(textArguments);
+  // A variable set, exported or the shell's options changed anywhere in the command (`GREP_OPTIONS=-e.`, `export`,
+  // `set -a`, an alias) may change how a program takes its arguments: then nothing in it is text.
+  const changesPrograms = quoted === null || quoted.pieces.some((piece) => ASSIGNS.test(piece[0]!.text) || SETS_THE_SHELL.has(program(piece[0]!.text)));
+  const args = here === null || changesPrograms ? [] : quoted.pieces.flatMap(textArguments);
   const every = (names: (name: string) => boolean): boolean => quoted !== null && quoted.pieces.every((piece) => !ASSIGNS.test(piece[0]!.text) && !piece[0]!.text.includes("/") && names(program(piece[0]!.text)));
   const runsNoText = every((name) => RUNS_NO_TEXT.has(name));
   const runsOnlyCode = every((name) => RUNS_NO_TEXT.has(name) || INTERPRETER.test(name));
@@ -651,6 +700,10 @@ function notPlainReading(given: string, ctx: FloorContext): Reading {
     texts: [...args.map((arg) => arg.word.text), ...code],
     named: [...named(command, shellSegments), ...commands.flatMap((text) => named(text, rough(text)))],
     plain: false,
+    globsStay: quoted !== null && commands.length === 0 && (() => {
+      const last = quoted.pieces.findLastIndex((piece) => piece.some((word) => program(word.text) === "rm"));
+      return last !== -1 && quoted.pieces.every((piece, at) => !piece.slice(1).some((word) => program(word.text) === "rm") && (at > last || (!ASSIGNS.test(piece[0]!.text) && !piece[0]!.text.includes("/") && CANNOT_MOVE.has(program(piece[0]!.text)))));
+    })(),
     raw: [command, ...commands, ...code].join("\n"),
     ctx,
   };
@@ -681,7 +734,10 @@ export function floor(given: string, ctx: FloorContext): string | null {
   } else {
     // An argument with a space in it may be a command for the program to run (`env -S`, `git … foreach`, `find -exec sh -c`);
     // a search pattern is not one, and a script or code is read as places only for its full paths.
-    const args = textArguments(words.map((text, at) => ({ text, live: "", from: at })));
+    // The same words read with their quotes, to know which stood inside them: a plain command is one piece.
+    const read = quotedPieces(given);
+    const quotedWords = read !== null && read.pieces.length === 1 && read.pieces[0]!.length === words.length ? read.pieces[0]!.map((word, at) => ({ ...word, from: at })) : [];
+    const args = textArguments(quotedWords);
     const isArg = (at: number, matched?: boolean): boolean => args.some((arg) => arg.word.from === at && (matched === undefined || arg.matched === matched));
     const inner = (skip: (at: number) => boolean): string[][] => words.flatMap((word, at) => (word.includes(" ") && !skip(at) ? roughSegments(word, ctx.home) : []));
     reading = {
@@ -691,6 +747,7 @@ export function floor(given: string, ctx: FloorContext): string | null {
       texts: args.map((arg) => arg.word.text),
       named: [],
       plain: true,
+      globsStay: false,
       raw: given,
       ctx,
     };

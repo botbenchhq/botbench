@@ -118,6 +118,24 @@ const HOSTILE = [
   // A `cd` behind another word, before a glob inside the copy; a glob in a full path in code.
   `builtin cd ~ && rm -rf Library/*`, `command cd ~ && rm -rf Library/*`, `if cd ~; then rm -rf Library/*; fi`,
   `python3 -c 'import glob;print(glob.glob("/Users/*/.ssh/*"))'`, `python3 -c 'import glob;print(glob.glob("/U*/owner/.ssh/*"))'`, `python3 - <<'EOF'${nl}import glob; print(glob.glob("/Users/*/.ss*/id_*"))${nl}EOF`,
+  // Found by the second adversarial review. A redirection's target is a place, never the pattern or the script.
+  `grep >>../../../../.zshrc . payload.txt`, `grep <../../../../.ssh/id_rsa .`, `grep < ../../../../.ssh/id_rsa .`, `sed <../../../../.ssh/id_rsa -n p`, `sed <../../../../.ssh/id_rsa p`,
+  `awk <../../../../.ssh/id_rsa 1`, `rg <../../../../.ssh/id_rsa .`, `grep >../task-5/src/index.ts . payload.txt`, `git grep >>../../../../.zshrc -h . `, `cat payload.txt | grep >>../../../../.zshrc .`,
+  `cat $a[1<<X]${nl}sudo id${nl}X]`, `cat ${'$'}{a[1<<X]}${nl}sudo id${nl}X]`, `grep >>'../../../../.zshrc' '.' payload.txt`, `grep '.' <<<'x' >'../task-5/a'`,
+  // An unquoted word is never text, whatever its place: the shell may turn it into paths.
+  `grep -v ../../../../.ssh/{,id_rsa}`, `grep -v ../../../../.ssh/*`, `grep -v ../../../../.ss?/id_rsa`, `grep -v ../../../../.ssh/id_rs[a]`, `grep -v /Users/owner/.ss[h]/*`, `grep -v /Users/owner/.s?h/*`,
+  `grep -hv ../../task-5/* x`, `rg -v ../../../../.ssh/*`, `git grep --no-index -v ../../../../.ssh/*`, `grep -r -v ../../../../.aws/*`,
+  // An abbreviated or unknown option, and a variable that changes the program's options.
+  `grep --rege=. ../../../../.ssh/id_rsa`, `grep --regex=. ../../../../.ssh/id_rsa`, `grep --regex x ../../../../.ssh/id_rsa`, `grep --fil=/dev/null ../task-5/secret`, `grep -X 'x' '../../../../.ssh/id_rsa'`,
+  `node --title -e '../../../../.ssh/id_rsa'`, `GREP_OPTIONS=-e. grep ../../../../.ssh/id_rsa`, `GREP_OPTIONS=-e. grep '../../../../.ssh/id_rsa'`, `export GREP_OPTIONS=-e.; grep '../../../../.ssh/id_rsa'`,
+  `printf '%s\\n' -e. > o; RIPGREP_CONFIG_PATH=o rg '../../../../.ssh/id_rsa'`,
+  // Something before the rm that changes folder or puts a link where the glob looks.
+  `chdir $PWD/../../../.. && rm -rf .ssh/*`, `chdir $PWD/../../../.. && rm -rf Library/*`, `ln -s /Applications d && rm -rf d/*`, `ln -s $PWD/../../../.. d && rm -rf d/*`, `ln -s /tmp d; rm -rf d/*`,
+  `perl -e 'symlink "../../../..", "d"' && rm -rf d/*`, `mv existing-link d && rm -rf d/*`, `tar -xf t.tar && rm -rf d/*`, `git checkout evil -- d && rm -rf d/*`, `cp -P some/link d; rm -rf d/*`, `../../../.. && rm -rf .ssh/*`,
+  `hash foo=$PWD/../../../..; rm -rf =foo/*`, `ls | xargs rm -rf d/*`,
+  // Globs in a full path inside code.
+  `python3 -c 'import glob;print(open(glob.glob("/Users/owner/.s[s]h/id_rsa")[0]).read())'`, `node -e 'console.log(require("fs").globSync("/Users/owner/.s{s,x}h/*"))'`,
+  `perl -e 'print glob("/Users/owner/.s{s,}h/*")'`, `perl -e 'print <~/.ssh/*>'`,
   // Quoted text that hides a command, or a pipe to a shell.
   `echo "a;sudo ls" | wc -l`, `echo 'x|git push' | wc -l`, `grep x a | bash -s`, `env -S 'cat /Users/owner/.ssh/id_rsa'; ls`, `watch 'cat</Users/owner/.ssh/id_rsa' | head`,
   // Here-documents fed to a shell, to an interpreter, or written and then run.
@@ -167,5 +185,11 @@ test("a here-document's text is found the way the shell finds it, and the reader
   // Not sure: no end, a comment, a substitution or arithmetic, a line that goes on, a delimiter the shell builds.
   for (const command of [`cat <<'EOF'${nl}x`, `cat <<'EOF'`, `cat <<'EOF' # x${nl}a${nl}EOF`, `x=$(cat <<'EOF'${nl}a${nl}EOF${nl})`, `(( a << EOF ))${nl}x${nl}EOF`, `cat <<'EOF' \\${nl}> a${nl}x${nl}EOF`, `cat <<$X${nl}a${nl}$X`, `cat <<'EOF${nl}x`]) {
     assert.equal(hereDocuments(command), null, JSON.stringify(command));
+  }
+});
+
+test("a program named like a property of every object is read as any other", () => {
+  for (const command of ["constructor -e x; ls", "__proto__ -e x; ls", "constructor -e x", "toString x | cat", "hasOwnProperty -e x; ls"]) {
+    assert.equal(runs(floor(command, at())), true, command);
   }
 });
