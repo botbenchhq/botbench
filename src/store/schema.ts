@@ -1173,4 +1173,17 @@ CREATE TRIGGER approvals_reason_fixed BEFORE UPDATE OF asks_because, target ON a
 BEGIN SELECT RAISE(ABORT, 'why an approval asks and what it is aimed at cannot be changed'); END;
 `,
   },
+  {
+    // What kind of request a fully autonomous run refused (`refusal`, src/approvals/refusals.ts), written with its
+    // `mode_refused` entry and on no other: whether it blocks the accept is read from it. An entry from before this has
+    // none and blocks, as every refusal did. And a run may be kept to one task (`one_task`), chosen when it starts and
+    // never changed after, like its mode.
+    name: "refusal_kinds_and_one_task",
+    sql: `
+ALTER TABLE action_log ADD COLUMN refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other')));
+ALTER TABLE runs ADD COLUMN one_task INTEGER NOT NULL DEFAULT 0 CHECK (one_task IN (0, 1));
+CREATE TRIGGER runs_one_task_fixed BEFORE UPDATE OF one_task ON runs
+BEGIN SELECT RAISE(ABORT, 'whether a run is kept to one task is chosen when it starts and never changed'); END;
+`,
+  },
 ];

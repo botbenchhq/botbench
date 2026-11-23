@@ -11,6 +11,7 @@ import type { FloorEntry } from "./floor.ts";
 import { askWords, fullAutonomyRefusal, gate, namesAFile, READ_ONLY_TOOLS, real, requestTarget, summarize, type AskWhy, type FloorSettings } from "./gate.ts";
 import { firstLine } from "../shorten.ts";
 import { approvalCount, findStanding, insertRevocation, insertStanding, listStanding, runGrants, showWords, standingGrants, standingProblem, type Grant, type StandingGrant } from "./grants.ts";
+import { asRefusalKind, refusalBlocksAccept, refusalKind, type RefusalKind } from "./refusals.ts";
 import { splitPlain } from "./shell.ts";
 
 /*
@@ -183,6 +184,8 @@ export interface LogEntry {
   command: string;
   cwd: string;
   detail: string | null;
+  /** What kind of request a fully autonomous run refused (src/approvals/refusals.ts), on a `mode_refused` entry; null on any other, and on one from before kinds were recorded. */
+  refusal: RefusalKind | null;
 }
 
 export interface ApprovalRequest {
@@ -358,6 +361,7 @@ const toLogEntry = (row: Record<string, unknown>): LogEntry => ({
   command: String(row.command),
   cwd: String(row.cwd),
   detail: text(row.detail),
+  refusal: asRefusalKind(row.refusal),
 });
 
 /** The action log, oldest first; everything or one task's. The log is only ever read here and added to by `appendLog`. */
@@ -393,11 +397,13 @@ export interface LogWrite {
   command: string;
   cwd: string;
   detail?: string | null;
+  /** Only with `mode_refused`: what kind of request was refused. */
+  refusal?: RefusalKind | null;
 }
 
 /** Add one entry to the action log. The broker writes every entry but the owner's decisions on tasks (engine/decision.ts). */
 export function appendLog(db: DatabaseSync, e: LogWrite): void {
-  db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null);
+  db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail, refusal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null, e.refusal ?? null);
 }
 
 interface Ticket {
@@ -421,6 +427,12 @@ interface Reply {
   verdict: Verdict;
   reason: string;
 }
+
+/** What the record of a refusal adds when the refusal does not stop the task being accepted (docs/product/voice.md). */
+const HARMLESS_WORDS: Partial<Record<RefusalKind, string>> = {
+  read_only: "It only reads files in the task's copy, so it does not stop the task being accepted.",
+  other: "It is not a command, a file or the network, so it does not stop the task being accepted.",
+};
 
 const hashOf = (secret: string): string => createHash("sha256").update(secret).digest("hex");
 const shorten = (s: string, max = 500): string => (s.length > max ? `${s.slice(0, max)}…` : s);
@@ -505,7 +517,7 @@ export function createBroker(options: {
   type RequestVerdict =
     | { verdict: "ask"; floor?: string; why: AskWhy }
     | { verdict: "deny"; reason: string }
-    | { verdict: "refuse"; reason: string; floor?: string }
+    | { verdict: "refuse"; reason: string; floor?: string; why: AskWhy }
     | { verdict: "allow"; rule: "preapproved" | "standing"; grant: Grant }
     | { verdict: "allow"; rule: "mode"; mode: RunMode }
     | { verdict: "allow"; rule: "files"; edit: boolean };
@@ -549,7 +561,7 @@ export function createBroker(options: {
       return { verdict: "ask", why: "unknown" };
     }
     // In a manual run every command asks whatever else is so, and the card says that.
-    const nobody = (reason: string, why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason } : { verdict: "ask", why: mode === "manual" && r.tool === "Bash" ? "manual" : why });
+    const nobody = (reason: string, why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason, why } : { verdict: "ask", why: mode === "manual" && r.tool === "Bash" ? "manual" : why });
     if (!ticket || ticket.taskId !== r.taskId || ticket.runId !== (r.runId ?? null) || ticket.role !== r.role) return nobody("This run is fully autonomous, and Botbench could not tell which of its agents asked, so it was refused. It was not run.", "unknown");
     if (r.tool !== "Bash") return fileRequestVerdict(r, ticket, cwd, mode);
     try {
@@ -593,7 +605,7 @@ export function createBroker(options: {
    * fully autonomous run. The path checked is the path that runs: an allow hands the CLI back this same input.
    */
   const fileRequestVerdict = (r: ApprovalRequest, ticket: Ticket, cwd: string, mode: RunMode): RequestVerdict => {
-    const asked = (why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason: fullAutonomyRefusal(r.tool) } : { verdict: "ask", why });
+    const asked = (why: AskWhy): RequestVerdict => (mode === "full" ? { verdict: "refuse", reason: fullAutonomyRefusal(r.tool), why } : { verdict: "ask", why });
     try {
       const input = isObject(r.input) ? r.input : null;
       if (input === null || !(namesAFile(r.tool) || r.tool === "Glob" || r.tool === "Grep")) return asked("other_tool");
@@ -607,7 +619,7 @@ export function createBroker(options: {
       return verdict;
     } catch (err) {
       console.error(`The gate could not decide about a ${shorten(r.tool, 100)} request of task ${r.taskId}: ${words(err)}`);
-      return mode === "full" ? { verdict: "refuse", reason: "This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run." } : { verdict: "ask", why: "unknown" };
+      return mode === "full" ? { verdict: "refuse", reason: "This run is fully autonomous, and Botbench could not check this request, so it was refused. It was not run.", why: "unknown" } : { verdict: "ask", why: "unknown" };
     }
   };
 
@@ -660,7 +672,18 @@ export function createBroker(options: {
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
     if (verdict.verdict === "refuse") {
-      const about = { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, tool: r.tool, command: r.command, cwd, detail: verdict.reason };
+      let refusal: RefusalKind = "unconfined";
+      try {
+        // Read as the CLI would run it, from where its agent stood; a request of no known attempt has no copy to read it in.
+        refusal = refusalKind({ tool: r.tool, input: isObject(r.input) ? r.input : { command: r.command }, worktree: ticket?.worktree ?? null, cwd: ticket === undefined ? "" : path.resolve(ticket.worktree, cwd === "" ? "." : cwd), why: verdict.why, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) });
+      } catch (err) {
+        // Not known to be harmless: it counts as unconfined, and so blocks the accept.
+        console.error(`What kind of request was refused could not be worked out: ${words(err)}`);
+      }
+      // The agent is told the refusal; the record also says, in words, when it does not stop the task being accepted.
+      const harmless = refusalBlocksAccept(refusal) ? undefined : HARMLESS_WORDS[refusal];
+      const detail = harmless === undefined ? verdict.reason : `${verdict.reason} ${harmless}`;
+      const about = { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, tool: r.tool, command: r.command, cwd, detail, refusal };
       try {
         appendLog(db, { ...about, rule: "mode_refused" });
       } catch (err) {

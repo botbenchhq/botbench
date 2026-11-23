@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { arrive, blocked, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { RUN_MODES } from "../src/engine/modes.ts";
+import { arrive, blocked, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, oneTaskFor, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -20,7 +21,7 @@ const ready: Facts = {
   hasChecks: null,
 };
 const inRepo = (over: Partial<Facts> = {}): Facts => ({ ...ready, repo: { kind: "known", path: REPO }, repoStatus: { state: "usable" }, ...over });
-const extras = { preapproved: ["npm test"], reviewer: null, delivery: "branch" as const };
+const extras = { preapproved: ["npm test"], reviewer: null, delivery: "branch" as const, oneTask: false };
 
 test("Send is disabled for a fully autonomous run on a repository with no check commands, and only then", () => {
   const why = /^Fully autonomous needs a check command for this repository\./;
@@ -46,7 +47,7 @@ test("with a repository and One task, Send starts a task with the path, prompt, 
 
 test("with a repository and Plan a run, Send starts a run with its mode, reviewer, delivery and build model", () => {
   const reviewer = { agent: "codex", model: null };
-  assert.deepEqual(sendFor(inRepo({ kind: "run", mode: "semi" }), { ...extras, reviewer, delivery: "pull_request" }), {
+  assert.deepEqual(sendFor(inRepo({ kind: "run", mode: "semi" }), { ...extras, reviewer, delivery: "pull_request", oneTask: true }), {
     do: "run",
     repo: REPO,
     prompt: "Add a README",
@@ -55,6 +56,7 @@ test("with a repository and Plan a run, Send starts a run with its mode, reviewe
     reviewer,
     mode: "semi",
     delivery: "pull_request",
+    oneTask: true,
   });
   // A build model of its own is sent only when the owner chose one.
   const run = sendFor(inRepo({ kind: "run", buildModel: { ok: true, model: "opus" } }), extras);
@@ -109,9 +111,22 @@ test("the sheet shows only the rows that apply: a chat has a repository and a mo
   assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "run", ...known }), ["repository", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "needed" }, kind: "task", ...known }), ["repository", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
   // No reviewer is set up at all: no Review row. The commands are not known until the repository is usable.
-  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "delivery", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "tasks", "delivery", "models"]);
+});
+
+test("Keep it to one task is offered for a run in every mode, is on by default in Fully autonomous only, and is sent as the owner chose it", () => {
+  assert.deepEqual(RUN_MODES.map((mode) => oneTaskFor(null, mode)), [false, false, true]);
+  assert.equal(oneTaskFor(null, null), false, "not known yet while the default mode is read");
+  for (const mode of RUN_MODES) {
+    assert.equal(oneTaskFor(true, mode), true, mode);
+    assert.equal(oneTaskFor(false, mode), false, mode);
+  }
+  const sent = sendFor(inRepo({ kind: "run", mode: "manual" }), { ...extras, oneTask: true });
+  assert.equal(sent.do === "run" && sent.oneTask, true);
+  // Choosing it returns to Add context, as the other two-way settings do.
+  assert.equal(returnsToList({ view: "tasks", value: "one", run: true }), true);
 });
 
 test("the repository, kind, mode, review and delivery are remembered on the device, and anything else read back is ignored", () => {
@@ -162,9 +177,9 @@ const issue = { fetchId: 4, allowHosts: false, number: 123, title: "Crash when t
 
 test("From an issue is a row of a run in a repository with a GitHub remote only, after What to do", () => {
   const known = { reviewOffered: true, commandsKnown: true };
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known, issueOffered: true }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
 });
 
 test("the row's value is the issue's number and the start of its title, or None", () => {

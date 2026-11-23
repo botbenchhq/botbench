@@ -183,7 +183,7 @@ test("a run is read with its plan and listed newest first; an unknown run is 404
     { ...one.body, createdAt: null, updatedAt: null },
     {
       id: first.id, repo: fs.realpathSync(api.repo), prompt: "Add two files and describe them", specPath: null, specText: null, title: "Add two files and describe them",
-      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, issue: null, outsideText: false, outsideHosts: false,
+      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, issue: null, outsideText: false, outsideHosts: false, oneTask: false,
       plan: THREE, tasks: [], preapproved: ["npm test"], waitingOnApproval: false, createdAt: null, updatedAt: null,
     },
   );
