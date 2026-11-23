@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DEFAULT_CONFIG_FILE, loadConfig, type Config } from "../../src/config.ts";
 import { startWatch, type Proposal } from "../../src/engine/watch.ts";
-import { deliveryEnv, ghArgs, parseWatchedIssues, type GhResult, type RunGh } from "../../src/github.ts";
+import { deliveryEnv, ghArgs, parseIssueRelation, parseWatchedIssues, type GhResult, type RunGh } from "../../src/github.ts";
 import { createPush } from "../../src/push.ts";
 import { openStore } from "../../src/store/db.ts";
 import { decrypt, newDevice, startPushEndpoint } from "../support/push-service.ts";
@@ -46,13 +46,17 @@ test("a poll proposes each open issue gh listed with the label once, with only g
   const first = capturedIssue();
   const shown = watch.proposals().find((p) => p.number === first.number)!;
   assert.deepEqual({ title: shown.title, author: shown.author, url: shown.url, repository: shown.repository, repoPath: shown.repoPath }, { title: first.title, author: first.author, url: first.url, repository: "github.com/jon-lange/botbench", repoPath: b.repo });
+  // How GitHub says the author relates to the repository, from the captured read of that issue (the composer's own read).
+  assert.equal(shown.authorRelation, parseIssueRelation(loadWatchCapture().outputs.issueApi.result.stdout, WATCH_REPO, first.number));
+  assert.equal(shown.authorRelation, "OWNER");
   assert.equal(watch.status()[0]!.state, "checked");
   assert.equal(watch.status()[0]!.problem, null);
 
   await watch.pollNow(b.repo);
   assert.equal(proposed.length, listed.length, "an issue already seen is not proposed again");
-  // Only the list was asked, with its exact arguments: no write to GitHub, and nothing more read.
-  assert.deepEqual(calls, [ghArgs.watchIssues(WATCH_REPO, b.label), ghArgs.watchIssues(WATCH_REPO, b.label)]);
+  // Only the list was asked, with its exact arguments, and for each issue seen the first time the composer's own read of
+  // who wrote it: no write to GitHub, nothing more read, and nothing read again for an issue already seen.
+  assert.deepEqual(calls, [ghArgs.watchIssues(WATCH_REPO, b.label), ...listed.map((i) => ghArgs.issueApi(WATCH_REPO, i.number)), ghArgs.watchIssues(WATCH_REPO, b.label)]);
   assert.deepEqual(rows(db).map((r) => r.state), listed.map(() => "proposed"));
 });
 
@@ -211,7 +215,7 @@ test("never two polls of one repository at once: a poll asked for while one is u
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
   let lists = 0;
-  const watch = startWatch({ db, config: b.config, timers: false, run: async (args, o) => (lists++, await gate, replay.run(args, o)) });
+  const watch = startWatch({ db, config: b.config, timers: false, run: async (args, o) => (args[0] === "issue" && lists++, await gate, replay.run(args, o)) });
   t.after(() => watch.close());
   const one = watch.pollNow(b.repo);
   const two = watch.pollNow(b.repo);

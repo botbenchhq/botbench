@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { watchedRepositories, type Config } from "../config.ts";
-import { ghArgs, ghSaid, ghSaysLimited, githubRetryDelay, backoffMs, parseApiHead, parseWatchedIssues, repoName, type RunGh, type WatchedIssue } from "../github.ts";
+import { ghArgs, ghSaid, ghSaysLimited, githubRetryDelay, backoffMs, parseApiHead, parseIssueRelation, parseWatchedIssues, repoName, type AuthorRelation, type RepoRef, type RunGh, type WatchedIssue } from "../github.ts";
 import { now as nowIso, transaction } from "../store/db.ts";
 import { githubOfRepository } from "./intake.ts";
 import { words } from "./task.ts";
@@ -57,6 +57,12 @@ export interface Proposal {
   title: string;
   /** Outside text: the author's login, or null for an account GitHub no longer has. */
   author: string | null;
+  /**
+   * How GitHub said the author relates to the repository when the issue was first seen (author_association), or null
+   * when that read failed. Shown beside the author, because the label alone is no reason to trust an issue: anyone
+   * with triage access can apply it.
+   */
+  authorRelation: AuthorRelation | null;
   /** The watched repository on this Mac it was seen for: where Start opens the composer. */
   repoPath: string;
   firstSeenAt: string;
@@ -105,6 +111,7 @@ const proposalOf = (row: Record<string, unknown>): Proposal => ({
   url: String(row.url),
   title: String(row.title),
   author: row.author === null ? null : String(row.author),
+  authorRelation: row.author_relation === null || row.author_relation === undefined ? null : (String(row.author_relation) as AuthorRelation),
   repoPath: String(row.repo_path),
   firstSeenAt: String(row.first_seen_at),
 });
@@ -149,12 +156,34 @@ export function startWatch(o: WatchOptions): Watch {
     timers.set(path, timer);
   };
 
+  /**
+   * How GitHub says each issue's author relates to the repository, read with the owner's gh for the issues not seen
+   * before only (the same read-only `gh api` the composer makes for an issue, ghArgs.issueApi). A read that fails gives
+   * null, shown as "GitHub did not say": it never stops the poll.
+   */
+  const relations = async (repo: RepoRef, issues: WatchedIssue[]): Promise<Map<number, AuthorRelation | null>> => {
+    const seen = db.prepare("SELECT 1 FROM watched_issues WHERE repository = ? AND number = ?");
+    const found = new Map<number, AuthorRelation | null>();
+    for (const issue of issues) {
+      if (seen.get(repoName(repo), issue.number) !== undefined) continue;
+      let relation: AuthorRelation | null = null;
+      try {
+        const answer = await o.run(ghArgs.issueApi(repo, issue.number), { cwd });
+        if (answer.started && answer.code === 0) relation = parseIssueRelation(answer.stdout, repo, issue.number);
+      } catch {
+        relation = null;
+      }
+      found.set(issue.number, relation);
+    }
+    return found;
+  };
+
   /** Store the issues not seen before, all together, and return the proposals that are new. */
-  const remember = (repository: string, repoPath: string, issues: WatchedIssue[]): Proposal[] =>
+  const remember = (repository: string, repoPath: string, issues: WatchedIssue[], related: Map<number, AuthorRelation | null>): Proposal[] =>
     transaction(db, () => {
       const at = nowIso();
-      const insert = db.prepare("INSERT INTO watched_issues (repository, number, repo_path, url, title, author, state, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, 'proposed', ?) ON CONFLICT (repository, number) DO NOTHING RETURNING *");
-      return issues.flatMap((issue) => insert.all(repository, issue.number, repoPath, issue.url, issue.title, issue.author, at).map(proposalOf));
+      const insert = db.prepare("INSERT INTO watched_issues (repository, number, repo_path, url, title, author, author_relation, state, first_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?) ON CONFLICT (repository, number) DO NOTHING RETURNING *");
+      return issues.flatMap((issue) => insert.all(repository, issue.number, repoPath, issue.url, issue.title, issue.author, related.get(issue.number) ?? null, at).map(proposalOf));
     });
 
   const poll = async (path: string): Promise<void> => {
@@ -194,8 +223,9 @@ export function startWatch(o: WatchOptions): Watch {
       }
       limited.delete(path);
       const issues = parseWatchedIssues(result.stdout, found.repo, entry.label);
+      const related = await relations(found.repo, issues);
       if (closed) return;
-      const added = remember(repoName(found.repo), path, issues);
+      const added = remember(repoName(found.repo), path, issues, related);
       Object.assign(status, { state: "checked", checkedAt: nowIso(), problem: null, said: null });
       for (const proposal of added) {
         try {

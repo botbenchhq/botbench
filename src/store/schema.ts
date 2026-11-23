@@ -1723,7 +1723,9 @@ CREATE TABLE device_pairing (
     // issue already here is never proposed again, after a restart too. `state` is `proposed` until the owner dismisses
     // it, and a dismissed one stays dismissed: the row is never deleted, its key and when it was first seen never
     // change, and it leaves `proposed` once. `repo_path` is the watched repository on this Mac it was seen for; `title`
-    // and `author` are outside text as gh listed them when first seen, shown as plain text only.
+    // and `author` are outside text as gh listed them when first seen, shown as plain text only. `author_relation` is how
+    // GitHub said the author relates to the repository (author_association) when the issue was first seen, or null when
+    // that read failed.
     name: "watched_issues",
     sql: `
 CREATE TABLE watched_issues (
@@ -1734,6 +1736,7 @@ CREATE TABLE watched_issues (
   url TEXT NOT NULL,
   title TEXT NOT NULL,
   author TEXT,
+  author_relation TEXT CHECK (author_relation IS NULL OR author_relation IN ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE')),
   state TEXT NOT NULL CHECK (state IN ('proposed', 'dismissed')),
   first_seen_at TEXT NOT NULL,
   dismissed_at TEXT,
@@ -1742,7 +1745,7 @@ CREATE TABLE watched_issues (
 );
 CREATE TRIGGER watched_issues_first_proposed BEFORE INSERT ON watched_issues WHEN NEW.state <> 'proposed'
 BEGIN SELECT RAISE(ABORT, 'a watched issue is first written as proposed'); END;
-CREATE TRIGGER watched_issues_fixed BEFORE UPDATE OF id, repository, number, repo_path, url, title, author, first_seen_at ON watched_issues
+CREATE TRIGGER watched_issues_fixed BEFORE UPDATE OF id, repository, number, repo_path, url, title, author, author_relation, first_seen_at ON watched_issues
 BEGIN SELECT RAISE(ABORT, 'a watched issue is kept as it was first seen'); END;
 CREATE TRIGGER watched_issues_dismissed_once BEFORE UPDATE OF state, dismissed_at ON watched_issues WHEN OLD.state <> 'proposed' OR NEW.state <> 'dismissed'
 BEGIN SELECT RAISE(ABORT, 'a watched issue is dismissed once, and never proposed again'); END;

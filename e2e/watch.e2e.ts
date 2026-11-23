@@ -44,6 +44,8 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   await expect(row).toHaveCount(1);
   await expect(row.locator(".ds-list__primary")).toHaveText(issue.title);
   await expect(row.locator(".ds-list__secondary [data-ds-content]")).toHaveText(issue.author!);
+  // Who wrote it, as GitHub says they relate to the repository: the label alone is not trust.
+  await expect(row.locator(".ds-list__secondary")).toContainText("GitHub says: owner of the repository");
   // Outside text is shown as written: nothing in it is drawn as a link, a heading or an image.
   expect(await row.locator("img, a, h1, h3, h4").count()).toBe(0);
   await expect(row.getByRole("button", { name: `Start a run from issue #${issue.number}` })).toBeVisible();
@@ -59,7 +61,7 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   await checkDesign(page, "the composer, opened from Start with the issue attached");
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
   await expect(sheet.locator(".ds-context-list__button", { hasText: "From an issue" }).locator(".ds-context-list__value")).toHaveText(issueWords({ number: issue.number, title: issue.title }));
-  await expect(sheet.locator(".ds-context-list__button", { hasText: "Repository" }).locator(".ds-context-list__value")).toHaveText(path.basename(repo));
+  await expect(sheet.locator(".ds-context-list__button", { hasText: /^Repository/ }).locator(".ds-context-list__value")).toHaveText(path.basename(repo));
   await closeContext(page);
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
@@ -72,17 +74,22 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   await row.getByRole("button", { name: `Dismiss issue #${issue.number}` }).click();
   await expect(row).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Work" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work", exact: true })).toBeVisible();
   await expect(row).toHaveCount(0);
   await botbench.restart();
   // The browser's session is kept across the restart, as in e2e/restart.e2e.ts.
   await page.goto(`${botbench.base}/#/work`);
-  await expect(page.getByRole("heading", { name: "Work" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Work", exact: true })).toBeVisible();
   await expect(page.getByTestId("board-empty")).toBeVisible();
   await expect(row).toHaveCount(0);
 
   // Settings shows the watch, with the label's warning in plain words.
+  // Right after the restart the first look may still be under way, before it has found the repository the remote names:
+  // the page is read again until it has.
   await page.goto(`${botbench.base}/#/settings`);
-  await expect(page.getByTestId("watch")).toContainText(watchAbout({ label, intervalMinutes: 10, repository: "github.com/jon-lange/botbench" }));
+  await expect(async () => {
+    await page.reload();
+    await expect(page.getByTestId("watch")).toContainText(watchAbout({ label, intervalMinutes: 10, repository: "github.com/jon-lange/botbench" }), { timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
   await checkDesign(page, "Settings, with a watched repository");
 });

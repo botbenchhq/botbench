@@ -764,6 +764,8 @@ export interface Proposal {
   url: string;
   title: string;
   author: string | null;
+  /** How GitHub said the author relates to the repository when the issue was first seen; null when it did not say. */
+  authorRelation: AuthorRelation | null;
   repoPath: string;
   firstSeenAt: string;
 }

@@ -6,7 +6,7 @@ import { NO_WATCH, watchAbout, watchFailure, watchStateWords } from "./watch-wor
 
 /**
  * Settings' "Watched issues" (issue #73): each repository whose settings file entry has a "watch", with its label, how
- * often it is looked at, that only people who can apply labels to it should be able to apply this one, and how its last
+ * often it is looked at, that the label is not trust (anyone with triage access can apply it), and how its last
  * look went: when it worked, or why it did not, with what gh said and when it tries again. The watch is set in the
  * settings file, which Botbench never writes, so it is shown here, not changed.
  */
