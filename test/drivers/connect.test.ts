@@ -5,6 +5,7 @@ import { createConnect, ConnectError, type ConnectableAgent, type FlowState } fr
 import type { DriverProbe } from "../../src/drivers/contract.ts";
 import { claudeCodeSignIn, codexSignIn, linkOn, NO_BROWSER, parseClaudeSignIn, parseCodexSignIn, pastedCode, plainText, signInFailure, type SignInDefinition } from "../../src/drivers/sign-in.ts";
 import { CLAUDE_RECORDING, CODEX_RECORDING, fill, randomDeviceCode, randomState, replayedClaude, replayedCodex } from "../support/replay-sign-in.ts";
+import { NO_PROCESS_LIST } from "../support/confined.ts";
 
 // The parsers are read against output captured from each real CLI (test/recordings/sign-in/). The state machine runs
 // a real child process: the capture replayed (see test/support/replay-sign-in.ts). No vendor is reached here; that is
@@ -103,7 +104,7 @@ test("a pasted code is one line of code characters; anything else is refused", (
   for (const bad of ["", "two words", "line\nbreak", "semi;colon", "$(x)", 42, null, "a".repeat(2049)]) assert.equal(pastedCode(bad), null, String(bad));
 });
 
-test("a sign-in waits with its link and code, a second start is refused, and cancel kills its process group and drops both", async (t) => {
+test("a sign-in waits with its link and code, a second start is refused, and cancel kills its process group and drops both", { skip: NO_PROCESS_LIST }, async (t) => {
   const code = randomDeviceCode();
   const { connect, changes } = connectFor(t, replayedCodex("wait", code));
   assert.equal(connect.view("codex").state, "idle");
@@ -128,7 +129,7 @@ test("a sign-in waits with its link and code, a second start is refused, and can
   await connect.cancel("codex");
 });
 
-test("an abandoned sign-in ends at its time limit, with its process group killed", async (t) => {
+test("an abandoned sign-in ends at its time limit, with its process group killed", { skip: NO_PROCESS_LIST }, async (t) => {
   const code = randomDeviceCode();
   const { connect, changes } = connectFor(t, replayedCodex("wait", code, { limitMs: 600 }));
   assert.equal((await connect.start("codex")).state, "waiting");
@@ -142,7 +143,7 @@ test("an abandoned sign-in ends at its time limit, with its process group killed
   assert.deepEqual(changes.at(-1), "codex:failed");
 });
 
-test("a CLI that prints no link in time is stopped and the start says so", async (t) => {
+test("a CLI that prints no link in time is stopped and the start says so", { skip: NO_PROCESS_LIST }, async (t) => {
   const marker = randomDeviceCode();
   const { connect } = connectFor(t, replayedCodex("silent", marker), undefined, 500);
   const view = await connect.start("codex");
@@ -177,7 +178,7 @@ test("success is the CLI ending with exit 0 and the probe then saying signed in;
   assert.equal(stillOut.connect.view("codex").reason, "Codex finished, but still says it is signed out.");
 });
 
-test("Claude Code: the pasted code goes to the waiting CLI; the CLI's own answer to a wrong code is the reason", async (t) => {
+test("Claude Code: the pasted code goes to the waiting CLI; the CLI's own answer to a wrong code is the reason", { skip: NO_PROCESS_LIST }, async (t) => {
   const state = randomState();
   const { connect, changes } = connectFor(t, replayedClaude("wait", state));
   const waiting = await connect.start("claude-code");
@@ -225,7 +226,7 @@ test("disconnect runs the CLI's own sign-out and probes again, and is refused wh
   assert.equal(connect.view("codex").state, "idle");
 });
 
-test("closing stops every sign-in that is under way", async () => {
+test("closing stops every sign-in that is under way", { skip: NO_PROCESS_LIST }, async () => {
   const code = randomDeviceCode();
   const connect = createConnect({ agents: [{ signIn: replayedCodex("wait", code), probe: async () => probeOf(false) }] });
   await connect.start("codex");

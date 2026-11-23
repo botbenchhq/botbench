@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { test } from "node:test";
-import { ghArgs, parseIssueView, runGh, type RepoRef } from "../../src/github.ts";
+import { createGitHub, ghArgs, parseIssueRelation, parseIssueView, runGh, type RepoRef } from "../../src/github.ts";
 import { ISSUE_CAPTURE_FILE, ISSUE_NUMBER, ISSUE_REPO, type IssueCapture } from "../support/replay-issue.ts";
 
 // The one live read of a GitHub issue: the owner's own gh reads one public issue of a well-known public repository
-// (cli/cli), through the exact arguments Botbench uses, and Botbench's parser reads what it printed. Read-only: nothing
+// (cli/cli), through the exact arguments Botbench uses (gh issue view, then gh api for how its author relates to the
+// repository), and Botbench's parsers read what it printed. Read-only: nothing
 // is written to GitHub. With BOTBENCH_CAPTURE_GH=1 it also writes what gh printed (and its answers for a pull request's
 // number and for a number with no issue) to test/recordings/gh-issue.json for the unit and browser tests.
 
@@ -28,6 +29,22 @@ test("live: the owner's gh reads one public issue with Botbench's arguments, and
   assert.ok(issue.author !== null);
   assert.ok(issue.labels.includes("bug"));
   assert.ok(issue.comments.length >= 1 && issue.comments.every((c) => typeof c.body === "string"));
+
+  // How the author relates to the repository: the real gh api's answer for the same issue, read by the same parser.
+  // Its author is not a member of cli/cli, so GitHub gives one of the relations of someone outside the project.
+  const api = await runGh(ghArgs.issueApi(repo, ISSUE_NUMBER), { cwd: process.cwd() });
+  assert.equal(api.code, 0, api.stderr);
+  const rest = JSON.parse(api.stdout) as { author_association?: unknown; user?: { login?: unknown } };
+  assert.equal(typeof rest.author_association, "string", "gh api prints author_association at the top level");
+  assert.equal(rest.user?.login, issue.author, "and the same author as gh issue view");
+  const relation = parseIssueRelation(api.stdout, repo, ISSUE_NUMBER);
+  assert.ok(relation !== null && ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"].includes(relation), String(relation));
+  // A pull request's number is refused there too.
+  const pull = await runGh(ghArgs.issueApi(repo, 1), { cwd: process.cwd() });
+  assert.equal(pull.code, 0, pull.stderr);
+  assert.throws(() => parseIssueRelation(pull.stdout, repo, 1), /is a pull request, not an issue/);
+  // And the whole read, as Botbench makes it, carries the relation with the issue.
+  assert.equal((await createGitHub().issue(repo, ISSUE_NUMBER)).authorRelation, relation);
 
   if (process.env.BOTBENCH_CAPTURE_GH === "1") {
     const pullArgs = ghArgs.issueView(repo, 1);

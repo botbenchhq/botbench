@@ -13,13 +13,6 @@ export const MODES: { mode: RunMode; name: string; description: string; warning?
   },
 ];
 
-/** A run's mode as the run and task screens say it. */
-export const MODE_SENTENCE: Record<RunMode, string> = {
-  manual: "Manual: you approve the plan and decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
-  semi: "Semi-autonomous: building starts without your plan approval (a run started from a GitHub issue still waits for it), and you decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
-  full: "Fully autonomous: Botbench builds without asking you, refuses what would need you, and accepts work whose every check passed and that its reviewer, if any, said looks right and named what it checked. The rest waits for you.",
-};
-
 /**
  * The three modes as one choice (the design system's option picker). With `only`, the other modes cannot be chosen
  * and say so: a task started on its own is always manual.

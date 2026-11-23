@@ -5,6 +5,7 @@ Local software factory. Drives owner's Claude Code / Codex / Gemini CLI / Grok. 
 ## Commands
 - typecheck: `npm run typecheck`
 - test: `npm test`
+- confined: `npm run test:confined` (`npm test` inside the sandbox Botbench gives a check; start it outside any sandbox)
 - live: `npm run test:live` (real CLIs, owner machine)
 - e2e: `npm run e2e`
 - client: `npm run build --prefix web`

@@ -263,7 +263,7 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     await expect(page.getByTestId("task-repo")).toBeHidden();
     const details = await openDetails(page);
     await expect(details.getByTestId("task-repo")).toHaveText(repo);
-    await expect(details.getByTestId("branch")).toHaveValue(task.branch);
+    await expect(details.getByTestId("branch")).toHaveText(task.branch);
     await expect(page.getByTestId("branch")).toHaveCount(1);
     const discard = page.getByRole("button", { name: "Discard" });
     await expect(discard).toBeVisible();

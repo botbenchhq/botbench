@@ -122,11 +122,32 @@ export interface Tracked {
   position: number;
 }
 
+/** How one setup or check command is started: the program and its arguments, and its environment. */
+export interface ConfinedStart {
+  argv: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * How a setup or check command is started: `/bin/sh -c <command>` under sandbox-exec, with the profile for its
+ * `worktree` and its own temporary folder `tmp`, and Botbench's environment for it. `proxyPort` is Botbench's proxy
+ * when the repository allows hosts. `npm run test:confined` (test/run-confined.ts) starts Botbench's own tests this way.
+ * Throws when a path cannot be put in a profile.
+ */
+export function confinedStart(o: { command: string; worktree: string; dataDir: string; tmp: string; proxyPort: number | null }): ConfinedStart {
+  const profile = seatbeltProfile({ worktree: o.worktree, unreadable: unreadablePaths({ dataDir: o.dataDir }), writable: [o.tmp] });
+  // The allowlist holds no GIT_* variable; the owner's own proxy settings are replaced, as the network is Botbench's to give.
+  const env = buildChildEnv(process.env, { TMPDIR: o.tmp, GIT_TERMINAL_PROMPT: "0" });
+  for (const name of [...PROXY_VARIABLES, "NO_PROXY", "no_proxy"]) delete env[name];
+  if (o.proxyPort !== null) for (const name of PROXY_VARIABLES) env[name] = `http://127.0.0.1:${o.proxyPort}`;
+  return { argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env };
+}
+
 async function runUntracked(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement }, onTmp: (dir: string) => void, onSpawn: (pgid: number) => void): Promise<CommandRun> {
   const problem = confinementProblem();
   if (problem !== null) return notRun(o, `Botbench did not run this command. ${problem}`);
   let tmp: string;
-  let profile: string;
+  let start: ConfinedStart;
   let proxy: Awaited<ReturnType<typeof startHostProxy>> | null = null;
   try {
     tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-command-")));
@@ -136,18 +157,14 @@ async function runUntracked(o: { command: string; cwd: string; limitMs: number; 
   onTmp(tmp);
   try {
     if (o.confinement.allowedHosts.length > 0) proxy = await startHostProxy(o.confinement.allowedHosts);
-    profile = seatbeltProfile({ worktree: fs.realpathSync(o.cwd), unreadable: unreadablePaths({ dataDir: o.confinement.dataDir }), writable: [tmp] });
+    start = confinedStart({ command: o.command, worktree: fs.realpathSync(o.cwd), dataDir: o.confinement.dataDir, tmp, proxyPort: proxy?.port ?? null });
   } catch (err) {
     await proxy?.close();
     fs.rmSync(tmp, { recursive: true, force: true });
     return notRun(o, `Botbench did not run this command: it could not confine it (${err instanceof Error ? err.message : String(err)}).`);
   }
-  // The allowlist holds no GIT_* variable; the owner's own proxy settings are replaced, as the network is Botbench's to give.
-  const env = buildChildEnv(process.env, { TMPDIR: tmp, GIT_TERMINAL_PROMPT: "0" });
-  for (const name of [...PROXY_VARIABLES, "NO_PROXY", "no_proxy"]) delete env[name];
-  if (proxy !== null) for (const name of PROXY_VARIABLES) env[name] = `http://127.0.0.1:${proxy.port}`;
   try {
-    return await spawnCommand({ ...o, argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env, onSpawn });
+    return await spawnCommand({ ...o, argv: start.argv, env: start.env, onSpawn });
   } finally {
     await proxy?.close();
     fs.rmSync(tmp, { recursive: true, force: true });

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { confinementProblem, HOME_SECRETS, hostProblem, SANDBOX_EXEC, seatbeltProfile, startHostProxy, unreadablePaths } from "../src/confinement.ts";
 import { tempDir } from "./support/repo.ts";
+import { NO_SANDBOX } from "./support/confined.ts";
 
 // What Botbench keeps every command an agent runs, and every setup and check command it runs itself, away from (U27).
 // Everything here is real: real folders and links, the real sandbox-exec of this Mac, a real local proxy and real sockets.
@@ -118,7 +119,7 @@ test("the browsers' profile folders are on the one list, so no confined command 
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test("a cookie file in a browser profile is refused to a command under the real sandbox-exec, as the list makes its profile", (t) => {
+test("a cookie file in a browser profile is refused to a command under the real sandbox-exec, as the list makes its profile", { skip: NO_SANDBOX }, (t) => {
   const dir = fs.realpathSync(tempDir("botbench-confine-browser-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");

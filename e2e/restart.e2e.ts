@@ -25,7 +25,7 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
   // A card asked in this run of Botbench says nothing about a restart.
   await expect(card.getByTestId("approval-parked")).toHaveCount(0);
-  const branch = await (await openDetails(page)).getByTestId("branch").inputValue();
+  const branch = (await (await openDetails(page)).getByTestId("branch").textContent())!;
   const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
 
   // Botbench stops and starts again. The device stays signed in across the restart, so the owner only reloads.
