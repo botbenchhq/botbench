@@ -1,9 +1,9 @@
 {
-  "about": "A real Claude Code session, recorded through Smelt's driver and permission broker by test/support/capture-redrive.ts. Attempt 1 asked to run `sh make-marker.sh` and was stopped while it waited. Attempt 2 resumed the session under the capture's own prompt (not the one Smelt sends after a restart) and asked to run `sh other.sh` instead, was allowed, and finished.",
+  "about": "A real Claude Code session, recorded through Botbench's driver and permission broker by test/support/capture-redrive.ts. Attempt 1 asked to run `sh make-marker.sh` and was stopped while it waited. Attempt 2 resumed the session under the capture's own prompt (not the one Botbench sends after a restart) and asked to run `sh other.sh` instead, was allowed, and finished.",
   "cli": "2.1.322 (Claude Code)",
   "model": "haiku",
-  "recordedAt": "2026-11-22T11:14:03.504Z",
-  "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+  "recordedAt": "2026-11-23T01:49:34.434Z",
+  "resumeCursor": "3d2efaec-b2da-474a-b126-4f9eac5e0a4a",
   "prompts": [
     "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done",
     "Do not run that command after all. Run the command `sh other.sh` with your Bash tool instead, exactly once. Then reply with the single word: done"
@@ -14,7 +14,7 @@
       "tool": "Bash",
       "command": "sh make-marker.sh",
       "cwd": ".",
-      "toolCallId": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+      "toolCallId": "toolu_01PcHvUf2t6xBKak1Yd4q3x4",
       "status": "superseded"
     },
     {
@@ -22,7 +22,7 @@
       "tool": "Bash",
       "command": "sh other.sh",
       "cwd": ".",
-      "toolCallId": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+      "toolCallId": "toolu_01WMm8f6TL1QNdCQSuaY8GwH",
       "status": "allowed"
     }
   ],
@@ -34,17 +34,17 @@
       },
       {
         "type": "session_started",
-        "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+        "resumeCursor": "3d2efaec-b2da-474a-b126-4f9eac5e0a4a",
         "model": "claude-haiku-5-5",
         "keySource": "none"
       },
       {
         "type": "tool_call",
-        "id": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "id": "toolu_01PcHvUf2t6xBKak1Yd4q3x4",
         "name": "Bash",
         "input": {
           "command": "sh make-marker.sh",
-          "description": "Run make-marker.sh script once"
+          "description": "Run make-marker.sh once"
         }
       },
       {
@@ -55,34 +55,34 @@
       },
       {
         "type": "permission_request",
-        "id": "ea28bdfa-21a8-4f74-8ac9-820ea931c4e7",
-        "toolCallId": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "id": "f61a7c5d-1163-401e-a167-3a8fa5928cf2",
+        "toolCallId": "toolu_01PcHvUf2t6xBKak1Yd4q3x4",
         "name": "Bash",
         "input": {
           "command": "sh make-marker.sh",
-          "description": "Run make-marker.sh script once"
+          "description": "Run make-marker.sh once"
         },
-        "reason": "Run make-marker.sh script once"
+        "reason": "Run make-marker.sh once"
       },
       {
         "type": "permission_resolved",
-        "id": "ea28bdfa-21a8-4f74-8ac9-820ea931c4e7",
-        "toolCallId": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "id": "f61a7c5d-1163-401e-a167-3a8fa5928cf2",
+        "toolCallId": "toolu_01PcHvUf2t6xBKak1Yd4q3x4",
         "decision": "cancelled",
         "note": null
       },
       {
         "type": "tool_result",
-        "id": "toolu_01QMzRJLTSzRTj3SfRJ9biAM",
+        "id": "toolu_01PcHvUf2t6xBKak1Yd4q3x4",
         "output": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.\n\nNote: The user's next message may contain a correction or preference. Pay close attention — if they explain what went wrong or how they'd prefer you to work, consider saving that to memory for future sessions.",
         "isError": true
       },
       {
         "type": "usage",
         "inputTokens": 2,
-        "outputTokens": 86,
-        "cacheReadTokens": 12932,
-        "cacheWriteTokens": 7494
+        "outputTokens": 85,
+        "cacheReadTokens": 7394,
+        "cacheWriteTokens": 9593
       },
       {
         "type": "turn_ended",
@@ -97,17 +97,17 @@
       },
       {
         "type": "session_started",
-        "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+        "resumeCursor": "3d2efaec-b2da-474a-b126-4f9eac5e0a4a",
         "model": "claude-haiku-5-5",
         "keySource": "none"
       },
       {
         "type": "tool_call",
-        "id": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "id": "toolu_01WMm8f6TL1QNdCQSuaY8GwH",
         "name": "Bash",
         "input": {
           "command": "sh other.sh",
-          "description": "Run other.sh script once"
+          "description": "Run other.sh once"
         }
       },
       {
@@ -118,25 +118,25 @@
       },
       {
         "type": "permission_request",
-        "id": "7f81a597-989e-445e-ab0a-c7febf875ec6",
-        "toolCallId": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "id": "3324d3af-e2f7-474c-8a66-226120688dfa",
+        "toolCallId": "toolu_01WMm8f6TL1QNdCQSuaY8GwH",
         "name": "Bash",
         "input": {
           "command": "sh other.sh",
-          "description": "Run other.sh script once"
+          "description": "Run other.sh once"
         },
-        "reason": "Run other.sh script once"
+        "reason": "Run other.sh once"
       },
       {
         "type": "permission_resolved",
-        "id": "7f81a597-989e-445e-ab0a-c7febf875ec6",
-        "toolCallId": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "id": "3324d3af-e2f7-474c-8a66-226120688dfa",
+        "toolCallId": "toolu_01WMm8f6TL1QNdCQSuaY8GwH",
         "decision": "allowed",
         "note": null
       },
       {
         "type": "tool_result",
-        "id": "toolu_01LgsLCY33pPz3bcCQdZXDVH",
+        "id": "toolu_01WMm8f6TL1QNdCQSuaY8GwH",
         "output": "(Bash completed with no output)",
         "isError": false
       },
@@ -147,9 +147,9 @@
       {
         "type": "usage",
         "inputTokens": 4,
-        "outputTokens": 83,
-        "cacheReadTokens": 41180,
-        "cacheWriteTokens": 447
+        "outputTokens": 82,
+        "cacheReadTokens": 34301,
+        "cacheWriteTokens": 445
       },
       {
         "type": "turn_ended",

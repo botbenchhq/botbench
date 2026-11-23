@@ -2,7 +2,7 @@
   "about": "A real Claude Code session, recorded through Botbench's driver and permission broker by test/support/capture-refused.ts, as the builder of a task of a fully autonomous run. Asked to run `git push origin HEAD` once, it asked for permission, Botbench refused it without asking anyone (the safety rules name it), and the CLI ended its turn.",
   "cli": "2.1.322 (Claude Code)",
   "model": "haiku",
-  "recordedAt": "2026-11-22T20:51:36.265Z",
+  "recordedAt": "2026-11-23T01:49:32.176Z",
   "prompt": "Run the command `git push origin HEAD` with your Bash tool, exactly once. If it is refused, do not try anything else and do not run any other command: reply with the single word: done",
   "refused": [
     {
@@ -10,7 +10,7 @@
       "command": "git push origin HEAD",
       "cwd": ".",
       "detail": "This run is fully autonomous, so Botbench refuses what its safety rules would otherwise ask you about (git-push). It was not run.",
-      "toolCallId": "toolu_016kq1KwBtxS19zw7FuCtcfn"
+      "toolCallId": "toolu_01FGjxU464UqexE5jTsZD9SE"
     }
   ],
   "events": [
@@ -20,17 +20,17 @@
     },
     {
       "type": "session_started",
-      "resumeCursor": "ca799423-675b-460e-b51a-e51192804fd9",
+      "resumeCursor": "c23dc1f3-b8a7-4867-961b-03560854779d",
       "model": "claude-haiku-5-5",
       "keySource": "none"
     },
     {
       "type": "tool_call",
-      "id": "toolu_016kq1KwBtxS19zw7FuCtcfn",
+      "id": "toolu_01FGjxU464UqexE5jTsZD9SE",
       "name": "Bash",
       "input": {
         "command": "git push origin HEAD",
-        "description": "Push current HEAD to origin"
+        "description": "Push current HEAD to origin once"
       }
     },
     {
@@ -41,25 +41,25 @@
     },
     {
       "type": "permission_request",
-      "id": "6acc82d3-c8d8-41d7-9d27-e88b2e69f5d4",
-      "toolCallId": "toolu_016kq1KwBtxS19zw7FuCtcfn",
+      "id": "c4884b47-211a-43ef-ab99-47982165b7de",
+      "toolCallId": "toolu_01FGjxU464UqexE5jTsZD9SE",
       "name": "Bash",
       "input": {
         "command": "git push origin HEAD",
-        "description": "Push current HEAD to origin"
+        "description": "Push current HEAD to origin once"
       },
-      "reason": "Push current HEAD to origin"
+      "reason": "Push current HEAD to origin once"
     },
     {
       "type": "permission_resolved",
-      "id": "6acc82d3-c8d8-41d7-9d27-e88b2e69f5d4",
-      "toolCallId": "toolu_016kq1KwBtxS19zw7FuCtcfn",
+      "id": "c4884b47-211a-43ef-ab99-47982165b7de",
+      "toolCallId": "toolu_01FGjxU464UqexE5jTsZD9SE",
       "decision": "denied",
       "note": "This run is fully autonomous, so Botbench refuses what its safety rules would otherwise ask you about (git-push). It was not run."
     },
     {
       "type": "tool_result",
-      "id": "toolu_016kq1KwBtxS19zw7FuCtcfn",
+      "id": "toolu_01FGjxU464UqexE5jTsZD9SE",
       "output": "Botbench's permission check denied this request without asking the owner: This run is fully autonomous, so Botbench refuses what its safety rules would otherwise ask you about (git-push). It was not run. Nothing was run.",
       "isError": true
     },
@@ -70,9 +70,9 @@
     {
       "type": "usage",
       "inputTokens": 4,
-      "outputTokens": 87,
-      "cacheReadTokens": 37137,
-      "cacheWriteTokens": 10903
+      "outputTokens": 88,
+      "cacheReadTokens": 24406,
+      "cacheWriteTokens": 9807
     },
     {
       "type": "turn_ended",
