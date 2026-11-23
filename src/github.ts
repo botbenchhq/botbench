@@ -15,7 +15,7 @@ import { gitEnv } from "./worktrees.ts";
  *   gh api --method=GET --hostname=<host> repos/<owner>/<name>/issues/<number>   the same issue as GitHub's REST API
  *                                                                  gives it, read only, for how its author relates to the repository
  *   gh pr list --repo=... --state=all --json=... --limit=100       the latest pull requests in any state, read only (engine/peers.ts)
- *   gh issue list --repo=<host/owner/name> --label=<label> --state=open --json=number,title,author,url,labels --limit=100
+ *   gh issue list --repo=<host/owner/name> --label=<label> --state=open --json=number,title,author,url,labels --limit=1000
  *                                                                  a watched repository's open issues carrying its label, read only (engine/watch.ts)
  *   gh api -i --method=GET --hostname=<host> repos/<owner>/<name>  only after that list failed on GitHub's limits: the
  *                                                                  answer's status and headers say how long to wait (engine/watch.ts)
@@ -149,8 +149,11 @@ export const ghArgs = {
 };
 
 const WATCH_FIELDS = "number,title,author,url,labels";
-/** The most open labelled issues one poll asks for. */
-export const WATCH_LIMIT = 100;
+/**
+ * The most open labelled issues one poll asks for. gh pages through GitHub's answers of 100 itself up to this, so an
+ * older labelled issue is not left out while the newest 100 stay open.
+ */
+export const WATCH_LIMIT = 1000;
 /** GitHub's own longest label name. */
 const LABEL_MAX = 50;
 

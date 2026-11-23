@@ -16,7 +16,7 @@ import { capturedIssue, loadWatchCapture, WATCH_REPO } from "./support/replay-wa
 const repo: RepoRef = { host: "github.com", owner: "jon-lange", name: "example" };
 
 test("the watch's list is one exact argument list, every value joined to its flag with =, asking only for open issues with the label", () => {
-  assert.deepEqual(ghArgs.watchIssues(repo, "botbench"), ["issue", "list", "--repo=github.com/jon-lange/example", "--label=botbench", "--state=open", "--json=number,title,author,url,labels", "--limit=100"]);
+  assert.deepEqual(ghArgs.watchIssues(repo, "botbench"), ["issue", "list", "--repo=github.com/jon-lange/example", "--label=botbench", "--state=open", "--json=number,title,author,url,labels", "--limit=1000"]);
   assert.deepEqual(ghArgs.watchIssues(repo, "good first issue")[3], "--label=good first issue");
   // A label that reads as a flag stays the label's value.
   assert.deepEqual(ghArgs.watchIssues(repo, "--repo=evil/x")[3], "--label=--repo=evil/x");

@@ -15,6 +15,6 @@ Context: a run can start from a GitHub issue the owner names in the composer (In
 ## Consequences
 
 - The watch is set in the settings file, which Botbench never writes. Settings shows it but does not change it.
-- A poll sees at most 100 labelled open issues.
+- A poll sees at most 1,000 labelled open issues; gh pages through GitHub's answers of 100 up to that.
 - After GitHub's GraphQL limit, which the REST headers do not show, the watch waits the capped backoff rather than the exact reset.
 - Rejected: webhooks, which would need a public address (Never); GitHub Actions, which would put Botbench's trust in a hosted runner; and starting a run automatically, which the issue rules out.

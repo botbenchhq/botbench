@@ -175,15 +175,19 @@ export function startWatch(o: WatchOptions): Watch {
       if (!result.started) return fail("The gh tool is not installed, or is not on the PATH Botbench runs with. Install it and sign in with gh auth login in a terminal.", null);
       if (result.code !== 0) {
         const said = ghSaid(result);
-        if (ghSaysLimited(result)) {
+        const saysLimited = ghSaysLimited(result);
+        // A 403 in other words may still be GitHub's limit: the head of one answer is read for it too, and decides.
+        if (saysLimited || /\bHTTP 403\b/.test(said)) {
           const attempt = (limited.get(path) ?? 0) + 1;
-          limited.set(path, attempt);
           // The head of one GitHub answer says how long: retry-after, or the reset of x-ratelimit-remaining 0.
           const probe = await o.run(ghArgs.watchHead(found.repo), { cwd });
           const head = probe.started ? parseApiHead(probe.stdout) : null;
-          const wait = (head === null ? null : githubRetryDelay(head, { attempt, now: clock(), baseMs: intervalMs, capMs: LIMIT_BACKOFF_CAP_MS })) ?? backoffMs({ attempt, baseMs: intervalMs, capMs: LIMIT_BACKOFF_CAP_MS });
-          nextMs = Math.max(intervalMs, wait);
-          return fail("GitHub asked Botbench to wait before it reads the issues again.", said);
+          const named = head === null ? null : githubRetryDelay(head, { attempt, now: clock(), baseMs: intervalMs, capMs: LIMIT_BACKOFF_CAP_MS });
+          if (named !== null || saysLimited) {
+            limited.set(path, attempt);
+            nextMs = Math.max(intervalMs, named ?? backoffMs({ attempt, baseMs: intervalMs, capMs: LIMIT_BACKOFF_CAP_MS }));
+            return fail("GitHub asked Botbench to wait before it reads the issues again.", said);
+          }
         }
         const signIn = /gh auth login/.test(said);
         return fail(signIn ? "The gh tool is not signed in. Run gh auth login in a terminal on this Mac." : "The gh tool could not list the issues.", said === "" ? `It stopped with exit code ${result.code ?? "none"}.` : said);

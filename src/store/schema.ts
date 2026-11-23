@@ -1666,7 +1666,8 @@ BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
   },
   {
     // The seen table of the issue watch (src/engine/watch.ts, ADR 0008): one row per issue a watched repository's poll
-    // has seen, by its GitHub repository (host/owner/name) and number, written the first time it is seen, so that an
+    // has seen, by its GitHub repository (host/owner/name, compared without case, as GitHub compares them) and number,
+    // written the first time it is seen, so that an
     // issue already here is never proposed again, after a restart too. `state` is `proposed` until the owner dismisses
     // it, and a dismissed one stays dismissed: the row is never deleted, its key and when it was first seen never
     // change, and it leaves `proposed` once. `repo_path` is the watched repository on this Mac it was seen for; `title`
@@ -1675,7 +1676,7 @@ BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
     sql: `
 CREATE TABLE watched_issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  repository TEXT NOT NULL,
+  repository TEXT NOT NULL COLLATE NOCASE,
   number INTEGER NOT NULL CHECK (number BETWEEN 1 AND 2147483647),
   repo_path TEXT NOT NULL,
   url TEXT NOT NULL,

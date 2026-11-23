@@ -84,6 +84,9 @@ test("the seen rows are kept in the SQLite file: after it is closed and opened a
   assert.throws(() => db.prepare("UPDATE watched_issues SET state = 'proposed', dismissed_at = NULL WHERE id = ?").run(first.id), /dismissed once, and never proposed again/);
   assert.throws(() => db.prepare("UPDATE watched_issues SET title = 'other' WHERE id = ?").run(first.id), /kept as it was first seen/);
   assert.throws(() => db.prepare("DELETE FROM watched_issues WHERE id = ?").run(first.id), /never deleted/);
+  // A remote that names the repository in other letter case is the same repository: the issue is not seen anew.
+  const recased = db.prepare("INSERT INTO watched_issues (repository, number, repo_path, url, title, state, first_seen_at) VALUES ('GitHub.com/Jon-Lange/Botbench', ?, '/r', 'u', 't', 'proposed', 'now') ON CONFLICT (repository, number) DO NOTHING").run(first.number);
+  assert.equal(Number(recased.changes), 0);
   assert.throws(() => db.prepare("INSERT INTO watched_issues (repository, number, repo_path, url, title, state, first_seen_at) VALUES ('x', 1, '/r', 'u', 't', 'dismissed', 'now')").run(), /first written as proposed/);
 });
 
@@ -177,10 +180,21 @@ test("after GitHub's limit the watch reads one answer's head with gh api -i and 
   assert.equal(status.nextAt, new Date(1377013266_000).toISOString(), "until x-ratelimit-reset");
   assert.deepEqual(calls, [ghArgs.watchIssues(WATCH_REPO, b.label), ghArgs.watchHead(WATCH_REPO)]);
   assert.deepEqual(rows(db), []);
+  // A 403 in other words is GitHub's limit only when the head says so; otherwise it is an ordinary failure, at the interval.
+  await watch.close();
+  const refused: GhResult = { started: true, code: 1, stdout: "", stderr: "HTTP 403: Resource not accessible by integration (https://api.github.com/graphql)\n" };
+  const ok200: GhResult = { started: true, code: 0, stdout: "HTTP/2.0 200 OK\nX-Ratelimit-Remaining: 4999\n\n{}", stderr: "" };
+  for (const [probe, expected] of [[{ started: true, code: 1, stdout: LIMIT_HEAD, stderr: "" }, new Date(1377013266_000).toISOString()], [ok200, new Date(at + 600_000).toISOString()]] as const) {
+    const quiet = replayWatchGh({ answer: (args) => (args[0] === "issue" ? refused : args[0] === "api" ? probe : undefined) });
+    const w = startWatch({ db, config: b.config, run: quiet.run, timers: false, now: () => at });
+    await w.pollNow(b.repo);
+    assert.equal(w.status()[0]!.nextAt, expected);
+    assert.equal(w.status()[0]!.problem, probe === ok200 ? "The gh tool could not list the issues." : "GitHub asked Botbench to wait before it reads the issues again.");
+    await w.close();
+  }
   // The head says nothing usable: the backoff from the interval, doubling with each limited poll in a row.
   const notStarted: GhResult = { started: false, code: null, stdout: "", stderr: "" };
   const blind = replayWatchGh({ answer: (args) => (args[0] === "issue" ? LIMIT_FAILURE : args[0] === "api" ? notStarted : undefined) });
-  await watch.close();
   const again = startWatch({ db, config: b.config, run: blind.run, timers: false, now: () => at });
   t.after(() => again.close());
   await again.pollNow(b.repo);
