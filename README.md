@@ -107,11 +107,12 @@ About ten minutes. It ends with a branch made by Claude Code in a practice repos
 
 **You need:** macOS; Node 24 or later; git, set up so you can commit; [Claude Code](https://www.anthropic.com/claude-code) 2.1.322 or later, installed and signed in (`claude --version`, `claude auth status`). Codex 0.171.0 or later only if you want it to review or build.
 
-**1. Get it and build the screens.** The server itself has nothing to install.
+**1. Get it and build the screens.** The server has nothing to install to run; the first `npm ci` brings what the build of the screens needs.
 
 ```sh
 git clone https://github.com/jon-lange/botbench.git
 cd botbench
+npm ci
 npm ci --prefix web
 npm run build --prefix web
 ```
