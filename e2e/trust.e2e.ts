@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
+import { appendLog } from "../src/approvals/broker.ts";
+import { insertStanding, realRepo } from "../src/approvals/grants.ts";
+import { createTask } from "../src/engine/task.ts";
+import { openStore } from "../src/store/db.ts";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
 import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
@@ -148,6 +152,68 @@ test("Check a command answers for each mode in words, the rule behind each named
     expect(await (await page.request.get(`${botbench.base}/api/action-log`)).json()).toEqual({ entries: [] });
     expect(await (await page.request.get(`${botbench.base}/api/grants`)).json()).toMatchObject({ grants: [] });
     expect(foreign, "requests to anything but Botbench").toEqual([]);
+  } finally {
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Take back stays focused and busy while it is sent, and the focus then goes to the row that took its place, or to the heading when none is left", async ({ page }) => {
+  // No model turn: three commands are always allowed before Botbench starts, each written with its log row as the broker writes one.
+  const dir = tempDir("botbench-e2e-take-back-");
+  const repo = path.join(dir, "sample-repo");
+  initRepo(repo, { "README.md": "# Sample\n" });
+  const home = path.join(dir, "home");
+  const db = openStore(home);
+  const task = createTask(db, { repo, prompt: "Tidy the README" });
+  for (const words of [["npm", "test"], ["npm", "run", "lint"], ["make", "build"]]) {
+    const grantId = insertStanding(db, { role: "implementer", repo: realRepo(repo), cwd: ".", words, taskId: task.id });
+    appendLog(db, { taskId: task.id, runId: task.runId, attemptId: null, grantId, rule: "standing_granted", tool: "Bash", command: words.join(" "), cwd: "." });
+  }
+  db.close();
+  const botbench = await startBotbench({ home });
+  try {
+    await signIn(page, botbench);
+    await openFromSettings(page, "Permissions");
+    const rows = page.getByTestId("grant-list").getByRole("listitem");
+    await expect(rows.getByTestId("grant-command")).toHaveText(["npm test", "npm run lint", "make build"]);
+
+    // While the request is held, the pressed button says Taking back, is busy, stays enabled and keeps the focus the closing dialog gave back to it.
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(/\/api\/grants\/\d+\/revoke$/, async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "Take back npm run lint" }).click();
+    await page.getByTestId("take-back-confirm").getByRole("button", { name: "Take it back" }).click();
+    const taking = rows.nth(1).getByRole("button", { name: "Taking back" });
+    await expect(taking).toHaveAttribute("aria-busy", "true");
+    await expect(taking).toBeEnabled();
+    await expect(taking).toBeFocused();
+    // A second press is ignored: no dialog opens.
+    await taking.press("Enter");
+    await expect(page.getByTestId("take-back-confirm")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Take back npm test" })).toBeDisabled();
+    await checkDesign(page, "trust, taking back");
+    await expect(taking).toBeFocused();
+    release();
+
+    // The row is gone, and the focus is on the row that took its place.
+    await expect(rows.getByTestId("grant-command")).toHaveText(["npm test", "make build"]);
+    await page.unroute(/\/api\/grants\/\d+\/revoke$/);
+    await expect(page.getByRole("button", { name: "Take back make build" })).toBeFocused();
+    // The last row gone: the row before it.
+    await page.getByRole("button", { name: "Take back make build" }).click();
+    await page.getByTestId("take-back-confirm").getByRole("button", { name: "Take it back" }).click();
+    await expect(rows.getByTestId("grant-command")).toHaveText(["npm test"]);
+    await expect(page.getByRole("button", { name: "Take back npm test" })).toBeFocused();
+    // None left: the section's heading.
+    await page.getByRole("button", { name: "Take back npm test" }).click();
+    await page.getByTestId("take-back-confirm").getByRole("button", { name: "Take it back" }).click();
+    await expect(page.getByTestId("grants-none")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Always allowed" })).toBeFocused();
+    await checkDesign(page, "trust, nothing left after Take back");
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);
     fs.rmSync(dir, { recursive: true, force: true });

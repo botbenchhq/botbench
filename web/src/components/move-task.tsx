@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, moveTask, type TaskDetail } from "../api/client.ts";
 import { MOVE_HEADING, moveAbout, moveButton, moveRefused } from "../app/handoff-words.ts";
 import { Alert } from "./header.tsx";
@@ -42,9 +43,9 @@ export function MoveTask({ task, onMoved, onSignedOut }: { task: Pick<TaskDetail
           <p data-testid="move-about">{moveAbout(task.builder)}</p>
           <div className="ds-cluster">
             {task.moveTo.map((agent) => (
-              <button key={agent} type="button" aria-busy={busy === agent} disabled={busy !== null} onClick={() => move(agent)} className="ds-button">
-                {moveButton(agent, busy === agent)}
-              </button>
+              <BusyButton key={agent} busy={busy === agent} busyLabel={moveButton(agent, true)} disabled={busy !== null && busy !== agent} onClick={() => move(agent)}>
+                {moveButton(agent, false)}
+              </BusyButton>
             ))}
           </div>
         </>

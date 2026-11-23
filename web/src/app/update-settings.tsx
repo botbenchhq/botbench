@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, getUpdate, setUpdateMode, startUpdate, type UpdateMode, type UpdateStatus } from "../api/client.ts";
 import { Alert } from "../components/header.tsx";
 import { canUpdate, UPDATE_MODE_ABOUT, updateStateWords, updateUnderWay, versionAbout } from "./update-words.ts";
@@ -68,9 +69,9 @@ export function UpdateSettings({ onSignedOut }: { onSignedOut: () => void }) {
         </div>
         {status !== null && canUpdate(status) && (
           <div className="ds-settings-row__control">
-            <button type="button" className="ds-button" aria-describedby={`${id}-about`} disabled={busy} onClick={update}>
+            <BusyButton aria-describedby={`${id}-about`} busy={busy} busyLabel="Starting" onClick={update}>
               Update now
-            </button>
+            </BusyButton>
           </div>
         )}
       </div>

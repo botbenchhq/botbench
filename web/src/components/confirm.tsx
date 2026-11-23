@@ -61,9 +61,11 @@ export function ConfirmDialog({ title, confirmLabel, cancelLabel, disabled, losi
  * is the main thing the view is for and asks first only some of the time (Accept, when the checks left files behind).
  * `startOpen` opens the dialog at once, for a step the owner chose elsewhere (Discard, from a row's More menu on Work).
  * `busy`: the confirmed action is being sent. The button carries aria-busy and ignores presses, but stays enabled, so
- * focus, which the closing dialog gives back to it, stays on it. `critical` marks a button that must never be hidden.
+ * focus, which the closing dialog gives back to it, stays on it. With `busyLabel` it then shows those words, and they
+ * are its name, as the design system's busy button has it. `disabled` is for another action's running, never its own.
+ * `critical` marks a button that must never be hidden.
  */
-export function ConfirmAction({ label, opener, primary = false, title, confirmLabel, cancelLabel, disabled, busy = false, critical = false, losing = false, testId, startOpen = false, onConfirm, children }: { label: string; opener?: { small: boolean; name: string }; primary?: boolean; title: ReactNode; confirmLabel: string; cancelLabel: string; disabled: boolean; busy?: boolean; critical?: boolean; losing?: boolean; testId: string; startOpen?: boolean; onConfirm: () => void; children: ReactNode }) {
+export function ConfirmAction({ label, opener, primary = false, title, confirmLabel, cancelLabel, disabled, busy = false, busyLabel, critical = false, losing = false, testId, startOpen = false, onConfirm, children }: { label: string; opener?: { small: boolean; name: string }; primary?: boolean; title: ReactNode; confirmLabel: string; cancelLabel: string; disabled: boolean; busy?: boolean; busyLabel?: string; critical?: boolean; losing?: boolean; testId: string; startOpen?: boolean; onConfirm: () => void; children: ReactNode }) {
   const [open, setOpen] = useState(startOpen);
   const button = useRef<HTMLButtonElement>(null);
   const closed = (confirmed: boolean): void => {
@@ -73,10 +75,12 @@ export function ConfirmAction({ label, opener, primary = false, title, confirmLa
     if (confirmed) onConfirm();
   };
 
+  const saysBusy = busy && busyLabel !== undefined;
+  const name = saysBusy ? undefined : opener?.name;
   return (
     <>
-      <button ref={button} type="button" disabled={disabled} aria-busy={busy || undefined} data-ds-critical={critical ? "" : undefined} onClick={() => busy || setOpen(true)} aria-label={opener?.name} data-ds-content-label={opener === undefined ? undefined : ""} className={opener?.small === true ? "ds-button ds-button--quiet ds-button--small" : primary ? "ds-button ds-button--primary" : "ds-button"}>
-        {label}
+      <button ref={button} type="button" disabled={disabled} aria-busy={busy || undefined} data-ds-critical={critical ? "" : undefined} onClick={() => busy || setOpen(true)} aria-label={name} data-ds-content-label={name === undefined ? undefined : ""} className={opener?.small === true ? "ds-button ds-button--quiet ds-button--small" : primary ? "ds-button ds-button--primary" : "ds-button"}>
+        {saysBusy ? busyLabel : label}
       </button>
       {open && (
         <ConfirmDialog title={title} confirmLabel={confirmLabel} cancelLabel={cancelLabel} disabled={disabled} losing={losing} testId={testId} onClose={closed}>

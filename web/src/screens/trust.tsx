@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ApiError, getActionLog, listGrants, previewCommand, revokeGrant, type LogEntry, type LogRule, type ModePreview, type StandingGrant } from "../api/client.ts";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
+import { takesItsPlace } from "../app/focus-after.ts";
 import { stepWord, times, visible } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
@@ -166,9 +168,9 @@ function CommandCheck({ onSignedOut }: { onSignedOut: () => void }) {
               className="ds-field__control"
             />
           </div>
-          <button type="submit" aria-busy={checking} disabled={checking} className="ds-button">
-            {checking ? "Checking" : "Check"}
-          </button>
+          <BusyButton type="submit" busy={checking} busyLabel="Checking">
+            Check
+          </BusyButton>
         </div>
         <p id={`${id}-command-about`} className="ds-field__description">
           As Claude Code would ask to run it from the top folder of a task's copy.
@@ -215,9 +217,14 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
   const [offerAfter, setOfferAfter] = useState<number | null>(null);
   const [log, setLog] = useState<{ entries: LogEntry[]; older: boolean } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** The id of the grant being taken back: its button is busy and keeps the focus; the others wait. */
+  const [takingBack, setTakingBack] = useState<number | null>(null);
   /** Whether it is the older log entries that are being read. */
   const [readingOlder, setReadingOlder] = useState(false);
+  /** The grant just taken back and its place in the list: once the list is read without it, the focus goes to its neighbour. */
+  const [taken, setTaken] = useState<{ id: number; at: number } | null>(null);
+  const grantsHeading = useRef<HTMLHeadingElement>(null);
+  const grantList = useRef<HTMLUListElement>(null);
   /** Counts reads of the log's newest page, so an answer that arrives after a newer one was asked for is dropped. */
   const reads = useRef(0);
 
@@ -225,7 +232,7 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
     (what: string) =>
       (err: unknown): void => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setBusy(false);
+        setTakingBack(null);
         setProblem(err instanceof ApiError ? `${what} ${err.message}` : `${what} Botbench could not be reached.`);
       },
     [onSignedOut],
@@ -242,14 +249,23 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
 
   useEffect(load, [load]);
 
+  // The row of a grant taken back held the focus, on its Take back button. Once the list no longer has it, the focus
+  // goes to the Take back button of the row that took its place, or to the section's heading when none is left. A
+  // focus the owner moved elsewhere meanwhile is left where it is: only a focus the row took with it is placed.
+  useEffect(() => {
+    if (taken === null || grants === null || grants.some((grant) => grant.id === taken.id)) return;
+    setTaken(null);
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    const next = takesItsPlace(grants, taken.at);
+    (next === undefined ? grantsHeading.current : grantList.current?.querySelector<HTMLButtonElement>(`[data-grant="${next.id}"] button`))?.focus();
+  }, [grants, taken]);
+
   const loadOlder = (): void => {
     const oldest = log?.entries.at(-1);
     if (oldest === undefined) return;
     const read = reads.current;
-    setBusy(true);
     setReadingOlder(true);
     getActionLog(PAGE, oldest.id).then((page) => {
-      setBusy(false);
       setReadingOlder(false);
       // The newest page was read again meanwhile: this older page no longer follows what is shown.
       if (read !== reads.current) return;
@@ -261,13 +277,17 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   const takeBack = (grant: StandingGrant): void => {
-    setBusy(true);
+    setTakingBack(grant.id);
     setProblem(null);
+    const at = grants?.findIndex((g) => g.id === grant.id) ?? 0;
     revokeGrant(grant.id).then(() => {
-      setBusy(false);
+      setTakingBack(null);
+      setTaken({ id: grant.id, at });
       load();
     }, (err: unknown) => {
       failed("Always allow was not taken back.")(err);
+      // Taken back elsewhere meanwhile, the row goes all the same once the list is read again.
+      setTaken({ id: grant.id, at });
       load();
     });
   };
@@ -280,7 +300,9 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
           </Alert>
         )}
         <section aria-labelledby="trust-grants" className="ds-stack ds-gap-sm">
-          <h2 id="trust-grants">Always allowed</h2>
+          <h2 ref={grantsHeading} id="trust-grants" tabIndex={-1}>
+            Always allowed
+          </h2>
           {grants === null ? (
             problem === null && (
               <p role="status" className="ds-spinner">
@@ -290,9 +312,9 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
           ) : grants.length === 0 ? (
             <p data-testid="grants-none">{`Nothing is always allowed.${offerAfter === null ? "" : ` After you have allowed the same command ${times(offerAfter)}, its request offers Always allow.`}`}</p>
           ) : (
-            <ul data-testid="grant-list" className="ds-list">
+            <ul ref={grantList} data-testid="grant-list" className="ds-list">
               {grants.map((grant) => (
-                <li key={grant.id} className="ds-list__row">
+                <li key={grant.id} data-grant={grant.id} className="ds-list__row">
                   <div className="ds-list__content">
                     <span className="ds-list__body">
                       <code data-testid="grant-command" data-ds-content="" className="ds-list__primary">
@@ -314,7 +336,9 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
                       title="Stop always allowing this command?"
                       confirmLabel="Take it back"
                       cancelLabel="Keep it"
-                      disabled={busy}
+                      disabled={readingOlder || (takingBack !== null && takingBack !== grant.id)}
+                      busy={takingBack === grant.id}
+                      busyLabel="Taking back"
                       losing
                       testId="take-back-confirm"
                       onConfirm={() => takeBack(grant)}
@@ -366,9 +390,9 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
                 ))}
               </ul>
               {log.older && (
-                <button type="button" disabled={busy} aria-busy={readingOlder} onClick={loadOlder} className="ds-button ds-button--quiet ds-show-more__all">
+                <BusyButton variant="quiet" className="ds-show-more__all" busy={readingOlder} busyLabel="Reading older activity" disabled={takingBack !== null} onClick={loadOlder}>
                   Show older activity
-                </button>
+                </BusyButton>
               )}
             </div>
           )}

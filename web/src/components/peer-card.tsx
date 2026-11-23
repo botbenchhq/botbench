@@ -1,5 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
 import { answerPeerCard, ApiError, dismissPeerCard, dontSendPeerDraft, givePeerCard, seePeerCard, sendPeerDraft, type PeerCard } from "../api/client.ts";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { threadHref } from "../app/paired-words.ts";
 import { visible } from "./approval-card.tsx";
@@ -78,7 +79,9 @@ export function IncomingPeerCard({ card, primary, onSignedOut }: { card: PeerCar
   const name = card.peer.name;
   const reply = card.kind === "question" ? "Your answer" : "Your next question";
 
+  // One action at a time, and each has its own view (the three buttons, the answer, the task): its button is the busy one.
   const act = (what: string, run: () => Promise<unknown>, after?: (value: unknown) => void): void => {
+    if (busy) return;
     setBusy(true);
     setProblem(null);
     run().then(
@@ -122,9 +125,9 @@ export function IncomingPeerCard({ card, primary, onSignedOut }: { card: PeerCar
           <button type="button" className="ds-button" disabled={busy} onClick={() => setOpen("give")}>
             Give it to Claude Code
           </button>
-          <button type="button" className="ds-button" disabled={busy} onClick={() => act("It was not dismissed.", () => dismissPeerCard(card.pairingId, card.messageId))}>
+          <BusyButton busy={busy} busyLabel="Dismissing" onClick={() => act("It was not dismissed.", () => dismissPeerCard(card.pairingId, card.messageId))}>
             Dismiss
-          </button>
+          </BusyButton>
         </div>
       )}
       {open === "answer" && (
@@ -145,9 +148,9 @@ export function IncomingPeerCard({ card, primary, onSignedOut }: { card: PeerCar
             <textarea ref={input} id={field} value={text} maxLength={MAX_MESSAGE} readOnly={busy} aria-describedby={`${field}-about`} onChange={(e) => setText(e.target.value)} className="ds-field__control ds-textarea" />
           </div>
           <div className="ds-cluster ds-gap-sm">
-            <button type="submit" disabled={busy || text.trim() === ""} aria-busy={busy || undefined} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
-              {busy ? "Sending" : "Send"}
-            </button>
+            <BusyButton type="submit" variant={primary ? "primary" : "secondary"} busy={busy} busyLabel="Sending" disabled={text.trim() === ""}>
+              Send
+            </BusyButton>
             <button type="button" disabled={busy} onClick={() => setOpen(null)} className="ds-button">
               Cancel
             </button>
@@ -174,9 +177,9 @@ export function IncomingPeerCard({ card, primary, onSignedOut }: { card: PeerCar
             </p>
           </div>
           <div className="ds-cluster ds-gap-sm">
-            <button type="submit" disabled={busy || repo === null} aria-busy={busy || undefined} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
+            <BusyButton type="submit" variant={primary ? "primary" : "secondary"} busy={busy} busyLabel="Starting" disabled={repo === null}>
               Start the task
-            </button>
+            </BusyButton>
             <button type="button" disabled={busy} onClick={() => setOpen(null)} className="ds-button">
               Cancel
             </button>
@@ -206,6 +209,7 @@ export function DraftPeerCard({ card, primary, onSignedOut }: { card: PeerCard; 
   const field = useId();
 
   const act = (what: "send" | "dont"): void => {
+    if (busy !== null) return;
     setBusy(what);
     setProblem(null);
     (what === "send" ? sendPeerDraft(card.pairingId, card.messageId, edited === null || edited === card.text ? undefined : edited) : dontSendPeerDraft(card.pairingId, card.messageId)).then(
@@ -247,17 +251,17 @@ export function DraftPeerCard({ card, primary, onSignedOut }: { card: PeerCard; 
         </p>
       )}
       <div className="ds-approval__actions">
-        <button type="button" disabled={busy !== null || (edited !== null && edited.trim() === "")} aria-busy={busy === "send" || undefined} onClick={() => act("send")} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
-          {busy === "send" ? "Sending" : "Send"}
-        </button>
+        <BusyButton variant={primary ? "primary" : "secondary"} busy={busy === "send"} busyLabel="Sending" disabled={busy === "dont" || (edited !== null && edited.trim() === "")} onClick={() => act("send")}>
+          Send
+        </BusyButton>
         {edited === null && (
           <button type="button" disabled={busy !== null} onClick={() => setEdited(card.text)} className="ds-button">
             Edit
           </button>
         )}
-        <button type="button" disabled={busy !== null} aria-busy={busy === "dont" || undefined} onClick={() => act("dont")} className="ds-button">
+        <BusyButton busy={busy === "dont"} busyLabel="Not sending" disabled={busy === "send"} onClick={() => act("dont")}>
           {"Don't send"}
-        </button>
+        </BusyButton>
       </div>
       <a className="ds-link" href={threadHref(card.pairingId, card.contextId)}>
         Open the conversation

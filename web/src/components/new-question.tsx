@@ -1,4 +1,5 @@
 import { useContext, useId, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, sendPeerMessage, type SentPeerMessage } from "../api/client.ts";
 import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { MAX_MESSAGE } from "./peer-card.tsx";
@@ -15,7 +16,7 @@ export function NewQuestion({ pairingId, peer, parentId, onSent, onSignedOut }: 
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<{ tone: "status" | "alert"; text: string } | null>(null);
   const send = (): void => {
-    if (text.trim() === "") return;
+    if (busy || text.trim() === "") return;
     setBusy(true);
     setSaid(null);
     sendPeerMessage(pairingId, { kind: "question", text, ...(parentId === undefined ? {} : { parentId }) })
@@ -52,9 +53,9 @@ export function NewQuestion({ pairingId, peer, parentId, onSent, onSignedOut }: 
         </p>
       </div>
       <div className="ds-cluster">
-        <button type="submit" className="ds-button" aria-busy={busy || undefined} disabled={busy || text.trim() === ""}>
-          {busy ? "Sending" : "Send"}
-        </button>
+        <BusyButton type="submit" busy={busy} busyLabel="Sending" disabled={text.trim() === ""}>
+          Send
+        </BusyButton>
       </div>
       {said !== null && (
         <p role={said.tone} data-testid="new-question-said">

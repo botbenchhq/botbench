@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, getPushKey } from "../api/client.ts";
 import { notificationState, sendTest, STATE_WORDS, turnOff, turnOn, type NotificationState } from "./notifications.ts";
 
@@ -11,7 +12,8 @@ const words = (err: unknown): string => (err instanceof Error && err.message ? e
 export function NotificationSettings({ onSignedOut }: { onSignedOut: () => void }) {
   const [state, setState] = useState<NotificationState | null>(null);
   const [key, setKey] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // What is being sent: its button is busy and keeps the focus; the other waits.
+  const [busy, setBusy] = useState<"switch" | "test" | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [testNote, setTestNote] = useState<string | null>(null);
   const id = useId();
@@ -31,7 +33,7 @@ export function NotificationSettings({ onSignedOut }: { onSignedOut: () => void 
   }, []);
 
   const change = (on: boolean) => {
-    setBusy(true);
+    setBusy("switch");
     setNote(null);
     setTestNote(null);
     (on ? turnOn(key!) : turnOff())
@@ -39,11 +41,11 @@ export function NotificationSettings({ onSignedOut }: { onSignedOut: () => void 
         setState(next);
         if (on && next === "off") setNote("Notifications were not allowed. Choose Allow notifications to be asked again.");
       }, failed(on ? "Notifications could not be allowed." : "Notifications could not be stopped."))
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
 
   const test = () => {
-    setBusy(true);
+    setBusy("test");
     setTestNote(null);
     sendTest()
       .then(
@@ -54,7 +56,7 @@ export function NotificationSettings({ onSignedOut }: { onSignedOut: () => void 
           setTestNote(words(err));
         },
       )
-      .finally(() => setBusy(false));
+      .finally(() => setBusy(null));
   };
 
   const switchable = state === "on" || state === "off";
@@ -83,9 +85,9 @@ export function NotificationSettings({ onSignedOut }: { onSignedOut: () => void 
             </p>
           </div>
           <div className="ds-settings-row__control">
-            <button type="button" className="ds-button" aria-describedby={`${id}-switch-about`} disabled={busy || (state === "off" && key === null)} onClick={() => change(state === "off")}>
+            <BusyButton aria-describedby={`${id}-switch-about`} busy={busy === "switch"} busyLabel={state === "on" ? "Stopping" : "Allowing"} disabled={busy === "test" || (state === "off" && key === null)} onClick={() => change(state === "off")}>
               {state === "on" ? "Stop notifications" : "Allow notifications"}
-            </button>
+            </BusyButton>
           </div>
         </div>
       ) : null}
@@ -98,9 +100,9 @@ export function NotificationSettings({ onSignedOut }: { onSignedOut: () => void 
             </p>
           </div>
           <div className="ds-settings-row__control">
-            <button type="button" className="ds-button" aria-describedby={`${id}-test-about`} disabled={busy} onClick={test}>
+            <BusyButton aria-describedby={`${id}-test-about`} busy={busy === "test"} busyLabel="Sending" disabled={busy === "switch"} onClick={test}>
               Send a test notification
-            </button>
+            </BusyButton>
           </div>
         </div>
       ) : null}
