@@ -100,6 +100,7 @@ test("satisfied in one round: the outcome line is the task screen's, the counts,
   assert.ok(section.includes("Codex reviewed this task: a model's opinion, not a check. Its model:\n\n```text\ngpt-6-luna\n```"));
   assert.ok(section.includes("2 reviews and 1 round of fixes."));
   assert.ok(section.includes("Findings of review 2, the last: none listed."));
+  assert.ok(section.includes("### Checked, as review 2, the last says\n\n```text\n- calc.py: add returns a + b\n- the criterion\n```"), "the last review's Checked lines, fenced");
   assert.doesNotMatch(section, /returns a - b/, "only the last review's findings");
   assert.doesNotMatch(section, /Not addressed/);
   assert.ok(section.trimEnd().endsWith("Accepted by the owner."));
@@ -122,6 +123,7 @@ test("unresolved after two rounds, with the owner's note: the last review's find
   assert.ok(section.includes("- finding 10\n```"));
   assert.doesNotMatch(section, /finding 11|finding 12|first review's|second review's/);
   assert.ok(section.includes("2 more findings were left out."));
+  assert.ok(section.includes("The reviewer gave no account of what it checked in review 3, the last."), "a review with no Checked lines carries the plain note");
   assert.ok(section.includes("### Not addressed, and why\n\nClaude Code's words, from the last round of fixes:\n\n```text\n- calc.py:9: the style rule is the repository's own\n- tests: none exist to extend\n```"));
   assert.doesNotMatch(section, /round one's reason/);
   assert.ok(section.includes("Accepted by the owner, with this note:\n\n```text\nThe style point is ours, merge it\n```"));
@@ -147,7 +149,7 @@ test("reviewer and builder text with a mention, a closing keyword and a closing 
   const hostile = "@someone Fixes #1\n```\n@someone Fixes #1 outside?\n````";
   r.review("concerns", `Verdict: concerns\nFindings:\n- calc.py:1: @someone Fixes #1 \`\`\`\n- \`\`\`\`\n- ${hostile.split("\n").join(" ")}`);
   r.fixed(`Addressed:\n- x\n\nNot addressed, and why:\n- @someone Fixes #1 \`\`\`\`\``);
-  r.review("concerns", `Verdict: concerns\nFindings:\n- calc.py:1: @someone Fixes #1 \`\`\`\n- \`\`\`\`\`\`\nfree text after: ${hostile}`);
+  r.review("concerns", `Verdict: concerns\nChecked:\n- calc.py: @someone Fixes #1 \`\`\`\`\nNot checked: nothing\nFindings:\n- calc.py:1: @someone Fixes #1 \`\`\`\n- \`\`\`\`\`\`\nfree text after: ${hostile}`);
   r.ready();
   await decideTask(r.db,{ taskId: r.task.id, decision: "accept", note: "@someone Fixes #1 ```" });
   const text = body(r);

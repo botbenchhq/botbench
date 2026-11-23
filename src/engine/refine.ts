@@ -81,7 +81,7 @@ export function parseChecked(text: string): string[] {
   return [...(inline === "" || isNone(inline) ? [] : [inline]), ...bulletsAfter(lines, at)];
 }
 
-const ADDRESSED =/^addressed\s*:$/i;
+const ADDRESSED = /^addressed\s*:$/i;
 const NOT_ADDRESSED = /^not addressed,? and why\s*:$/i;
 
 /** The builder's reply read for its closing form: what it addressed and what it did not, with why. Null when the reply does not end in that form. */

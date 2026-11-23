@@ -6,7 +6,7 @@ import { now, transaction } from "../store/db.ts";
 import { isOwnBranch, notOwnWords, parseTaskBranch, workbenchName } from "../workbench.ts";
 import { branchCommit, BRANCH_PREFIX, pushTaskBranch, remoteAddress, remoteBranchCommit } from "../worktrees.ts";
 import { onTaskAccepted, taskDecision } from "./decision.ts";
-import { count, loopRecord, outcomeLine, parseFindings, parseRefineReply } from "./refine.ts";
+import { count, loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseFindings, parseRefineReply } from "./refine.ts";
 import { taskReviews } from "./review.ts";
 import { agentName } from "./roles.ts";
 import type { Delivery } from "./run.ts";
@@ -163,9 +163,10 @@ export const MAX_BODY_FINDINGS = 10;
 
 /**
  * The body's Review section: who reviewed, the loop's outcome in the task screen's own line (`outcomeLine`), how many
- * reviews and rounds of fixes there were, the last review's findings, what the builder did not address in the last
+ * reviews and rounds of fixes there were, what the last review says it checked (or the plain note that it gave no
+ * account), the last review's findings, what the builder did not address in the last
  * round of fixes and why, and who accepted. Botbench's own words are outside the fences; the model's name (the owner
- * may have typed it), the findings, the builder's reasons, the owner's note and the mode's reasons are inside.
+ * may have typed it), the checked lines, the findings, the builder's reasons, the owner's note and the mode's reasons are inside.
  */
 function reviewSection(db: DatabaseSync, taskId: number): string[] {
   const reviews = taskReviews(db, taskId);
@@ -184,6 +185,9 @@ function reviewSection(db: DatabaseSync, taskId: number): string[] {
   if (last.outcome === "reviewed") {
     const findings = parseFindings(last.text);
     const which = reviews.length === 1 ? "the review" : `review ${reviews.length}, the last`;
+    const checked = parseChecked(last.text);
+    if (checked.length === 0) parts.push(`${NO_ACCOUNT} in ${which}.`);
+    else parts.push(`### Checked, as ${which} says`, fenced(checked.map((c) => `- ${c}`).join("\n")));
     if (findings.length === 0) parts.push(`Findings of ${which}: none listed.`);
     else {
       parts.push(`### Findings of ${which}`, fenced(findings.slice(0, MAX_BODY_FINDINGS).map((f) => `- ${f}`).join("\n")));

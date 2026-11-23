@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { reviewOutcome as reviewOutcomeOf } from "../../src/engine/modes.ts";
-import { loopRecord, outcomeLine, reviewOutcome, taskRefinements } from "../../src/engine/refine.ts";
+import { loopRecord, outcomeLine, parseChecked, reviewOutcome, taskRefinements } from "../../src/engine/refine.ts";
 import { taskReviews } from "../../src/engine/review.ts";
 import { createRun, createRuns, getRun, storePlan, type Runs } from "../../src/engine/run.ts";
 import { taskEvidence, type StationCommand } from "../../src/engine/stations.ts";
@@ -292,6 +292,18 @@ test("a fully autonomous run whose loop ends with a looks-right verdict that nam
   assert.equal(task.status, "awaiting_decision", task.reason ?? "");
   assert.match(task.reason!, /It needs your review: The reviewer gave no account of what it checked\./);
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM decisions WHERE task_id = ?").get(taskId)!.n, 0);
+});
+
+test("a fully autonomous run whose loop ends with a looks-right review that names what it checked, its checks passing on the fixed work, is accepted by the mode", async (t) => {
+  const e = await line(t, ["done", "refine"], ["review", "checked-review"]);
+  const { taskId } = approved(e, 2, "full");
+  await e.tasks.idle();
+  const last = taskReviews(e.db, taskId).at(-1)!;
+  assert.equal(last.verdict, "looks_right");
+  assert.ok(parseChecked(last.text).length >= 2, `the recorded review says what it checked:\n${last.text}`);
+  assert.equal(reviewOutcomeOf(e.db, taskId), "satisfied");
+  assert.equal(getTask(e.db, taskId)!.status, "accepted", getTask(e.db, taskId)!.reason ?? "");
+  assert.equal(e.db.prepare("SELECT decided_by FROM decisions WHERE task_id = ?").get(taskId)!.decided_by, "mode");
 });
 
 test("the round of fixes runs on the run's build model, as its build did", async (t) => {
