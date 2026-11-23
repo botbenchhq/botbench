@@ -151,7 +151,8 @@ test("live: with the marker script pre-approved, the script chained with another
     assert.deepEqual([fs.existsSync(path.join(worktree, "marker.txt")), fs.existsSync(path.join(worktree, "other.txt"))], [false, false], "nothing ran while the request waits");
     await decline(live, approval.id);
   });
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.status, "failed", task.reason ?? "");
+  assert.ok(task.reason?.startsWith("Claude Code finished without changing any file"), task.reason ?? "");
   assert.deepEqual(asked.map((a) => [a.tool, a.command, a.cwd]), [["Bash", chained, "."]]);
   const worktree = worktreeOf(live, task);
   assert.deepEqual([fs.existsSync(path.join(worktree, "marker.txt")), fs.existsSync(path.join(worktree, "other.txt"))], [false, false], "declined: neither half ran");
@@ -171,7 +172,8 @@ test("live (AE6 in part): a command on the safety floor asks even though it is p
     asked.push(approval);
     await decline(live, approval.id);
   });
-  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.status, "failed", task.reason ?? "");
+  assert.ok(task.reason?.startsWith("Claude Code finished without changing any file"), task.reason ?? "");
   // The owner did pre-approve it, and it is listed as such; the floor still sent it to the owner.
   assert.deepEqual(task.preapproved, ["git push"]);
   assert.deepEqual(asked.map((a) => [a.tool, a.command, a.cwd]), [["Bash", "git push", "."]]);

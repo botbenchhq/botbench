@@ -169,7 +169,8 @@ test("live: the marker script is approved three times across two tasks; the four
   assert.equal((await post(live, `/api/grants/${grant!.id}/revoke`, {})).status, 200);
   assert.deepEqual(await grants(live), []);
   const fourth = await run(live, ONCE, () => ({ decision: "decline" }));
-  assert.equal(fourth.task.status, "awaiting_decision", fourth.task.reason ?? "");
+  assert.equal(fourth.task.status, "failed", fourth.task.reason ?? "");
+  assert.ok(fourth.task.reason?.startsWith("Claude Code finished without changing any file"), fourth.task.reason ?? "");
   assert.deepEqual(shown(fourth.cards), [["Bash", COMMAND, ".", null]]);
   assert.deepEqual((await actionLog(live, fourth.task.id)).map((e) => e.rule), ["asked_owner", "owner_declined"]);
   assert.equal(fs.existsSync(path.join(worktreeOf(live, fourth.task), "marker.txt")), false, "declined: it did not run");
