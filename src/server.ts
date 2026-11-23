@@ -75,6 +75,8 @@ export interface StartOptions {
   config: Config;
   home: string;
   signInDelayMs?: number;
+  /** How long a code from Add a device signs in; 5 minutes when left out. */
+  pairingLifetimeMs?: number;
   /** The built client; `web/dist` in this checkout when left out. */
   clientDir?: string;
   /** How often an idle event stream is sent a comment to keep it open. */
@@ -213,7 +215,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const ctx = { db, home, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
-  const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
+  const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs, pairingLifetimeMs: options.pairingLifetimeMs });
 
   const handler: http.RequestListener = (req, res) => {
     // The gate answers sign-in and every refusal itself; only a request with a session reaches the routes.

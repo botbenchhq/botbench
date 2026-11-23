@@ -9,12 +9,12 @@ import { SettingsScreen } from "../screens/settings.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
 import { TaskScreen } from "../screens/task.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
-import { TurnScreen } from "../screens/turn.tsx";
+import { OpenChat, TurnScreen } from "../screens/turn.tsx";
 import { UsageScreen } from "../screens/usage.tsx";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn"; start: Kind | null; proposal?: number } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "work" } | { screen: "settings"; section: "agents" | null } | { screen: "run"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn"; start: Kind | null; proposal?: number } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number; discard: boolean } | { screen: "work" } | { screen: "settings"; section: "agents" | null } | { screen: "run"; id: number } | { screen: "chat"; id: number } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -31,13 +31,21 @@ function parseRoute(hash: string): Route {
   // Work lists the runs and the tasks started on their own, where Runs and Tasks were.
   if (at === "/work") return { screen: "work" };
   if (at === "/runs" || at === "/tasks") return { screen: "redirect", to: "#/work" };
+  // The sign-in address from Add a device, opened on a device that is already signed in: the code is not needed.
+  if (at.startsWith("code=")) return { screen: "redirect", to: "#/" };
   if (at === "/trust") return { screen: "trust" };
   if (at === "/usage") return { screen: "usage" };
   if (at === "/settings") return { screen: "settings", section: null };
   // Settings at its Agents section: where the home screen sends the owner to connect an agent.
   if (at === "/settings/agents") return { screen: "settings", section: "agents" };
-  const one = /^\/(tasks|runs)\/([1-9]\d{0,14})$/.exec(at);
-  return one ? { screen: one[1] === "runs" ? "run" : "task", id: Number(one[2]) } : { screen: "none", what: at };
+  // A chat from the Work list: Chat, with that chat on it.
+  const chat = /^\/chats\/([1-9]\d{0,14})$/.exec(at);
+  if (chat) return { screen: "chat", id: Number(chat[1]) };
+  // A task's Discard chosen from its More menu on Work: the task's screen, with Discard's confirmation open.
+  const task = /^\/tasks\/([1-9]\d{0,14})(\?discard)?$/.exec(at);
+  if (task) return { screen: "task", id: Number(task[1]), discard: task[2] !== undefined };
+  const run = /^\/runs\/([1-9]\d{0,14})$/.exec(at);
+  return run ? { screen: "run", id: Number(run[1]) } : { screen: "none", what: at };
 }
 
 function useRoute(): Route {
@@ -65,7 +73,8 @@ function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
-  if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
+  if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
+  if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   return (
     <Frame current={null}>
       <Page>

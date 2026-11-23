@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ApiError, getBoard, getDriver, openEventStream, type BoardGroup, type BoardGroupName, type BoardItem, type DriverState } from "../api/client.ts";
+import { ApiError, cancelRun, getBoard, getDriver, openEventStream, setRowHidden, type BoardGroup, type BoardGroupName, type BoardItem, type DriverState } from "../api/client.ts";
 import { checksWords } from "../components/evidence.tsx";
 import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.tsx";
 import { runFacts, runLook, runWord } from "../components/run-status.ts";
 import { StatusBadge } from "../components/status.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
+import { agentName } from "../app/chat.ts";
+import { cancelStatement, moreName, rowMenu, type RowAction } from "../app/row-menu.ts";
 import { OtherWorkbenches } from "../components/other-workbenches.tsx";
+import { ConfirmDialog } from "../components/confirm.tsx";
+import { copyWords } from "../components/decision.tsx";
+import { MenuRow } from "../components/row-menu.tsx";
+import { RenameChatDialog } from "../components/rename-chat.tsx";
 import { Proposals } from "../components/proposals.tsx";
 
 type Groups = BoardGroup[];
@@ -16,30 +22,40 @@ const GROUP: Record<BoardGroupName, { label: string; none: string }> = {
   "needs-you": { label: "Needs you", none: "Nothing needs you." },
   running: { label: "Running", none: "Nothing is running." },
   finished: { label: "Finished", none: "Nothing has finished yet." },
+  chats: { label: "Chats", none: "No chats yet. A chat you send from Chat is listed here." },
 };
 
-/** One row: a planned run, or a task started on its own, in the design system's run-status row. */
-function Row({ item }: { item: BoardItem }) {
-  const [href, look, word, facts] =
-    item.kind === "run"
-      ? [`#/runs/${item.id}`, runLook(item), runWord(item), runFacts(item)]
-      : [`#/tasks/${item.id}`, statusLook(item), statusWord(item), `Task ${item.id}${item.checks === null ? "" : ` · ${checksWords(item.checks)}`} · ${folderName(item.repo)}`];
-  return (
-    <li className="ds-list__row">
-      <a href={href} className="ds-list__link">
-        <span className="ds-run-status">
-          <span data-ds-content="" className="ds-run-status__title">
-            {item.title}
-          </span>
-          <span className="ds-run-status__station">
-            <StatusBadge look={look}>{word}</StatusBadge>
-          </span>
-          <span className="ds-run-status__facts">{facts}</span>
+/** Where a row leads: a run's or a task's screen, or Chat with that chat on it. */
+const hrefOf = (item: BoardItem): string => (item.kind === "run" ? `#/runs/${item.id}` : item.kind === "task" ? `#/tasks/${item.id}` : `#/chats/${item.id}`);
+
+/** One row's content: a planned run, a task started on its own, or a chat, in the design system's run-status row. */
+function RowContent({ item }: { item: BoardItem }) {
+  if (item.kind === "chat") {
+    return (
+      <span className="ds-run-status">
+        <span data-ds-content="" className="ds-run-status__title">
+          {item.title}
         </span>
-      </a>
-    </li>
+        <span className="ds-run-status__facts">{`Chat · ${item.agents.map(agentName).join(", ")}`}</span>
+      </span>
+    );
+  }
+  const [look, word, facts] = item.kind === "run" ? [runLook(item), runWord(item), runFacts(item)] : [statusLook(item), statusWord(item), `Task ${item.id}${item.checks === null ? "" : ` · ${checksWords(item.checks)}`} · ${folderName(item.repo)}`];
+  return (
+    <span className="ds-run-status">
+      <span data-ds-content="" className="ds-run-status__title">
+        {item.title}
+      </span>
+      <span className="ds-run-status__station">
+        <StatusBadge look={look}>{word}</StatusBadge>
+      </span>
+      <span className="ds-run-status__facts">{facts}</span>
+    </span>
   );
 }
+
+/** What a menu item asked for that needs a dialog: Cancel's confirmation, or Rename's name. */
+type Asking = { kind: "cancel"; item: Extract<BoardItem, { kind: "run" }> } | { kind: "rename"; item: Extract<BoardItem, { kind: "chat" }> } | null;
 
 /**
  * What a board with no runs and no tasks says: how a first run goes, and its one action. When Claude Code cannot be
@@ -84,24 +100,32 @@ function FirstRun({ driver }: { driver: DriverState | "failed" | null }) {
 }
 
 /**
- * Work, the runs board (unit 16): runs and the tasks started on their own, by what needs you, what is running and what finished. One group is shown at a time, chosen with
- * the selector, which counts each group; at first it is the first group that holds anything. It is read again whenever
- * live updates come up and each time a run or a task reaches a state or an approval is asked for or answered.
+ * Work, the runs board (unit 16): runs and the tasks started on their own, by what needs you, what is running and what
+ * finished, and the chats. One group is shown at a time, chosen with the selector, which counts each group; at first it
+ * is the first group that holds anything. Each row ends in its More menu (components/row-menu.tsx). Rows the owner hid
+ * are left out and counted, and Show hidden lists them instead. The list is read again whenever live updates come up
+ * and each time a run or a task reaches a state or an approval is asked for or answered.
  */
 export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [groups, setGroups] = useState<Groups | null>(null);
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [viewingHidden, setViewingHidden] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [chosen, setChosen] = useState<BoardGroupName | null>(null);
   const [driver, setDriver] = useState<DriverState | "failed" | null>(null);
+  /** What the last menu action did, or why it did not. */
+  const [said, setSaid] = useState<{ tone: "status" | "error"; text: string } | null>(null);
+  const [asking, setAsking] = useState<Asking>(null);
   const reads = useRef(0);
   const name = useId();
 
   const load = useCallback((): void => {
     const read = ++reads.current;
-    getBoard().then(
+    getBoard(viewingHidden).then(
       (next) => {
         if (read !== reads.current) return;
-        setGroups(next);
+        setGroups(next.groups);
+        setHiddenCount(next.hidden);
         setFailed(null);
       },
       (err: unknown) => {
@@ -110,7 +134,7 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
         setFailed(err instanceof ApiError ? `The runs could not be read. ${err.message}` : "The runs could not be read: Botbench could not be reached.");
       },
     );
-  }, [onSignedOut]);
+  }, [onSignedOut, viewingHidden]);
 
   /** Counts the live updates that may change the issues to start, so that section reads them again. */
   const [watchRefresh, setWatchRefresh] = useState(0);
@@ -120,7 +144,38 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
     return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && (load(), again()), onSignedOut, onRun: () => (load(), again()), onTask: load, onApproval: load, onWatch: again });
   }, [load, onSignedOut]);
 
-  const empty = groups !== null && groups.every((group) => group.total === 0);
+  const failedWith = (what: string) => (err: unknown) => {
+    if (err instanceof ApiError && err.status === 401) return onSignedOut();
+    setSaid({ tone: "error", text: `${what} ${err instanceof ApiError ? err.message : "Botbench could not be reached."}` });
+  };
+  const act = (item: BoardItem, action: RowAction): void => {
+    setSaid(null);
+    if (action === "open") window.location.hash = hrefOf(item);
+    else if (action === "discard") window.location.hash = `#/tasks/${item.id}?discard`;
+    else if (action === "cancel" && item.kind === "run") setAsking({ kind: "cancel", item });
+    else if (action === "rename" && item.kind === "chat") setAsking({ kind: "rename", item });
+    else if (action === "copy-branch" && item.kind !== "chat" && item.branch !== null) {
+      const branch = item.branch;
+      void copyWords(branch, `The branch name was not copied: this browser refused. It is ${branch}.`).then((text) => setSaid({ tone: text === "Copied." ? "status" : "error", text: text === "Copied." ? `Copied the branch name ${branch}.` : text }));
+    } else if (action === "open-pull-request" && item.kind !== "chat" && item.pullRequest !== null) window.open(item.pullRequest.url, "_blank", "noopener,noreferrer");
+    else if (action === "hide" || action === "show") {
+      const hide = action === "hide";
+      setRowHidden(item.kind, item.id, hide).then(() => {
+        setSaid({ tone: "status", text: hide ? `Hidden from the list: ${item.kind === "chat" ? "the chat" : `${item.kind} ${item.id}`}. Nothing was deleted; Show hidden lists it.` : `Back in the list: ${item.kind === "chat" ? "the chat" : `${item.kind} ${item.id}`}.` });
+        load();
+      }, failedWith(hide ? "It was not hidden." : "It was not shown again."));
+    }
+  };
+  const cancelConfirmed = (runId: number) => cancelRun(runId).then(load, failedWith("The run was not cancelled."));
+
+  const switchView = (hidden: boolean): void => {
+    setSaid(null);
+    setGroups(null);
+    setChosen(null);
+    setViewingHidden(hidden);
+  };
+
+  const empty = groups !== null && groups.every((group) => group.total === 0) && hiddenCount === 0 && !viewingHidden;
   // Only an empty board needs to know whether a run could start; the check asks the CLI, so it is not made on every update.
   useEffect(() => {
     if (!empty || driver !== null) return;
@@ -168,22 +223,81 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 ))}
               </div>
             </fieldset>
+            {viewingHidden && <p data-testid="hidden-view">{`Rows hidden from the list (${hiddenCount}). Hiding deletes nothing: each row's More menu can show it in the list again.`}</p>}
             <div data-testid="board-group">
               {current === undefined || current.items.length === 0 ? (
-                <p>{GROUP[shown].none}</p>
+                <p>{viewingHidden ? `Nothing in ${GROUP[shown].label} is hidden.` : GROUP[shown].none}</p>
               ) : (
                 <div className="ds-stack ds-gap-sm">
-                  <ul aria-label={GROUP[shown].label} className="ds-list">
-                    {current.items.map((item) => (
-                      <Row key={`${item.kind} ${item.id}`} item={item} />
-                    ))}
-                  </ul>
+                  <ds-menu>
+                    <ul aria-label={GROUP[shown].label} className="ds-list">
+                      {current.items.map((item) => (
+                        <MenuRow key={`${item.kind} ${item.id}`} href={hrefOf(item)} name={moreName(item)} nameHasContent={item.kind === "chat"} items={rowMenu(item, viewingHidden)} onAction={(action) => act(item, action)}>
+                          <RowContent item={item} />
+                        </MenuRow>
+                      ))}
+                    </ul>
+                  </ds-menu>
                   {current.total > current.items.length && <p>{`These are the newest ${current.items.length} of ${current.total}.`}</p>}
                 </div>
               )}
             </div>
-            <OtherWorkbenches onSignedOut={onSignedOut} />
+            {said !== null &&
+              (said.tone === "error" ? (
+                <Alert tone="error" role="alert">
+                  {said.text}
+                </Alert>
+              ) : (
+                <p role="status" data-testid="row-said">
+                  {said.text}
+                </p>
+              ))}
+            {viewingHidden ? (
+              <div>
+                <button type="button" onClick={() => switchView(false)} className="ds-button ds-button--quiet ds-button--small">
+                  Back to the list
+                </button>
+              </div>
+            ) : (
+              hiddenCount > 0 && (
+                <div>
+                  <button type="button" onClick={() => switchView(true)} className="ds-button ds-button--quiet ds-button--small">
+                    {`Show hidden (${hiddenCount})`}
+                  </button>
+                </div>
+              )
+            )}
+            {!viewingHidden && <OtherWorkbenches onSignedOut={onSignedOut} />}
           </div>
+        )}
+        {asking?.kind === "cancel" && (
+          <ConfirmDialog
+            title="Cancel this run?"
+            confirmLabel="Cancel run"
+            cancelLabel="Keep run"
+            disabled={false}
+            losing
+            testId="cancel-run"
+            onClose={(confirmed) => {
+              setAsking(null);
+              if (confirmed) void cancelConfirmed(asking.item.id);
+            }}
+          >
+            <p>{cancelStatement(asking.item.status, asking.item.taskCount)}</p>
+          </ConfirmDialog>
+        )}
+        {asking?.kind === "rename" && (
+          <RenameChatDialog
+            chat={asking.item}
+            onSignedOut={onSignedOut}
+            onClose={(renamed) => {
+              setAsking(null);
+              if (renamed !== null) {
+                setSaid({ tone: "status", text: renamed.named ? "The chat was renamed." : "The chat is named by its first message again." });
+                load();
+              }
+            }}
+          />
         )}
       </Page>
     </Frame>

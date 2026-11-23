@@ -1665,6 +1665,58 @@ BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
 `,
   },
   {
+    // The lists' own state, per installation (src/api/board.ts, src/engine/chats.ts). `chat_members`: which chat each
+    // chat attempt belongs to, a chat being named by its first attempt (`chat_id`), recorded as each message is sent;
+    // append-only, like the chat itself. `chat_titles`: the name the owner gave a chat, one line, trimmed, at most 80
+    // characters; no row means the chat is called by its first message. `hidden_rows`: a run, a task or a chat the owner
+    // hid from the Work list. Renaming, hiding and showing change only these two tables: no run, task, chat, branch or
+    // copy is changed or deleted by them. This migration adds its own tables and changes no other.
+    name: "list_rows",
+    sql: `
+CREATE TABLE chat_members (
+  attempt_id INTEGER PRIMARY KEY REFERENCES chat_attempts (attempt_id),
+  chat_id INTEGER NOT NULL REFERENCES chat_attempts (attempt_id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX chat_members_chat ON chat_members (chat_id, attempt_id);
+CREATE TRIGGER chat_members_no_update BEFORE UPDATE ON chat_members
+BEGIN SELECT RAISE(ABORT, 'chat members are append-only'); END;
+CREATE TRIGGER chat_members_no_delete BEFORE DELETE ON chat_members
+BEGIN SELECT RAISE(ABORT, 'chat members are append-only'); END;
+
+CREATE TABLE chat_titles (
+  chat_id INTEGER PRIMARY KEY REFERENCES chat_attempts (attempt_id),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 80 AND title = trim(title) AND instr(title, char(10)) = 0),
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE hidden_rows (
+  kind TEXT NOT NULL CHECK (kind IN ('run', 'task', 'chat')),
+  item_id INTEGER NOT NULL CHECK (item_id >= 1),
+  hidden_at TEXT NOT NULL,
+  PRIMARY KEY (kind, item_id)
+);
+`,
+  },
+  {
+    // Adding a device with a one-time code (src/api/pairing.ts): at most one pairing, the one Settings made last. It holds
+    // the SHA-256 of the code, never the code. `used_at` is set by the one sign-in it opened, so a second try is told the
+    // code was used; `replaced_hash` is the code this one cancelled, so that code is told it was replaced. The row goes
+    // once it has expired, and with the session that made it: signing that device out deletes its pairing, so a code
+    // made by a session the owner has since ended (a stolen one, say) no longer signs in.
+    name: "device_pairing",
+    sql: `
+CREATE TABLE device_pairing (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  session_id INTEGER NOT NULL REFERENCES browser_sessions(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL CHECK (length(code_hash) = 64),
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  replaced_hash TEXT CHECK (replaced_hash IS NULL OR length(replaced_hash) = 64)
+);
+`,
+  },
+  {
     // The seen table of the issue watch (src/engine/watch.ts, ADR 0008): one row per issue a watched repository's poll
     // has seen, by its GitHub repository (host/owner/name, compared without case, as GitHub compares them) and number,
     // written the first time it is seen, so that an

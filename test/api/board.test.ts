@@ -104,13 +104,15 @@ test("the board needs a session", async (t) => {
   await res.arrayBuffer();
 });
 
-test("with no runs and no tasks the board is three empty groups in order: Needs you, Running, Finished", async (t) => {
+test("with no runs, tasks or chats the board is four empty groups in order: Needs you, Running, Finished, Chats, with nothing hidden", async (t) => {
   const api = await start(t);
   assert.deepEqual(await board(api), [
     { name: "needs-you", total: 0, items: [] },
     { name: "running", total: 0, items: [] },
     { name: "finished", total: 0, items: [] },
+    { name: "chats", total: 0, items: [] },
   ]);
+  assert.equal((await call(api, "GET", "/api/board")).body.hidden, 0);
 });
 
 test("runs and stand-alone tasks in each state appear in the right group, the ones that need the owner first, each group counted by its items", { skip: NO_SANDBOX }, async (t) => {
@@ -153,12 +155,13 @@ test("runs and stand-alone tasks in each state appear in the right group, the on
   const building = plannedRun(api, api.slow);
   assert.equal((await call(api, "POST", `/api/runs/${building.id}/plan/approve`, { planVersion: building.planVersion })).status, 200);
   const groups = await until(api, (g) => g[1]!.items.some((item) => item.kind === "run" && item.id === building.id && item.status === "running") && db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status = 'building'").get(building.id) !== undefined);
-  assert.deepEqual(groups.map((group) => group.name), ["needs-you", "running", "finished"], "the groups are in order, the one that needs the owner first");
+  assert.deepEqual(groups.map((group) => group.name), ["needs-you", "running", "finished", "chats"], "the groups are in order, the one that needs the owner first");
   const sorted = Object.fromEntries(Object.entries(shape(groups)).map(([name, items]) => [name, [...items].sort()]));
   assert.deepEqual(sorted, {
     "needs-you": [`run ${planReady.id}`, `run ${toDecide.id}`, `run ${partly.id}`, `task ${lone.id}`].sort(),
     running: [`run ${queued.id}`, `run ${building.id}`].sort(),
     finished: [`run ${cancelled.id}`, `run ${allFailed.id}`, `run ${decided.id}`, `task ${loneFailed}`].sort(),
+    chats: [],
   });
   // A task of a planned run is on the board as part of its run, never on its own.
   for (const task of [...decideTasks, ...partlyTasks, decidedTask]) assert.ok(!groups.some((group) => group.items.some((item) => item.kind === "task" && item.id === task.id)), `task ${task.id} is only in its run`);

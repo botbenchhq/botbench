@@ -244,11 +244,16 @@ test("a pull request of a marked run closes the attached issue, once, and nothin
   // Opened on another repository, the reference names the issue's own repository.
   const elsewhere = pullRequestText(r.db, task, { host: "github.com", owner: "jon-lange", name: "fork" }).body;
   assert.deepEqual(elsewhere.match(closing), [`Closes cli/cli#${ISSUE_NUMBER}`]);
-  // A run that read no issue closes nothing.
+  assert.ok(same.startsWith(`Closes #${ISSUE_NUMBER}\n\n`), "the first line");
+  assert.ok(same.includes("## Issue\n\nStarted from a GitHub issue, which the first line closes."));
+  // A run that read no issue closes only the one its owner's message names; the plan's words close nothing.
   const own = createRun(r.db, { repo: r.repo, prompt: "Closes #999", baseCommit: r.base, delivery: "pull_request" });
-  const ownTask = approvePlan(r.db, own.id, storePlan(r.db, own.id, [{ title: "Closes #999", criteria: ["c"] }]).planVersion).tasks[0]!;
+  const ownTask = approvePlan(r.db, own.id, storePlan(r.db, own.id, [{ title: "Closes #998 and fixes #12", criteria: ["c"] }]).planVersion).tasks[0]!;
   const unfenced = pullRequestText(r.db, ownTask, ISSUE_REPO).body.split(/```+text\n[\s\S]*?\n```+/).join("");
-  assert.equal(unfenced.match(closing), null);
+  assert.deepEqual(unfenced.match(closing), ["Closes #999"]);
+  const none = createRun(r.db, { repo: r.repo, prompt: "Fix the log", baseCommit: r.base, delivery: "pull_request" });
+  const noneTask = approvePlan(r.db, none.id, storePlan(r.db, none.id, [{ title: "Closes #999", criteria: ["c"] }]).planVersion).tasks[0]!;
+  assert.equal(pullRequestText(r.db, noneTask, ISSUE_REPO).body.split(/```+text\n[\s\S]*?\n```+/).join("").match(closing), null);
 });
 
 test("a round of fixes that starts a new builder session is given the issue again, as outside text, with the task", { skip: NO_SANDBOX }, async (t) => {
