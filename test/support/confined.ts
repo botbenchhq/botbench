@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { SANDBOX_EXEC } from "../../src/confinement.ts";
 
 // Whether this computer is a Mac at all: on Linux (the Linux job of .github/workflows/ci.yml) there is no sandbox-exec,
-// and the tests that start it are skipped with that reason; test/run-without-sandbox.ts holds how many there are.
+// and the tests that start it are skipped with that reason; test/run-counted.ts holds how many there are.
 // And whether this test run is itself inside a macOS sandbox, as it is when Botbench runs `npm test` as a repository's
 // check, and when `npm run test:confined` (test/run-confined.ts) runs it the same way. Inside one, macOS lets a process
 // neither start a sandbox of its own nor run `ps`, and the tests that need either are skipped with the reason below.

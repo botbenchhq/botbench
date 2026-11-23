@@ -47,7 +47,7 @@ test("on this Mac Botbench can confine commands; elsewhere, or without sandbox-e
   else assert.match(confinementProblem() ?? "", new RegExp(`only on macOS, and this computer runs ${process.platform}\\.`));
   const linux = confinementProblem({ platform: "linux" });
   assert.match(linux ?? "", /only on macOS/);
-  const missing = confinementProblem({ sandboxExec: "/usr/bin/no-such-sandbox-exec" });
+  const missing = confinementProblem({ platform: "darwin", sandboxExec: "/usr/bin/no-such-sandbox-exec" });
   assert.match(missing ?? "", /\/usr\/bin\/no-such-sandbox-exec/);
   assert.match(missing ?? "", /not found/);
 });

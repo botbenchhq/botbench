@@ -65,10 +65,10 @@ jobs:
           npm audit --audit-level=high
           npm audit --prefix web --audit-level=high
 
-      # npm test with the skips counted: test/run-without-sandbox.ts fails unless exactly the expected number of tests
-      # were skipped for being off a Mac.
-      - name: npm test without a sandbox (sandbox tests skipped and counted)
-        run: npm run test:without-sandbox -- --test-timeout=120000
+      # npm test with the skips counted: test/run-counted.ts fails unless exactly the number expected off a Mac were
+      # skipped (the tests that start sandbox-exec, and the few about macOS alone).
+      - name: npm test off a Mac (sandbox tests skipped and counted)
+        run: npm run test:counted -- --test-timeout=120000
 
   macos:
     name: Full tests and browser suite (macOS)
@@ -94,6 +94,13 @@ jobs:
           npm ci
           npm ci --prefix web
 
+      # A short temporary folder for the steps after this one. The default one (/var/folders/<28 characters>/T, and
+      # /private/var/... once resolved) makes the Unix sockets the tests open (a data folder's broker.sock, a socket in a
+      # task's copy) 105 bytes long, past macOS's 104, which Node 24 refuses with EINVAL. Botbench's own
+      # ~/.botbench/broker.sock is far shorter.
+      - name: A short temporary folder
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       # The dictation tests turn macOS's own speech into a phone's recording with ffmpeg (test/support/speech.ts).
       - name: ffmpeg, when the runner has none
         run: command -v ffmpeg || brew install ffmpeg
@@ -106,8 +113,10 @@ jobs:
       - name: Build the client
         run: npm run build --prefix web
 
-      - name: npm test (the whole suite)
-        run: npm test -- --test-timeout=120000
+      # Every test but the dictation ones, which need macOS's speech recognition, and the runner is a virtual machine
+      # without it (test/support/speech.ts); test/run-counted.ts fails unless exactly those were skipped.
+      - name: npm test (the whole suite but dictation, counted)
+        run: npm run test:counted -- --test-timeout=120000
 
       - name: Browser suite without LIVE and MILESTONE tests
         run: npm run e2e -- --trace off --grep-invert "LIVE|MILESTONE"

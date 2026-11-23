@@ -13,6 +13,14 @@ export const NO_SPEECH: string | null = (() => {
   } catch {
     return "ffmpeg is not installed (brew install ffmpeg); the dictation tests convert speech with it";
   }
+  // GitHub's macOS runners are virtual machines, and there macOS's speech recognition is not available: the helper's
+  // check answered "unsupported" on macOS 26 (the macOS job of .github/workflows/ci.yml, run 45148799886). A Mac that is
+  // not a virtual machine runs these tests, and a speech engine that fails there fails them.
+  try {
+    if (execFileSync("sysctl", ["-n", "kern.hv_vmm_present"], { encoding: "utf8" }).trim() === "1") return "this Mac is a virtual machine (kern.hv_vmm_present is 1), where macOS's speech recognition is not available";
+  } catch {
+    // No such sysctl on this macOS: not taken as a virtual machine, so the tests run.
+  }
   return null;
 })();
 

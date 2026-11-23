@@ -96,9 +96,12 @@ test("the seen rows are kept in the SQLite file: after it is closed and opened a
 
 /** The real gh with a configuration folder of its own that holds no sign-in, as on a Mac where nobody ran gh auth login. */
 function signedOutGh(dir: string): RunGh {
+  // As on the owner's Mac: inside a GitHub Actions job (GITHUB_ACTIONS=true, the Linux CI runner) gh words its
+  // sign-in message for a workflow instead ("set the GH_TOKEN environment variable"), which Botbench never runs in.
+  const { GITHUB_ACTIONS: _actions, ...env } = deliveryEnv();
   return (args, o) =>
     new Promise((resolve) => {
-      execFile("gh", [...args], { cwd: o.cwd, env: { ...deliveryEnv(), GH_CONFIG_DIR: dir }, timeout: 30_000 }, (err, stdout, stderr) => {
+      execFile("gh", [...args], { cwd: o.cwd, env: { ...env, GH_CONFIG_DIR: dir }, timeout: 30_000 }, (err, stdout, stderr) => {
         const code = err === null ? 0 : typeof err.code === "number" ? err.code : null;
         resolve({ started: !(err !== null && err.code === "ENOENT"), code, stdout, stderr });
       });
