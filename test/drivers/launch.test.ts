@@ -276,8 +276,6 @@ test("an attempt behind the permission gate asks Botbench about every tool call 
   assert.equal(ungated[ungated.indexOf("--permission-prompts") + 1], "none");
   assert.equal(ungated.includes("--permission-prompt-tool") || ungated.includes("--append-system-prompt-file"), false);
   assert.deepEqual(Object.keys(settingsOf(ungated)).sort(), ["permissions", "sandbox"]);
-  // The gate is only for an attempt in a worktree: without the edit rule it is not switched on.
-  assert.equal(claudeArgs({ confinement: CONFINED, gated: true }).includes("--permission-prompt-tool"), false);
   for (const flag of ["--settings", "--permission-prompt-tool", "--append-system-prompt-file"]) {
     assert.ok(checkVersion("2.1.0").missingFlags.includes(flag), flag);
     assert.equal(checkVersion("2.1.322").missingFlags.includes(flag), false);
@@ -558,4 +556,26 @@ test("no attempt can start work that outlives its turn: the subagent, scheduling
     if (kind === "planner") for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) assert.ok(denied.includes(tool), `${kind}: ${tool}`);
     else assert.ok(!denied.includes("Edit"), `${kind} may still edit`);
   }
+});
+
+test("a chat's Claude Code goes through the gate with the CLI's full set of tools: no settings file, its prompts answered, only the tools that outlive a turn denied", () => {
+  const args = claudeArgs({ confinement: CONFINED, model: "haiku", gated: true });
+  const valueOf = (flag: string): string | undefined => {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  };
+  // The chat's folder is one the agent may write in: a settings file it wrote there must not be loaded by the next turn.
+  assert.equal(valueOf("--setting-sources"), "");
+  assert.equal(valueOf("--permission-prompt-tool"), "stdio");
+  assert.equal(args.includes("--permission-prompts"), false, "prompts are answered, not dropped");
+  const settings = settingsOf(args);
+  assert.deepEqual(Object.keys(settings).sort(), ["hooks", "permissions", "sandbox"]);
+  assert.deepEqual(settings.permissions, { ask: ["Bash"], blockReadsOutsideWorkingDirectories: true });
+  // Nothing narrows the CLI's own tools: no list of tools, and the web tools are not denied.
+  assert.equal(args.includes("--tools"), false);
+  assert.equal(args.includes("--allowedTools"), false, "no edit rule: Botbench's gate decides about each edit");
+  const denied = valueOf("--disallowedTools")!.split(",");
+  for (const tool of ["WebFetch", "WebSearch", "Bash", "Read", "Write", "Edit"]) assert.equal(denied.includes(tool), false, tool);
+  // The chat's commands still reach no host.
+  assert.deepEqual((settings.sandbox as { network: { allowedDomains: string[] } }).network.allowedDomains, []);
 });

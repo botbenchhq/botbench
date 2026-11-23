@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import { createChat } from "../../src/api/chat.ts";
+import { createBroker } from "../../src/approvals/broker.ts";
 import { createTurns } from "../../src/api/turns.ts";
 import type { Config } from "../../src/config.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
@@ -81,7 +82,7 @@ test("the first run ends once a chat is stored, and stays ended after a restart"
   const api = await fresh(t);
   const { db } = api.server;
   const claude = new ClaudeCodeDriver();
-  const turns = createTurns({ db, home: api.home, driver: claude, onEvent: () => {} });
+  const turns = createTurns({ db, home: api.home, driver: claude, broker: createBroker({ db, home: api.home, onChange: () => {} }), onEvent: () => {} });
   const chat = createChat({ db, home: api.home, turns, claude, agents: { codex: chatReplayDriver("codex") }, onEvent: () => {} });
   const [reply] = await chat.send({ message: "Name one primary colour.", conversation: [], agents: [{ agent: "codex", model: "gpt-6-luna" }] });
   for (let i = 0; i < 500 && chat.turnRunning(reply!.attemptId); i++) await new Promise((resolve) => setTimeout(resolve, 10));

@@ -1,0 +1,210 @@
+{
+  "about": "Real Claude Code chat turns, recorded through Botbench's chat path, driver and permission broker by test/support/capture-chat-fetch.ts, with Web access in chat set to Ask. Each was asked to fetch https://example.com. The fetch asked for approval; in `allowed` the owner allowed it once and Claude Code read the page, in `declined` the owner denied it with a note.",
+  "cli": "2.1.322 (Claude Code)",
+  "model": "haiku",
+  "recordedAt": "2026-11-23T03:33:54.740Z",
+  "prompt": "Fetch https://example.com and tell me its title.",
+  "note": "Do not fetch it. Answer from what you already know.",
+  "log": [
+    {
+      "rule": "asked_owner",
+      "tool": "WebFetch",
+      "detail": null
+    },
+    {
+      "rule": "owner_allowed",
+      "tool": "WebFetch",
+      "detail": null
+    },
+    {
+      "rule": "asked_owner",
+      "tool": "WebFetch",
+      "detail": null
+    },
+    {
+      "rule": "owner_declined",
+      "tool": "WebFetch",
+      "detail": "Do not fetch it. Answer from what you already know."
+    }
+  ],
+  "sessions": {
+    "allowed": [
+      {
+        "type": "user_prompt",
+        "text": "Fetch https://example.com and tell me its title."
+      },
+      {
+        "type": "session_started",
+        "resumeCursor": "2203fc41-c013-4afb-8f13-c194e80354f2",
+        "model": "claude-haiku-5-5",
+        "keySource": "none"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_01M4hX8GqJPFev4uz7KEyzWs",
+        "name": "WebFetch",
+        "input": {
+          "url": "https://example.com"
+        }
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_01M4hX8GqJPFev4uz7KEyzWs",
+        "output": "<tool_use_error>InputValidationError: WebFetch failed due to the following issue:\nThe required parameter `prompt` is missing\n\nThis tool's schema was not sent to the API — it was not in the discovered-tool set derived from message history. Without the schema in your prompt, typed parameters (arrays, numbers, booleans) get emitted as strings and the client-side parser rejects them. Load the tool first: call ToolSearch with query \"select:WebFetch\", then retry this call. For reference, this tool's input schema is: {\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"url\":{\"description\":\"The URL to fetch content from\",\"type\":\"string\",\"format\":\"uri\"},\"prompt\":{\"description\":\"The prompt to run on the fetched content\",\"type\":\"string\"},\"offset\":{\"description\":\"Character position in the page text to start reading from. Use it to read on through a page too long for one call, with the value the previous result gave.\",\"type\":\"integer\",\"minimum\":0,\"maximum\":9007199254740991}},\"required\":[\"url\",\"prompt\"],\"additionalProperties\":false}</tool_use_error>",
+        "isError": true
+      },
+      {
+        "type": "rate_limit",
+        "limited": false,
+        "status": "allowed",
+        "resetsAt": "2026-11-26T23:00:00.000Z"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_018S7zfBKrZ46X8v75G6tMaj",
+        "name": "ToolSearch",
+        "input": {
+          "query": "select:WebFetch",
+          "max_results": 1
+        }
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_018S7zfBKrZ46X8v75G6tMaj",
+        "output": "{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}",
+        "isError": false
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_015E6yh1EeJNBVKabGyZwVce",
+        "name": "WebFetch",
+        "input": {
+          "url": "https://example.com",
+          "prompt": "What is the title of this page? Reply with the exact <title> text only."
+        }
+      },
+      {
+        "type": "permission_request",
+        "id": "79adfd5e-e630-421d-99c7-a4753b85f438",
+        "toolCallId": "toolu_015E6yh1EeJNBVKabGyZwVce",
+        "name": "WebFetch",
+        "input": {
+          "url": "https://example.com",
+          "prompt": "What is the title of this page? Reply with the exact <title> text only."
+        },
+        "reason": null
+      },
+      {
+        "type": "permission_resolved",
+        "id": "79adfd5e-e630-421d-99c7-a4753b85f438",
+        "toolCallId": "toolu_015E6yh1EeJNBVKabGyZwVce",
+        "decision": "allowed",
+        "note": null
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_015E6yh1EeJNBVKabGyZwVce",
+        "output": "Example Domain",
+        "isError": false
+      },
+      {
+        "type": "text",
+        "text": "The title of https://example.com is **\"Example Domain\"**."
+      },
+      {
+        "type": "usage",
+        "inputTokens": 8,
+        "outputTokens": 249,
+        "cacheReadTokens": 59802,
+        "cacheWriteTokens": 10715
+      },
+      {
+        "type": "turn_ended",
+        "reason": "completed",
+        "detail": null
+      }
+    ],
+    "declined": [
+      {
+        "type": "user_prompt",
+        "text": "Fetch https://example.com and tell me its title."
+      },
+      {
+        "type": "session_started",
+        "resumeCursor": "0b6915c2-f533-4c6b-a3bd-3547d77a9471",
+        "model": "claude-haiku-5-5",
+        "keySource": "none"
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_01W4JXutGtYKtr7NyWnkoKbt",
+        "name": "ToolSearch",
+        "input": {
+          "query": "select:WebFetch",
+          "max_results": 1
+        }
+      },
+      {
+        "type": "rate_limit",
+        "limited": false,
+        "status": "allowed",
+        "resetsAt": "2026-11-26T23:00:00.000Z"
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_01W4JXutGtYKtr7NyWnkoKbt",
+        "output": "{\"type\":\"tool_reference\",\"tool_name\":\"WebFetch\"}",
+        "isError": false
+      },
+      {
+        "type": "tool_call",
+        "id": "toolu_01X8veTxGqR7AJZGC5TVEKah",
+        "name": "WebFetch",
+        "input": {
+          "url": "https://example.com",
+          "prompt": "What is the title of this page? Reply with the exact title text only."
+        }
+      },
+      {
+        "type": "permission_request",
+        "id": "3922319c-0321-4383-bb56-fa80d16bf807",
+        "toolCallId": "toolu_01X8veTxGqR7AJZGC5TVEKah",
+        "name": "WebFetch",
+        "input": {
+          "url": "https://example.com",
+          "prompt": "What is the title of this page? Reply with the exact title text only."
+        },
+        "reason": null
+      },
+      {
+        "type": "permission_resolved",
+        "id": "3922319c-0321-4383-bb56-fa80d16bf807",
+        "toolCallId": "toolu_01X8veTxGqR7AJZGC5TVEKah",
+        "decision": "declined",
+        "note": "Do not fetch it. Answer from what you already know."
+      },
+      {
+        "type": "tool_result",
+        "id": "toolu_01X8veTxGqR7AJZGC5TVEKah",
+        "output": "The owner denied this request, so it was not run. Do not try to get the same thing done another way. The owner's note: Do not fetch it. Answer from what you already know.",
+        "isError": true
+      },
+      {
+        "type": "text",
+        "text": "I couldn't fetch the page. The fetch was denied, and I didn't try another route to it. From memory, the title of example.com is **\"Example Domain.\"** That's unverified against the live page, so it may have changed."
+      },
+      {
+        "type": "usage",
+        "inputTokens": 6,
+        "outputTokens": 365,
+        "cacheReadTokens": 45159,
+        "cacheWriteTokens": 7197
+      },
+      {
+        "type": "turn_ended",
+        "reason": "completed",
+        "detail": null
+      }
+    ]
+  }
+}

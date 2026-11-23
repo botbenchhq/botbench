@@ -191,7 +191,7 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   const refused = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator(".ds-tool-call");
   await expect(refused).toHaveAttribute("data-state", "declined");
   await expect(refused.locator(".ds-tool-call__title")).toHaveText(/^Denied\s*Did not run\s*sh make-marker\.sh$/);
-  await expect(refused.locator(".ds-tool-call__note")).toHaveText("You denied it. It was not run.");
+  await expect(refused.locator(".ds-tool-call__note")).toHaveText("You denied this.");
   expect(await refused.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el, "::before").maskImage), "a denied call's icon").toContain("ban");
   await expect(resolved).toContainText(`Your note: ${note}`);
   await expect(resolved.locator("b")).toHaveCount(0);

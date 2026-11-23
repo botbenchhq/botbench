@@ -85,6 +85,8 @@ export interface StartOptions {
   dictation?: Omit<DictationOptions, "home"> & { maxBytes?: number };
   /** What Botbench asks of GitHub (pull requests, and reading an issue). The owner's own gh unless a test replays output captured from it. */
   github?: GitHub;
+  /** Claude Code for chat turns only. The real one unless a test replays a chat turn captured from it. */
+  chatClaude?: Driver;
 }
 
 
@@ -130,9 +132,10 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db.close();
     throw err;
   }
-  const turns = createTurns({ db, home, driver, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
+  const chatClaude = options.chatClaude ?? driver;
+  const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
-  const chat = createChat({ db, home, turns, claude: driver, agents: reviewers, onEvent: stream.notify });
+  const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
   const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), reviewers, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);

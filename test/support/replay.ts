@@ -39,7 +39,14 @@ export function loadRecording(name: string): Recording {
 const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true };
 const now = (): string => new Date().toISOString();
 
-class ReplaySession implements DriverSession {
+/** What one replayed session plays: the recorded events, and where the hook reported each call it saw from (relative to the folder). */
+export interface Played {
+  resumeCursor: string;
+  events: DriverEvent[];
+  hookCwd: (toolCallId: string) => string | undefined;
+}
+
+export class ReplaySession implements DriverSession {
   readonly capabilities = CAPABILITIES;
   private readonly listeners = new Set<(event: DriverEvent) => void>();
   private answer: ((response: unknown) => void) | null = null;
@@ -48,18 +55,18 @@ class ReplaySession implements DriverSession {
 
   readonly attemptId: number;
   private readonly db: DatabaseSync;
-  private readonly recording: Recording;
+  private readonly played: Played;
   private readonly options: StartAttemptOptions;
 
-  constructor(attemptId: number, db: DatabaseSync, recording: Recording, options: StartAttemptOptions) {
+  constructor(attemptId: number, db: DatabaseSync, played: Played, options: StartAttemptOptions) {
     this.attemptId = attemptId;
     this.db = db;
-    this.recording = recording;
+    this.played = played;
     this.options = options;
   }
 
   resumeCursor(): string {
-    return this.recording.resumeCursor;
+    return this.played.resumeCursor;
   }
 
   onEvent(listener: (event: DriverEvent) => void): () => void {
@@ -87,7 +94,7 @@ class ReplaySession implements DriverSession {
   private async play(prompt: string): Promise<TurnEndReason> {
     // The prompt is the caller's own; what follows is what the real CLI did in the recorded turn.
     this.record({ type: "user_prompt", text: prompt });
-    const recorded = this.recording.attempts[1]!.filter((event) => event.type !== "user_prompt");
+    const recorded = this.played.events.filter((event) => event.type !== "user_prompt");
     let given: unknown = null;
     for (const event of recorded) {
       await new Promise((resolve) => setImmediate(resolve));
@@ -104,9 +111,9 @@ class ReplaySession implements DriverSession {
       this.record(event);
       if (event.type === "tool_call") {
         // The CLI's pre-tool hook asked the gate about the call, from the directory that was recorded for it.
-        const hook = this.recording.approvals.find((a) => a.toolCallId === event.id);
+        const hook = this.played.hookCwd(event.id);
         const gate = this.options.gate;
-        if (hook && gate) await askBroker(gate.socketPath, gate.secret, { tool_name: event.name, tool_input: event.input, tool_use_id: event.id, cwd: path.resolve(this.options.cwd, hook.cwd) });
+        if (hook !== undefined && gate) await askBroker(gate.socketPath, gate.secret, { tool_name: event.name, tool_input: event.input, tool_use_id: event.id, cwd: path.resolve(this.options.cwd, hook) });
       }
       if (event.type === "permission_request") {
         given = await new Promise((resolve) => (this.answer = resolve));
@@ -152,7 +159,8 @@ export function replayDriver(recording: Recording): Driver {
       const attemptId = Number(
         options.db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', ?, ?, 'running', NULL, ?, ?)").run(options.model ?? null, recording.resumeCursor, at, at).lastInsertRowid,
       );
-      return Promise.resolve(new ReplaySession(attemptId, options.db, recording, options));
+      const played: Played = { resumeCursor: recording.resumeCursor, events: recording.attempts[1]!, hookCwd: (id) => recording.approvals.find((a) => a.toolCallId === id)?.cwd };
+      return Promise.resolve(new ReplaySession(attemptId, options.db, played, options));
     },
   };
 }

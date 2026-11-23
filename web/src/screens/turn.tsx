@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
+import { ApprovalsContext } from "../app/approvals.tsx";
+import { ApprovalCard } from "../components/approval-card.tsx";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
 import { Frame, PageHeader, StreamBanner } from "../components/header.tsx";
@@ -296,6 +298,19 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   }, [refresh, onSignedOut]);
 
   const shown = useMemo(() => events.filter((e) => conversation.includes(e.attemptId)), [events, conversation]);
+  // What this chat's Claude Code waits for you to answer: each card stands in the transcript where it was asked.
+  const { pending } = useContext(ApprovalsContext);
+  // A chat's request from another device's chat (or one this device put away) is shown here too, after the transcript.
+  const waitingHere = useMemo(() => (pending ?? []).filter((approval) => approval.chat), [pending]);
+  const askedAt = useMemo(() => new Set(shown.flatMap((e) => (e.payload.type === "permission_request" ? [`${e.attemptId}:${e.payload.toolCallId}`] : []))), [shown]);
+  const cardOf = (approval: (typeof waitingHere)[number]) => <ApprovalCard key={approval.id} approval={approval} more={0} on="chat" onSignedOut={onSignedOut} />;
+  const asking = useCallback(
+    (attemptId: number, toolCallId: string) => {
+      const approval = waitingHere.find((a) => a.attemptId === attemptId && a.toolCallId === toolCallId);
+      return approval === undefined ? null : cardOf(approval);
+    },
+    [waitingHere, onSignedOut],
+  );
   const chat = useMemo(() => chatView(shown, infos, conversation), [shown, infos, conversation]);
   const endedOf = (a: { attemptId: number; turn: number }): boolean => events.some((e) => e.attemptId === a.attemptId && e.turn === a.turn && e.type === "turn_ended");
   const working = active.filter((a) => !endedOf(a));
@@ -518,6 +533,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     <Frame
       current="turn"
       fill
+      showing={waitingHere.map((approval) => approval.id)}
       banner={connected ? undefined : <StreamBanner />}
       actions={
         conversation.length > 0 && (
@@ -543,12 +559,17 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             {shown.length > 0 ? (
               <Transcript
                 events={chat.events}
-                working={running && working.length <= 1 ? (stopping ? `Stopping ${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)}.` : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? (askedCount === 1 && targets.ok ? targets.targets[0]!.agent : CLAUDE))} is working.`) : null}
+                asking={asking}
+                working={running && working.length <= 1 ? (waitingHere.some((a) => working.some((w) => w.attemptId === a.attemptId)) && !stopping ? `${agentName(CLAUDE)} is waiting for your answer.` : stopping ? `Stopping ${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)}.` : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? (askedCount === 1 && targets.ok ? targets.targets[0]!.agent : CLAUDE))} is working.`) : null}
                 modelName={nameOf}
                 modelDiffers={differs}
                 who={chat.who}
                 after={
                   <>
+                    {/* A request whose place in the transcript has not arrived yet still shows its card. */}
+                    {waitingHere.filter((a) => !askedAt.has(`${a.attemptId}:${a.toolCallId}`)).map((a) => (
+                      <li key={`asked-${a.id}`}>{cardOf(a)}</li>
+                    ))}
                     {working.length > 1 &&
                       working.map(({ attemptId }) => (
                         <li key={`working-${attemptId}`} className="ds-split">
@@ -575,8 +596,14 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 )}
               </div>
             ) : (
-              // An empty chat shows nothing above the box. Work in a repository says, in one muted line, where and what follows.
-              !chatting && (
+              // An empty chat shows nothing above the box but a chat's request still waiting. Work in a repository says, in one muted line, where and what follows.
+              waitingHere.length > 0 ? (
+                <ol className="ds-stack ds-gap-sm pt-md">
+                  {waitingHere.map((a) => (
+                    <li key={`asked-${a.id}`}>{cardOf(a)}</li>
+                  ))}
+                </ol>
+              ) : !chatting && (
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
                     ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`

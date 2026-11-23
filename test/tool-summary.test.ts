@@ -168,3 +168,12 @@ test("an approval card names the file of a file tool and the folder otherwise, i
   assert.equal(directoryWords("../x"), "../x (outside the task's copy)");
   for (const words of ["The top folder of the task's copy", "Not reported", "sub (inside the task's copy)"]) assert.deepEqual(bannedIn(words), []);
 });
+
+test("a chat's approval card says the chat's folder, not a task's copy, and names no folder for a web tool, whose address is its line", () => {
+  assert.deepEqual(placeWords({ tool: "Bash", cwd: ".", target: null, command: "ls", chat: true }), { term: "Folder", words: "The chat's own folder" });
+  assert.deepEqual(placeWords({ tool: "Bash", cwd: "sub", target: null, command: "ls", chat: true }), { term: "Folder", words: "sub (inside the chat's folder)" });
+  assert.deepEqual(placeWords({ tool: "Read", cwd: ".", target: "/etc/hosts", command: "/etc/hosts", chat: true }), { term: "File", words: "/etc/hosts (outside the chat's folder)" });
+  assert.equal(placeWords({ tool: "WebFetch", cwd: ".", target: null, command: JSON.stringify({ url: "https://example.com", prompt: "title" }), chat: true }), null);
+  assert.deepEqual(approvalWords("WebFetch", JSON.stringify({ url: "https://example.com", prompt: "title" })).line, "Wants to fetch https://example.com");
+  for (const words of ["The chat's own folder", "sub (inside the chat's folder)", "/etc/hosts (outside the chat's folder)"]) assert.deepEqual(bannedIn(words), []);
+});

@@ -246,20 +246,29 @@ function givenPath(tool: string, command: string): string | null {
 
 /**
  * Where a request is aimed, as its card says it: the file of a file tool, the folder a search looks in, and otherwise the
- * folder the agent stood in. `target` is the server's: relative to the task's copy when inside it, a full path when not.
+ * folder the agent stood in. `target` is the server's: relative to the task's copy (or a chat's folder) when inside it, a
+ * full path when not. In a chat a tool that is neither the shell nor a file tool (a web fetch or search) is aimed at what
+ * its own line names, not at a folder: null then.
  */
-export function placeWords(approval: { tool: string; cwd: string; target: string | null; command: string }): { term: "File" | "Folder"; words: string } {
+export function placeWords(approval: { tool: string; cwd: string; target: string | null; command: string; chat?: boolean }): { term: "File" | "Folder"; words: string } | null {
   const file = FILE_TOOLS.has(approval.tool);
+  const chat = approval.chat === true;
+  const where = chat ? "the chat's folder" : "the task's copy";
+  const folder = (cwd: string): string => (!chat ? directoryWords(cwd) : cwd === "." ? "The chat's own folder" : cwd === "" ? "Not reported" : cwd === ".." || cwd.startsWith("../") ? `${cwd} (outside the chat's folder)` : `${cwd} (inside the chat's folder)`);
+  if (chat && !file && approval.tool !== "Bash" && !SEARCH_TOOLS.has(approval.tool)) return null;
   const { target } = approval;
   if (target === null && file) {
     // The server could not place it (a relative path from a folder nobody reported): the path as the agent gave it.
     const given = givenPath(approval.tool, approval.command);
     return { term: "File", words: given === null ? "Not reported" : `${given} (the folder it starts from was not reported)` };
   }
-  if (target === null) return { term: "Folder", words: directoryWords(approval.cwd) };
-  if (target === ".") return { term: "Folder", words: directoryWords(".") };
-  return { term: file ? "File" : "Folder", words: target.startsWith("/") ? `${target} (outside the task's copy)` : `${target} (inside the task's copy)` };
+  if (target === null) return { term: "Folder", words: folder(approval.cwd) };
+  if (target === ".") return { term: "Folder", words: folder(".") };
+  return { term: file ? "File" : "Folder", words: target.startsWith("/") ? `${target} (outside ${where})` : `${target} (inside ${where})` };
 }
+
+/** The tools that search files: their card shows the folder they look in. */
+const SEARCH_TOOLS = new Set(["Glob", "Grep"]);
 
 /**
  * How an approval card says what is asked: for a tool that is not a shell command, a line in words from the tool's name

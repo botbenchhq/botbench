@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createChat } from "../src/api/chat.ts";
+import { createBroker } from "../src/approvals/broker.ts";
 import { createTurns } from "../src/api/turns.ts";
 import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { openStore } from "../src/store/db.ts";
@@ -58,7 +59,7 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
     // One chat stored, by the chat itself, while Botbench runs.
     const db = openStore(botbench.home);
     const claude = new ClaudeCodeDriver();
-    const turns = createTurns({ db, home: botbench.home, driver: claude, onEvent: () => {} });
+    const turns = createTurns({ db, home: botbench.home, driver: claude, broker: createBroker({ db, home: botbench.home, onChange: () => {} }), onEvent: () => {} });
     const chat = createChat({ db, home: botbench.home, turns, claude, agents: { codex: chatReplayDriver("codex") }, onEvent: () => {} });
     const [reply] = await chat.send({ message: "Name one primary colour.", conversation: [], agents: [{ agent: "codex", model: "gpt-6-luna" }] });
     await expect.poll(() => chat.turnRunning(reply!.attemptId)).toBe(false);

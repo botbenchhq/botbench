@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { agentState } from "../app/chat.ts";
-import { ApiError, getAgents, getDefaultMode, getWorkbench, openEventStream, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WorkbenchSetting } from "../api/client.ts";
+import { ApiError, getAgents, getChatWebAccess, getDefaultMode, getWorkbench, openEventStream, setChatWebAccess, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { DeviceSettings } from "../app/device-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
@@ -141,9 +141,76 @@ function WorkbenchName({ onSignedOut }: { onSignedOut: () => void }) {
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
  * now, and what Botbench lets it do: Claude Code plans and builds, Codex, Grok and Antigravity review. Runs: the mode New run starts with,
- * kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
+ * kept by Botbench. Chat: what Claude Code's web tools may do in a chat, kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
  * Notifications: this device's notifications, on or off (unit 23).
  */
+/** The choices for web access in chat, in the order they are offered, with what each does. */
+const WEB_ACCESS: { value: WebAccess; label: string }[] = [
+  { value: "allow", label: "Allow" },
+  { value: "ask", label: "Ask" },
+  { value: "off", label: "Off" },
+];
+
+/**
+ * Web access in chat: whether Claude Code may fetch pages and search the web in a chat without asking, asks you each
+ * time, or may not. Kept by Botbench and saved as it is chosen; a chat reads it at each request.
+ */
+function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
+  const id = useId();
+  const [value, setValue] = useState<WebAccess | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    getChatWebAccess().then(setValue, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setProblem(err instanceof ApiError ? `Web access in chat could not be read. ${err.message}` : "Web access in chat could not be read: Botbench could not be reached.");
+    });
+  }, [onSignedOut]);
+  const choose = (next: WebAccess): void => {
+    const before = value;
+    setValue(next);
+    setProblem(null);
+    setChatWebAccess(next).then(setValue, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setValue(before);
+      setProblem(err instanceof ApiError ? `Web access in chat was not saved. ${err.message}` : "Web access in chat was not saved: Botbench could not be reached.");
+    });
+  };
+  return (
+    <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-chat`}>
+      <h2 className="ds-settings-row__heading" id={`${id}-chat`}>
+        Chat
+      </h2>
+      <div className="ds-settings-row">
+        <div className="ds-settings-row__text">
+          <label className="ds-settings-row__label" htmlFor={`${id}-web`}>
+            Web access in chat
+          </label>
+          <p className="ds-settings-row__description" id={`${id}-web-about`}>
+            Whether Claude Code may fetch pages and search the web in a chat. The address or search goes to that site or search service; what comes back goes to Claude Code. Each one shows in the chat.
+          </p>
+        </div>
+        <div className="ds-settings-row__control">
+          <div className="ds-select">
+            <select data-testid="chat-web-access" className="ds-field__control ds-select__control" id={`${id}-web`} value={value ?? ""} disabled={value === null} aria-describedby={`${id}-web-about`} onChange={(e) => choose(e.currentTarget.value as WebAccess)}>
+              {value === null && <option value="">Checking</option>}
+              {WEB_ACCESS.map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+      {problem !== null && (
+        <Alert tone="error" role="alert">
+          {problem}
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 export function SettingsScreen({ section, onSignedOut }: { section: "agents" | null; onSignedOut: () => void }) {
   const [agents, setAgents] = useState<AgentState[] | null>(null);
   // Opened at its Agents section (#/settings/agents): that section is brought into view and its heading takes the focus,
@@ -253,6 +320,8 @@ export function SettingsScreen({ section, onSignedOut }: { section: "agents" | n
               </Alert>
             )}
           </div>
+
+          <ChatWebAccess onSignedOut={onSignedOut} />
 
           <WorkbenchName onSignedOut={onSignedOut} />
 
