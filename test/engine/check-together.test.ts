@@ -162,6 +162,11 @@ test("stale: once bob pushes a new commit, or the task's branch moves, the resul
   const both = (await shown()).checks[0]!.freshness;
   assert.deepEqual(both, { state: "stale", taskMoved: true, pullRequestMoved: true, taskNow: added, pullRequestNow: moved });
   assert.equal(ran.taskCommit, task.headCommit);
+
+  // Checking again runs on both heads as they are now, so its result is current.
+  const again = await (await b.together.start(task.id, 7)).finished;
+  assert.deepEqual([again.taskCommit, again.peerCommit], [added, moved]);
+  assert.deepEqual((await shown()).checks[0]!.freshness, { state: "current" });
 });
 
 // The gate, as a rule on what is stored and what the view shows. Literal views and results stand for what the store
@@ -188,6 +193,11 @@ test("the gate: with the setting on, each overlapping open pull request of anoth
   const unread = checkTogetherGate({ required: true, files, view: { state: "unavailable", repo: "/r", problem: "gh is not signed in", checkedAt: "" }, checks: [result({})], taskHead: A });
   assert.equal(unread.ok, false, "a view that cannot be read is a wait, never a pass");
   assert.deepEqual(freshness(result({}), { taskHead: A, view: view([]) }), { state: "closed" });
+  // What gh's limits may hide is a wait: a list as long as Botbench asks for, and a pull request listed with as many files as gh gives.
+  assert.equal(checkTogetherGate({ required: true, files, view: { ...v, mayBeMore: true } as PeersView, checks: [result({})], taskHead: A }).ok, false, "there may be more open pull requests");
+  const many = Array.from({ length: 100 }, (_, i) => `docs/f${i}.md`);
+  const capped = checkTogetherGate({ required: true, files, view: view([{ number: 9, files: many, head: C }]), checks: [], taskHead: A });
+  assert.deepEqual([capped.ok, (capped as { waitingOn: number[] }).waitingOn], [false, [9]], "a pull request listed with 100 files may change more");
 });
 
 test("fully autonomous with the setting on: a task whose transcript asks to skip the shared check waits for the owner; a passing check together lets its mode accept it", { skip: NO_SANDBOX }, async (t) => {

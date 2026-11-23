@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { realRepo } from "../approvals/grants.ts";
-import { MAX_ISSUE_NUMBER, redact } from "../github.ts";
+import { MAX_ISSUE_NUMBER, PR_FILE_LIMIT, PR_LIST_LIMIT, redact } from "../github.ts";
 import { now, transaction } from "../store/db.ts";
 import { isOwnBranch } from "../workbench.ts";
 import { branchCommit, combinedRoot, describeCommits, prepareCombinedCopy, remoteAddress, removeCombinedCopy } from "../worktrees.ts";
@@ -169,7 +169,8 @@ export function overlapping(view: PeersView, files: readonly string[]): { pr: Pe
   const ours = new Set(files);
   return view.pullRequests.flatMap((pr) => {
     const both = pr.files.filter((file) => ours.has(file));
-    return both.length === 0 ? [] : [{ pr, files: both }];
+    // gh lists at most PR_FILE_LIMIT files of a pull request: one listed with that many may change more, so it may overlap.
+    return both.length === 0 && !(files.length > 0 && pr.files.length >= PR_FILE_LIMIT) ? [] : [{ pr, files: both }];
   });
 }
 
@@ -185,6 +186,7 @@ const listWords = (items: readonly string[]): string => (items.length <= 1 ? (it
 export function checkTogetherGate(o: { required: boolean; files: readonly string[]; view: PeersView; checks: readonly CombinedCheck[]; taskHead: string | null }): { ok: true } | { ok: false; why: string; waitingOn: number[] } {
   if (!o.required) return { ok: true };
   if (o.view.state !== "ready") return { ok: false, why: `This repository requires checking together with other workbenches' pull requests, and Botbench could not read them: ${o.view.problem}`, waitingOn: [] };
+  if (o.view.mayBeMore === true) return { ok: false, why: `This repository requires checking together, and it has at least ${PR_LIST_LIMIT} open pull requests, more than Botbench reads at once, so it cannot tell which of them change the same files.`, waitingOn: [] };
   const blockers = overlapping(o.view, o.files).filter(({ pr }) => !o.checks.some((c) => c.pullRequest === pr.number && c.outcome === "passed" && freshness(c, { taskHead: o.taskHead, view: o.view }).state === "current"));
   if (blockers.length === 0) return { ok: true };
   const named = listWords(blockers.map(({ pr }) => prWords(pr)));
@@ -229,9 +231,8 @@ export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
   const busy = new Map<number, { pullRequest: number; finished: Promise<CombinedCheck> }>();
   const stop = new AbortController();
 
-  const run = async (task: Task, pr: PeerPullRequest, fetchUrl: string, commands: { setup: readonly StationCommand[]; checks: readonly StationCommand[] }): Promise<CombinedCheck> => {
+  const run = async (task: Task, taskCommit: string, pr: PeerPullRequest, fetchUrl: string, commands: { setup: readonly StationCommand[]; checks: readonly StationCommand[] }): Promise<CombinedCheck> => {
     const startedAt = now();
-    const taskCommit = task.headCommit!;
     const dir = path.join(combinedRoot(home), `task-${task.id}-${randomBytes(6).toString("hex")}`);
     const base = { taskId: task.id, pullRequest: pr.number, workbench: pr.workbench, peerBranch: pr.branch, taskCommit, startedAt };
     let stored: Stored;
@@ -300,9 +301,13 @@ export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
       const remote = o.remote(task.repo);
       const address = await remoteAddress(task.repo, remote).catch(() => null);
       if (address === null) throw new TaskError(409, `This repository has no remote named ${remote}, so the pull request cannot be fetched.`);
+      // The commit the task's branch is at now, which is what staleness compares with: a branch moved since Botbench's
+      // commit is checked as it is now, not as it was.
+      const taskCommit = await branchCommit(task.repo, task.branch).catch(() => null);
+      if (taskCommit === null) throw new TaskError(409, `The branch ${task.branch} is not in the repository any more, so there is nothing to check together.`);
       // Checked again now, after the reads: a second start meanwhile is refused, never run twice at once.
       if (busy.has(task.id)) throw new TaskError(409, `This task is already being checked together with pull request #${busy.get(task.id)!.pullRequest}. Wait for it to finish.`);
-      const finished = run(task, pr, address.fetch, commands).finally(() => busy.delete(task.id));
+      const finished = run(task, taskCommit, pr, address.fetch, commands).finally(() => busy.delete(task.id));
       busy.set(task.id, { pullRequest: pr.number, finished });
       return { finished };
     },

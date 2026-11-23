@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { realRepo } from "../approvals/grants.ts";
 import { repositoryDelivery, type Config } from "../config.ts";
-import { redact, repoName, type GitHub, type ListedPullRequest } from "../github.ts";
+import { PR_LIST_LIMIT, redact, repoName, type GitHub, type ListedPullRequest } from "../github.ts";
 import { ownWorkbenches, parseTaskBranch } from "../workbench.ts";
 import { remoteTaskBranches } from "../worktrees.ts";
 import { githubOfRepository } from "./intake.ts";
@@ -40,7 +40,16 @@ export interface PeerBranch {
   branch: string;
 }
 export type PeersView =
-  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; checkedAt: string }
+  | {
+      state: "ready";
+      repo: string;
+      repository: string;
+      pullRequests: PeerPullRequest[];
+      branches: PeerBranch[];
+      checkedAt: string;
+      /** True when gh gave as many open pull requests as Botbench asks for at once, so there may be more it did not list. */
+      mayBeMore?: boolean;
+    }
   | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
 
 /**
@@ -96,7 +105,7 @@ export function createPeers(o: { db: DatabaseSync; config: Config; github: GitHu
           throw new Error(`The branches on the remote ${remote} could not be read: ${words(err)}`);
         }),
       ]);
-      return { state: "ready", repo, repository: repoName(found.repo), ...otherWork(prs, branches, ownWorkbenches(o.db)), checkedAt };
+      return { state: "ready", repo, repository: repoName(found.repo), ...otherWork(prs, branches, ownWorkbenches(o.db)), checkedAt, mayBeMore: prs.length >= PR_LIST_LIMIT };
     } catch (err) {
       return unavailable(words(err));
     }
