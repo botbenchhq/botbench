@@ -294,7 +294,7 @@ export class AcpTurnSession implements DriverSession {
     } else {
       this.answerPermission(request, "reject");
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "declined", note: words(given.note) });
-      this.refused.push(words(given.note) === null ? "The owner declined it." : `The owner declined it, and wrote: ${words(given.note)}`);
+      this.refused.push(words(given.note) === null ? "The owner said no to it." : `The owner said no to it, and wrote: ${words(given.note)}`);
     }
     return Promise.resolve();
   }

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { SANDBOX_EXEC } from "../../src/confinement.ts";
-import { acpLines, acpReader, acpStartProblem, requestPaths, type AcpToolRequest } from "../../src/drivers/acp-turn.ts";
+import { acpLines, acpReader, acpStartProblem, continuation, MAX_CONTINUATIONS, requestPaths, type AcpToolRequest } from "../../src/drivers/acp-turn.ts";
 import {
   AGY_CHAT_TOOLS, AGY_CONFIG_DENIED, AGY_REVIEW_TOOLS, agyTerminal, AGY_WEB_TOOLS, agentDefinition, agentName, agyDecide, agyLoopback, agyProgram, agyTools, agyToolsProfile, plantedConfigProblem,
   ANTIGRAVITY_CAPABILITIES, antigravityProfile, antigravitySignIn, AntigravityDriver, parseAcpModels, prepareProfile, profileGeminiDir, profileSignedIn, resolvedPath, signInSandbox, SIGN_IN_FILES, writeAgent,
@@ -323,4 +323,10 @@ test("an attempt that would edit a task's copy, resume, or reach a host is refus
   await assert.rejects(driver.startAttempt({ ...base, readOnly: true, confinement: { dataDir: data, allowedHosts: ["example.com"] } }), /no network/);
   await assert.rejects(driver.startAttempt({ ...base, chatTools: { readable: [] }, readOnly: true }), /cannot also be read-only/);
   await assert.rejects(driver.startAttempt({ ...base, readOnly: true, model: "--dangerously-skip-permissions" }), /model name/);
+});
+
+test("after a refusal ended Antigravity's answer, Botbench's next message says what was refused and why, as data from Botbench, a few times at most", () => {
+  const text = continuation(["The owner said no to it, and wrote: not there."]);
+  assert.match(text, /^\[From Botbench\] What you last asked to do was not run\. The owner said no to it, and wrote: not there\. Do not try it another way\./);
+  assert.equal(MAX_CONTINUATIONS, 3);
 });
