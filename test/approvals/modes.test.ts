@@ -62,9 +62,16 @@ type Kind = keyof typeof KINDS;
 
 const ask = (request: GateRequest, grants: Grant[] = []): GateVerdict => gate(request, grants, { home: HOME });
 
-/** The rule the owner gave, written out once, independent of the gate's own code. */
-function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean): GateVerdict["verdict"] | "preapproved" | "mode" | "edit" | "saved output" | "worktree_read" {
-  const k: { shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; savedOutput?: boolean; granted?: boolean; read?: boolean } = KINDS[kind];
+type Outcome = GateVerdict["verdict"] | "preapproved" | "mode" | "edit" | "saved output" | "worktree_read";
+type Facts = { shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; savedOutput?: boolean; granted?: boolean; read?: boolean };
+
+/**
+ * The rule the owner gave ("approvals are for actions and changes, not for using a tool"), written out once,
+ * independent of the gate's own code. `marked`: the run read outside text, so no grant applies. `everyCommand`: the
+ * owner's setting "Ask before every command", which brings back a card for every command of a manual run.
+ */
+function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean, marked = false, everyCommand = false): Outcome {
+  const k: Facts = KINDS[kind];
   if (k.read) return "worktree_read";
   const nobody = mode === "full" ? "refuse" : "ask";
   // An edit inside the copy and a read of the session's own saved output run in every mode, confined or not.
@@ -73,8 +80,23 @@ function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boo
   if (!k.shell) return nobody;
   // The floor does not loosen: it asks in manual and semi-autonomous, and refuses in fully autonomous.
   if (k.floor) return nobody;
-  // A grant matches only a plain command with nothing beside it.
-  if (preapproved && (kind === "plain command" || k.granted === true)) return "preapproved";
+  // A grant matches only a plain command with nothing beside it, and never in a run that read outside text.
+  if (preapproved && !marked && (kind === "plain command" || k.granted === true)) return "preapproved";
+  // A confined command runs without asking in every mode, unless the owner asked to be asked before every command (manual only).
+  if (confined && !k.unconfinable && !(mode === "manual" && everyCommand)) return "mode";
+  return nobody;
+}
+
+/** The rule as it was before this change, kept only so the matrix can show what loosened. */
+function before(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean, marked: boolean): Outcome {
+  const k: Facts = KINDS[kind];
+  if (k.read) return "worktree_read";
+  const nobody = mode === "full" ? "refuse" : "ask";
+  if (k.inside) return "edit";
+  if (k.savedOutput) return "saved output";
+  if (!k.shell) return nobody;
+  if (k.floor) return nobody;
+  if (preapproved && !marked && (kind === "plain command" || k.granted === true)) return "preapproved";
   if (mode !== "manual" && confined && !k.unconfinable) return "mode";
   return nobody;
 }
@@ -86,29 +108,56 @@ const requestOf = (kind: Kind) => {
   return { tool: k.tool, input: k.input, worktree: WORKTREE, cwd: k.cwd ?? WORKTREE, sessionOutput: SESSION_OUTPUT };
 };
 
-test("the matrix: every mode, kind of request, confinement, floor and pre-approval gets the verdict the modes promise", () => {
+test("the matrix: every mode, kind of request, confinement, floor, pre-approval, outside text and \"Ask before every command\" gets the verdict the rule promises, and only confined commands off the floor loosened", (t) => {
   let cases = 0;
+  const loosened: string[] = [];
   for (const mode of RUN_MODES) {
     for (const kind of Object.keys(KINDS) as Kind[]) {
       for (const confined of [true, false]) {
         for (const preapproved of [true, false]) {
-          const grants = preapproved ? [grant(["npm", "test"]), grant(["git", "push", "origin", "main"]), grant(["ls"]), grant(["rm"])] : [];
-          const verdict = ask({ ...requestOf(kind), scope, mode, confined }, grants);
-          assert.equal(outcome(verdict), expected(mode, kind, confined, preapproved), `${mode}, ${kind}, ${confined ? "confined" : "not confined"}, ${preapproved ? "allowed in advance" : "not allowed in advance"}: ${JSON.stringify(verdict)}`);
-          cases++;
+          for (const marked of [false, true]) {
+            for (const everyCommand of [false, true]) {
+              const grants = preapproved ? [grant(["npm", "test"]), grant(["git", "push", "origin", "main"]), grant(["ls"]), grant(["rm"])] : [];
+              const verdict = ask({ ...requestOf(kind), scope, mode, confined, outsideText: marked, askEveryCommand: everyCommand }, grants);
+              const row = `${mode}, ${kind}, ${confined ? "confined" : "not confined"}, ${preapproved ? "allowed in advance" : "not allowed in advance"}, ${marked ? "outside text" : "no outside text"}, ${everyCommand ? "ask before every command" : "setting off"}`;
+              const now = expected(mode, kind, confined, preapproved, marked, everyCommand);
+              assert.equal(outcome(verdict), now, `${row}: ${JSON.stringify(verdict)}`);
+              // The differential: a row is as it was, or it is a confined command that the floor does not name and that now runs without asking.
+              const was = before(mode, kind, confined, preapproved, marked);
+              if (now !== was) {
+                const k: Facts = KINDS[kind];
+                assert.ok(now === "mode" && (was === "ask" || was === "refuse") && k.shell && !k.floor && confined && !k.unconfinable, `${row}: was ${was}, now ${now}`);
+                loosened.push(row);
+              }
+              cases++;
+            }
+          }
         }
       }
     }
   }
-  assert.equal(cases, 3 * Object.keys(KINDS).length * 4);
+  assert.equal(cases, 3 * Object.keys(KINDS).length * 16);
+  t.diagnostic(`${loosened.length} of ${cases} rows loosened, every one a confined command the floor does not name, now run without asking`);
+  // Only manual rows loosened (semi and full already ran these), and only with the setting off.
+  assert.ok(loosened.length > 0);
+  assert.ok(loosened.every((row) => row.startsWith("manual, ") && row.endsWith("setting off")), loosened.join("\n"));
+  // With "Ask before every command" on, the manual rows are exactly as before.
+  for (const kind of Object.keys(KINDS) as Kind[]) for (const confined of [true, false]) assert.equal(expected("manual", kind, confined, false, false, true), before("manual", kind, confined, false, false));
 });
 
-test("without a mode the gate is the manual one: confinement alone lets nothing run", () => {
+test("without a mode the gate is the manual one: a confined command runs, and with \"Ask before every command\" it asks, saying why", () => {
   for (const kind of ["plain command", "compound command"] as const) {
     const { tool, input } = KINDS[kind];
-    assert.equal(ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, confined: true }).verdict, "ask");
-    assert.equal(ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual", confined: true }).verdict, "ask");
+    assert.equal(outcome(ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, confined: true })), "mode");
+    assert.equal(outcome(ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual", confined: true })), "mode");
+    const asked = ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual", confined: true, askEveryCommand: true });
+    assert.equal(asked.verdict === "ask" ? asked.why : asked.verdict, "every_command");
+    // The setting is for manual runs and tasks; a semi-autonomous run is not changed by it.
+    assert.equal(outcome(ask({ tool, input, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "semi", confined: true, askEveryCommand: true })), "mode");
   }
+  // An unconfined command asks because it is unconfined, in every mode but full.
+  const loose = ask({ tool: "Bash", input: { command: "npm test" }, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual", confined: false });
+  assert.deepEqual(loose, { verdict: "ask", why: "not_confined" });
 });
 
 test("on the floor, semi-autonomous still names the rule it asks for, and fully autonomous refuses with a plain reason that names it", () => {
@@ -144,8 +193,22 @@ test("a fully autonomous run accepts only when every check passed, the review is
   assert.equal(no({ checks: null, review: "none", refusals: [] }), "It needs your review: No checks ran on it.");
   assert.equal(no({ checks: "passed", review: "unresolved", refusals: [] }), "It needs your review: The reviewer raised concerns.");
   assert.equal(no({ checks: "passed", review: "failed", refusals: [] }), "It needs your review: The review did not finish.");
-  assert.equal(no({ checks: "passed", review: "none", refusals: ["git push origin HEAD"] }), "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
-  assert.equal(no({ checks: "failed", review: "unresolved", refusals: ["sudo ls", "WebFetch https://x"] }), "It needs your review: A check failed. The reviewer raised concerns. Botbench refused 2 things an agent asked to do during this task (sudo ls; WebFetch https://x).");
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "git push origin HEAD", kind: "floor" }] }), "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
+  assert.equal(no({ checks: "passed", review: "none", refusals: [], protectedFiles: ["test/recordings/a.json"] }), "It needs your review: It changed 1 file under a protected path, which only you can accept: test/recordings/a.json.");
+  assert.equal(no({ checks: "passed", review: "satisfied", refusals: [], unexpectedFiles: ["src/server.ts", "notes.txt"] }), "It needs your review: It changed 2 files not expected from the plan: src/server.ts, notes.txt.");
+  assert.equal(autoAccept({ checks: "passed", review: "none", refusals: [], protectedFiles: [], unexpectedFiles: [] }).accept, true);
+  assert.equal(no({ checks: "failed", review: "unresolved", refusals: [{ command: "sudo ls", kind: "floor" }, { command: "WebFetch https://x", kind: "network" }] }), "It needs your review: A check failed. The reviewer raised concerns. Botbench refused 2 things an agent asked to do during this task (sudo ls; WebFetch https://x).");
+  // A refusal recorded before kinds were blocks, as every refusal did then.
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls", kind: null }] }), "It needs your review: Botbench refused something an agent asked to do during this task (ls).");
+  // Only the refusals that block are named; a harmless one beside them is not counted.
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "npm test", kind: "unconfined" }] }), "It needs your review: Botbench refused something an agent asked to do during this task (npm test).");
+});
+
+test("a fully autonomous run accepts when what was refused was harmless, and its reasons name what was refused", () => {
+  assert.deepEqual(autoAccept({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "TodoWrite {}", kind: "other" }] }), {
+    accept: true,
+    reasons: "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src; TodoWrite {}) was not on the always-ask list and would not have reached outside the task's copy.",
+  });
 });
 
 // A run that read outside text (a GitHub issue, engine/intake.ts): no pre-approved command and no standing permission

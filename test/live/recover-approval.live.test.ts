@@ -73,6 +73,12 @@ const approvals = async (c: Client, status?: string): Promise<ApprovalBody[]> =>
 const actionLog = async (c: Client, taskId: number): Promise<LogBody[]> => (await getJson<{ entries: LogBody[] }>(c, `/api/action-log?taskId=${taskId}`)).entries;
 const transcript = async (c: Client, attemptId: number): Promise<DriverEvent[]> => (await getJson<{ events: StoredEvent[] }>(c, `/api/attempts/${attemptId}/events`)).events.map((e) => e.payload);
 
+/** Turns on the owner's setting Ask before every command, as Settings saves it; it is kept in the store across a restart. */
+async function everyCommand(c: Client): Promise<void> {
+  const res = await fetch(`${c.base}/api/settings`, { method: "PUT", headers: { ...c.headers, ...JSON_TYPE }, body: JSON.stringify({ askEveryCommand: true }) });
+  assert.equal(res.status, 200, await res.text());
+}
+
 async function startTask(c: Client, repo: string): Promise<number> {
   const res = await fetch(`${c.base}/api/tasks`, { method: "POST", headers: { ...c.headers, ...JSON_TYPE }, body: JSON.stringify({ repo, prompt: PROMPT }) });
   const body = (await res.json()) as { taskId: number };
@@ -113,7 +119,7 @@ async function untilEnded(c: Client, taskId: number): Promise<TaskBody> {
 
 /** Every file below `dir`, by name, without git's own folder. */
 const filesBelow = (dir: string): string[] => fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => !name.split(path.sep).includes(".git"));
-const worktreeOf = (home: string, task: TaskBody): string => path.join(home, "worktrees", task.branch!.split("/")[1]!, `task-${task.id}`);
+const worktreeOf = (home: string, task: TaskBody): string => path.join(home, "worktrees", task.branch!.split("/").at(-2)!, `task-${task.id}`);
 const attemptRows = (home: string): { id: number; status: string; pgid: number | null; resume_cursor: string | null }[] => {
   const db = new DatabaseSync(path.join(home, DB_FILE), { readOnly: true });
   try {
@@ -138,6 +144,8 @@ test("live: Botbench is killed while a task waits on an approval and its Claude 
   });
 
   let client = await signIn(botbench.base, botbench.home);
+  // A command kept inside the task's copy runs without a card by default; the card to park needs Ask before every command.
+  await everyCommand(client);
   const taskId = await startTask(client, repo);
   const asked = await firstPending(client, taskId);
   assert.deepEqual([asked.command, asked.cwd, asked.parkedAt, asked.storedDecision], ["sh make-marker.sh", ".", null, null]);
@@ -212,6 +220,8 @@ test("live: Botbench is shut down while a task waits on an approval and started 
   const firstServer = await startServer({ config: CONFIG, home, signInDelayMs: 1 });
   t.after(() => firstServer.close());
   let client = await signIn(`http://127.0.0.1:${firstServer.port}`, home);
+  // A command kept inside the task's copy runs without a card by default; the card to park needs Ask before every command.
+  await everyCommand(client);
   const taskId = await startTask(client, repo);
   const asked = await firstPending(client, taskId);
   const firstAttempt = (await getTask(client, taskId)).attemptId!;

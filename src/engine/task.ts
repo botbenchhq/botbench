@@ -12,14 +12,15 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
-import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
-import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
+import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
+import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
 import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
+import { protectedWords, taskScope, type FileScope } from "./scope.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
@@ -128,6 +129,15 @@ function toTask(row: Record<string, unknown>): Task {
 export function getTask(db: DatabaseSync, id: number): Task | null {
   const row = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
   return row ? toTask(row) : null;
+}
+
+/**
+ * The files a task's work changed, from its start commit to the commit Botbench recorded as its head, read from the
+ * repository: what its changed files are marked from (engine/scope.ts). None when either commit is missing or cannot be read.
+ */
+async function changedPaths(task: Pick<Task, "repo" | "baseCommit">, headCommit: string | null): Promise<string[]> {
+  if (task.baseCommit === null || headCommit === null) return [];
+  return describeCommits({ repo: task.repo, baseCommit: task.baseCommit, headCommit }).then((files) => files.map((file) => file.path), () => []);
 }
 
 /** The newest tasks, newest first. */
@@ -378,6 +388,8 @@ export interface TasksOptions {
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
   repoHosts?: (repo: string) => readonly string[];
+  /** The paths of a repository that only the owner may accept a change to (engine/scope.ts). None when left out. */
+  protectedPaths?: (repo: string) => readonly string[];
   /** The agents that can review a run's tasks, by name. A run whose reviewer is not among them has its tasks' reviews fail, saying so. */
   reviewers?: Partial<Record<string, Driver>>;
   /** The time a reviewer gets; 10 minutes when left out. */
@@ -409,7 +421,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const issue = runIssue(db, task.runId);
     return issue === null ? task.prompt : `${task.prompt}\n\n${outsideTextPrompt(issue)}`;
   };
-  /** Whether the builder's driver runs every shell command confined: only then may a run's mode let one run without asking. */
+  /** Whether the builder's driver runs every shell command confined: only then may a command run without asking. */
   const confined = driver.capabilities.confinedCommands === true;
   /**
    * The builder's way to the permission gate, the same for its build, a round of fixes, a resume and an answer after a
@@ -572,19 +584,29 @@ export function createTasks(options: TasksOptions): Tasks {
     await handOver(task, "reviewing", {});
   };
 
-  /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now. */
-  const qualifies = (id: number, checks: Task["checks"]): ReturnType<typeof autoAccept> => autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id) });
+  /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now and the marks of its changed files. */
+  const qualifies = (id: number, checks: Task["checks"], scope: readonly FileScope[]): ReturnType<typeof autoAccept> =>
+    autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id), protectedFiles: scope.filter((f) => f.protected).map((f) => f.path), unexpectedFiles: scope.filter((f) => !f.expected && !f.protected).map((f) => f.path) });
 
   /**
-   * The task is ready for review. In a fully autonomous run it is accepted by the mode when it qualifies, as the owner's
-   * Accept would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it
-   * waits for the owner with a plain line saying why.
+   * The task is ready for review. First the files it changed, from its start commit to its head commit, are read and
+   * marked (engine/scope.ts). In any mode, one under a protected path makes it wait for the owner with a reason naming
+   * those files. In a fully autonomous run it is otherwise accepted by the mode when it qualifies, as the owner's Accept
+   * would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it waits for
+   * the owner with a plain line saying why.
    */
   const handOver = async (task: Task, from: "building" | "verifying" | "reviewing", change: TaskChange): Promise<void> => {
-    if (runModeOf(db, task.runId) !== "full") return void moveFrom(task.id, from, "awaiting_decision", change);
     // A build that changed nothing never gets here (`verify`); rounds of fixes that undid every change of the build would.
-    const empty = await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).then((work) => work.files.length === 0, () => true);
-    const verdict = empty ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null);
+    // Changes that cannot be read are taken as none, which a fully autonomous run never accepts.
+    // Read at the commit Botbench recorded, the one the mode's accept requires the branch to hold, never the copy's HEAD.
+    const head = change.headCommit ?? getTask(db, task.id)?.headCommit ?? null;
+    const files = await changedPaths(task, head);
+    const scope = taskScope(db, task, files, options.protectedPaths?.(task.repo) ?? []);
+    if (runModeOf(db, task.runId) !== "full") {
+      const guarded = scope.filter((f) => f.protected).map((f) => f.path);
+      return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? change : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` });
+    }
+    const verdict = files.length === 0 ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null, scope);
     const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why });
     if (ready === null || !verdict.accept) return;
     try {
@@ -622,7 +644,15 @@ export function createTasks(options: TasksOptions): Tasks {
   const refine = async (task: Task, reviewer: string, stopped?: AbortSignal): Promise<void> => {
     const at = moveFrom(task.id, "reviewing", "building", { note: `round ${refineRoundOf(db, task.id)} of fixes` });
     if (at === null) return;
-    const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
+    await startRound(at, reviewer, false, stopped);
+  };
+
+  /**
+   * Start the builder on the round of fixes of a task at `building`: in its earlier session when it has one, unless
+   * `fresh`. `note`, for the task's history, is stored with the new attempt once it has started.
+   */
+  const startRound = async (at: Task, reviewer: string, fresh: boolean, stopped?: AbortSignal, note?: string): Promise<void> => {
+    const attempt = fresh || at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
     const admission = admitBuilder(at);
     let session: DriverSession;
@@ -635,18 +665,36 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
       return refined(at, refineRoundOf(db, at.id)!, null, "error", "", `${agentName(driver.name)} could not be started for the round of fixes: ${words(err)}`, stopped);
     }
-    await drive(at, session, admission, await refinePromptFor(at, reviewer, cursor === null), null, stopped, cursor !== null);
+    await drive(at, session, admission, await refinePromptFor(at, reviewer, cursor === null), null, stopped, cursor !== null, note);
   };
 
   /**
    * A round of fixes ended, completed or failed: what the builder wrote is committed, the round is recorded, and the
    * loop goes on. Work that changed is checked again and reviewed again; a round that failed or changed nothing ends
-   * the loop, and the task is Ready for review.
+   * the loop, and the task is Ready for review. A round that took up the builder's earlier session (`resumed`) and
+   * completed with no reply and no change is not taken as an answer: Botbench notes it on the task and runs the round
+   * once more in a new session, with the whole task (detect, log and retry fresh, as issue #111 cites paperclip's claude-local adapter doing).
+   * That new session's round is recorded however it ends; one with no reply and no change is a round with no answer.
+   * The empty rounds of #111 had one cause, which the driver now handles (the CLI's own result for a background command
+   * left from the earlier session, `parseClaudeLine`); the retry stays for an empty resumed round of any other cause.
    */
-  const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal): Promise<void> => {
+  /** How the note on a round's one retry in a new session ends; the round's retry is found by it. */
+  const FRESH_RETRY = "the round runs once more in a new session";
+  const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal, resumed = false): Promise<void> => {
     const from = taskReviews(db, task.id).at(-1)?.headCommit ?? task.headCommit!;
     const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
     const headCommit = (await commit(task))?.headCommit ?? null;
+    const reviewer = reviewAssignment(db, task.id)?.agent ?? null;
+    // Once per round, read from the task's history: a retry that a restart takes up again in its own session is still the
+    // retry. Its note is stored with the new session's attempt, in one write (`drive`), so a restart before that session
+    // started finds no note and the round still gets its retry.
+    const retried = db.prepare("SELECT 1 FROM task_events WHERE task_id = ? AND detail LIKE ? LIMIT 1").get(task.id, `round ${round} of fixes: %${FRESH_RETRY}%`) !== undefined;
+    if (resumed && !retried && end === "completed" && reply.trim() === "" && headCommit === from && reviewer !== null && !closed && stopped?.aborted !== true && !cancelled(task)) {
+      const at = getTask(db, task.id);
+      // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+      const note = `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; ${FRESH_RETRY}`;
+      if (at?.status === "building") return startRound(at, reviewer, true, stopped, note);
+    }
     const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
     insertRefinement(db, { taskId: task.id, round, attemptId, outcome: end === "completed" ? "finished" : "failed", changed: headCommit !== null && headCommit !== from, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
     options.onTaskChange(getTask(db, task.id)!);
@@ -767,7 +815,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * the turn waits for the owner, the task is parked: its approvals stay pending and it stays at `building` for the
    * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | null, stopped?: AbortSignal, fromSession = resumed === "answer"): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -790,7 +838,7 @@ export function createTasks(options: TasksOptions): Tasks {
         void broker
           .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));
       }
       if (event.type === "permission_resolved") {
@@ -804,7 +852,8 @@ export function createTasks(options: TasksOptions): Tasks {
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner" } as const;
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    move(id, "building", { attemptId: session.attemptId, ...(resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
+    // `note`: the caller's own, stored in the same write as the attempt (a round's retry in a new session, `refined`).
+    move(id, "building", { attemptId: session.attemptId, ...(note !== undefined ? { note } : resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
     let end: TurnEndReason | "not sent";
     let silence: SilenceWatch | null = null;
     try {
@@ -859,7 +908,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
     else if (silent) await finish(task, "interrupted", silenceReason(agentName(driver.name), silenceLimit));
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
-    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped);
+    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped, fromSession);
     else if (end === "completed") await verify(task, reply, stopped);
     // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
     else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");
@@ -1003,8 +1052,10 @@ export function createTasks(options: TasksOptions): Tasks {
    * is in the store. Returns the tasks to take up, in the order they were started.
    */
   const recover = async (): Promise<number[]> => {
-    // A CLI process of the last run that is recorded on no task (Botbench stopped between starting it and writing it down) is stopped too.
-    for (const row of db.prepare("SELECT id FROM attempts WHERE pgid IS NOT NULL AND created_at < ? ORDER BY id").all(began)) {
+    // A CLI process of the last run that is recorded on no task (Botbench stopped between starting it and writing it down,
+    // or a chat or review turn) is stopped too, and every turn of the last run still running is recorded as stopped:
+    // one whose process number was not written yet, or was cleared before its end was, has nothing left to stop.
+    for (const row of db.prepare("SELECT id FROM attempts WHERE (pgid IS NOT NULL OR status = 'running') AND created_at < ? ORDER BY id").all(began)) {
       await stopSurvivor(db, Number(row.id)).catch(report(`Stopping the process left by attempt ${row.id}`));
     }
     const unstoppable = await closeLeftCommands(db, began);
@@ -1013,12 +1064,18 @@ export function createTasks(options: TasksOptions): Tasks {
     for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'reviewing' ORDER BY id").all()) {
       const id = Number(row.id);
       const assigned = reviewAssignment(db, id);
+      const at = getTask(db, id)!;
+      // Its changed files are marked as `handOver` marks them, so a protected file is named here too.
+      const files = await changedPaths(at, at.headCommit);
+      const scope = taskScope(db, at, files, options.protectedPaths?.(at.repo) ?? []);
+      const guarded = scope.filter((f) => f.protected).map((f) => f.path);
       transaction(db, () => {
-        storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `Botbench stopped before ${agentName(assigned?.agent ?? "the reviewer")} finished its review.`);
+        storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `${RESTART_STOPPED}. ${agentName(assigned?.agent ?? "The reviewer")} did not finish its review.`);
         // A fully autonomous run accepts no task whose review did not finish: it says why it waits for the owner.
         const left = getTask(db, id)!;
-        const verdict = runModeOf(db, left.runId) === "full" ? qualifies(id, left.checks) : null;
-        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish", ...(verdict === null || verdict.accept ? {} : { reason: verdict.why }) });
+        const verdict = runModeOf(db, left.runId) === "full" ? qualifies(id, left.checks, scope) : null;
+        const reason = verdict !== null ? (verdict.accept ? null : verdict.why) : guarded.length > 0 ? `It needs your review: ${protectedWords(guarded)}` : null;
+        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish", ...(reason === null ? {} : { reason }) });
       });
       options.onTaskChange(getTask(db, id)!);
     }

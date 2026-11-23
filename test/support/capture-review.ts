@@ -5,7 +5,7 @@ import readline from "node:readline";
 import { codexArgs } from "../../src/drivers/codex.ts";
 import { launch } from "../../src/drivers/launch.ts";
 import { reviewerPrompt } from "../../src/engine/roles.ts";
-import { commitsDiff, createWorktree, sharedGitDir } from "../../src/worktrees.ts";
+import { commitsDiff, createWorktree, describeCommits, sharedGitDir } from "../../src/worktrees.ts";
 import { initRepo, ownerCommit, tempDir, write } from "./repo.ts";
 
 /*
@@ -32,7 +32,7 @@ const worktree = await createWorktree({ repo, home, run: "run-1", task: "task-1"
 write(worktree.path, "calc.py", "def add(a, b):\n    return a - b\n");
 const head = ownerCommit(worktree.path, "Botbench task 1: add two numbers");
 const task = { title: "Add a function that adds two numbers", criteria: ["calc.py defines add(a, b), which returns the sum of a and b"] };
-const prompt = reviewerPrompt({ task, diff: await commitsDiff({ path: worktree.path, baseCommit: worktree.baseCommit, headCommit: head }), cut: null });
+const prompt = reviewerPrompt({ task, files: (await describeCommits({ repo: worktree.path, baseCommit: worktree.baseCommit, headCommit: head })).map((f) => f.path), diff: await commitsDiff({ path: worktree.path, baseCommit: worktree.baseCommit, headCommit: head }), cut: null });
 const args = codexArgs({ place: { cwd: worktree.path, dataDir: home, gitDir: await sharedGitDir(repo) }, model: MODEL });
 
 async function capture(extraEnv: Record<string, string>): Promise<{ lines: string[]; exitCode: number | null }> {

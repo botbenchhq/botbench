@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, chooseRepository, closeContext, expect, messageBox, MONO_FAMILY, openCanDo, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, chooseRepository, closeContext, expect, messageBox, MONO_FAMILY, openCanDo, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Pre-approved commands in the real client, at a phone's size: a real Botbench process whose settings list commands
@@ -35,6 +35,8 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   const foreign = watchRequests(page, botbench);
   const before = checkoutState(repo);
   await signIn(page, botbench);
+  // A command kept inside the task's copy runs without a card anyway; with Ask before every command on, only the list lets it.
+  await askBeforeEveryCommand(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const tray = page.getByTestId("approval-tray");
   await openComposer(page);
@@ -47,7 +49,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(page.getByTestId("preapproved-about")).toContainText("Dangerous commands always ask");
   expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   // Send is still the one primary action; the sheet has none of its own.
-  expect(await primaries(page)).toEqual(["Send"]);
+  await expect.poll(() => primaries(page)).toEqual(["Send"]);
   await checkDesign(page, "add context, the repository's pre-approved commands");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-new-task.png"), fullPage: true });
 
@@ -112,7 +114,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added/);
   const branch = (await page.getByTestId("branch").textContent())!;
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
-  await expect((await openCanDo(page)).getByTestId("can-do-text")).toContainText("The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first");
+  await expect((await openCanDo(page)).getByTestId("can-do-text")).toContainText("with Ask before every command on in Settings, every one waits for your answer first, unless you listed it above or chose Always allow for it (see Permissions)");
   await expect(page.getByRole("button", { name: /always|standing|every time|remember/i })).toHaveCount(0);
   await checkDesign(page, "task, finished on a pre-approved command");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-task.png"), fullPage: true });
@@ -127,7 +129,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("a repository with nothing configured offers an empty list that says every command asks, and the offer follows the repository named", async ({ page, botbench, repo }) => {
+test("a repository with nothing configured offers an empty list that says confined commands run anyway, and the offer follows the repository named", async ({ page, botbench, repo }) => {
   // A second repository, which the settings do not name.
   const other = path.join(botbench.home, "..", "other-repo");
   initRepo(other);
@@ -137,7 +139,7 @@ test("a repository with nothing configured offers an empty list that says every 
   const sheet = await openRow(page, "Allowed commands");
   await expect(sheet.getByRole("region", { name: HEADING })).toBeVisible();
   await expect(page.getByTestId("preapproved-list")).toHaveCount(0);
-  await expect(page.getByTestId("preapproved-none")).toHaveText("No command is listed, so every shell command asks.");
+  await expect(page.getByTestId("preapproved-none")).toHaveText("No command is listed. Commands kept inside the task's copy still run without asking, unless Ask before every command is on in Settings.");
   await checkDesign(page, "add context, nothing pre-approved");
 
   // Changing the repository changes the offer: the configured one's list replaces the empty one, and the other way round.

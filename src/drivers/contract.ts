@@ -21,8 +21,8 @@ export interface DriverCapabilities {
   edits: boolean;
   /**
    * Every shell command the CLI runs for an attempt runs inside the attempt's `confinement`, and the CLI refuses to start
-   * rather than run one outside it. Only then may a semi-autonomous or fully autonomous run let a command run without
-   * asking (engine/modes.ts). Left out, they are not known to.
+   * rather than run one outside it. Only then may a command run without asking
+   * (approvals/gate.ts). Left out, they are not known to.
    */
   confinedCommands?: boolean;
   /** False when the CLI is started with no tools at all and sees only what it is sent. Left out: it has tools. */

@@ -38,7 +38,12 @@ async function start(t: TestContext): Promise<Live> {
   const res = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
   assert.equal(res.status, 200);
   await res.arrayBuffer();
-  return { server, base, home, repo, headers: { cookie: res.headers.getSetCookie()[0]!.split(";")[0]! } };
+  const headers = { cookie: res.headers.getSetCookie()[0]!.split(";")[0]! };
+  // A command kept inside the task's copy runs without a card by default; these tests are about the card, so the owner's
+  // setting Ask before every command is on.
+  const every = await fetch(`${base}/api/settings`, { method: "PUT", headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ askEveryCommand: true }) });
+  assert.equal(every.status, 200, await every.text());
+  return { server, base, home, repo, headers };
 }
 
 interface TaskBody {
@@ -74,7 +79,7 @@ const getTask = (live: Live, id: number): Promise<TaskBody> => getJson(live, `/a
 const approvals = async (live: Live, status?: string): Promise<ApprovalBody[]> => (await getJson<{ approvals: ApprovalBody[] }>(live, `/api/approvals${status ? `?status=${status}` : ""}`)).approvals;
 const actionLog = async (live: Live, taskId: number): Promise<LogBody[]> => (await getJson<{ entries: LogBody[] }>(live, `/api/action-log?taskId=${taskId}`)).entries;
 const transcript = async (live: Live, attemptId: number): Promise<DriverEvent[]> => (await getJson<{ events: StoredEvent[] }>(live, `/api/attempts/${attemptId}/events`)).events.map((e) => e.payload);
-const worktreeOf = (live: Live, task: TaskBody): string => path.join(live.home, "worktrees", task.branch!.split("/")[1]!, `task-${task.id}`);
+const worktreeOf = (live: Live, task: TaskBody): string => path.join(live.home, "worktrees", task.branch!.split("/").at(-2)!, `task-${task.id}`);
 const ended = (task: TaskBody): boolean => task.status !== "queued" && task.status !== "building";
 
 async function startTask(live: Live, prompt: string, preapproved: string[]): Promise<number> {

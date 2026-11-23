@@ -1,17 +1,27 @@
 import type { DatabaseSync } from "node:sqlite";
+import { asRefusalKind, refusalBlocksAccept, type RefusalKind } from "../approvals/refusals.ts";
 import { now } from "../store/db.ts";
 import { loopRecord, NO_ACCOUNT, reviewOutcome as loopOutcome } from "./refine.ts";
 import { reviewAssignment } from "./review.ts";
+import { protectedWords, unexpectedWords } from "./scope.ts";
 
 /*
- * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it).
- *   manual  the owner approves the plan, every command that is not allowed in advance asks, the owner decides
- *   semi    the owner approves the plan and decides; a command that runs inside the confinement runs without asking
- *   full    the plan is approved by the mode; confined commands run without asking; whatever would ask the owner is
- *           refused instead (the safety floor among it); a task is accepted by the mode when every check passed and
- *           the review is satisfied or there is none, and handed back to the owner, saying why, when not
- * A mode never loosens the safety floor, and broker failure denies in every mode. Nothing is ever merged; an accepted
- * task's branch is pushed only by a run that chose to open a pull request (decision.ts, `acceptedWords`).
+ * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it). A mode is about the
+ * owner's decisions, not about tools: in every mode using a tool never asks (a read, an edit inside the task's copy, a
+ * confined command the safety floor does not name, the CLI's own bookkeeping, the web as the owner's setting Web
+ * access allows), and an action or change that matters outside the copy asks (approvals/gate.ts).
+ *   manual  the owner approves the plan and decides on each result
+ *   semi    building starts without plan approval; the owner decides on each result. A run that read outside text (a
+ *           GitHub issue) still waits for the owner's plan approval: a stranger's text does not start a build alone
+ *   full    no plan approval; whatever would ask the owner is refused instead (the safety floor among it); a task is
+ *           accepted by the mode when every check passed, the review is satisfied or there is none, nothing refused
+ *           blocks it (approvals/refusals.ts; a web tool refused because Web access is Off blocks it), and every changed
+ *           file is expected from the plan and none is under a protected path; handed back to the owner, saying why, when not
+ * In every mode a task that changed a file under a protected path waits for the owner with a reason naming the files.
+ * The owner's setting "Ask before every command" brings back a card for every command of a manual run and of a task
+ * started on its own (which is always manual). A mode never loosens the safety floor, and broker failure denies in
+ * every mode. Nothing is ever merged; an accepted task's branch is pushed only by a run that chose to open a pull
+ * request (decision.ts, `acceptedWords`).
  */
 
 export type RunMode = "manual" | "semi" | "full";
@@ -38,6 +48,18 @@ export function setDefaultMode(db: DatabaseSync, mode: RunMode): void {
   db.prepare("INSERT INTO owner_settings (name, value, updated_at) VALUES ('default_mode', ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(mode, now());
 }
 
+/** Whether the owner chose "Ask before every command" in Settings; off when never chosen. Read from the store for each request. */
+export function askEveryCommand(db: DatabaseSync): boolean {
+  return db.prepare("SELECT value FROM owner_settings WHERE name = 'ask_every_command'").get()?.value === "on";
+}
+
+export function setAskEveryCommand(db: DatabaseSync, on: boolean): void {
+  db.prepare("INSERT INTO owner_settings (name, value, updated_at) VALUES ('ask_every_command', ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(on ? "on" : "off", now());
+}
+
+/** Whether a run's plan is approved without the owner as soon as it is stored: fully autonomous, and semi-autonomous unless the run read outside text. */
+export const planApprovedByMode = (run: { mode: RunMode; outsideText: boolean }): boolean => run.mode === "full" || (run.mode === "semi" && !run.outsideText);
+
 /**
  * Where a task's review stands: "none" (its run has no reviewer), "satisfied", "unaccounted" (it looks right, but the
  * review does not say what it checked), "unresolved" (concerns, or no verdict in
@@ -55,9 +77,21 @@ export function reviewOutcome(db: DatabaseSync, taskId: number): ReviewOutcome {
   return record.reviews.length === 0 ? "failed" : loopOutcome(record);
 }
 
-/** What a fully autonomous run refused during a task: each refused request's command, oldest first. */
-export function modeRefusals(db: DatabaseSync, taskId: number): string[] {
-  return db.prepare("SELECT tool, command FROM action_log WHERE task_id = ? AND rule = 'mode_refused' ORDER BY id").all(taskId).map((row) => (row.tool === "Bash" ? String(row.command) : `${String(row.tool)} ${String(row.command)}`.trim()));
+/** One request a fully autonomous run refused: its command as a line, and its kind (null for one recorded before kinds were). */
+export interface ModeRefusal {
+  command: string;
+  kind: RefusalKind | null;
+}
+
+/** What was refused without asking during a task, oldest first: by a fully autonomous run, or because Web access is Off (a refusal of the network). */
+export function modeRefusals(db: DatabaseSync, taskId: number): ModeRefusal[] {
+  return db
+    .prepare("SELECT rule, tool, command, refusal FROM action_log WHERE task_id = ? AND rule IN ('mode_refused', 'web_refused') ORDER BY id")
+    .all(taskId)
+    .map((row) => ({
+      command: row.tool === "Bash" ? String(row.command) : `${String(row.tool)} ${String(row.command)}`.trim(),
+      kind: row.rule === "web_refused" ? "network" : asRefusalKind(row.refusal),
+    }));
 }
 
 export interface AcceptFacts {
@@ -65,16 +99,20 @@ export interface AcceptFacts {
   checks: "passed" | "failed" | "none" | null;
   review: ReviewOutcome;
   /** The requests the mode refused during the task. */
-  refusals: readonly string[];
+  refusals: readonly ModeRefusal[];
+  /** Changed files under a protected path, and changed files the plan did not lead one to expect (engine/scope.ts). None when left out. */
+  protectedFiles?: readonly string[];
+  unexpectedFiles?: readonly string[];
 }
 
 const shorten = (s: string, max = 200): string => (s.length > max ? `${s.slice(0, max)}…` : s);
 
 /**
  * Whether a fully autonomous run accepts a task without the owner, from what is known of it: every check passed (so at
- * least one is set up), the review is satisfied or the run has none, and nothing was refused during the task. Answers
- * the reasons it qualified, for the record, or the plain reasons it needs the owner. Whether the builder touched files
- * the plan did not expect is not known to Botbench and is not judged here.
+ * least one is set up), the review is satisfied or the run has none, nothing refused during the task blocks the
+ * accept (`refusalBlocksAccept`: the safety rules, or a request that would have left the confinement), no changed file
+ * is under a protected path, and every changed file is one the plan led one to expect (engine/scope.ts). Answers the
+ * reasons it qualified, for the record, naming any refusal that did not block, or the plain reasons it needs the owner.
  */
 export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string } | { accept: false; why: string } {
   const why: string[] = [];
@@ -83,8 +121,13 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   if (facts.review === "unresolved") why.push("The reviewer raised concerns.");
   else if (facts.review === "unaccounted") why.push(`${NO_ACCOUNT}.`);
   else if (facts.review === "failed") why.push("The review did not finish.");
-  if (facts.refusals.length > 0) why.push(`Botbench refused ${facts.refusals.length === 1 ? "something" : `${facts.refusals.length} things`} an agent asked to do during this task (${shorten(facts.refusals.join("; "))}).`);
+  const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
+  if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${shorten(blocking.join("; "))}).`);
+  if ((facts.protectedFiles?.length ?? 0) > 0) why.push(protectedWords(facts.protectedFiles!));
+  if ((facts.unexpectedFiles?.length ?? 0) > 0) why.push(unexpectedWords(facts.unexpectedFiles!));
   if (why.length > 0) return { accept: false, why: `It needs your review: ${why.join(" ")}` };
   const review = facts.review === "satisfied" ? "the reviewer said it looks right and what it checked" : "this run has no reviewer";
-  return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };
+  if (facts.refusals.length === 0) return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };
+  const harmless = facts.refusals.map((refusal) => refusal.command);
+  return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and what Botbench refused (${shorten(harmless.join("; "))}) was not on the always-ask list and would not have reached outside the task's copy.` };
 }

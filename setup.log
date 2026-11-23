@@ -1,0 +1,37 @@
+vite v8.3.8 building client environment for production...
+transforming...
+✓ 76 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/assets/minus-DPygsdXf.svg                                0.30 kB │ gzip:   0.22 kB
+dist/assets/check-C2Pvz7WI.svg                                0.31 kB │ gzip:   0.22 kB
+dist/assets/chevron-down-DzcxfixX.svg                         0.31 kB │ gzip:   0.22 kB
+dist/assets/chevron-up-rT-m4HDh.svg                           0.31 kB │ gzip:   0.23 kB
+dist/assets/chevron-right-CAqWlakg.svg                        0.32 kB │ gzip:   0.23 kB
+dist/assets/plus-ArF4c_QP.svg                                 0.33 kB │ gzip:   0.22 kB
+dist/assets/x-uVUm5eY0.svg                                    0.33 kB │ gzip:   0.23 kB
+dist/assets/arrow-down-B4fqLioh.svg                           0.34 kB │ gzip:   0.23 kB
+dist/assets/clock-Bc1cBeAF.svg                                0.34 kB │ gzip:   0.24 kB
+dist/assets/favicon-BwimPsLH.svg                              0.34 kB │ gzip:   0.25 kB
+dist/assets/chevrons-up-down-DRLVDURB.svg                     0.35 kB │ gzip:   0.23 kB
+dist/assets/search-FPwSXsNK.svg                               0.35 kB │ gzip:   0.24 kB
+dist/assets/ban-BsXK0zZv.svg                                  0.35 kB │ gzip:   0.24 kB
+dist/assets/circle-check-DsCMM8aR.svg                         0.36 kB │ gzip:   0.25 kB
+dist/assets/circle-slash-CJhIkU0K.svg                         0.36 kB │ gzip:   0.25 kB
+dist/assets/info-DECcGcBF.svg                                 0.36 kB │ gzip:   0.24 kB
+dist/assets/circle-pause-D-PW9nh8.svg                         0.41 kB │ gzip:   0.25 kB
+dist/assets/circle-alert-3BV0arpk.svg                         0.41 kB │ gzip:   0.26 kB
+dist/assets/triangle-alert-qbEjBARe.svg                       0.43 kB │ gzip:   0.27 kB
+dist/assets/loader-M9ALcbN3.svg                               0.51 kB │ gzip:   0.27 kB
+dist/assets/circle-dashed-BSc7B1dL.svg                        0.67 kB │ gzip:   0.33 kB
+dist/assets/apple-touch-icon-5UIVzzvH.png                     0.84 kB
+dist/index.html                                               1.47 kB │ gzip:   0.77 kB
+dist/assets/icons-DIR06Isi.svg                               11.36 kB │ gzip:   1.83 kB
+dist/assets/ibm-plex-mono-latin-400-normal-DMJ8VG8y.woff2    14.70 kB
+dist/assets/ibm-plex-mono-latin-500-normal-DSY6xOcd.woff2    14.88 kB
+dist/assets/ibm-plex-mono-latin-600-normal-BgSNZQsw.woff2    15.62 kB
+dist/assets/ibm-plex-sans-latin-wght-normal-IvpUvPa2.woff2   45.71 kB
+dist/assets/index-DkKdZr3D.css                              196.55 kB │ gzip:  24.02 kB
+dist/assets/index-D2k4xBwN.js                               460.70 kB │ gzip: 134.30 kB
+
+✓ built in 391ms

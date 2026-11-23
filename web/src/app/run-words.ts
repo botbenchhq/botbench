@@ -8,8 +8,8 @@ import type { RunMode } from "../api/client.ts";
 
 /** A run's mode as the run and task screens say it. */
 export const MODE_SENTENCE: Record<RunMode, string> = {
-  manual: "Manual: you approve the plan, each command that is not allowed in advance, and the result.",
-  semi: "Semi-autonomous: commands run without asking, kept away from your sign-ins and the network. You approve the plan and the result.",
+  manual: "Manual: you approve the plan and decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
+  semi: "Semi-autonomous: building starts without your plan approval (a run started from a GitHub issue still waits for it), and you decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
   full: "Fully autonomous: Botbench builds without asking you, refuses what would need you, and accepts work whose every check passed and that its reviewer, if any, said looks right and named what it checked. The rest waits for you.",
 };
 
@@ -23,7 +23,7 @@ const hostWord = (hosts: readonly string[]): string => (hosts.length === 1 ? "ho
  */
 export function modeSentence(mode: RunMode, issueHosts: readonly string[]): string {
   if (issueHosts.length === 0) return MODE_SENTENCE[mode];
-  if (mode === "semi") return `Semi-autonomous: commands run without asking, kept away from your sign-ins and from every network host but the ones you allowed for this run: ${listed(issueHosts)}. You approve the plan and the result.`;
+  if (mode === "semi") return `Semi-autonomous: you approve the plan, as this run was started from a GitHub issue, and decide on each result. Commands kept inside the task's copy run without asking, away from your sign-ins and from every network host but the ones you allowed for this run: ${listed(issueHosts)}.`;
   return `${MODE_SENTENCE[mode]} Its commands may reach the network ${hostWord(issueHosts)} you allowed for this run: ${listed(issueHosts)}.`;
 }
 

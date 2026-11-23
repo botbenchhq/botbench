@@ -5,7 +5,8 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
-import { repositoryHosts, repositorySettings } from "../config.ts";
+import { repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
+import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
 import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
@@ -14,7 +15,7 @@ import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
-import { commitsFileDiff, describeCommits, describeWork, fileDiff, type FileChange } from "../worktrees.ts";
+import { commitsFileDiff, describeCommits, describeWork, type FileChange } from "../worktrees.ts";
 import { BodyError, builderOnly, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -112,9 +113,10 @@ export async function leftoversOf(task: Task): Promise<string[] | null> {
 }
 
 /**
- * The files the task changed, from its base commit to the commit Botbench made. Null with the reason when they cannot
- * be read. A decided task has no copy left: its changes are read from the branch it kept, and a task whose branch was
- * deleted has none to show.
+ * The files the task changed, from its base commit to the commit Botbench recorded for it (`headCommit`), read from the
+ * repository's own store, as the engine reads them to mark them (engine/task.ts, `changedPaths`): never from whatever
+ * the copy's HEAD is now, which a builder may have moved. Null with the reason when they cannot be read, also when an
+ * undecided task's copy is gone or is not one Botbench made. A task whose branch was deleted has none to show.
  */
 async function changedFiles(db: DatabaseSync, task: Task, remains: TaskRemains | null): Promise<{ files: FileChange[] | null; filesProblem: string | null }> {
   if (task.headCommit === null || task.worktreePath === null || task.baseCommit === null) return { files: null, filesProblem: null };
@@ -123,11 +125,25 @@ async function changedFiles(db: DatabaseSync, task: Task, remains: TaskRemains |
   const decided = taskDecision(db, task.id);
   if (decided?.branch === "deleted") return { files: null, filesProblem: null };
   try {
-    if (decided !== null) return { files: await describeCommits({ repo: task.repo, baseCommit: task.baseCommit, headCommit: task.headCommit }), filesProblem: null };
-    return { files: (await describeWork({ path: task.worktreePath, baseCommit: task.baseCommit })).files, filesProblem: null };
+    const recorded = { repo: task.repo, baseCommit: task.baseCommit, headCommit: task.headCommit };
+    if (decided !== null) return { files: await describeCommits(recorded), filesProblem: null };
+    // An undecided task's copy must still be the one Botbench made; its files are still those of the recorded commit.
+    const work = await describeWork({ path: task.worktreePath, baseCommit: task.baseCommit });
+    return { files: work.headCommit === task.headCommit ? work.files : await describeCommits(recorded), filesProblem: null };
   } catch (err) {
     return { files: null, filesProblem: `The task's changes cannot be read: ${words(err)}` };
   }
+}
+
+/**
+ * The task's changed files, each with its marks (engine/scope.ts): `expected`, when the plan, the checks or the task's
+ * tests lead one to expect it, and `protected`, when it lies under a protected path.
+ */
+async function markedFiles(ctx: RouteContext, task: Task, remains: TaskRemains | null): Promise<{ files: (FileChange & Omit<FileScope, "path">)[] | null; filesProblem: string | null }> {
+  const { files, filesProblem } = await changedFiles(ctx.db, task, remains);
+  if (files === null) return { files, filesProblem };
+  const scope = taskScope(ctx.db, task, files.map((file) => file.path), repositoryProtectedPaths(ctx.config, task.repo));
+  return { files: files.map((file, i) => ({ ...file, expected: scope[i]!.expected, protected: scope[i]!.protected })), filesProblem };
 }
 
 
@@ -174,7 +190,7 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   const { db } = ctx;
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
@@ -212,9 +228,8 @@ async function diff(db: DatabaseSync, res: http.ServerResponse, task: Task, url:
   // Only a name git itself listed as changed is ever handed back to git.
   const file = files.find((f) => f.path === given[0]);
   if (!file) throw new TaskError(400, "That file is not one of this task's changed files.");
-  const whole = decided !== null
-    ? await commitsFileDiff({ repo: task.repo, baseCommit: task.baseCommit!, headCommit: task.headCommit!, file: file.path })
-    : await fileDiff({ path: task.worktreePath!, baseCommit: task.baseCommit!, file: file.path });
+  // The same two commits as the list of files above.
+  const whole = await commitsFileDiff({ repo: task.repo, baseCommit: task.baseCommit!, headCommit: task.headCommit!, file: file.path });
   json(res, 200, { file: file.path, diff: whole.slice(0, MAX_DIFF), truncated: whole.length > MAX_DIFF });
 }
 

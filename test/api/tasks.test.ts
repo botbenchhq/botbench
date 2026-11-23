@@ -16,11 +16,11 @@ import { NO_PROCESS_LIST } from "../support/confined.ts";
 type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
-async function start(t: T, dir = tempDir("botbench-tasks-api-")): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
+async function start(t: T, dir = tempDir("botbench-tasks-api-"), settings: Partial<Config> = {}): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
   // `dir` holds the Botbench home and the test's repositories; removing it removes their worktrees with them.
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
-  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...settings };
   const server = await startServer({ config, home, signInDelayMs: 1 });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
@@ -142,8 +142,31 @@ test("a repository path that cannot be used is refused before any task row or wo
   assert.deepEqual(Object.keys(await check(dir)).sort(), ["path", "reason", "usable"]);
 });
 
-test("a committed task is described with its changed files, and each file's diff runs from the base commit to the branch head", async (t) => {
+test("the changed files and their diffs are those of the commit Botbench recorded, not of whatever the copy's HEAD is now", async (t) => {
   const { server, base, headers, dir, home } = await start(t);
+  const repo = path.join(dir, "repo");
+  initRepo(repo, { "README.md": "# Sample\n" });
+  const task = createTask(server.db, { repo, prompt: "add hello.txt" });
+  const worktree = await createWorktree({ repo, home, run: "run-api", task: `task-${task.id}` });
+  moveTask(server.db, task.id, "building", { worktree });
+  write(worktree.path, "hello.txt", "hi\n");
+  const recorded = await commitWork({ path: worktree.path, message: "Botbench task: add hello.txt" });
+  assert.ok(recorded.committed);
+  moveTask(server.db, task.id, "awaiting_decision", { headCommit: recorded.commit });
+  // A commit made in the copy after the one Botbench recorded, as a builder may make with git itself.
+  write(worktree.path, "stray.txt", "later\n");
+  git(worktree.path, "add", "stray.txt");
+  git(worktree.path, "commit", "--quiet", "-m", "made in the copy");
+  assert.notEqual(git(worktree.path, "rev-parse", "HEAD").trim(), recorded.commit);
+
+  const described = (await get(base, headers, `/api/tasks/${task.id}`)).body as { files: { path: string }[] };
+  assert.deepEqual(described.files.map((f: { path: string }) => f.path), ["hello.txt"], "the engine marks these same files");
+  assert.equal((await get(base, headers, `/api/tasks/${task.id}/diff?file=stray.txt`)).status, 400);
+  assert.match(String((await get(base, headers, `/api/tasks/${task.id}/diff?file=hello.txt`)).body.diff), /\+hi\n$/);
+});
+
+test("a committed task is described with its changed files, each marked as the plan expected it and as protected, and each file's diff runs from the base commit to the branch head", async (t) => {
+  const { server, base, headers, dir, home } = await start(t, undefined, { protectedPaths: ["src/"] });
   const repo = path.join(dir, "repo");
   const baseCommit = initRepo(repo, { "README.md": "# Sample\n", "src/app.txt": "one\ntwo\nthree\n", "old.txt": "going\n" });
   write(repo, "README.md", "# Sample\nthe owner's uncommitted line\n");
@@ -177,11 +200,12 @@ test("a committed task is described with its changed files, and each file's diff
   assert.deepEqual({ ...described.body, createdAt: null, updatedAt: null }, {
     id: task.id, repo, prompt: "change three files", requestedModel: null, status: "awaiting_decision", reason: null,
     branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, waitingOnApproval: false, parked: false, resuming: false, ofPlan: null, preapproved: [], outsideText: false, issue: null, resumeNote: null, mode: "manual", reviewOutcome: "none", reviewRounds: 0, refineRounds: 0, createdAt: null, updatedAt: null, issueHosts: [],
+    // "change three files" names none of them, and src/ is protected in this server's settings.
     files: [
-      { path: "hello.txt", status: "added", added: 1, removed: 0, binary: false },
-      { path: "odd name's \"file\".txt", status: "added", added: 1, removed: 0, binary: false },
-      { path: "old.txt", status: "deleted", added: 0, removed: 1, binary: false },
-      { path: "src/app.txt", status: "modified", added: 2, removed: 1, binary: false },
+      { path: "hello.txt", status: "added", added: 1, removed: 0, binary: false, expected: false, protected: false },
+      { path: "odd name's \"file\".txt", status: "added", added: 1, removed: 0, binary: false, expected: false, protected: false },
+      { path: "old.txt", status: "deleted", added: 0, removed: 1, binary: false, expected: false, protected: false },
+      { path: "src/app.txt", status: "modified", added: 2, removed: 1, binary: false, expected: false, protected: true },
     ],
     filesProblem: null,
     checks: null,

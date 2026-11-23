@@ -48,8 +48,8 @@ test("CRITICAL: under the profile of a CLI with its own tools, a command reads a
   for (const d of [folder, own, repo]) fs.mkdirSync(d, { recursive: true });
   fs.writeFileSync(path.join(repo, "a.txt"), "REPO\n");
   fs.writeFileSync(path.join(data, "secret.txt"), "DATA\n");
-  // Beside this checkout, in the home folder, outside every allowed place.
-  const outside = path.resolve(import.meta.dirname, "..", "..", `.tools-sandbox-decoy-${process.pid}`);
+  // In the home folder, outside every allowed place (not beside this checkout, which need not be in the home folder).
+  const outside = path.join(os.homedir(), `.tools-sandbox-decoy-${process.pid}`);
   fs.writeFileSync(outside, "DECOY\n");
   t.after(() => fs.rmSync(outside, { force: true }));
   const open = net.createServer((socket) => socket.end()).listen(0, "127.0.0.1");

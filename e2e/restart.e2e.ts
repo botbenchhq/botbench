@@ -1,6 +1,6 @@
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, openDetails, openWork, signIn, startTaskIn, test } from "./helpers.ts";
+import { SHOTS, askBeforeEveryCommand, checkDesign, expect, messageBox, openDetails, openWork, signIn, startTaskIn, test } from "./helpers.ts";
 
 // An approval across a restart, in the real client at a phone's size: a real Botbench process that is stopped and
 // started again on the same data, and the owner's Claude Code on its cheapest model asking for real.
@@ -14,6 +14,8 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });
   const before = checkoutState(repo);
   await signIn(page, botbench);
+  // A command kept inside the task's copy runs without a card by default: the card to park needs Ask before every command.
+  await askBeforeEveryCommand(page, botbench);
 
   await startTaskIn(page, repo, PROMPT);
   await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
@@ -24,12 +26,13 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   // A card asked in this run of Botbench says nothing about a restart.
   await expect(card.getByTestId("approval-parked")).toHaveCount(0);
   const branch = (await (await openDetails(page)).getByTestId("branch").textContent())!;
-  const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
+  const worktree = path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1");
 
   // Botbench stops and starts again. The device stays signed in across the restart, so the owner only reloads.
   await botbench.restart();
   await page.goto(botbench.base);
-  await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
+  // The composer remembers the repository, so its box may read "Describe the task" rather than "Message Claude Code".
+  await expect(messageBox(page)).toBeEnabled();
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");

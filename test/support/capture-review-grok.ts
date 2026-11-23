@@ -6,7 +6,7 @@ import { makeReviewFolder, proxyEnv, sandboxed, startProviderProxy } from "../..
 import { GROK_EXTRA_ENV, GROK_PROVIDER, grokArgs, grokInput, grokProfile } from "../../src/drivers/grok.ts";
 import { launch } from "../../src/drivers/launch.ts";
 import { reviewerPrompt } from "../../src/engine/roles.ts";
-import { commitsDiff, createWorktree } from "../../src/worktrees.ts";
+import { commitsDiff, createWorktree, describeCommits } from "../../src/worktrees.ts";
 import { checkRecording } from "./recording-check.ts";
 import { initRepo, ownerCommit, tempDir, write } from "./repo.ts";
 
@@ -35,7 +35,7 @@ const worktree = await createWorktree({ repo, home, run: "run-1", task: "task-1"
 write(worktree.path, "calc.py", "def add(a, b):\n    return a - b\n");
 const head = ownerCommit(worktree.path, "Botbench task 1: add two numbers");
 const task = { title: "Add a function that adds two numbers", criteria: ["calc.py defines add(a, b), which returns the sum of a and b"] };
-const prompt = reviewerPrompt({ task, diff: await commitsDiff({ path: worktree.path, baseCommit: worktree.baseCommit, headCommit: head }), cut: null, tools: false });
+const prompt = reviewerPrompt({ task, files: (await describeCommits({ repo: worktree.path, baseCommit: worktree.baseCommit, headCommit: head })).map((f) => f.path), diff: await commitsDiff({ path: worktree.path, baseCommit: worktree.baseCommit, headCommit: head }), cut: null, tools: false });
 
 async function capture(extraEnv: Record<string, string>): Promise<{ lines: string[]; exitCode: number | null }> {
   const folder = makeReviewFolder(home);

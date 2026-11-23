@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { agentState } from "../app/chat.ts";
-import { ApiError, getAgents, getChatWebAccess, getDefaultMode, getWorkbench, openEventStream, setChatWebAccess, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
+import { ApiError, getAgents, getAskEveryCommand, getChatWebAccess, getDefaultMode, getWorkbench, openEventStream, setAskEveryCommand, setChatWebAccess, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { DeviceSettings } from "../app/device-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
@@ -141,10 +141,10 @@ function WorkbenchName({ onSignedOut }: { onSignedOut: () => void }) {
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
  * now, and what Botbench lets it do: Claude Code plans and builds, Codex, Grok and Antigravity review. Runs: the mode New run starts with,
- * kept by Botbench. Chat: what Claude Code's web tools may do in a chat, kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
+ * and whether every command of a Manual run asks, kept by Botbench. Web: what Claude Code's web tools may do, kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
  * Notifications: this device's notifications, on or off (unit 23).
  */
-/** The choices for web access in chat, in the order they are offered, with what each does. */
+/** The choices for web access, in the order they are offered, with what each does. */
 const WEB_ACCESS: { value: WebAccess; label: string }[] = [
   { value: "allow", label: "Allow" },
   { value: "ask", label: "Ask" },
@@ -152,9 +152,9 @@ const WEB_ACCESS: { value: WebAccess; label: string }[] = [
 ];
 
 /**
- * Web access in chat: whether Claude Code may fetch pages and search the web in a chat without asking, asks you each
- * time, or may not; and whether Codex and Grok, which cannot ask, may use their own web search (Allow only), in a chat
- * and in a review. Kept by Botbench and saved as it is chosen; a chat reads it at each request.
+ * Web access: whether Claude Code may fetch pages and search the web without asking, in a chat, a task or a run, asks
+ * you each time, or may not; and whether Codex and Grok, which cannot ask, may use their own web search (Allow only), in
+ * a chat and in a review. Kept by Botbench and saved as it is chosen; it is read at each request.
  */
 function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
   const id = useId();
@@ -163,7 +163,7 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
   useEffect(() => {
     getChatWebAccess().then(setValue, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
-      setProblem(err instanceof ApiError ? `Web access in chat could not be read. ${err.message}` : "Web access in chat could not be read: Botbench could not be reached.");
+      setProblem(err instanceof ApiError ? `Web access could not be read. ${err.message}` : "Web access could not be read: Botbench could not be reached.");
     });
   }, [onSignedOut]);
   const choose = (next: WebAccess): void => {
@@ -173,21 +173,21 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
     setChatWebAccess(next).then(setValue, (err: unknown) => {
       if (err instanceof ApiError && err.status === 401) return onSignedOut();
       setValue(before);
-      setProblem(err instanceof ApiError ? `Web access in chat was not saved. ${err.message}` : "Web access in chat was not saved: Botbench could not be reached.");
+      setProblem(err instanceof ApiError ? `Web access was not saved. ${err.message}` : "Web access was not saved: Botbench could not be reached.");
     });
   };
   return (
     <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-chat`}>
       <h2 className="ds-settings-row__heading" id={`${id}-chat`}>
-        Chat
+        Web
       </h2>
       <div className="ds-settings-row">
         <div className="ds-settings-row__text">
           <label className="ds-settings-row__label" htmlFor={`${id}-web`}>
-            Web access in chat
+            Web access
           </label>
           <p className="ds-settings-row__description" id={`${id}-web-about`}>
-            Whether Claude Code may fetch pages and search the web in a chat. The address or search goes to that site or search service; what comes back goes to Claude Code. Each one shows in the chat. Codex and Grok cannot ask you first, so they search the web, in a chat and when they review a task, only on Allow; their own provider runs the search, and their commands reach nothing on the network but that provider.
+            Whether Claude Code may fetch pages and search the web, in a chat, a task or a run. The address or search goes to that site or search service; what comes back goes to Claude Code. Each one shows in the transcript. A run started from a GitHub issue always asks. Codex and Grok cannot ask you first, so they search the web, in a chat and when they review a task, only on Allow; their own provider runs the search, and their commands reach nothing on the network but that provider.
           </p>
         </div>
         <div className="ds-settings-row__control">
@@ -209,6 +209,60 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
         </Alert>
       )}
     </div>
+  );
+}
+
+/**
+ * Ask before every command: off by default. On, every command of a Manual run or a single task asks you, also one kept
+ * inside the task's copy. Kept by Botbench and saved as it is chosen; it is read at each request.
+ */
+function AskEveryCommand({ onSignedOut }: { onSignedOut: () => void }) {
+  const id = useId();
+  const [value, setValue] = useState<boolean | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    getAskEveryCommand().then(setValue, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setProblem(err instanceof ApiError ? `Ask before every command could not be read. ${err.message}` : "Ask before every command could not be read: Botbench could not be reached.");
+    });
+  }, [onSignedOut]);
+  const choose = (next: boolean): void => {
+    const before = value;
+    setValue(next);
+    setProblem(null);
+    setAskEveryCommand(next).then(setValue, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setValue(before);
+      setProblem(err instanceof ApiError ? `Ask before every command was not saved. ${err.message}` : "Ask before every command was not saved: Botbench could not be reached.");
+    });
+  };
+  return (
+    <>
+      <div className="ds-settings-row">
+        <div className="ds-settings-row__text">
+          <label className="ds-settings-row__label" htmlFor={`${id}-every`}>
+            Ask before every command
+          </label>
+          <p className="ds-settings-row__description" id={`${id}-every-about`}>
+            In Manual runs and single tasks, asks you before each command, also one kept inside the task's copy. Off, only commands on the always-ask list or outside the copy ask.
+          </p>
+        </div>
+        <div className="ds-settings-row__control">
+          <div className="ds-select">
+            <select data-testid="ask-every-command" className="ds-field__control ds-select__control" id={`${id}-every`} value={value === null ? "" : value ? "on" : "off"} disabled={value === null} aria-describedby={`${id}-every-about`} onChange={(e) => choose(e.currentTarget.value === "on")}>
+              {value === null && <option value="">Checking</option>}
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      {problem !== null && (
+        <Alert tone="error" role="alert">
+          {problem}
+        </Alert>
+      )}
+    </>
   );
 }
 
@@ -320,6 +374,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: "agents" | n
                 {modeProblem}
               </Alert>
             )}
+            <AskEveryCommand onSignedOut={onSignedOut} />
           </div>
 
           <ChatWebAccess onSignedOut={onSignedOut} />
