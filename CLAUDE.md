@@ -1,6 +1,6 @@
 # Botbench
 
-Local software factory. Drives owner's Claude Code / Codex / Gemini CLI / Grok. Output: verified branch + evidence. Mac or phone.
+Local software factory. Drives owner's Claude Code / Codex / Antigravity (Gemini) / Grok. Output: verified branch + evidence. Mac or phone.
 
 ## Commands
 - typecheck: `npm run typecheck`
