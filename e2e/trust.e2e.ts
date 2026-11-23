@@ -130,11 +130,13 @@ test("Check a command answers for each mode in words, the rule behind each named
       await checkDesign(page, `trust, a command that asks, light, ${width}px`);
     }
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "dark"));
+    // Loaded again at a phone's width, then widened, as the light pass does.
+    await page.setViewportSize({ width: 390, height: 900 });
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await run("ls src");
     await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: it runs kept in the task's copy, and the safety rules do not name it\.$/));
-    for (const width of [1280, 390]) {
+    for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(result).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px, dark`).toBe(true);
