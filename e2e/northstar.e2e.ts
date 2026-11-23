@@ -34,10 +34,12 @@
  * repository as their remote, which their git settings send to the bare repository on disk.
  *
  * How the first check fails every time, and how the fix round mends it: the repository's one check, in Botbench's
- * settings file outside the task's copy, wants check-token.txt to hold a token made fresh for this test. The builder's
- * first turn is never shown the check, so its first result fails; the failure, token included, is what Botbench sends
- * the builder in the round of fixes for a failing check, and writing the file is the fix. The check names calc.py and
- * check-token.txt, so both are files the plan leads one to expect (src/engine/scope.ts) and a fully autonomous run may
+ * settings file outside the task's copy, is a changelog rule: CHANGELOG.md must have a line that names calc.py and this
+ * change's ticket, a ticket id made fresh for this test. The builder's first turn is never shown the check, so its first
+ * result fails; the failure, ticket included, is what Botbench sends the builder in the round of fixes for a failing
+ * check, and adding the changelog line is the fix. (An earlier form of this check asked for a file holding a bare
+ * token; a careful model refused to write it, as passing a check with no work behind it.) The check names calc.py and
+ * CHANGELOG.md, so both are files the plan leads one to expect (src/engine/scope.ts) and a fully autonomous run may
  * accept them. The draft in calc.txt subtracts: the task copies it to calc.py as a first pass, which is the diff the
  * replayed review was recorded on, and the builder fixes it in the round after the review.
  *
@@ -63,7 +65,9 @@ const ENTRY = path.resolve(import.meta.dirname, "serve-replayed-northstar.ts");
 const ISSUE = parseIssueView(loadIssueCapture().outputs.issue.result.stdout, ISSUE_REPO, ISSUE_NUMBER);
 
 /** The run's message, the same on both workbenches: it names the one issue, and asks for one task the planner cannot widen. */
-const MESSAGE = `Issue #${ISSUE_NUMBER}. Plan exactly one task, titled: Create calc.py as an exact copy of calc.txt in this first pass, then fix what the review finds. Its one criterion: calc.py defines add(a, b). Read calc.txt only, write with your Write or Edit tool, and run no command.`;
+// The builder must leave the subtraction in place until the review raises it (a live model tends to fix it at once,
+// and the replayed review was recorded on the copy that subtracts), so the message says so plainly.
+const MESSAGE = `Issue #${ISSUE_NUMBER}. Plan exactly one task, titled: Create calc.py as an exact copy of calc.txt in this first pass, then fix what the review finds. Give it exactly these two criteria, word for word: "Until a reviewer asks for a change, calc.py is a byte-for-byte copy of calc.txt, its subtraction included." and "calc.py defines add(a, b)." Read calc.txt only, write with your Write or Edit tool, and run no command.`;
 
 interface World {
   /** The shared remote, a bare repository on disk. */
@@ -71,7 +75,7 @@ interface World {
   /** Workbench A's clone and workbench B's. */
   alice: string;
   bob: string;
-  /** What the check wants check-token.txt to hold. */
+  /** The ticket id the check wants CHANGELOG.md to name, with calc.py, on one line. */
   token: string;
   check: string;
 }
@@ -85,7 +89,9 @@ const test = base.extend<{ dir: string; world: World; alice: Botbench; bob: Botb
   world: async ({ dir }, use) => {
     const bare = path.join(dir, "remote.git");
     const seed = path.join(dir, "seed");
-    initRepo(seed, { "README.md": "# Calculator\n", "calc.txt": "def add(a, b):\n    return a - b\n" });
+    // Python's bytecode is ignored, as in any Python repository: a builder that imports calc.py to try it must not
+    // leave a file the plan does not name.
+    initRepo(seed, { "README.md": "# Calculator\n", ".gitignore": "__pycache__/\n", "calc.txt": "def add(a, b):\n    return a - b\n" });
     git(dir, "init", "--quiet", "--bare", "-b", "main", bare);
     git(seed, "push", "--quiet", bare, "main");
     const clone = (name: string): string => {
@@ -96,11 +102,13 @@ const test = base.extend<{ dir: string; world: World; alice: Botbench; bob: Botb
       git(repo, "remote", "set-url", "origin", ISSUE_ADDRESS);
       return fs.realpathSync(repo);
     };
-    const token = `northstar-${randomBytes(6).toString("hex")}`;
-    const check = `grep -q 'def add' calc.py && grep -qx '${token}' check-token.txt || { echo "FAIL: check-token.txt must hold exactly one line: ${token}"; exit 1; }`;
+    const token = `NS-${randomBytes(4).toString("hex").toUpperCase()}`;
+    const check = `grep -q 'def add' calc.py && grep 'calc.py' CHANGELOG.md | grep -q '${token}' || { echo "FAIL: the changelog rule: CHANGELOG.md needs a line that names calc.py and this change's ticket, ${token}"; exit 1; }`;
     await use({ bare, alice: clone("alice"), bob: clone("bob"), token, check });
   },
   alice: async ({ dir, world }, use) => {
+    // startBotbench writes the settings file beside the home folder, so the folder that holds both must exist.
+    fs.mkdirSync(path.join(dir, "alice"), { recursive: true });
     const botbench = await startBotbench({
       home: path.join(dir, "alice", "home"),
       entry: ENTRY,
@@ -111,10 +119,13 @@ const test = base.extend<{ dir: string; world: World; alice: Botbench; bob: Botb
     expect(leftover, "no CLI process of workbench A is left after it stops").toEqual([]);
   },
   bob: async ({ dir, world }, use) => {
+    // B needs a check too: a fully autonomous run can be started only on a repository that has one.
+    // startBotbench writes the settings file beside the home folder, so the folder that holds both must exist.
+    fs.mkdirSync(path.join(dir, "bob"), { recursive: true });
     const botbench = await startBotbench({
       home: path.join(dir, "bob", "home"),
       entry: ENTRY,
-      settings: { workbench: "bob", drivers: { "claude-code": { model: "haiku" }, codex: {} }, repositories: { [world.bob]: { claimIssues: true } } },
+      settings: { workbench: "bob", drivers: { "claude-code": { model: "haiku" }, codex: {} }, repositories: { [world.bob]: { checks: [world.check], claimIssues: true } } },
     });
     await use(botbench);
     const { leftover } = await botbench.stop();
@@ -150,13 +161,22 @@ async function matchDevice(page: Page): Promise<void> {
  * each under BOTBENCH_SHOTS (`northstar-<name>-phone-dark.png`, `northstar-<name>-desktop-light.png`, …). The page is
  * left at the phone's size, in dark.
  */
-async function judge(page: Page, screen: string, name: string, ready: Locator): Promise<void> {
+/**
+ * The design checks and screenshots of one screen at 390x844 and 1280x800, dark and light. `reopen` puts back what a
+ * change of size closed (the Add context sheet does not stay open across a resize).
+ */
+async function judge(page: Page, screen: string, name: string, ready: Locator, reopen?: () => Promise<void>): Promise<void> {
   for (const [size, viewport] of [["phone", PHONE], ["desktop", DESKTOP]] as const) {
     for (const mode of ["dark", "light"] as const) {
       await page.setViewportSize(viewport);
       await page.emulateMedia({ colorScheme: mode });
       await expect(page.locator("html")).toHaveAttribute("data-theme", "auto");
+      // A change between the phone and the desktop layout draws the page anew a moment later: wait for it to settle first.
+      await page.waitForTimeout(1_000);
+      if (reopen !== undefined && !(await ready.isVisible())) await reopen();
       await expect(ready).toBeVisible();
+      // Colours change with a short transition after the mode changes: judge the settled page, not one in between.
+      await page.waitForTimeout(500);
       await checkDesign(page, `${screen}, ${size}, ${mode}`);
       if (SHOTS) await tallShot(page, path.join(SHOTS, `northstar-${name}-${size}-${mode}.png`));
     }
@@ -180,13 +200,28 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   // The issue is read through the replayed real gh and shown to the owner, then not attached: a run that read an
   // issue's text cannot be fully autonomous (see the header), so the run names it in its message instead.
   await chooseRepository(page, world.alice);
+  // "From an issue" is a row of a run only.
+  await choose(page, "What to do", "Plan a run");
   const intake = await openRow(page, "From an issue");
   await intake.getByLabel("Issue number or address").fill(String(ISSUE_NUMBER));
   await intake.getByRole("button", { name: "Look it up" }).click();
   await expect(intake.getByTestId("issue-preview").getByRole("heading", { name: ISSUE.title })).toBeVisible();
   await expect(intake.getByTestId("issue-preview")).toContainText(`#${ISSUE_NUMBER} of github.com/cli/cli`);
-  await judge(page, "A, the issue as read", "a-issue-read", intake.getByTestId("issue-preview"));
-  await closeContext(page);
+  // The composer is drawn anew when the window changes between the phone and the desktop layout, and what was chosen
+  // in it is not kept: choose the repository and the run again, and look the issue up again.
+  const lookUp = async (): Promise<void> => {
+    await chooseRepository(page, world.alice);
+    await choose(page, "What to do", "Plan a run");
+    const sheet = await openRow(page, "From an issue");
+    if (!(await sheet.getByTestId("issue-preview").isVisible())) {
+      await sheet.getByLabel("Issue number or address").fill(String(ISSUE_NUMBER));
+      await sheet.getByRole("button", { name: "Look it up" }).click();
+    }
+  };
+  await judge(page, "A, the issue as read", "a-issue-read", intake.getByTestId("issue-preview"), lookUp);
+  // After the changes of size the sheet can be left open but not drawn; the run is set up afresh below, so start clean.
+  await page.reload();
+  await expect(messageBox(page)).toBeVisible();
   await startRunIn(page, world.alice, MESSAGE, { mode: "Fully autonomous", review: "codex ?default", delivery: "Open a pull request" });
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
   const runA = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
@@ -208,17 +243,24 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   const foreignB = watchRequests(pageB, bob);
   await signIn(pageB, bob);
   await matchDevice(pageB);
-  await openComposer(pageB);
-  await chooseRepository(pageB, world.bob);
-  await choose(pageB, "What to do", "Plan a run");
-  await choose(pageB, "Mode", "Fully autonomous");
-  await choose(pageB, "When accepted", "Open a pull request");
-  await closeContext(pageB);
-  await messageBox(pageB).fill(MESSAGE);
+  // B's run, set up in the composer. The draft does not survive a change of the window's size (the composer is drawn
+  // anew between the phone and the desktop layout), so the screens are judged first and the run is set up again after.
+  const setUpB = async (): Promise<void> => {
+    await openComposer(pageB);
+    await chooseRepository(pageB, world.bob);
+    await choose(pageB, "What to do", "Plan a run");
+    await choose(pageB, "Mode", "Fully autonomous");
+    await choose(pageB, "When accepted", "Open a pull request");
+    await closeContext(pageB);
+    await messageBox(pageB).fill(MESSAGE);
+  };
+  await setUpB();
+  await judge(pageB, "B, the composer, with A's claim", "b-composer-claim", pageB.getByTestId("peer-warning"), setUpB);
+  await pageB.reload();
+  await setUpB();
   // B shows A's claim before Send: a warning only, and Send stays enabled.
   await expect(pageB.getByTestId("peer-warning")).toHaveText(new RegExp(`^A best-effort match on #${ISSUE_NUMBER} in your message: alice started on this issue (less than a minute|\\d+ minutes?) ago\\.$`));
   await expect(pageB.getByRole("button", { name: "Send" })).toBeEnabled();
-  await judge(pageB, "B, the composer, with A's claim", "b-composer-claim", pageB.getByTestId("peer-warning"));
   await pageB.getByRole("button", { name: "Send" }).click();
   await expect(pageB.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
   const runB = Number(/Run (\d+)/.exec((await pageB.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
@@ -257,7 +299,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await expect(firstBuild.locator(".ds-check-list__result")).toHaveText("Failed, exit code 1");
   await expect(firstBuild.locator(".ds-check-list__name")).toHaveText(world.check);
   await firstBuild.locator(".ds-check-list__toggle").click();
-  await expect(firstBuild.locator(".ds-check-list__log")).toContainText(`FAIL: check-token.txt must hold exactly one line: ${world.token}`);
+  await expect(firstBuild.locator(".ds-check-list__log")).toContainText(`FAIL: the changelog rule: CHANGELOG.md needs a line that names calc.py and this change's ticket, ${world.token}`);
   // The failure went back to the builder as a round of fixes, and the checks on its fix passed.
   const afterFix = checks.locator("details.ds-disclosure", { has: page.locator("summary", { hasText: /^Checks after round 1 of fixes$/ }) });
   await afterFix.locator(":scope > summary").click();
@@ -290,7 +332,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   const deliveredCalc = git(world.bare, "show", `${task.headCommit}:calc.py`);
   expect(deliveredCalc, "the delivered add adds").toMatch(/return a \+ b/);
   expect(deliveredCalc, "the delivered add no longer subtracts").not.toMatch(/return a - b/);
-  expect(git(world.bare, "show", `${task.headCommit}:check-token.txt`).trim(), "the delivered token file is what the check wants").toBe(world.token);
+  expect(git(world.bare, "show", `${task.headCommit}:CHANGELOG.md`).split("\n").some((line) => line.includes("calc.py") && line.includes(world.token)), "the delivered changelog has the line the check wants").toBe(true);
   expect(delivered.get(lock), "A's claim stays, as its run opened a pull request").toBe(claimed.get(lock));
   expect(delivered.get(claimBranch)).toBe(claimed.get(lock));
   expect([...delivered.keys()].filter((branch) => branch.startsWith("botbench/bob/")), "nothing of B's is on the remote").toEqual([]);

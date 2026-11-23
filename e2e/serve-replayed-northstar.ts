@@ -21,7 +21,7 @@ const settings = startupSettings(process.env, (line) => console.log(line));
 const config = loadConfig({ defaults: DEFAULT_CONFIG_FILE, local: settings.localConfig });
 const configured = (name: typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
 const github = replayPeers(replayIssues(replayGitHub().github).github).github;
-const reviewers = { [CODEX]: reviewReplayDriver(["review", "checked-review"]), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
+const reviewers = { [CODEX]: reviewReplayDriver(["review", "checked-review"]), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver({ dataDir: settings.homes.home, ...configured(ANTIGRAVITY) }) };
 const server = await startServer({ config: { ...config, port: settings.port ?? config.port }, home: settings.homes.home, github, reviewers });
 for (const address of server.addresses) console.log(`Botbench is listening on http://${address}:${server.port} (gh and the reviewer replayed, for tests)`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void server.close());
