@@ -82,7 +82,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
   const signals = [...(timeoutMs === undefined ? [] : [AbortSignal.timeout(timeoutMs)]), ...(giveUp ? [giveUp] : [])];
   const res = await fetch(path, {
     method,
@@ -680,6 +680,28 @@ export interface WorkbenchSetting {
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
 
+/** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
+export interface MemoryNote {
+  id: number;
+  text: string;
+  hash: string;
+  savedAt: string;
+  editedAt: string | null;
+}
+
+/** The notes in memory, newest first, with the caps of one note and of the whole store. */
+export interface MemoryList {
+  notes: MemoryNote[];
+  maxNoteChars: number;
+  maxKb: number;
+}
+
+export const getMemory = (): Promise<MemoryList> => request("GET", "/api/memory", undefined, 30_000);
+/** Refused with 409 when the note changed since `hash` was read; nothing is overwritten then. */
+export const editMemoryNote = async (id: number, text: string, hash: string): Promise<MemoryNote> => (await request<{ note: MemoryNote }>("PUT", `/api/memory/${id}`, { text, hash }, 30_000)).note;
+/** The notes as they are after the forget. Refused with 409 when the note changed since `hash` was read. */
+export const forgetMemoryNote = (id: number, hash: string): Promise<MemoryList> => request("DELETE", `/api/memory/${id}`, { hash }, 30_000);
+
 /** Another workbench's open pull request on a repository's remote. Its title, branch, files and workbench are outside text. */
 export interface PeerPullRequest {
   workbench: string;
@@ -873,7 +895,9 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
-  | "sandboxed";
+  | "sandboxed"
+  /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
+  | "memory";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

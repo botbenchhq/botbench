@@ -8,6 +8,7 @@ import { insertPreapproved, realRepo } from "../approvals/grants.ts";
 import { chatWebAccess } from "../approvals/web-access.ts";
 import { allowedHostsFor, outsideTextPrompt, runIssue, runOutside } from "./intake.ts";
 import { learningsSection } from "./learnings.ts";
+import { memorySection } from "./memory.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
@@ -453,12 +454,14 @@ export function createTasks(options: TasksOptions): Tasks {
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
   /**
    * A builder's first prompt: the task's own, then the notes in docs/solutions/ of the task's copy when it has any
-   * (engine/learnings.ts), then, for a run started from an issue, the issue as outside text.
+   * (engine/learnings.ts), then the owner's notes on this workbench when there are any (engine/memory.ts), then, for a
+   * run started from an issue, the issue as outside text.
    */
   const builderPrompt = (task: Task): string => {
     const issue = runIssue(db, task.runId);
     const learnings = learningsSection(task.worktreePath ?? task.repo);
-    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    const memory = memorySection(home);
+    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${memory === undefined ? "" : `\n\n${memory}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
   };
   /** Whether the builder's driver runs every shell command confined: only then may a command run without asking. */
   const confined = driver.capabilities.confinedCommands === true;

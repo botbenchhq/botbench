@@ -134,11 +134,11 @@ test("a database at an older schema version is migrated forward and keeps its ro
   assert.equal(db.prepare("SELECT count(*) AS n FROM events WHERE attempt_id = 1").get()?.n, 1);
 });
 
-test("the latest migration gives each task a stored time to try again, empty for a task from before it, kept when the task waits for a usage limit and cleared when it leaves that wait", (t) => {
+test("the usage_limit_wait migration gives each task a stored time to try again, empty for a task from before it, kept when the task waits for a usage limit and cleared when it leaves that wait", (t) => {
   const home = tempDir(t);
   // A real database at the version before this migration, holding a task at work.
   const old = new DatabaseSync(path.join(home, DB_FILE));
-  migrate(old, MIGRATIONS.slice(0, MIGRATIONS.length - 1));
+  migrate(old, MIGRATIONS.slice(0, MIGRATIONS.findIndex((m) => m.name === "usage_limit_wait")));
   old.prepare("INSERT INTO tasks (repo_path, prompt, status, created_at, updated_at) VALUES ('/r', 'p', 'building', 'then', 'then')").run();
   assert.ok(!columnNames(old, "tasks").includes("retry_at"));
   old.close();
