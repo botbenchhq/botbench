@@ -538,7 +538,35 @@ STRIDE for B14:
 | Denial of service: a huge issue, or a slow GitHub | Caps on what is kept and sent; `gh` killed after a minute; the composer's request has its own limit | Done |
 | Elevation of privilege: issue text becomes a `gh` or git argument, a closing reference, a branch name, a grant or an accepted change | Only the parsed number reaches `gh`; only the stored number and repository make the closing line; branch and commit subject are Botbench's; no grant applies; never fully autonomous | Done |
 
-What it does not cover, stated exactly: a planner or builder that is persuaded by the issue can still write bad or hostile code inside its copy, and in manual and semi-autonomous a confined command runs without asking (with no network unless ticked); the owner reviews and decides, as for any run. The planner's task titles and criteria, which the owner approves, may echo the issue. Bidirectional-text and look-alike characters in the issue are shown as they are. Only the comments `gh issue view` returns are read (GitHub's first page of them). Watching a repository for new issues, labels as triggers, posting back to GitHub, and other trackers are not built.
+What it does not cover, stated exactly: a planner or builder that is persuaded by the issue can still write bad or hostile code inside its copy, and in manual and semi-autonomous a confined command runs without asking (with no network unless ticked); the owner reviews and decides, as for any run. The planner's task titles and criteria, which the owner approves, may echo the issue. Bidirectional-text and look-alike characters in the issue are shown as they are. Only the comments `gh issue view` returns are read (GitHub's first page of them). Watching a repository for labelled issues is the next section; posting back to GitHub and other trackers are not built.
+
+### Watching a repository for labelled issues (issue #73, ADR 0008)
+
+The same outside party as B14, now read without the owner naming an issue: a background poller lists a watched repository's labelled open issues and proposes each new one on Work. (`src/engine/watch.ts`, `src/github.ts`, `src/api/watch.ts`, `src/config.ts`, migration `watched_issues`.)
+
+**The label is the gate.** A repository is watched only when the owner's settings file gives it a `"watch"` with a label (refused with a plain message when there is no label, or the label or the interval is not one that can be used; unit-tested). Whoever can apply that label decides what is proposed, so only maintainers should be able to apply it; Settings says so in plain words on the repository's row. GitHub lets anyone with triage access apply labels, so the gate is as strong as the repository's own permissions, and Botbench cannot check them.
+
+**What is sent.** Only `gh`'s read calls, with the owner's own sign-in, which Botbench never reads: `gh issue list --repo=<host/owner/name> --label=<label> --state=open --json=number,title,author,url,labels --limit=100` at the repository's interval (10 minutes when not set), and only after that failed on GitHub's limits, one `gh api -i --method=GET --hostname=<host> repos/<owner>/<name>`, of which only the status and headers are read. Both are argument lists with no shell, each value joined to its flag with `=`. A label with a comma or a double quote is refused, since gh would read either as another filter. Both run with the same environment, prompts off and 1-minute limit as every other `gh` command. Nothing is written to GitHub: there is no comment, label, close or assignment command (unit- and engine-tested: the replayed gh is asked only these arguments).
+
+**What comes back is outside text.** An entry is kept only when it is an issue of this same repository at its `/issues/` address (a pull request's `/pull/` address, another repository's and a fork's are dropped), carries the label, and is not said to be in a state other than OPEN (unit-tested on output captured from the real gh). Its title and author go to the seen table and to Work as plain text, never as an argument, a link or markdown. They never reach a model from the watch. A run gets the issue only through the composer's From an issue row, which reads it again with today's B14 rules: never fully autonomous, plan approval, the run marked as outside text, no hosts unless ticked.
+
+**Nothing starts by itself.** A proposal is a row in `watched_issues`. No task, run, session or model turn exists until the owner presses Start, which opens the composer with the issue attached, and then sends it (API- and browser-tested). The table holds each issue once by (repository, number), so an issue is never proposed twice, after a restart too. A dismissed one never returns (the store refuses the change back, and every edit of what was seen or any delete; tested on a real SQLite file closed and opened again).
+
+**The phone.** Each new proposal sends one notification, "An issue is ready to start", that opens Work. The payload holds no title, text, author or label (engine-tested by decrypting it as the browser does). A poll that sees the issue again sends none.
+
+STRIDE for the watch:
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Spoofing: someone who should not choose work applies the label | The label is the gate, and Settings says only maintainers should be able to apply it. A proposal starts nothing, and a run from it is never fully autonomous and waits for plan approval | Done. The repository's label permissions are the owner's to set on GitHub |
+| Spoofing: a pull request, another repository's issue or a closed issue is proposed | Address, label and state checks on every entry | Done (unit-tested on captured gh output) |
+| Tampering: a dismissed issue comes back, or what was seen is rewritten | Triggers: dismissed once, key, title, author and first-seen time fixed, no delete | Done (tested) |
+| Repudiation: a proposal's origin is unknown | The row keeps the repository, number, address and when it was first seen. A run from it names its own issue read, as in B14 | Done |
+| Information disclosure: the issue's words reach the push service or a model | The notification is fixed text. The watch gives nothing to a model; a run gets the issue only through B14 | Done (tested) |
+| Denial of service: many labelled issues, a slow or limiting GitHub | At most 100 per poll; one poll per repository at a time; `gh` killed after a minute; after GitHub's limit, wait until retry-after or x-ratelimit-reset, else a backoff capped at an hour, never sooner than the interval | Done (tested with GitHub's documented limited answer) |
+| Elevation of privilege: issue text becomes a `gh` argument or an action | Only the owner's configured label and the repository's own name reach gh; nothing in an answer is ever an argument; nothing is written to GitHub | Done |
+
+What it does not cover: a poll of `gh issue list` sees at most 100 issues each time. GitHub's GraphQL limit is not in the REST headers the probe reads, so after it the watch waits the capped backoff, not the exact reset.
 
 ### Peers: named workbenches that see each other's work (P1, P2, P3)
 

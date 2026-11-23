@@ -7,6 +7,7 @@ import { StatusBadge } from "../components/status.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { OtherWorkbenches } from "../components/other-workbenches.tsx";
+import { Proposals } from "../components/proposals.tsx";
 
 type Groups = BoardGroup[];
 
@@ -111,9 +112,12 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
     );
   }, [onSignedOut]);
 
+  /** Counts the live updates that may change the issues to start, so that section reads them again. */
+  const [watchRefresh, setWatchRefresh] = useState(0);
   useEffect(() => {
     load();
-    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && load(), onSignedOut, onRun: load, onTask: load, onApproval: load });
+    const again = (): void => setWatchRefresh((n) => n + 1);
+    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && (load(), again()), onSignedOut, onRun: () => (load(), again()), onTask: load, onApproval: load, onWatch: again });
   }, [load, onSignedOut]);
 
   const empty = groups !== null && groups.every((group) => group.total === 0);
@@ -142,6 +146,7 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
             {failed}
           </Alert>
         )}
+        <Proposals refresh={watchRefresh} onSignedOut={onSignedOut} />
         {groups === null ? (
           failed === null && (
             <p role="status" className="ds-spinner">

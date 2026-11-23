@@ -14,7 +14,7 @@ import { UsageScreen } from "../screens/usage.tsx";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn"; start: Kind | null } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "work" } | { screen: "settings"; section: "agents" | null } | { screen: "run"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn"; start: Kind | null; proposal?: number } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "work" } | { screen: "settings"; section: "agents" | null } | { screen: "run"; id: number } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -22,6 +22,9 @@ function parseRoute(hash: string): Route {
   if (at === "" || at === "/" || at === "/turn") return { screen: "turn", start: null };
   // New task and New run open the composer with that kind chosen.
   if (at === "/turn?start=task" || at === "/turn?start=run") return { screen: "turn", start: at.endsWith("task") ? "task" : "run" };
+  // Start on an issue proposed on Work: a run, with the From an issue row opened on that issue (components/proposals.tsx).
+  const proposed = /^\/turn\?start=run&proposal=([1-9]\d{0,14})$/.exec(at);
+  if (proposed) return { screen: "turn", start: "run", proposal: Number(proposed[1]) };
   // The addresses of the New task and New run forms the composer replaced.
   if (at === "/tasks/new") return { screen: "redirect", to: "#/turn?start=task" };
   if (at === "/runs/new") return { screen: "redirect", to: "#/turn?start=run" };
@@ -54,7 +57,7 @@ function Redirect({ to }: { to: string }) {
 }
 
 function screenFor(route: Route, onSignedOut: () => void) {
-  if (route.screen === "turn") return <TurnScreen key={route.start ?? ""} start={route.start} onSignedOut={onSignedOut} />;
+  if (route.screen === "turn") return <TurnScreen key={`${route.start ?? ""} ${route.proposal ?? ""}`} start={route.start} proposal={route.proposal ?? null} onSignedOut={onSignedOut} />;
   if (route.screen === "redirect") return <Redirect to={route.to} />;
   if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
   if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;

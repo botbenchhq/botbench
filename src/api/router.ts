@@ -32,6 +32,8 @@ import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
 import type { Chat } from "./chat.ts";
 import type { AgentChecks } from "./agents.ts";
+import type { Watch } from "../engine/watch.ts";
+import { watchRoutes } from "./watch.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
@@ -68,6 +70,8 @@ export interface RouteContext {
   /** Checking a task together with another workbench's open pull request, and the owner's setting that requires it. */
   checkTogether: CheckTogether;
   claims: Claims;
+  /** The issue watch: each watched repository's state, and the issues proposed as runs on Work. */
+  watch: Watch;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -167,5 +171,6 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await pushRoutes(req, res, ctx, url)) return;
   if (await connectRoutes(req, res, ctx, url)) return;
   if (await voiceRoutes(req, res, ctx, url)) return;
+  if (watchRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }
