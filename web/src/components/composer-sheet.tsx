@@ -157,7 +157,7 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
     return state.kind === "task" ? (
       <ModePicker name="run-mode" legend="Mode" hideLegend hint="A single task always runs in Manual. Plan a run to choose another mode." value="manual" onChange={() => {}} only="manual" />
     ) : (
-      <ModePicker name="run-mode" legend="Mode" hideLegend hint={state.issue.attached !== null ? ISSUE_NOT_FULL : "Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right; the rest waits for you. The mode cannot be changed once the run starts."} value={state.mode} onChange={state.setMode} {...(state.issue.attached !== null ? { refused: { mode: "full" as const, state: "Not for a run from an issue" } } : {})} />
+      <ModePicker name="run-mode" legend="Mode" hideLegend hint={state.issue.attached !== null ? ISSUE_NOT_FULL : "Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right and named what it checked; the rest waits for you. The mode cannot be changed once the run starts."} value={state.mode} onChange={state.setMode} {...(state.issue.attached !== null ? { refused: { mode: "full" as const, state: "Not for a run from an issue" } } : {})} />
     );
   if (row === "issue") return <IssueOptions state={state.issue} />;
   if (row === "review") return <ReviewOptions state={state.review} />;

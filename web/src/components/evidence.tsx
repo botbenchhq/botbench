@@ -180,7 +180,7 @@ export { agentName };
 export const reviewerWords = (reviewer: { agent: string; model: string | null }): string => `${agentName(reviewer.agent)}, ${reviewer.model ?? "its default model"}`;
 
 /** The plain sentence about what a review is, shown wherever one is. */
-export const REVIEW_RISK = "A model's opinion of the changes, not a check. The reviewer read the diff where it could change nothing and reach no network. Botbench reads only its verdict line: with concerns, the builder is given the review to fix what it agrees with, under the same permissions as for its build, and the same reviewer looks again.";
+export const REVIEW_RISK = "A model's opinion of the changes, not a check. The reviewer read the diff where it could change nothing and reach no network. Botbench reads only its verdict line and the lines under its Checked heading, which it must give to count as satisfied: with concerns, the builder is given the review to fix what it agrees with, under the same permissions as for its build, and the same reviewer looks again.";
 
 /** A review's verdict line: the verdict in words when the reply gave it in the asked form. */
 function verdictWords(review: Review): string {
@@ -190,8 +190,9 @@ function verdictWords(review: Review): string {
 }
 
 /**
- * A task's review, under its checks: the verdict line, with the reviewer's own words one tap away behind a disclosure.
- * A review that did not happen says why, in view. The reply is the model's text, marked as such and shown as text.
+ * A task's review, under its checks: the verdict line and, in view under it, what the reviewer says it checked, or the
+ * plain note that it did not say; the reviewer's own words are one tap away behind a disclosure. A review that did not
+ * happen says why, in view. The reply and its Checked lines are the model's text, shown as text.
  */
 export function ReviewEvidence({ review }: { review: Review }) {
   if (review.outcome !== "reviewed") {
@@ -203,22 +204,45 @@ export function ReviewEvidence({ review }: { review: Review }) {
   }
   const took = duration(review.durationMs);
   return (
-    <details data-testid="review-detail" className="ds-disclosure">
-      <summary className="ds-disclosure__summary">
-        <span data-testid="review-verdict">{verdictWords(review)}</span>
-        <span className="ds-disclosure__meta">
-          <time dateTime={took.iso}>{took.words}</time>
-        </span>
-      </summary>
-      <div className="ds-disclosure__content ds-stack ds-gap-sm">
-        {review.diffCut && <p>{`The diff was ${review.diffChars} characters long, and the reviewer was sent only its first part.`}</p>}
-        <figure className="ds-code-block">
-          <pre data-ds-content="" data-testid="review-text" className="ds-code-block__body">
-            <code>{review.text}</code>
-          </pre>
-        </figure>
-      </div>
-    </details>
+    <div className="ds-stack ds-gap-sm">
+      <p data-testid="review-verdict">{verdictWords(review)}</p>
+      {review.accountNote !== null ? (
+        <p data-testid="review-no-account">{review.accountNote}</p>
+      ) : (
+        <div data-testid="review-checked" className="ds-stack ds-gap-sm">
+          <p>Checked:</p>
+          <ul className="ds-list ds-list--dense">
+            {review.checked.map((line, i) => (
+              <li key={i} className="ds-list__row">
+                <div className="ds-list__content">
+                  <span className="ds-list__body">
+                    <span data-ds-content="" className="ds-list__primary">
+                      {line}
+                    </span>
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <details data-testid="review-detail" className="ds-disclosure">
+        <summary className="ds-disclosure__summary">
+          The full review
+          <span className="ds-disclosure__meta">
+            <time dateTime={took.iso}>{took.words}</time>
+          </span>
+        </summary>
+        <div className="ds-disclosure__content ds-stack ds-gap-sm">
+          {review.diffCut && <p>{`The diff was ${review.diffChars} characters long, and the reviewer was sent only its first part.`}</p>}
+          <figure className="ds-code-block">
+            <pre data-ds-content="" data-testid="review-text" className="ds-code-block__body">
+              <code>{review.text}</code>
+            </pre>
+          </figure>
+        </div>
+      </details>
+    </div>
   );
 }
 

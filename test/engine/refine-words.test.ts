@@ -64,7 +64,7 @@ test("the reviewer's second look is sent its own earlier review and the builder'
   assert.match(prompt, /<previous-review>\nVerdict: concerns/);
   assert.match(prompt, /<builder-reasons>\n- calc\.py:2: the owner asked for a - b/);
   assert.equal(prompt.match(/<\/builder-reasons>/g)?.length, 1);
-  assert.match(prompt, /Verdict: looks right\nFindings:/, "the reply's form is the same");
+  assert.match(prompt, /Verdict: looks right\nChecked:\n/, "the reply's form is the same");
   const none = reviewerPrompt({ task: TASK, diff: "x", cut: null, previous: { round: 2, review: REVIEW, reasons: [] } });
   assert.match(none, /<builder-reasons>\n- none\n<\/builder-reasons>/);
   const unknown = reviewerPrompt({ task: TASK, diff: "x", cut: null, previous: { round: 2, review: REVIEW, reasons: null } });
@@ -77,13 +77,20 @@ const ADDRESSED = "Addressed:\n- calc.py:2: fixed\nNot addressed, and why:\n- no
 
 test("the outcome and its plain line say what came of the reviews and the fixes", () => {
   const three = "Verdict: concerns\nFindings:\n- a: 1\n- b: 2\n- c: 3";
+  const right = "Verdict: looks right\nChecked:\n- calc.py: add returns a + b\n- the criterion\nNot checked: nothing left out\nFindings:\n- none";
   const cases: [Parameters<typeof outcomeLine>[0], string, string][] = [
     [{ agent: "codex", builder: "claude-code", reviews: [], refinements: [], cap: 2 }, "none", ""],
-    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("looks_right", "Verdict: looks right\nFindings:\n- none")], refinements: [], cap: 2 }, "satisfied", "Codex found nothing to fix."],
+    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("looks_right", right)], refinements: [], cap: 2 }, "satisfied", "Codex found nothing to fix."],
     [
-      { agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed("looks_right")], refinements: [fix("Addressed:\n- a: x\n- b: y\nNot addressed, and why:\n- c: not needed")], cap: 2 },
+      { agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed("looks_right", right)], refinements: [fix("Addressed:\n- a: x\n- b: y\nNot addressed, and why:\n- c: not needed")], cap: 2 },
       "satisfied",
       "Codex raised 3 concerns. Claude Code addressed 2 and explained 1. Codex is satisfied.",
+    ],
+    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("looks_right", "Verdict: looks right\nFindings:\n- none")], refinements: [], cap: 2 }, "unaccounted", "Codex said it looks right but gave no account of what it checked: needs your judgment."],
+    [
+      { agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed("looks_right", "Verdict: looks right\nFindings:\n- none")], refinements: [fix(ADDRESSED)], cap: 2 },
+      "unaccounted",
+      "Codex raised 3 concerns. Claude Code addressed 1. Codex said it looks right but gave no account of what it checked: needs your judgment.",
     ],
     [
       { agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed("concerns"), reviewed("concerns")], refinements: [fix("Addressed:\n- a: x\n- b: y\nNot addressed, and why:\n- c: no"), fix(ADDRESSED)], cap: 2 },

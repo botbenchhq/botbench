@@ -17,13 +17,14 @@ import type { LineResult } from "../../src/drivers/one-turn.ts";
  * Botbench's own reader for that CLI.
  *   "chat"       test/recordings/chat-turns.json: the CLI's answer to Botbench's chat prompt (one earlier exchange, one question)
  *   "compare"    the same file, Codex only: its comparison of the three answers
- *   "signed-out" test/recordings/<agent>-review.json: the CLI with no sign-in, which ended the turn as failed
+ *   "review"     test/recordings/<agent>-review.json: the CLI's review of a diff that adds calc.py with `return a - b`
+ *   "signed-out" the same file: the CLI with no sign-in, which ended the turn as failed
  * What is not: the CLI printed those lines for the capture's prompt, and the replay plays them after whatever prompt its
  * caller sends. The replay's own are the answers to `probe` and `models`, the hold ("hang": the session waits until it
  * is stopped, having played nothing), and the turn's end when it is stopped. No test may read those as what a CLI does.
  */
 
-export type ChatSession = "chat" | "compare" | "signed-out" | "hang";
+export type ChatSession = "chat" | "compare" | "review" | "signed-out" | "hang";
 type Agent = typeof CODEX | typeof GROK | typeof ANTIGRAVITY;
 
 const RECORDINGS = path.resolve(import.meta.dirname, "..", "recordings");
@@ -37,7 +38,7 @@ const READERS: Record<Agent, { capabilities: DriverCapabilities; reader: () => (
 
 /** The lines a session plays. */
 function linesOf(agent: Agent, session: Exclude<ChatSession, "hang">): string[] {
-  if (session === "signed-out") return load(READERS[agent].review).sessions["signed-out"]!.lines;
+  if (session === "review" || session === "signed-out") return load(READERS[agent].review).sessions[session]!.lines;
   if (session === "compare" && agent !== CODEX) throw new Error("Only Codex's comparison was recorded.");
   return load("chat-turns.json").sessions[session === "compare" ? "compare" : agent]!.lines;
 }

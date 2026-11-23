@@ -90,7 +90,7 @@ test("satisfied in one round: the outcome line is the task screen's, the counts,
   const r = await rig(t, { reviewer: true });
   r.review("concerns", "Verdict: concerns\nFindings:\n- calc.py:2: returns a - b");
   r.fixed("I fixed it.\n\nAddressed:\n- calc.py:2: now returns a + b\n\nNot addressed, and why:\n- none");
-  r.review("looks_right", "Verdict: looks right\nFindings:\n- none");
+  r.review("looks_right", "Verdict: looks right\nChecked:\n- calc.py: add returns a + b\n- the criterion\nNot checked: nothing left out\nFindings:\n- none");
   r.ready();
   await decideTask(r.db,{ taskId: r.task.id, decision: "accept" });
   const section = reviewOf(body(r));
@@ -130,7 +130,7 @@ test("unresolved after two rounds, with the owner's note: the last review's find
 
 test("accepted by the mode: the section says so, with the recorded reasons, fenced", async (t) => {
   const r = await rig(t, { reviewer: true, mode: "full" });
-  r.review("looks_right", "Verdict: looks right\nFindings:\n- none");
+  r.review("looks_right", "Verdict: looks right\nChecked:\n- calc.py: add returns a + b\n- the criterion\nNot checked: nothing left out\nFindings:\n- none");
   const reasons = "Accepted without you, as this run is fully autonomous: every check passed, the review is satisfied, and nothing an agent asked for was refused.";
   r.ready();
   await acceptByMode(r.db, r.task.id, reasons);
