@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { agentState } from "../app/chat.ts";
 import { ApiError, getAgents, getDefaultMode, getWorkbench, openEventStream, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
@@ -144,8 +144,16 @@ function WorkbenchName({ onSignedOut }: { onSignedOut: () => void }) {
  * kept by Botbench. Appearance: the mode this device shows, saved as it is chosen.
  * Notifications: this device's notifications, on or off (unit 23).
  */
-export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
+export function SettingsScreen({ section, onSignedOut }: { section: "agents" | null; onSignedOut: () => void }) {
   const [agents, setAgents] = useState<AgentState[] | null>(null);
+  // Opened at its Agents section (#/settings/agents): that section is brought into view and its heading takes the focus,
+  // so a screen reader starts there too.
+  const agentsHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (section !== "agents") return;
+    agentsHeading.current?.scrollIntoView({ block: "start" });
+    agentsHeading.current?.focus({ preventScroll: true });
+  }, [section]);
   const [problem, setProblem] = useState<string | null>(null);
   const { choice } = useAppearance();
   const id = useId();
@@ -212,7 +220,7 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
           </ul>
 
           <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-agents`}>
-            <h2 className="ds-settings-row__heading" id={`${id}-agents`}>
+            <h2 ref={agentsHeading} tabIndex={-1} className="ds-settings-row__heading" id={`${id}-agents`}>
               Agents
             </h2>
             {AGENTS.map(({ agent: key, name }) => {

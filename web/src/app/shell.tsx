@@ -14,7 +14,7 @@ import { UsageScreen } from "../screens/usage.tsx";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn"; start: Kind | null } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "work" } | { screen: "settings" } | { screen: "run"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn"; start: Kind | null } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number } | { screen: "work" } | { screen: "settings"; section: "agents" | null } | { screen: "run"; id: number } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -30,7 +30,9 @@ function parseRoute(hash: string): Route {
   if (at === "/runs" || at === "/tasks") return { screen: "redirect", to: "#/work" };
   if (at === "/trust") return { screen: "trust" };
   if (at === "/usage") return { screen: "usage" };
-  if (at === "/settings") return { screen: "settings" };
+  if (at === "/settings") return { screen: "settings", section: null };
+  // Settings at its Agents section: where the home screen sends the owner to connect an agent.
+  if (at === "/settings/agents") return { screen: "settings", section: "agents" };
   const one = /^\/(tasks|runs)\/([1-9]\d{0,14})$/.exec(at);
   return one ? { screen: one[1] === "runs" ? "run" : "task", id: Number(one[2]) } : { screen: "none", what: at };
 }
@@ -57,7 +59,7 @@ function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
   if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
   if (route.screen === "work") return <BoardScreen onSignedOut={onSignedOut} />;
-  if (route.screen === "settings") return <SettingsScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
