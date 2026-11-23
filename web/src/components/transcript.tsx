@@ -3,6 +3,7 @@ import { RESTART_STOPPED, type DriverEvent, type StoredEvent } from "../api/clie
 import { DiffLine } from "./diff.tsx";
 import { duration as took } from "./evidence.tsx";
 import { Icon, type IconName } from "./icon.tsx";
+import { MarkdownView } from "./markdown-view.tsx";
 import { callLine, callReason, callTarget, confinedWords, duration, editChange, ranFor, stepGroupOpen, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
@@ -390,11 +391,10 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
     case "text":
       // Claude Code sends each piece of its reply whole, never word by word, so a text row is a finished message the
       // moment it is stored: the message's streaming state, its caret and its stopped state have no event to come from.
+      // The reply is drawn with the safe markdown subset: still only React text and elements, never HTML, a link or an image.
       return (
         <Line kind={e.type} look="agent" label={by ?? "Claude Code"} state="done">
-          <Body>
-            <Theirs>{e.text}</Theirs>
-          </Body>
+          <MarkdownView text={e.text} className="ds-message__body ds-stack ds-gap-sm" />
         </Line>
       );
     case "session_started":
