@@ -563,17 +563,61 @@ export async function pushTaskBranch(o: { repo: string; remote: string; branch: 
   checkBase(o.commit);
   const at = await branchCommit(o.repo, o.branch);
   if (at !== o.commit) throw new Error(at === null ? `The branch ${o.branch} is not in the repository any more, so it was not pushed.` : `The branch ${o.branch} has moved since it was recorded, so it was not pushed.`);
+  await pushRef(o.repo, o.branch, ["--no-follow-tags", o.remote, `${o.commit}:refs/heads/${o.branch}`]);
+}
+
+/** `git push --porcelain --no-verify --recurse-submodules=no --no-signed <args>`, with a refusal said in the remote's own words. */
+async function pushRef(repo: string, branch: string, args: string[]): Promise<void> {
   try {
-    await git(path.resolve(o.repo), ["push", "--porcelain", "--no-verify", "--no-follow-tags", "--recurse-submodules=no", "--no-signed", o.remote, `${o.commit}:refs/heads/${o.branch}`], GIT_NETWORK_LIMIT_MS);
+    await git(path.resolve(repo), ["push", "--porcelain", "--no-verify", "--recurse-submodules=no", "--no-signed", ...args], GIT_NETWORK_LIMIT_MS);
   } catch (err) {
     const refusal = err instanceof GitError ? pushRefusal(err.stdout) : null;
     if (refusal !== null) {
       // What the remote itself said (branch protection, a hook's reason), from its "remote:" lines.
       const said = (err as GitError).stderr.split("\n").filter((line) => line.startsWith("remote:")).map((line) => line.slice("remote:".length).trim()).filter(Boolean).join(" ").slice(0, 600);
-      throw new Error(`The remote refused the branch ${o.branch}: ${refusal}.${said === "" ? "" : ` It said: ${said}`}`, { cause: err });
+      throw new Error(`The remote refused the branch ${branch}: ${refusal}.${said === "" ? "" : ` It said: ${said}`}`, { cause: err });
     }
     throw err;
   }
+}
+
+/*
+ * Claiming an issue (Peers P3, engine/claims.ts): a branch pushed early that holds one commit Botbench makes itself,
+ * with no parent and no files, so nothing of the repository's content or of the owner's unpushed commits leaves with it.
+ */
+
+/** Make a claim's commit in `repo`: the empty tree, no parent, Botbench as its author, `message` as its message. No ref is written. */
+export async function makeClaimCommit(repo: string, message: string): Promise<string> {
+  if (message.trim() === "") throw new Error("A commit message is required.");
+  const dir = path.resolve(repo);
+  const tree = (await git(dir, ["hash-object", "-t", "tree", "-w", "/dev/null"], GIT_CHECK_LIMIT_MS)).trim();
+  const commit = (await git(dir, ["-c", `user.name=${AUTHOR_NAME}`, "-c", `user.email=${AUTHOR_EMAIL}`, "commit-tree", "--no-gpg-sign", `-m${message}`, tree], GIT_CHECK_LIMIT_MS)).trim();
+  checkBase(commit);
+  return commit;
+}
+
+/**
+ * Push `commit` to a new branch `branch` on `remote`: `git push … <remote> <commit>:refs/heads/<branch>`. Never by
+ * force: a branch of that name already there, with any other commit, refuses it. Only a branch in Botbench's own form.
+ */
+export async function pushNewBranch(o: { repo: string; remote: string; branch: string; commit: string }): Promise<void> {
+  checkRemote(o.remote);
+  checkPushable(o.branch);
+  checkBase(o.commit);
+  await pushRef(o.repo, o.branch, ["--no-follow-tags", o.remote, `${o.commit}:refs/heads/${o.branch}`]);
+}
+
+/**
+ * Delete the branch `branch` on `remote`, and only while it still points at `commit`. A delete needs no force; the
+ * `--force-with-lease=<ref>:<commit>` here forces nothing: it is git's compare-and-delete, which makes git refuse unless
+ * the remote branch is at exactly `commit` when the remote takes the request, so a branch somebody moved, even a moment
+ * ago, is never deleted. Only a branch in Botbench's own form.
+ */
+export async function deleteRemoteBranchAt(o: { repo: string; remote: string; branch: string; commit: string }): Promise<void> {
+  checkRemote(o.remote);
+  checkPushable(o.branch);
+  checkBase(o.commit);
+  await pushRef(o.repo, o.branch, [`--force-with-lease=refs/heads/${o.branch}:${o.commit}`, o.remote, `:refs/heads/${o.branch}`]);
 }
 
 /**

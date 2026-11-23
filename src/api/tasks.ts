@@ -281,7 +281,11 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
       const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note });
       ctx.stream.announceTask(decided.task);
-      if (decided.run !== null) ctx.stream.announceRun(decided.run);
+      if (decided.run !== null) {
+        ctx.stream.announceRun(decided.run);
+        // A run the decision ended may release its issue claim (engine/claims.ts).
+        ctx.claims.runChanged(decided.run);
+      }
       json(res, 200, await detail(ctx, decided.task));
     } else if (method === "POST" && discard) {
       const body = await readJsonBody(req);

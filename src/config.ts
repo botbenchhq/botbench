@@ -111,6 +111,11 @@ export interface RepositoryConfig {
   baseBranch?: string;
   /** Paths in this repository, added to the top-level "protectedPaths", that only the owner may accept a change to. */
   protectedPaths?: string[];
+  /**
+   * Whether a run started from an issue of this repository claims it on the remote (Peers P3, engine/claims.ts): an
+   * early branch other workbenches see, deleted again when the run ends without a pull request. Off when absent.
+   */
+  claimIssues?: boolean;
 }
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
@@ -273,6 +278,10 @@ function validate(c: Json, where: string): Config {
           if (typeof list !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(list) || list.includes("..") || list.endsWith("/") || list.startsWith(BRANCH_PREFIX)) fail(`repository "${repo}": "baseBranch" must be a branch name such as "main", and not one of Botbench's own (${BRANCH_PREFIX}…).`);
           continue;
         }
+        if (setting === "claimIssues") {
+          if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue pushes a branch that tells other workbenches you started on it.`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -312,7 +321,7 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues"] as const;
 
 const PROTECTED_RULE = 'must be a list of paths inside the repository, such as ["test/recordings/", "package-lock.json"]: relative to its top folder, without "..", "*" or a leading "/".';
 
@@ -365,6 +374,11 @@ export function repositoryHosts(config: Config, repo: string): string[] {
 export function repositoryDelivery(config: Config, repo: string): { remote: string; baseBranch: string | null } {
   const settings = repositorySettings(config, repo);
   return { remote: settings.remote ?? "origin", baseBranch: settings.baseBranch ?? null };
+}
+
+/** Whether a run started from an issue of a repository claims it on its remote. Off unless its settings say true. */
+export function repositoryClaims(config: Config, repo: string): boolean {
+  return repositorySettings(config, repo).claimIssues === true;
 }
 
 /** A repository's settings, found by its real path. The config's keys are compared as written and with their links followed. */

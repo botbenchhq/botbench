@@ -14,6 +14,7 @@ import { taskEvidence } from "./stations.ts";
 import { MODE_WORDS, isRunMode } from "./modes.ts";
 import { getTask, TaskError, words, type Task } from "./task.ts";
 import { runIssue } from "./intake.ts";
+import type { Claims } from "./claims.ts";
 
 /*
  * Delivery: an accepted task's branch pushed, and a pull request opened for it, by Botbench itself on this Mac with the
@@ -257,6 +258,11 @@ export interface DeliveryOptions {
   github: GitHub;
   /** Called after each step is recorded, so screens read the task again. */
   onTaskChange: (task: Task) => void;
+  /**
+   * Asked before the branch is pushed and again before the pull request is opened (engine/claims.ts): why not, when the
+   * task's run gave way to another workbench's earlier claim on its issue; null to go on.
+   */
+  claims?: Pick<Claims, "beforeSend">;
 }
 
 export interface Deliveries {
@@ -390,6 +396,12 @@ export function createDeliveries(options: DeliveryOptions): Deliveries {
     }
     const { remote, repo, base, branch } = where;
     const repository = repoName(repo);
+    // Another workbench's earlier claim on the run's issue: nothing is sent (engine/claims.ts).
+    const yielded = await options.claims?.beforeSend(task.runId, "push", branch);
+    if (yielded != null) {
+      record(task, { step: "failed", failedStep: "check", detail: yielded }, `Did not open a pull request: ${yielded}`);
+      return;
+    }
     record(task, { step: "requested", requestedBy: by, remote, repository, base, branch, headCommit: commit }, `Pushing the branch ${branch} to ${remote} (${repository}) and opening a pull request into ${base}${by === "run" ? ", as the run was set to" : ", as you asked"}.`);
 
     // The push: only when the remote lacks the commit; never over other commits.
@@ -406,6 +418,13 @@ export function createDeliveries(options: DeliveryOptions): Deliveries {
     } catch (err) {
       const why = err instanceof DeliveryFailure ? err.message : redact(`The branch ${branch} could not be pushed to ${remote}: ${words(err)}`);
       record(task, { step: "failed", failedStep: "push", detail: why }, `Did not open a pull request: ${why}`);
+      return;
+    }
+
+    // The claims on the run's issue are read again before a pull request is opened: an earlier one of another workbench's opens none here.
+    const late = await options.claims?.beforeSend(task.runId, "pull_request", branch);
+    if (late != null) {
+      record(task, { step: "failed", failedStep: "pull_request", detail: late }, `Did not open a pull request: ${late}`);
       return;
     }
 

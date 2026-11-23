@@ -24,6 +24,7 @@ import { voiceRoutes } from "./voice.ts";
 import { issueRoutes } from "./issues.ts";
 import { peersRoutes } from "./peers.ts";
 import type { Peers } from "../engine/peers.ts";
+import type { Claims } from "../engine/claims.ts";
 import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
 import type { Chat } from "./chat.ts";
@@ -59,6 +60,7 @@ export interface RouteContext {
   github: GitHub;
   /** Other workbenches' work on a repository's shared remote, read only. */
   peers: Peers;
+  claims: Claims;
   /** Where the built client is. */
   clientDir: string;
 }

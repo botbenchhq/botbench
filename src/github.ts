@@ -14,8 +14,9 @@ import { gitEnv } from "./worktrees.ts";
  *   gh issue view <number> --repo=<host/owner/name> --json=...     one issue, read only (engine/intake.ts)
  *   gh api --method=GET --hostname=<host> repos/<owner>/<name>/issues/<number>   the same issue as GitHub's REST API
  *                                                                  gives it, read only, for how its author relates to the repository
- *   gh pr list --repo=... --state=open --json=... --limit=100      the open pull requests, read only (engine/peers.ts)
+ *   gh pr list --repo=... --state=all --json=... --limit=100       the latest pull requests in any state, read only (engine/peers.ts)
  *
+ * The one write besides a pull request goes through git, not gh: a claim branch pushed and deleted (engine/claims.ts).
  * Never `gh pr merge`, never `gh repo delete`, never anything that changes a branch, and nothing that writes to an
  * issue: no comment, label, close or assignment.
  */
@@ -110,7 +111,7 @@ export const ghArgs = {
     if (title === "") throw new Error("A pull request needs a title.");
     return ["pr", "create", `--repo=${repoName(repo)}`, `--base=${o.base}`, `--head=${o.head}`, `--title=${title}`, "--body-file=-"];
   },
-  /** The repository's open pull requests, read only: what other workbenches have in flight (engine/peers.ts). */
+  /** The repository's pull requests in one state or all, read only: what other workbenches have in flight (engine/peers.ts). */
   prListOpen: (repo: RepoRef, state: "open" | "all" = "open"): string[] => ["pr", "list", `--repo=${repoName(repo)}`, `--state=${state}`, `--json=${PR_FIELDS}`, `--limit=${PR_LIST_LIMIT}`],
   /** The number is checked to be a plain positive whole number, so it can only ever be read as the issue's number. */
   issueView: (repo: RepoRef, number: number): string[] => {
@@ -177,6 +178,23 @@ export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullR
     found.push({ number, url, title: plain(pr.title, TITLE_LIMIT), state: pr.state, headRefName: pr.headRefName, closes: [...new Set(closes)], files: [...new Set(files)] });
   }
   return found;
+}
+
+/**
+ * One page of a repository's pull requests: those the parser kept, and whether gh's answer filled the page (`full`), so
+ * that older pull requests may be missing from it. `full` counts every entry gh gave, a fork's and an unreadable one
+ * included: a page of 100 with one fork's pull request in it is still full though only 99 are kept.
+ */
+export interface PullRequestPage {
+  pullRequests: ListedPullRequest[];
+  full: boolean;
+}
+
+/** `parsePullRequestList`, with whether gh's answer held as many entries as were asked for. */
+export function parsePullRequestPage(stdout: string, repo: RepoRef): PullRequestPage {
+  const pullRequests = parsePullRequestList(stdout, repo);
+  // parsePullRequestList has made sure the answer is a list.
+  return { pullRequests, full: (JSON.parse(stdout) as unknown[]).length >= PR_LIST_LIMIT };
 }
 
 /** The largest issue number Botbench asks for: GitHub's numbers are 32-bit. */
@@ -356,8 +374,8 @@ export interface GitHub {
   openPullRequest(repo: RepoRef, o: { base: string; head: string; title: string; body: string; cwd: string }): Promise<PullRequest>;
   /** Read one issue, and how its author relates to the repository; nothing is written to it. */
   issue(repo: RepoRef, number: number): Promise<IssueView>;
-  /** The repository's open pull requests, read only (engine/peers.ts). */
-  openPullRequests(repo: RepoRef): Promise<ListedPullRequest[]>;
+  /** The repository's latest pull requests in every state, open, closed and merged, read only (engine/peers.ts). */
+  pullRequests(repo: RepoRef): Promise<PullRequestPage>;
 }
 
 /** The GitHub Botbench uses: the owner's `gh`, run by `run`. */
@@ -380,6 +398,6 @@ export function createGitHub(run: RunGh = runGh, cwd = process.cwd()): GitHub {
       const view = parseIssueView(await ok(ghArgs.issueView(repo, number)), repo, number);
       return { ...view, authorRelation: parseIssueRelation(await ok(ghArgs.issueApi(repo, number)), repo, number) };
     },
-    openPullRequests: async (repo) => parsePullRequestList(await ok(ghArgs.prListOpen(repo)), repo).filter((pr) => pr.state === "OPEN"),
+    pullRequests: async (repo) => parsePullRequestPage(await ok(ghArgs.prListOpen(repo, "all")), repo),
   };
 }

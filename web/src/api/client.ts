@@ -575,6 +575,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   outsideHosts: boolean;
   /** Those hosts, by name, for a run from an issue whose owner allowed them; empty for any other run. */
   issueHosts: string[];
+  /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
+  claim: { state: "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -603,9 +605,12 @@ export interface RunAnnouncement {
   status: RunStatus;
 }
 
-/** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery }, 30_000);
+/**
+ * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
+ * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
+ */
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; takeOver?: string[] }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -672,9 +677,16 @@ export interface PeerBranch {
   workbench: string;
   branch: string;
 }
-/** What other workbenches have in flight on one repository's remote, or why that cannot be read now. */
+/** Another workbench's claim on an issue: it started a run on it at `startedAt` (a UTC minute) and has no pull request yet. */
+export interface PeerClaim {
+  workbench: string;
+  branch: string;
+  issue: number;
+  startedAt: string;
+}
+/** What other workbenches have in flight on one repository's remote, or why that cannot be read now. `repository` is the shared one, host/owner/name. */
 export type PeersView =
-  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; checkedAt: string }
+  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[]; checkedAt: string }
   | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
 /** The view for each repository the owner has used. Reading it never holds up anything else. */
 export const getPeers = async (): Promise<PeersView[]> => (await request<{ views: PeersView[] }>("GET", "/api/peers", undefined, 90_000)).views;
@@ -785,7 +797,8 @@ export type LogRule =
   | "mode_allowed"
   | "mode_refused"
   | "mode_accepted"
-  | "delivery";
+  | "delivery"
+  | "issue_claim";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

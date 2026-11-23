@@ -148,7 +148,9 @@ export type LogRule =
   /** A web tool of a chat, allowed or refused by the owner's setting "Web access in chat". */
   | "chat_web_access"
   /** A confined command of a chat, which the floor does not name, ran without asking. */
-  | "chat_confined";
+  | "chat_confined"
+  /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
+  | "issue_claim";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 

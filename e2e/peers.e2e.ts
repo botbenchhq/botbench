@@ -4,15 +4,16 @@ import { test as base } from "@playwright/test";
 import { createTask, moveTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { chooseWorkbench } from "../src/workbench.ts";
-import { commitWork, createWorktree } from "../src/worktrees.ts";
+import { claimBranchName } from "../src/engine/claim-branch.ts";
+import { commitWork, createWorktree, makeClaimCommit, pushNewBranch } from "../src/worktrees.ts";
 import { PEERS_ADDRESS } from "../test/support/replay-peers.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { checkDesign, chooseRepository, closeContext, expect, messageBox, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// Named workbenches that see each other's work (Peers P1, P2) in the real client, at a phone's size, with no model
+// Named workbenches that see each other's work (Peers P1, P2, P3) in the real client, at a phone's size, with no model
 // turn. The shared remote is a real bare repository on disk; another installation ("bob") has pushed its task branch
-// to it from its own clone, and this installation ("alice") has a task ready for review on its own named branch. The
+// and a claim on issue #82 to it from its own clone, and this installation ("alice") has a task ready for review on its own named branch. The
 // repository names the remote by the GitHub address of the owner's repository jon-lange/botbench, which its git
 // settings send to the bare repository. Botbench is started through e2e/serve-replayed-gh.ts, whose list of open pull
 // requests is replayed from output captured once from the real gh for that repository (test/support/replay-peers.ts,
@@ -39,6 +40,12 @@ const test = base.extend<{ dir: string; seeded: { home: string; repo: string; ta
     git(bob, "add", "bob.txt");
     git(bob, "-c", "user.name=Bob", "-c", "user.email=bob@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "bob's work");
     git(bob, "push", "--quiet", "origin", "HEAD:refs/heads/botbench/bob/run-1/task-1");
+    // And bob's claim on issue #82 (Peers P3), made three minutes ago with Botbench's own claim commit and push.
+    const claim = claimBranchName("bob", 2, 82, new Date(Date.now() - 3 * 60_000));
+    await pushNewBranch({ repo: bob, remote: "origin", branch: claim, commit: await makeClaimCommit(bob, "Botbench: bob started on issue #82") });
+    // And an old claim of bob's on issue #90, from three hours ago, which alice's owner may take over.
+    const old = claimBranchName("bob", 1, 90, new Date(Date.now() - 3 * 60 * 60_000));
+    await pushNewBranch({ repo: bob, remote: "origin", branch: old, commit: await makeClaimCommit(bob, "Botbench: bob started on issue #90") });
     // Alice's installation, this one: its own clone of the same remote, and a task ready for review on its named branch.
     const repo = path.join(dir, "alice");
     git(dir, "clone", "--quiet", bare, repo);
@@ -74,7 +81,12 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   const branch = others.getByTestId("peer-branch");
   await expect(branch).toHaveCount(1);
   await expect(branch).toContainText("botbench/bob/run-1/task-1");
-  await expect(branch).toContainText("bob · Pushed, no pull request yet · alice");
+  // Each row names the repository both share, never this Mac's folder for it ("alice").
+  await expect(branch).toContainText("bob · Pushed, no pull request yet · github.com/jon-lange/botbench");
+  await expect(others.getByRole("list", { name: "Other workbenches in github.com/jon-lange/botbench" })).toBeVisible();
+  await expect(others.getByTestId("peer-claim")).toHaveCount(2);
+  await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #82" })).toContainText(/bob · Started on issue #82 \d+ minutes ago · github\.com\/jon-lange\/botbench/);
+  await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #90" })).toContainText("bob · Started on issue #90 3 hours ago · github.com/jon-lange/botbench");
   // This workbench's own branch is not listed.
   await expect(others).not.toContainText(seeded.branch);
   await checkDesign(page, "Work, with another workbench's branch");
@@ -91,6 +103,27 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await messageBox(page).fill("Fix Issue #59");
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   await expect(page.getByTestId("peer-warning")).toHaveCount(0);
+  // Naming the issue bob claimed: a warning only, and Send stays enabled.
+  await messageBox(page).fill("Issue #82 on jon-lange/botbench");
+  await expect(page.getByTestId("peer-warning")).toHaveText(/^A best-effort match on #82 in your message: bob started on this issue \d+ minutes ago\.$/);
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+
+  // A new run on the issue of bob's old claim: Take over, behind a confirm that names bob. A claim minutes old offers none.
+  await page.goto(`${botbench.base}/#/turn?start=run`);
+  await closeContext(page);
+  await messageBox(page).fill("Issue #82 on jon-lange/botbench");
+  await expect(page.getByTestId("peer-warning")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /^Take over/ })).toHaveCount(0);
+  await messageBox(page).fill("Issue #90 on jon-lange/botbench");
+  await expect(page.getByTestId("peer-warning")).toHaveText(/^A best-effort match on #90 in your message: bob started on this issue 3 hours ago\.$/);
+  await page.getByRole("button", { name: "Take over bob's claim on issue #90" }).click();
+  const dialog = page.getByTestId("take-over-dialog");
+  await expect(dialog.getByRole("heading", { name: "Take over bob's claim?" })).toBeVisible();
+  await expect(dialog).toContainText("bob started on issue #90 3 hours ago and has opened no pull request.");
+  await checkDesign(page, "Take over another workbench's claim");
+  await dialog.getByRole("button", { name: "Take over" }).click();
+  await expect(page.getByTestId("peer-taken-over")).toHaveText("bob's claim on issue #90 is taken over: your run goes ahead, and Botbench leaves its branch as it is.");
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
   await page.goto(`${botbench.base}/#/settings`);
   const name = page.getByLabel("Workbench name");

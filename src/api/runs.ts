@@ -11,6 +11,7 @@ import { deliveryOf } from "../engine/delivery.ts";
 import { issueHostsFor, runIssue } from "../engine/intake.ts";
 import { repositoryHosts } from "../config.ts";
 import { issueLink } from "./issues.ts";
+import { claimOf } from "../engine/claims.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -52,6 +53,8 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
     // The issue the run was started from, and whether it is marked as having read outside text (engine/intake.ts).
     // `issueHosts`: for a marked run whose owner allowed them, the network hosts its commands may reach, as the settings name them now.
     issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
+    // Whether the run told other workbenches it started on its issue, and what became of that (engine/claims.ts).
+    claim: claimOf(db, id),
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
@@ -90,7 +93,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
       builderOnly(body);
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue });
+      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, takeOver: body.takeOver });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });
