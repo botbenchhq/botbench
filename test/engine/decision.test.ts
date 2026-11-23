@@ -14,6 +14,7 @@ import { MIGRATIONS } from "../../src/store/schema.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver, type BuildTurn } from "../support/replay-build.ts";
 import { botbenchBranches, checkoutState, git, initRepo, ownerCommit, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // Decisions (unit 14): the owner closes a task that is ready for review by accepting or rejecting it. Everything here is
 // real: a temporary git repository, git itself, and SQLite. Tasks are put at Ready for review either by Botbench's own
@@ -225,7 +226,7 @@ async function line(t: T, script: BuildTurn[], checks: StationCommand[], files?:
   return { ...s, tasks, runs };
 }
 
-test("AE3, and a run is done only when every task is decided: tasks whose checks failed can still be accepted or rejected, and the run waits until the last is decided", async (t) => {
+test("AE3, and a run is done only when every task is decided: tasks whose checks failed can still be accepted or rejected, and the run waits until the last is decided", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done"], [{ command: "echo the suite failed; exit 1", limitMs: 10_000 }]);
   const planned = storePlan(e.db, createRun(e.db, { repo: e.repo, prompt: "Add two files", baseCommit: e.base }).id, TWO);
   const { run, tasks } = e.runs.approve(planned.id, planned.planVersion);
@@ -246,7 +247,7 @@ test("AE3, and a run is done only when every task is decided: tasks whose checks
   assert.equal(worktreeCount(e.repo), 1);
 });
 
-test("files a check left in the worktree after Botbench committed are listed and never deleted unasked; ignored files do not count; once confirmed, they go with the worktree and the decision names them", async (t) => {
+test("files a check left in the worktree after Botbench committed are listed and never deleted unasked; ignored files do not count; once confirmed, they go with the worktree and the decision names them", { skip: NO_SANDBOX }, async (t) => {
   const leaves = "echo report > check-report.txt; echo changed >> README.md; mkdir -p node_modules && echo cached > node_modules/cache.txt";
   const e = await line(t, ["done"], [{ command: leaves, limitMs: 10_000 }], { "README.md": "# Sample\n", ".gitignore": "node_modules/\n" });
   const started = await e.tasks.start(e.repo, "create hello.txt");
@@ -342,7 +343,7 @@ test("a copy already removed by hand: the decision forgets only that copy, leave
 
 // Unit 16: a run with nothing left to decide ends, and a task that failed or was stopped can be cleaned up by the owner.
 
-test("a run whose every task failed or was stopped does not wait for a decision: it is done, with nothing to review, and its history says why", async (t) => {
+test("a run whose every task failed or was stopped does not wait for a decision: it is done, with nothing to review, and its history says why", { skip: NO_SANDBOX }, async (t) => {
   const failing: StationCommand = { command: "echo preparing the copy; exit 1", limitMs: 10_000 };
   const e = await line(t, [], [], undefined, [failing]);
   const planned = storePlan(e.db, createRun(e.db, { repo: e.repo, prompt: "Add two files", baseCommit: e.base }).id, TWO);

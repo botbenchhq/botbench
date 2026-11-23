@@ -15,6 +15,7 @@ import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { replayGitHub } from "../support/replay-github.ts";
 import { git, initRepo, tempDir, write } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // Named workbenches (Peers P1) with a real git, real SQLite and no network. Two "installations" are two stores, each
 // with its own clone of one shared remote: a real bare repository on disk, reached through the GitHub address its
@@ -118,7 +119,7 @@ async function refused(fn: () => unknown, message: RegExp): Promise<void> {
   assert.fail("not refused");
 }
 
-test("two installations with different names make different branches for run 1 task 1, and both are delivered to one shared remote", async (t) => {
+test("two installations with different names make different branches for run 1 task 1, and both are delivered to one shared remote", { skip: NO_SANDBOX }, async (t) => {
   const shared = remote(t);
   const alice = bench(t, shared, "alice");
   const bob = bench(t, shared, "bob");
@@ -152,7 +153,7 @@ test("a task whose branch has the old two-level name is still decided, delivered
   assert.equal(git(alice.repo, "branch", "--list", failed.branch!).trim(), "", "deleted by Discard");
 });
 
-test("another workbench's branch on the shared remote does not block a delivery and is never touched", async (t) => {
+test("another workbench's branch on the shared remote does not block a delivery and is never touched", { skip: NO_SANDBOX }, async (t) => {
   const shared = remote(t);
   const bob = bench(t, shared, "bob");
   const alice = bench(t, shared, "alice");

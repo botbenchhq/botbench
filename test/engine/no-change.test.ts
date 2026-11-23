@@ -15,6 +15,7 @@ import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/
 import { loadPlanRecording } from "../support/replay-plan.ts";
 import { reviewReplayDriver, type ReviewReplay } from "../support/replay-review.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // A builder's turn that ends without changing any file is not work to review (run 2, task 3 of the self-review, where the
 // builder left its work to subagents and ended): with real SQLite, a real temporary repository, a real check command and
@@ -90,7 +91,7 @@ test("a builder that changed no file fails, saying so with its last message; no 
   assert.ok(fs.existsSync(task.worktreePath!), "its copy stays, for Resume or Discard");
 });
 
-test("Resume of a task that changed nothing takes up the same session, says what happened, and goes on to the checks once it changed something", async (t) => {
+test("Resume of a task that changed nothing takes up the same session, says what happened, and goes on to the checks once it changed something", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"]);
   const id = await oneTask(e, "manual");
   assert.equal(getTask(e.db, id)!.status, "failed");

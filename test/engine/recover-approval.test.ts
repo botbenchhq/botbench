@@ -16,6 +16,7 @@ import { MIGRATIONS } from "../../src/store/schema.ts";
 import { checkoutState, git, initRepo, tempDir } from "../support/repo.ts";
 import type { Left } from "../support/leave-pending.ts";
 import { loadRecording, replayDriver } from "../support/replay.ts";
+import { NO_PROCESS_LIST } from "../support/confined.ts";
 
 // Approvals across a restart. The store, the broker and its socket, git and the processes are the real ones. The Botbench
 // that "stopped" is a real process that is killed where it stands (test/support/leave-pending.ts). No test here starts
@@ -135,7 +136,7 @@ test("a pending approval row is still pending after the store is closed and reop
   assert.equal(getTask(third.db, s.taskId)!.status, "building");
 });
 
-test("a CLI process that survived from before the restart is stopped on start, before the task is parked; a process group that began after the attempt is not touched", { timeout: 30_000 }, async (t) => {
+test("a CLI process that survived from before the restart is stopped on start, before the task is parked; a process group that began after the attempt is not touched", { skip: NO_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   const s = stoppedWhileWaiting(t, { survivor: true });
   assert.ok(s.pgid !== null && processGroupAlive(s.pgid), "the survivor is running");
   // Botbench's own time zone must not shift when a process is taken to have begun: far west here, far east below.

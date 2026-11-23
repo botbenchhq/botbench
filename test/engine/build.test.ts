@@ -15,6 +15,7 @@ import { createWorktree } from "../../src/worktrees.ts";
 import { workbenchName } from "../../src/workbench.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
 import { checkoutState, git, initRepo, ownerCommit, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { NO_SANDBOX, NO_SANDBOX_OR_PROCESS_LIST } from "../support/confined.ts";
 
 // The build line: a run's approved tasks are built one at a time, in plan order, each in its own worktree from the
 // run's base commit, after the repository's setup commands. No test in this file starts a CLI: each builder's turn is a
@@ -94,7 +95,7 @@ const alive = (pid: number): boolean => {
   }
 };
 
-test("AE1: deleting one of three planned tasks and approving creates exactly two task worktrees, from the run's base commit, built in plan order; the run is then ready for review", async (t) => {
+test("AE1: deleting one of three planned tasks and approving creates exactly two task worktrees, from the run's base commit, built in plan order; the run is then ready for review", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done"]);
   const run = planned(e);
   const edited = editPlan(e.db, run.id, [THREE[0], THREE[2]], run.planVersion);
@@ -134,7 +135,7 @@ test("AE1: deleting one of three planned tasks and approving creates exactly two
   assert.deepEqual(checkoutState(e.repo), before, "the owner's checkout is untouched");
 });
 
-test("tasks build strictly one after another: the second task's worktree does not exist until the first has finished", async (t) => {
+test("tasks build strictly one after another: the second task's worktree does not exist until the first has finished", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done"], { hold: [0] });
   const run = planned(e, THREE.slice(0, 2));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -157,7 +158,7 @@ test("tasks build strictly one after another: the second task's worktree does no
   assert.equal(getRun(e.db, run.id)!.status, "awaiting_decision");
 });
 
-test("the tasks of a run are built on the run's build model, not on the configured one: the builder's attempt is started with it", async (t) => {
+test("the tasks of a run are built on the run's build model, not on the configured one: the builder's attempt is started with it", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"]);
   const run = storePlan(e.db, createRun(e.db, { repo: e.repo, prompt: "Add a file", baseCommit: e.base, requestedModel: "opus", buildModel: "sonnet" }).id, THREE.slice(0, 1));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -166,7 +167,7 @@ test("the tasks of a run are built on the run's build model, not on the configur
   assert.deepEqual(e.driver.started.map((started) => started.model), ["sonnet"], "the line's configured model is haiku; the run asked for sonnet");
 });
 
-test("a failing setup command fails its task with the reason and its output before any agent turn starts, the commands after it do not run, and the run goes on with the next task", async (t) => {
+test("a failing setup command fails its task with the reason and its output before any agent turn starts, the commands after it do not run, and the run goes on with the next task", { skip: NO_SANDBOX }, async (t) => {
   const failing = "echo preparing the copy; echo it broke >&2; exit 3";
   const e = await line(t, ["done", "done"], { setup: [{ command: "echo first step", limitMs: 10_000 }, { command: failing, limitMs: 10_000 }, { command: "echo never runs > never.txt", limitMs: 10_000 }] });
   const run = planned(e, THREE.slice(0, 2));
@@ -196,7 +197,7 @@ test("a failing setup command fails its task with the reason and its output befo
   assert.deepEqual(e.runChanges.at(-1), `${run.id}:done`);
 });
 
-test("how many setup commands a round holds is recorded before the first runs, so a count shown while the third waits is out of three", { timeout: 30_000 }, async (t) => {
+test("how many setup commands a round holds is recorded before the first runs, so a count shown while the third waits is out of three", { skip: NO_SANDBOX, timeout: 30_000 }, async (t) => {
   const waits = "while [ ! -f go ]; do sleep 0.05; done; echo third";
   const e = await line(t, ["done"], { setup: [{ command: "echo first", limitMs: 10_000 }, { command: waits, limitMs: 20_000 }, { command: "echo third", limitMs: 10_000 }] });
   const run = planned(e, THREE.slice(0, 1));
@@ -210,7 +211,7 @@ test("how many setup commands a round holds is recorded before the first runs, s
   assert.deepEqual(commandLists(e.db, id), [{ kind: "setup", round: 1, total: 3 }]);
 });
 
-test("a setup command that passes its time limit is killed with its child processes and recorded as timed out; a stand-alone task runs setup commands too", { timeout: 30_000 }, async (t) => {
+test("a setup command that passes its time limit is killed with its child processes and recorded as timed out; a stand-alone task runs setup commands too", { skip: NO_SANDBOX_OR_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   // A setup command may write only inside the task's copy (U27), so the child's number is left there.
   const stall = 'sleep 300 &\necho $! > "$1"\nsleep 300\n';
   const e = await line(t, ["done"], { setup: [{ command: "sh stall.sh child.pid", limitMs: 1000 }], files: { "README.md": "# Sample\n", "stall.sh": stall } });
@@ -234,7 +235,7 @@ test("a setup command that passes its time limit is killed with its child proces
   assert.equal(e.driver.started.length, 0);
 });
 
-test("a stand-alone task's setup output is evidence on it, and what setup wrote is committed by Botbench with the agent's work", async (t) => {
+test("a stand-alone task's setup output is evidence on it, and what setup wrote is committed by Botbench with the agent's work", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { setup: [SETUP_WRITES] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -245,7 +246,7 @@ test("a stand-alone task's setup output is evidence on it, and what setup wrote 
   assert.equal(built.worktreePath, taskWorktree(e, built.runId!, built.id), "a task of its own is under its own run's folder");
 });
 
-test("cancelling a running run stops the active turn, commits what it had, keeps the finished task's branch, marks the unstarted task cancelled, and ends the run as cancelled", async (t) => {
+test("cancelling a running run stops the active turn, commits what it had, keeps the finished task's branch, marks the unstarted task cancelled, and ends the run as cancelled", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done", "done"], { hold: [1], setup: [SETUP_WRITES] });
   const run = planned(e);
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -278,7 +279,7 @@ test("cancelling a running run stops the active turn, commits what it had, keeps
   assert.equal(worktreeCount(e.repo), 3, "both started tasks keep their worktrees; the third has none");
 });
 
-test("cancelling while setup runs kills the setup command and builds nothing more", { timeout: 30_000 }, async (t) => {
+test("cancelling while setup runs kills the setup command and builds nothing more", { skip: NO_SANDBOX, timeout: 30_000 }, async (t) => {
   const e = await line(t, ["done"], { setup: [{ command: "sleep 30", limitMs: 60_000 }] });
   const run = planned(e, THREE.slice(0, 2));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -293,7 +294,7 @@ test("cancelling while setup runs kills the setup command and builds nothing mor
   assert.equal(e.driver.started.length, 0);
 });
 
-test("an approval pending in task 1 keeps task 2 queued, with no worktree, until the owner answers", async (t) => {
+test("an approval pending in task 1 keeps task 2 queued, with no worktree, until the owner answers", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["ask", "done"]);
   const run = planned(e, THREE.slice(0, 2));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -313,7 +314,7 @@ test("an approval pending in task 1 keeps task 2 queued, with no worktree, until
   assert.equal(getRun(e.db, run.id)!.status, "awaiting_decision");
 });
 
-test("cancelling a run while its task waits for an answer closes the pending approval and builds nothing more", async (t) => {
+test("cancelling a run while its task waits for an answer closes the pending approval and builds nothing more", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["ask", "done"]);
   const run = planned(e, THREE.slice(0, 2));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -327,7 +328,7 @@ test("cancelling a run while its task waits for an answer closes the pending app
   assert.equal(getRun(e.db, run.id)!.status, "cancelled");
 });
 
-test("after a restart, a running run's task that was being prepared, before any agent turn, is started again once, and its unstarted tasks are built after it in order; the run reaches its end", async (t) => {
+test("after a restart, a running run's task that was being prepared, before any agent turn, is started again once, and its unstarted tasks are built after it in order; the run reaches its end", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-build-restart-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
@@ -360,7 +361,7 @@ test("after a restart, a running run's task that was being prepared, before any 
   assert.equal(getRun(db, run.id)!.status, "awaiting_decision");
 });
 
-test("setup evidence is append-only: a row cannot be changed, deleted or replaced", async (t) => {
+test("setup evidence is append-only: a row cannot be changed, deleted or replaced", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { setup: [{ command: "echo ready", limitMs: 10_000 }] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -394,7 +395,7 @@ test("a database at the previous schema version gains the evidence table and kee
   assert.deepEqual(taskEvidence(db, 7), []);
 });
 
-test("Botbench runs an owner's command in a directory with a time limit, in its own process group, without the caller's git variables, and keeps the end of a long output", { timeout: 30_000 }, async (t) => {
+test("Botbench runs an owner's command in a directory with a time limit, in its own process group, without the caller's git variables, and keeps the end of a long output", { skip: NO_SANDBOX, timeout: 30_000 }, async (t) => {
   const dir = tempDir("botbench-command-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const before = process.env.GIT_DIR;
@@ -489,7 +490,7 @@ test("critique: cancelling a run whose task is parked on an answer across a rest
   assert.equal(e.driver.started.length, 0);
 });
 
-test("critique: when a parked task cannot be resumed after the owner answers, its run still goes on with the tasks after it and reaches its end", async (t) => {
+test("critique: when a parked task cannot be resumed after the owner answers, its run still goes on with the tasks after it and reaches its end", { skip: NO_SANDBOX }, async (t) => {
   const p = await parkedRun(t);
   const e = await engineOn(t, p, ["done"]);
   assert.equal(getTask(p.db, p.taskIds[0]!)!.status, "building");
@@ -502,7 +503,7 @@ test("critique: when a parked task cannot be resumed after the owner answers, it
   assert.equal(getTask(p.db, p.taskIds[1]!)!.status, "awaiting_decision");
 });
 
-test("critique: a command that ends by itself is recorded as it ended, even when its time limit or a stop comes while its output is still being read", async (t) => {
+test("critique: a command that ends by itself is recorded as it ended, even when its time limit or a stop comes while its output is still being read", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-command-race-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // It exits at once and leaves a child outside its group holding its output open, so Botbench is still reading when the limit passes.
@@ -513,7 +514,7 @@ test("critique: a command that ends by itself is recorded as it ended, even when
   assert.deepEqual([result.outcome, result.exitCode], ["passed", 0]);
 });
 
-test("a task's setup commands run confined: one that reads Botbench's data folder is refused and fails its task before any agent starts, and the repository's allowed hosts reach them through Botbench's proxy", async (t) => {
+test("a task's setup commands run confined: one that reads Botbench's data folder is refused and fails its task before any agent starts, and the repository's allowed hosts reach them through Botbench's proxy", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { setup: [{ command: 'echo "proxy=${HTTPS_PROXY:-none}"', limitMs: 10_000 }, { command: "cat ../../../botbench.sqlite", limitMs: 10_000 }], hosts: ["registry.npmjs.org"] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
