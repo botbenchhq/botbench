@@ -1,7 +1,8 @@
-import { useContext, type ReactNode } from "react";
+import { useContext, useEffect, useRef, type ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
 import { trayShows } from "./approval-tray.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
+import { arrive, tabTitle } from "../app/arrival.ts";
 import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { Mark } from "../brand/mark.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -123,14 +124,20 @@ export function Alert({ tone, role, id, testId, title, action, children }: { ton
 }
 
 /** The top of a view: its one h1 and, under it, what the view adds. `action` is the view's own action, beside the title. */
-export function PageHeader({ title, theirs = false, hidden = false, compact = false, action, children }: { title: string; theirs?: boolean; hidden?: boolean; compact?: boolean; action?: ReactNode; children?: ReactNode }) {
+export function PageHeader({ title, tab = title, theirs = false, hidden = false, compact = false, action, children }: { title: string; tab?: string; theirs?: boolean; hidden?: boolean; compact?: boolean; action?: ReactNode; children?: ReactNode }) {
   // `theirs`: the title is somebody else's words (a task's prompt). `hidden`: the view's one h1 is for assistive
   // technology only, on a screen whose content says what it is (the chat). `compact`: the header of a master-detail
-  // pattern's list pane.
+  // pattern's list pane. `tab` names the browser's tab and the history entry: the title, unless the title is somebody
+  // else's words, when the screen gives a name of Botbench's own ("Task 12").
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    document.title = tabTitle(tab);
+  }, [tab]);
+  useEffect(() => arrive(heading.current), []);
   return (
     <header className={hidden ? "ds-page-header ds-visually-hidden" : compact ? "ds-page-header ds-page-header--compact" : "ds-page-header"}>
       <div className="ds-page-header__text">
-        <h1 data-ds-content={theirs ? "" : undefined} className="ds-page-header__title">
+        <h1 ref={heading} tabIndex={-1} data-ds-content={theirs ? "" : undefined} className="ds-page-header__title">
           {title}
         </h1>
         {children}

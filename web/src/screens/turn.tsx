@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type RunSourceRef, type StoredEvent, type UpdateWithMain } from "../api/client.ts";
 import { MAIN_CHOICE_WORDS } from "../app/main-words.ts";
-import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, limitName, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, limitName, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, SEND_KEY_HINT, sendFor, sendsOn, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { useFinePointer } from "../app/wide.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
@@ -167,6 +168,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const [opening] = useState(() => (from === null ? null : composerOpening(from, takeHandOff())));
   const source = opening?.source ?? null;
   const [prompt, setPrompt] = useState(opening?.prompt ?? "");
+  const fine = useFinePointer();
   /** Other workbenches' old claims the owner confirmed taking over for the run about to start, by branch. */
   const [takenOver, setTakenOver] = useState<string[]>([]);
   const startRef = useRef<Promise<{ attemptId: number; turn: number }[]> | null>(null);
@@ -606,7 +608,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     send();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    if (sendsOn({ key: event.key, shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, isComposing: event.nativeEvent.isComposing }, { fine })) {
       event.preventDefault();
       send();
     }
@@ -677,6 +679,9 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const label = repo.kind === "none" ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
   const builderDown = builder.state !== "ready";
+  // With a keyboard and a mouse, the line that says which key sends is part of what the box is described by.
+  const keysHint = fine && !showStop && !builderDown;
+  const boxDescribedBy = [describedBy, keysHint ? "composer-keys" : null].filter((id) => id != null).join(" ") || undefined;
   const name = repoName(repo, known);
 
   return (
@@ -781,7 +786,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
 
         <form onSubmit={submit} aria-busy={showStop || undefined} className="ds-composer ds-composer--sticky" noValidate>
           <div className="ds-composer__box">
-            <textarea id="prompt" name="prompt" ref={promptRef} rows={1} aria-label={label} placeholder={label} value={prompt} disabled={builderDown} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={describedBy} className="ds-composer__input" />
+            <textarea id="prompt" name="prompt" ref={promptRef} rows={1} aria-label={label} placeholder={label} value={prompt} disabled={builderDown} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={boxDescribedBy} className="ds-composer__input" />
             <div className="ds-composer__bar">
               <BusyButton icon="plus" spriteHref={SPRITE} className="ds-icon-button" aria-label="Add context" aria-haspopup="dialog" onClick={() => openSheet("rows")}>
                 {null}
@@ -901,6 +906,11 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
             <BusyButton variant="quiet" size="small" onClick={checkDriver}>
               Check again
             </BusyButton>
+          )}
+          {keysHint && (
+            <p id="composer-keys" data-testid="composer-keys" className="ds-composer__reason">
+              {SEND_KEY_HINT}
+            </p>
           )}
           {error !== null && (
             <p id="composer-error" role="alert" className="ds-composer__error">

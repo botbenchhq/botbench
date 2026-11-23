@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useId, useRef, useState } from "react";
 import { ApiError, getBoard } from "../api/client.ts";
 import { WorkChangesContext } from "../app/approvals.tsx";
-import { countLine, matching, workRows, type WorkRows } from "../app/work-list.ts";
+import { countLine, matching, rowLine, workRows, type WorkRows } from "../app/work-list.ts";
 import { Alert } from "./header.tsx";
 
 /**
@@ -91,7 +91,7 @@ export function WorkColumn({ current, query, onQuery, onSignedOut }: { current: 
                         <span data-ds-content="" className="ds-list__primary">
                           {r.title}
                         </span>
-                        <span className="ds-list__secondary">{`${r.state} · ${r.kind === "run" ? "Run" : "Task"} ${r.id}`}</span>
+                        <span className="ds-list__secondary">{rowLine(r)}</span>
                       </span>
                     </a>
                   </li>

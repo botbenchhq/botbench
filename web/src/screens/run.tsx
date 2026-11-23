@@ -2,11 +2,12 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type For
 import { ApiError, approvePlan, cancelRun, getRun, getTranscript, openEventStream, requestPlanChanges, savePlan, type PlanTask, type RunDetail, type RunTask, type StoredEvent } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
-import { ConfirmAction } from "../components/confirm.tsx";
+import { ConfirmAction, ConfirmDialog } from "../components/confirm.tsx";
 import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { PullRequestLink, pullRequestWords } from "../components/pull-request.tsx";
 import { CHECKS_LINE, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
+import { editChanged, fromLines, toLines } from "../app/plan-edit.ts";
 import { modeSentence } from "../app/run-words.ts";
 import { APPROVAL_LIMIT_WORDS, limitName } from "../app/composer.ts";
 import { cancelStatement } from "../app/row-menu.ts";
@@ -26,8 +27,6 @@ const UNDO_SECONDS = 10;
 const when = (iso: string): string => new Date(iso).toLocaleString();
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 /** The criteria as the editor holds them: one on each line. */
-const toLines = (criteria: readonly string[]): string => criteria.join("\n");
-const fromLines = (text: string): string[] => text.split("\n").map((line) => line.trim()).filter((line) => line !== "");
 
 /** Which row of the plan is being edited: one of its tasks by position from 0, or a new one at the end. */
 type Editing = { at: number | "new"; title: string; criteria: string; problem: { title?: string; criteria?: string; save?: string } };
@@ -67,7 +66,17 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
     onSave();
   };
   return (
-    <form onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && !saving && onCancel()} className="ds-editable-list__editor" noValidate>
+    <form
+      onSubmit={submit}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || saving) return;
+        // The same key press would otherwise close the question that Cancel may open.
+        e.preventDefault();
+        onCancel();
+      }}
+      className="ds-editable-list__editor"
+      noValidate
+    >
       <div className="ds-field">
         <label htmlFor="plan-title" className="ds-field__label">{`${name} title`}</label>
         <input ref={title} id="plan-title" type="text" autoComplete="off" readOnly={saving} value={editing.title} onChange={(e) => onChange({ ...editing, title: e.target.value })} aria-invalid={editing.problem.title !== undefined} aria-describedby={editing.problem.title === undefined ? undefined : "plan-title-error"} className="ds-field__control" />
@@ -122,6 +131,16 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [connected, setConnected] = useState(true);
   const [editing, setEditing] = useState<Editing | null>(null);
+  // Cancel was pressed on an edit that holds typed words: the question whether to lose them is open.
+  const [leaving, setLeaving] = useState(false);
+  const unsaved = editing !== null && run !== null && editChanged(editing, run.plan);
+  useEffect(() => {
+    if (!unsaved) return;
+    // Closing the tab or loading the page again asks first, in the browser's own words.
+    const ask = (event: BeforeUnloadEvent): void => event.preventDefault();
+    window.addEventListener("beforeunload", ask);
+    return () => window.removeEventListener("beforeunload", ask);
+  }, [unsaved]);
   const [busy, setBusy] = useState<"save" | "approve" | "changes" | "cancel" | null>(null);
   const [decisionProblem, setDecisionProblem] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
@@ -205,6 +224,23 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
     return err instanceof ApiError ? err.message : "Botbench could not be reached.";
   };
   const focusEdit = (at: number): void => void window.requestAnimationFrame(() => (document.querySelector<HTMLElement>(`[data-edit="${at}"]:not(:disabled)`) ?? document.querySelector<HTMLElement>("[data-add-task]"))?.focus());
+
+  /** The row the open editor returns focus to. */
+  const editRow = (): number => (editing === null || run === null ? 0 : editing.at === "new" ? run.plan.length : editing.at);
+  /** Cancel or Escape in the editor: at once when nothing was typed, and after a question when words would be lost. */
+  const cancelEdit = (): void => {
+    if (unsaved) return setLeaving(true);
+    const at = editRow();
+    setEditing(null);
+    focusEdit(at);
+  };
+  const answeredLeaving = (discard: boolean): void => {
+    setLeaving(false);
+    if (!discard) return void window.requestAnimationFrame(() => document.getElementById("plan-title")?.focus());
+    const at = editRow();
+    setEditing(null);
+    focusEdit(at);
+  };
 
   const saveEdit = (): void => {
     if (run === null || editing === null || busy !== null) return;
@@ -431,7 +467,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     {run.plan.map((task, i) => (
                       <li key={i} className="ds-editable-list__item">
                         {editing?.at === i ? (
-                          <PlanEditor editing={editing} name={`Task ${i + 1}`} saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={() => (setEditing(null), focusEdit(i))} />
+                          <PlanEditor editing={editing} name={`Task ${i + 1}`} saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={cancelEdit} />
                         ) : (
                           <PlanRow task={task} number={i + 1} locked={busy !== null || editing !== null} onEdit={() => setEditing({ at: i, title: task.title, criteria: toLines(task.criteria), problem: {} })} onDelete={() => remove(i)} />
                         )}
@@ -439,10 +475,15 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     ))}
                     {editing?.at === "new" && (
                       <li className="ds-editable-list__item">
-                        <PlanEditor editing={editing} name="New task" saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={() => (setEditing(null), focusEdit(run.plan.length))} />
+                        <PlanEditor editing={editing} name="New task" saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={cancelEdit} />
                       </li>
                     )}
                   </ol>
+                  {leaving && (
+                    <ConfirmDialog title="Discard what you typed?" confirmLabel="Discard changes" cancelLabel="Keep editing" disabled={false} losing testId="discard-edit" onClose={answeredLeaving}>
+                      <p>Your changes to this task are not saved. The plan stays as it was.</p>
+                    </ConfirmDialog>
+                  )}
                   {editing?.at !== "new" && (
                     <div className="ds-editable-list__add">
                       <button type="button" data-add-task disabled={busy !== null || editing !== null || run.plan.length >= 20} onClick={() => setEditing({ at: "new", title: "", criteria: "", problem: {} })} className="ds-button ds-button--quiet">

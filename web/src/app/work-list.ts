@@ -33,6 +33,9 @@ const row = (item: BoardItem): WorkRow =>
       ? { key: `chat ${item.id}`, kind: "chat", id: item.id, href: `#/chats/${item.id}`, title: item.title, state: "Chat", updatedAt: item.updatedAt }
       : { key: `task ${item.id}`, kind: "task", id: item.id, href: `#/tasks/${item.id}`, title: item.title, state: statusWord(item), updatedAt: item.updatedAt };
 
+/** The line under a row's title: its state and which run or task it is. A chat has no number of its own to show. */
+export const rowLine = (r: WorkRow): string => (r.kind === "chat" ? r.state : `${r.state} \u00b7 ${r.kind === "run" ? "Run" : "Task"} ${r.id}`);
+
 /** The board's groups as one list, newest change first: the column has no groups of its own. */
 export function workRows(groups: readonly BoardGroup[]): WorkRows {
   const rows = groups.flatMap((group) => group.items.map(row));

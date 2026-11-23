@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { hasSession } from "../api/client.ts";
+import { arrive, noteNavigation, tabTitle } from "./arrival.ts";
 import { parseRoute, type Route } from "./route.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
 import { PeerCardsProvider } from "./peer-cards.tsx";
@@ -21,7 +22,10 @@ type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 function useRoute(): Route {
   const [hash, setHash] = useState(window.location.hash);
   useEffect(() => {
-    const onChange = (): void => setHash(window.location.hash);
+    const onChange = (): void => {
+      noteNavigation();
+      setHash(window.location.hash);
+    };
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
@@ -32,6 +36,30 @@ function useRoute(): Route {
 function Redirect({ to }: { to: string }) {
   useEffect(() => window.location.replace(to), [to]);
   return null;
+}
+
+/** The screen shown for an address that names none. Its heading names the tab and takes focus as any screen's does. */
+function NotFound({ what }: { what: string }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    document.title = tabTitle("No such screen");
+    arrive(heading.current);
+  }, []);
+  return (
+    <Frame current={null}>
+      <Page>
+        <div className="ds-not-found">
+          <div role="alert" className="ds-empty-state">
+            <h1 ref={heading} tabIndex={-1} className="ds-empty-state__title">
+              {"There is no screen at "}
+              <span data-ds-content="">{what}</span>.
+            </h1>
+            <p className="ds-empty-state__body">The address may be mistyped. The navigation lists every screen there is.</p>
+          </div>
+        </div>
+      </Page>
+    </Frame>
+  );
 }
 
 function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
@@ -48,21 +76,7 @@ function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
   if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
-  return (
-    <Frame current={null}>
-      <Page>
-        <div className="ds-not-found">
-          <div role="alert" className="ds-empty-state">
-            <h1 className="ds-empty-state__title">
-              {"There is no screen at "}
-              <span data-ds-content="">{route.what}</span>.
-            </h1>
-            <p className="ds-empty-state__body">The address may be mistyped. The navigation lists every screen there is.</p>
-          </div>
-        </div>
-      </Page>
-    </Frame>
-  );
+  return <NotFound key={route.what} what={route.what} />;
 }
 
 /** The row of the column of chats and work that the open screen shows, as WorkColumn keys it. */

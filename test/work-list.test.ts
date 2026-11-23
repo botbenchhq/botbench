@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BoardGroup, BoardItem } from "../web/src/api/client.ts";
-import { countLine, matching, workRows } from "../web/src/app/work-list.ts";
+import { countLine, matching, rowLine, workRows } from "../web/src/app/work-list.ts";
 
 // What the column of chats and work beside a wide screen lists and says, decided without a browser, from rows shaped
 // as /api/board sends them.
@@ -63,4 +63,12 @@ test("chats are listed with the work, newest change first, each opening on Chat,
   assert.deepEqual(list.rows.map((r) => [r.title, r.state, r.href]), [["Why is the login slow?", "Chat", "#/chats/4"], ["Add rate limiting", "Working", "#/tasks/2"], ["Name the export", "Chat", "#/chats/3"]]);
   assert.equal(countLine(list, "", 3), "2 chats and 1 task");
   assert.deepEqual(matching(list.rows, "login").map((r) => r.href), ["#/chats/4"]);
+});
+
+test("under its title a row says its state and which run or task it is; a chat says only that it is a chat", () => {
+  const row = { key: "", href: "", title: "", updatedAt: "" };
+  assert.equal(rowLine({ ...row, kind: "task", id: 12, state: "Ready for review" }), "Ready for review \u00b7 Task 12");
+  assert.equal(rowLine({ ...row, kind: "run", id: 4, state: "Plan ready for review" }), "Plan ready for review \u00b7 Run 4");
+  // A chat is not a task and has no number a person would use.
+  assert.equal(rowLine({ ...row, kind: "chat", id: 12, state: "Chat" }), "Chat");
 });

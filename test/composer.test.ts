@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
 import { chatOffer, readKnownAgents } from "../web/src/app/chat.ts";
-import { APPROVAL_LIMIT_WORDS, APPROVAL_LIMITS, arrive, blocked, builderChip, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, LIMIT_WORDS, limitName, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { APPROVAL_LIMIT_WORDS, APPROVAL_LIMITS, arrive, blocked, builderChip, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, LIMIT_WORDS, limitName, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, sendsOn, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 import { fallbackOrders, moveAbout, moveButton, moveRefused, orderWords, sessionAgent, sessionsLine, shownAttempts } from "../web/src/app/handoff-words.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
@@ -474,4 +474,21 @@ test("the task screen's words for a move: one button per agent, what a move does
   assert.equal(sessionsLine("codex", 0, true), null);
   assert.equal(sessionsLine("codex", 1, false), "This is Codex's latest session on this task. Its 1 earlier session is kept in Botbench's records, not shown here.");
   assert.equal(sessionsLine("codex", 2, true), "These are the sessions before and after each move to another agent. Its 2 earlier sessions are kept in Botbench's records, not shown here.");
+});
+
+test("Enter sends from a keyboard and a mouse; on a touch screen it starts a new line, and Cmd or Ctrl with Enter sends everywhere", () => {
+  const key = (over: Partial<Parameters<typeof sendsOn>[0]> = {}) => ({ key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, isComposing: false, ...over });
+  assert.equal(sendsOn(key(), { fine: true }), true);
+  assert.equal(sendsOn(key(), { fine: false }), false);
+  // Shift with Enter is the new line, and Option with Enter is left to the browser.
+  assert.equal(sendsOn(key({ shiftKey: true }), { fine: true }), false);
+  assert.equal(sendsOn(key({ altKey: true }), { fine: true }), false);
+  for (const fine of [true, false]) {
+    assert.equal(sendsOn(key({ metaKey: true }), { fine }), true);
+    assert.equal(sendsOn(key({ ctrlKey: true }), { fine }), true);
+    // The Enter that picks a word while composing Japanese, Chinese or Korean text never sends.
+    assert.equal(sendsOn(key({ isComposing: true }), { fine }), false);
+    assert.equal(sendsOn(key({ isComposing: true, metaKey: true }), { fine }), false);
+    assert.equal(sendsOn(key({ key: "a", metaKey: true }), { fine }), false);
+  }
 });
