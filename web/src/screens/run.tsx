@@ -11,7 +11,7 @@ import { MODE_SENTENCE } from "../components/mode-choice.tsx";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { runSentence } from "../components/run-status.ts";
+import { runSentence, runTaskNote } from "../components/run-status.ts";
 import { offersMerge, statusLook, statusWord } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
@@ -475,7 +475,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                             </span>
                           </span>
                         </a>
-                        {(task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null && <p data-ds-content="">{task.reason}</p>}
+                        {runTaskNote(task) !== null && <p data-ds-content="">{runTaskNote(task)}</p>}
                         <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
                         {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
                         <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />

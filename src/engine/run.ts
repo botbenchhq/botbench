@@ -10,6 +10,7 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
+import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS, watchSilence } from "./silence.ts";
 import { agentName, correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
@@ -488,6 +489,8 @@ export interface RunsOptions {
   repoCommands?: (repo: string) => { checks: readonly StationCommand[] };
   /** The mode a run is given when the request names none; manual when left out. */
   defaultMode?: () => RunMode;
+  /** How long a planner may send nothing before it is stopped (engine/silence.ts); 10 minutes when left out, and 0 for no limit. */
+  silenceLimitMs?: number;
 }
 
 /** How one go of the planner ended. */
@@ -505,6 +508,7 @@ export const OUTSIDE_NOT_FULL = "A run started from a GitHub issue cannot be ful
  */
 export function createRuns(options: RunsOptions): Runs {
   const { db, home, driver, broker } = options;
+  const silenceLimit = options.silenceLimitMs ?? SILENCE_LIMIT_MS;
   let closed = false;
   let current: { runId: number; session: DriverSession } | null = null;
 
@@ -569,19 +573,27 @@ export function createRuns(options: RunsOptions): Runs {
       options.onEvent();
     });
 
+    /** Whether a turn of this planner was stopped because it went silent (engine/silence.ts). */
+    let silent = false;
     const turn = async (prompt: string): Promise<{ end: TurnEndReason; text: string }> => {
       reply = [];
       detail = null;
       let end: TurnEndReason;
+      // Registered after the listener above, so it reads the requests the CLI waits on as they stand after each event.
+      const silence = watchSilence(session, silenceLimit, () => asking.size > 0);
       try {
         end = await session.sendTurn(prompt);
       } catch (err) {
         end = "error";
         detail = words(err);
+      } finally {
+        silence.clear();
       }
+      if (silence.fired() && end !== "completed") silent = true;
       return { end, text: reply.join("\n") };
     };
-    const problemOf = (end: TurnEndReason): string => (closed ? STOPPED : end === "interrupted" ? "The planner was stopped before it finished." : `The planner ended with an error${detail === null ? "." : `: ${detail}`}`);
+    const problemOf = (end: TurnEndReason): string =>
+      silent ? plannerSilenceReason(agentName(driver.name), silenceLimit) : closed ? STOPPED : end === "interrupted" ? "The planner was stopped before it finished." : `The planner ended with an error${detail === null ? "." : `: ${detail}`}`;
 
     let outcome: Outcome;
     try {
@@ -613,8 +625,12 @@ export function createRuns(options: RunsOptions): Runs {
     }
     try {
       await session.close();
+      // Nothing of a silent planner may be left running: its whole process group is confirmed gone before the run records it.
+      if (silent) await confirmGroupGone(db, session.attemptId);
     } catch (err) {
-      if (!("cancelled" in outcome)) outcome = { problem: `The planner's Claude Code process could not be stopped: ${words(err)}` };
+      if (!("cancelled" in outcome)) {
+        outcome = { problem: silent ? `The planner went silent for ${durationWords(silenceLimit)}, the silence limit in Botbench's settings, and Botbench could not stop its ${agentName(driver.name)} process: ${words(err)}` : `The planner's ${agentName(driver.name)} process could not be stopped: ${words(err)}` };
+      }
       report(`Stopping run ${run.id}'s planner`)(err);
     }
     current = null;
