@@ -3,8 +3,8 @@ import type { RunMode } from "../api/client.ts";
 
 /** Each mode in the order it is offered, with its name and what it does in one line. */
 export const MODES: { mode: RunMode; name: string; description: string; warning?: string }[] = [
-  { mode: "manual", name: "Manual", description: "Asks before every command and decision." },
-  { mode: "semi", name: "Semi-autonomous", description: "Runs commands on its own. You approve the plan and the result." },
+  { mode: "manual", name: "Manual", description: "You approve the plan and decide on each result." },
+  { mode: "semi", name: "Semi-autonomous", description: "Builds without waiting for plan approval. You decide on each result." },
   {
     mode: "full",
     name: "Fully autonomous",

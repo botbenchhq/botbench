@@ -14,7 +14,7 @@ import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS
 import { agentName, correctionPrompt, IMPLEMENTER, mergePlan, oneTaskPrompt, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
-import { isRunMode, MODE_WORDS, type RunMode } from "./modes.ts";
+import { isRunMode, MODE_WORDS, planApprovedByMode, type RunMode } from "./modes.ts";
 import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
@@ -31,8 +31,9 @@ import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
  *
  * The planner is read-only. It works in a detached worktree of the run's base commit under the Botbench home, never in
  * the owner's checkout; the driver starts it without any tool that writes; every shell command it wants goes to the
- * owner through the gate under the planner role, where no grant applies, unless the run's mode lets a confined one run
- * (engine/modes.ts). A fully autonomous run's plan is approved by the mode as soon as it is stored. The worktree is removed when planning ends,
+ * owner through the gate under the planner role, where no grant applies, unless it is a confined one the floor does not
+ * name, which runs (approvals/gate.ts). A fully autonomous run's plan is approved by the mode as soon as it is stored,
+ * and so is a semi-autonomous run's, unless it read outside text (engine/modes.ts, `planApprovedByMode`). The worktree is removed when planning ends,
  * however it ends. What the planner replies is data: it is validated and stored as text.
  */
 
@@ -301,7 +302,8 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
  * The owner approves the plan as it stands: one queued task row per plan task, each naming the run, and the run is
  * running. All in one write. The tasks are queued on the run's build model; a run that recorded none takes
  * `implementerModel`, the configured one. No worktree is made here: building a task is the build station's. `by` "mode"
- * is a fully autonomous run approving its own plan as the planner gave it; only such a run's plan is approved that way.
+ * is a fully autonomous run, or a semi-autonomous one that read no outside text, approving its own plan as the planner
+ * gave it; only such a run's plan is approved that way.
  */
 export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknown, implementerModel: string | null = null, by: "owner" | "mode" = "owner"): { run: Run; tasks: Task[] } {
   return transaction(db, () => {
@@ -309,7 +311,7 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
     versionGiven(planVersion);
     if (run.status !== "awaiting_plan_approval") throw notWaiting(run, "approve");
     sameVersion(run, planVersion);
-    if (by === "mode" && run.mode !== "full") throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}, so its plan waits for your approval.`);
+    if (by === "mode" && !planApprovedByMode(run)) throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}${run.outsideText ? " and was started from a GitHub issue" : ""}, so its plan waits for your approval.`);
     const plan = planTasks(db, runId);
     // What is approved is checked once more as it is stored: nothing reaches a builder that a plan may not hold.
     const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) }, { oneTask: run.oneTask });
@@ -322,7 +324,7 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
       return made;
     });
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    writeRun(db, runId, "running", { reason: null, planChanged: true, detail: `plan approved ${by === "owner" ? "by the owner" : "by the run's mode, fully autonomous"}: ${tasksWord(tasks.length)} queued` });
+    writeRun(db, runId, "running", { reason: null, planChanged: true, detail: `plan approved ${by === "owner" ? "by the owner" : `by the run's mode, ${MODE_WORDS[run.mode]}`}: ${tasksWord(tasks.length)} queued` });
     return { run: getRun(db, runId)!, tasks: tasks.map((id) => getTask(db, id)!) };
   });
 }
@@ -575,7 +577,7 @@ export function createRuns(options: RunsOptions): Runs {
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
           .request({ taskId: null, runId: run.id, attemptId: session.attemptId, role: PLANNER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined, files: answer.files !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
           .catch(report(`Answering a permission request of run ${run.id}'s planner`));
       }
       if (event.type === "permission_resolved") {
@@ -694,8 +696,9 @@ export function createRuns(options: RunsOptions): Runs {
     if ("tasks" in outcome) {
       const note = [outcome.note, leftover].filter((part): part is string => typeof part === "string").join(" ");
       const stored = announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: note === "" ? null : note }));
-      // A fully autonomous run does not wait at the plan gate: building starts on the plan as the planner gave it.
-      if (stored.mode === "full") approveNow(id, stored.planVersion, "mode");
+      // A fully autonomous run, and a semi-autonomous one that read no outside text, do not wait at the plan gate:
+      // building starts on the plan as the planner gave it.
+      if (planApprovedByMode(stored)) approveNow(id, stored.planVersion, "mode");
       return;
     }
     // Botbench is stopping: the run is left planning, and the next start plans it again (see `recover`).

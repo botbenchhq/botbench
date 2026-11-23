@@ -8,7 +8,7 @@ import { actionLog, createBroker, listApprovals, type Answer, type Approval, typ
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import { toolResultsFolder } from "../../src/drivers/claude-code.ts";
 import { capIssue, storeIssue } from "../../src/engine/intake.ts";
-import type { RunMode } from "../../src/engine/modes.ts";
+import { setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
 import { approvePlan, createRun, storePlan } from "../../src/engine/run.ts";
 import { parseIssueView } from "../../src/github.ts";
 import { openStore } from "../../src/store/db.ts";
@@ -118,7 +118,7 @@ test("semi-autonomous, outside text: grep with \\|, a command ending in 2>/dev/n
   assert.deepEqual(log.map((e) => e.cwd), SHAPES.flatMap(() => [".", "sub"]), "each is logged with the folder it ran in");
 });
 
-test("semi-autonomous, outside text: a command on the always-ask list and an unconfined one still ask, each card saying why; manual asks about the shapes above", async (t) => {
+test("semi-autonomous, outside text: a command on the always-ask list and an unconfined one still ask, each card saying why; manual runs the shapes above too, and asks about each with Ask before every command on", async (t) => {
   const r = await rig(t);
   const a = agent(r, "semi", { outside: true });
   const push = await a.ask("Bash", { command: "git push origin HEAD" }, "push");
@@ -141,15 +141,25 @@ test("semi-autonomous, outside text: a command on the always-ask list and an unc
   assert.equal(unheard.card?.asksBecause, "Botbench could not match it to the request it checked.");
   assert.deepEqual([push, secrets, keychain, named, escape, unconfined, unheard].map((x) => x.answer.byMode), Array(7).fill(undefined));
 
+  // Manual: using a tool never asks, so each shape runs confined, as in semi-autonomous.
   const manual = agent(r, "manual", { outside: true });
   let i = 0;
   for (const command of SHAPES) {
     const { answer, card } = await manual.ask("Bash", { command }, `manual-${++i}`);
+    assert.deepEqual([answer.decision, answer.byMode, answer.approvalId, card], ["allow", "manual", null, undefined], command);
+  }
+  assert.deepEqual(rulesOf(r, manual.taskId), SHAPES.map(() => "mode_allowed"));
+  // With the owner's "Ask before every command" on, each asks again, the card saying why; a semi-autonomous run is not changed by it.
+  setAskEveryCommand(r.db, true);
+  const cautious = agent(r, "manual", { outside: true });
+  for (const command of SHAPES) {
+    const { answer, card } = await cautious.ask("Bash", { command }, `cautious-${++i}`);
     assert.ok(answer.approvalId !== null, command);
-    assert.equal(card?.asksBecause, "In Manual mode every command asks you.", command);
+    assert.equal(card?.asksBecause, "Ask before every command is on in Settings.", command);
     assert.equal(card?.cwd, ".", command);
   }
-  assert.deepEqual(rulesOf(r, manual.taskId), SHAPES.flatMap(() => ["asked_owner", "owner_declined"]));
+  assert.deepEqual(rulesOf(r, cautious.taskId), SHAPES.flatMap(() => ["asked_owner", "owner_declined"]));
+  assert.equal((await agent(r, "semi", { outside: true }).ask("Bash", { command: "ls" }, `semi-${++i}`)).answer.byMode, "semi");
 });
 
 test("a Write or an Edit inside the task's copy never asks, in any mode, also from a sub-folder; outside the copy it asks, or is refused when fully autonomous", async (t) => {

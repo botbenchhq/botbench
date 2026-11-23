@@ -39,7 +39,12 @@ async function start(t: TestContext, files: Record<string, string>): Promise<Liv
   const res = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
   assert.equal(res.status, 200);
   await res.arrayBuffer();
-  return { server, base, dir, home, repo, headers: { cookie: res.headers.getSetCookie()[0]!.split(";")[0]! } };
+  const headers = { cookie: res.headers.getSetCookie()[0]!.split(";")[0]! };
+  // A command kept inside the task's copy runs without a card by default; these tests are about the card, so the owner's
+  // setting Ask before every command is on.
+  const every = await fetch(`${base}/api/settings`, { method: "PUT", headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ askEveryCommand: true }) });
+  assert.equal(every.status, 200, await every.text());
+  return { server, base, dir, home, repo, headers };
 }
 
 interface TaskBody {
@@ -125,7 +130,7 @@ async function untilEnded(live: Live, taskId: number, whilePending?: (approval: 
 
 /** Every file below `dir`, by name, without git's own folder. */
 const filesBelow = (dir: string): string[] => fs.readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => !name.split(path.sep).includes(".git"));
-const worktreeOf = (live: Live, task: TaskBody): string => path.join(live.home, "worktrees", task.branch!.split("/")[1]!, `task-${task.id}`);
+const worktreeOf = (live: Live, task: TaskBody): string => path.join(live.home, "worktrees", task.branch!.split("/").at(-2)!, `task-${task.id}`);
 
 test("live: a task that must run the repository's marker script waits as a pending approval; allowing it lets the turn finish, and the marker file exists", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });

@@ -7,7 +7,7 @@ import { checkDesign, expect, messageBox, openComposer, sendChat, signIn } from 
 // A chat's Claude Code asking for approval, in the real client at a phone's size, against a real Botbench process whose
 // Claude Code, in a chat only, replays real chat turns that asked to fetch https://example.com (e2e/serve-replayed-chat.ts,
 // the owner's approved exception). No model turn: the first chat turn is the one the owner allowed, the next the one
-// the owner denied. The owner picks Ask for "Web access in chat" in Settings, as a person would.
+// the owner denied. The owner picks Ask for "Web access" in Settings, as a person would.
 
 const test = base.extend<{ botbench: Botbench }>({
   botbench: async ({}, use) => {
@@ -22,14 +22,20 @@ test("with Ask, a chat's fetch waits as a card in the chat, Allow once continues
   test.setTimeout(120_000);
   await signIn(page, botbench);
 
-  // Settings: web access in chat is Allow until the owner picks Ask.
+  // Settings: web access is Allow until the owner picks Ask.
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  const web = page.getByLabel("Web access in chat");
+  const web = page.getByLabel("Web access", { exact: true });
   await expect(web).toHaveValue("allow");
   await web.selectOption("ask");
-  await checkDesign(page, "settings, web access in chat");
+  // Ask before every command, under Runs, is Off until the owner turns it on, and is kept.
+  const every = page.getByLabel("Ask before every command", { exact: true });
+  await expect(every).toHaveValue("off");
+  await every.selectOption("on");
+  await checkDesign(page, "settings, web access and ask before every command");
   await page.reload();
-  await expect(page.getByLabel("Web access in chat")).toHaveValue("ask");
+  await expect(page.getByLabel("Web access", { exact: true })).toHaveValue("ask");
+  await expect(page.getByLabel("Ask before every command", { exact: true })).toHaveValue("on");
+  expect(((await (await page.request.get(`${botbench.base}/api/settings`)).json()) as { askEveryCommand: boolean }).askEveryCommand).toBe(true);
   await openComposer(page);
   await expect(messageBox(page)).toBeEnabled();
 

@@ -132,6 +132,10 @@ test("live: a prompt against a temporary repository returns a valid task list wi
 
 test("live: a planner told to create a file cannot: it has no tool that writes, a shell command for it asks the owner under the planner role, and no file appears in the planning worktree or the source", { timeout: PLAN_TIMEOUT }, async (t) => {
   const live = await start(t);
+  // A command kept inside the planner's copy runs without a card by default; this test is about the card, so the owner's
+  // setting Ask before every command is on.
+  const every = await fetch(`${live.base}/api/settings`, { method: "PUT", headers: { ...live.headers, ...JSON_TYPE }, body: JSON.stringify({ askEveryCommand: true }) });
+  assert.equal(every.status, 200, await every.text());
   const before = checkoutState(live.repo);
   // Botbench's own planner prompt tells the model not to try, and a model that obeys shows nothing about the enforcement.
   // So this attempt is started exactly as the engine starts a planner (the run's planning worktree, a read-only

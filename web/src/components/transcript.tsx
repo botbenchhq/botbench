@@ -63,7 +63,7 @@ function readStory(events: readonly StoredEvent[], live: boolean): Story {
     else if (e.type === "permission_resolved") {
       story.answers.set(e.toolCallId, e.decision);
       if (e.decision === "denied" && e.note !== null) story.refusals.set(e.toolCallId, e.note);
-      if (e.decision === "allowed" || e.decision === "preapproved" || e.decision === "standing" || e.decision === "web" || e.decision === "chat") story.allowedAt.set(e.toolCallId, event.ts);
+      if (e.decision === "allowed" || e.decision === "preapproved" || e.decision === "standing" || e.decision === "web" || e.decision === "chat" || e.decision === "mode" || e.decision === "bookkeeping") story.allowedAt.set(e.toolCallId, event.ts);
     }
     else if (e.type === "permission_denied") {
       story.refused.add(e.id);
@@ -447,22 +447,21 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
       return card === null ? null : <li data-event={e.type}>{card}</li>;
     }
     case "permission_resolved": {
-      // A web fetch or search the owner's setting lets run in a chat is an ordinary step: its call's own line says it.
-      // So is a confined command that runs without asking in a chat, as it would when Claude Code is used directly.
-      if (e.decision === "web" || e.decision === "chat") return null;
+      // A web fetch or search the owner's setting lets run is an ordinary step: its call's own line says it. So is a
+      // confined command that runs without asking, in a chat or a task, as it would when Claude Code is used directly.
+      if (e.decision === "web" || e.decision === "chat" || e.decision === "mode" || e.decision === "bookkeeping") return null;
       const said = {
         allowed: "You allowed it once.",
         preapproved: "It was allowed without asking you: you listed this command when you started the task.",
         standing: "It was allowed without asking you: you chose Always allow for this command. Permissions lists it, and you can take it back there.",
-        mode: "It ran without asking you: this run's mode lets a command run when it is kept away from your sign-ins and the network.",
         files: "It ran without asking you: it reads or changes a file inside the task's copy, or reads output Claude Code saved for this task.",
         declined: "You denied it. It was not run.",
         denied: "Botbench denied it without asking you. It was not run.",
         cancelled: "The request ended without an answer. It was not run.",
       }[e.decision];
-      const label = { allowed: "Allowed", preapproved: "Allowed for this task", standing: "Always allowed", mode: "Allowed by the run's mode", files: "Allowed: the task's own files", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" }[e.decision];
+      const label = { allowed: "Allowed", preapproved: "Allowed for this task", standing: "Always allowed", files: "Allowed: the task's own files", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" }[e.decision];
       // The owner's own answers and the standing rules are decisions; a refusal by Botbench and a request nobody answered are not.
-      const icon = ({ allowed: "check", declined: "x", preapproved: "circle-check", standing: "circle-check", mode: "circle-check", files: "circle-check" } as const)[e.decision as "allowed" | "declined" | "preapproved" | "standing" | "mode" | "files"];
+      const icon = ({ allowed: "check", declined: "x", preapproved: "circle-check", standing: "circle-check", files: "circle-check" } as const)[e.decision as "allowed" | "declined" | "preapproved" | "standing" | "files"];
       return (
         <Line kind={e.type} look={icon === undefined ? "refused" : "decision"} label={label} icon={icon}>
           <What call={story.calls.get(e.toolCallId)} fallback="The request" />

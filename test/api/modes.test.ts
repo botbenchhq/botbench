@@ -101,6 +101,18 @@ test("Settings: web access in chat is Allow until the owner picks Ask or Off, wh
   assert.equal((await call(api, "GET", "/api/settings")).body.chatWebAccess, "allow");
 });
 
+test("Settings: Ask before every command is off until the owner turns it on, which is kept; anything but true or false is refused", async (t) => {
+  const api = await start(t);
+  assert.equal((await call(api, "GET", "/api/settings")).body.askEveryCommand, false);
+  for (const value of [true, false, true]) {
+    const saved = await call(api, "PUT", "/api/settings", { askEveryCommand: value });
+    assert.deepEqual([saved.status, saved.body.askEveryCommand], [200, value]);
+    assert.equal((await call(api, "GET", "/api/settings")).body.askEveryCommand, value);
+  }
+  for (const bad of ["on", 1, null]) assert.equal((await call(api, "PUT", "/api/settings", { askEveryCommand: bad })).status, 400, JSON.stringify(bad));
+  assert.equal((await call(api, "GET", "/api/settings")).body.askEveryCommand, true);
+});
+
 test("Settings needs the owner's session", async (t) => {
   const api = await start(t);
   const res = await fetch(`${api.base}/api/settings`);
