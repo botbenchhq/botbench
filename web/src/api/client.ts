@@ -1010,7 +1010,9 @@ export type LogRule =
   | "question_unasked"
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
-  | "memory";
+  | "memory"
+  /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
+  | "peer_message_conflict";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {
