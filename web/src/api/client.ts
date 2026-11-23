@@ -19,7 +19,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "answered" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   /** `usageLimit`: the turn ended because the agent's usage limit was reached; `resetsAt` is when it said it resets, or null. */
@@ -137,6 +137,8 @@ export interface AgentState extends Omit<DriverState, "driver"> {
   roles: string[];
   /** What it can do in a chat, in one sentence; null for Claude Code. */
   chat?: string | null;
+  /** Whether it reads a repository attached to a chat (never changing it); false for Claude Code. */
+  readsRepository?: boolean;
 }
 /** The agents as their last check found them, when it ended, whether a new check is running, and the cap on rounds of fixes. */
 export interface AgentsAnswer {
@@ -273,8 +275,9 @@ export interface ChatReply {
   roundId: number | null;
 }
 /** Send a chat message to one agent or several, with the chat so far; or, with `compare`, ask one to compare a round's answers. Each agent is checked first, which takes seconds. */
-export const sendChatMessage = (o: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number }): Promise<ChatReply[]> =>
-  request<{ replies: ChatReply[] }>("POST", "/api/chat", o, 60_000).then((r) => r.replies);
+/** `repository`: the full path of a repository attached to the chat, which the agents asked read and never change; left out for none. */
+export const sendChatMessage = ({ repository, ...o }: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number; repository?: string }): Promise<ChatReply[]> =>
+  request<{ replies: ChatReply[] }>("POST", "/api/chat", { ...o, ...(repository === undefined || repository === "" ? {} : { repository }) }, 60_000).then((r) => r.replies);
 
 export async function interruptTurn(attemptId: number): Promise<void> {
   await request("POST", `/api/turns/${attemptId}/interrupt`, {});
@@ -431,6 +434,19 @@ export interface FileChange {
   protected: boolean;
 }
 
+/** One round of fixes for a failing check: the round of checks it was sent, how it ended, and whether it changed the work. */
+export interface CheckFix {
+  round: number;
+  checkRound: number;
+  outcome: "finished" | "failed" | "stopped";
+  changed: boolean;
+  problem: string | null;
+  fromCommit: string;
+  headCommit: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
 export interface TaskDetail extends TaskSummary {
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
@@ -441,6 +457,12 @@ export interface TaskDetail extends TaskSummary {
   evidence: Evidence[];
   /** How many commands each round of setup and checks holds, recorded as it starts. */
   commandLists: CommandList[];
+  /** The rounds of fixes for a failing check on the latest version of the work, in order. */
+  checkFixes: CheckFix[];
+  /** What came of those rounds, in a plain line, once they are over; null before, or with none. */
+  checkFixLine: string | null;
+  /** Every request Botbench refused without asking during the task, in full, oldest first. */
+  refused: string[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
   /** Its latest review, once there is one. */
@@ -509,8 +531,9 @@ export interface KnownRepository {
 /** The repositories used before, most recent first, then the configured ones. */
 export const listRepos = (): Promise<KnownRepository[]> => request<{ repositories: KnownRepository[] }>("GET", "/api/repos", undefined, CHECK_REPO_LIMIT_MS).then((r) => r.repositories);
 /** `preapproved` is exactly what this task's run may use without asking: the server grants nothing the request does not list. */
-export const startTask = (repo: string, prompt: string, model: string | null | undefined, preapproved: string[]): Promise<{ taskId: number }> =>
-  request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved }, 30_000);
+/** Start one task; `agent` names the builder when it is not Claude Code ("codex"). */
+export const startTask = (repo: string, prompt: string, model: string | null | undefined, preapproved: string[], agent?: string): Promise<{ taskId: number }> =>
+  request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved, ...(agent === undefined ? {} : { agent }) }, 30_000);
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 /** Accept a task that is ready for review. `removeLeftovers` is the list of files its checks left, as the owner saw and confirmed them. */
@@ -640,8 +663,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[]; agent?: string }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -915,6 +938,19 @@ export interface Approval {
   asksBecause: string | null;
   /** Where a file tool's request is aimed: relative to the task's copy when inside it, a full path when not; null when it names none or it is not known. */
   target: string | null;
+  /** Set when this is Claude Code's question to the owner, not a request to run something: the question and its choices, all in the agent's own words. */
+  question: Question | null;
+  /** The owner's answer to a question, as given; null until there is one. */
+  answer: string | null;
+}
+
+/** Claude Code's question to the owner, as its card shows it. Every word is the agent's: shown as plain text, never as markdown or HTML. */
+export interface Question {
+  text: string;
+  /** The agent's short label for it; "" when it gave none. */
+  header: string;
+  /** Two to four. `description` is "" when the agent gave none. */
+  choices: { label: string; description: string }[];
 }
 
 /** The scope of a standing permission a card offers. */
@@ -968,6 +1004,10 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
+  /** The owner answered Claude Code's question; the entry holds the answer. */
+  | "owner_answered"
+  /** In a fully autonomous run, Claude Code's question that nobody was asked: it chose for itself. */
+  | "question_unasked"
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory";
@@ -989,6 +1029,9 @@ export const listPendingApprovals = async (): Promise<Approval[]> =>
   (await request<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals.filter((approval) => approval.storedDecision === null);
 export const answerApproval = (id: number, decision: "allow" | "decline", note?: string): Promise<{ approval: Approval }> =>
   request("POST", `/api/approvals/${id}`, note === undefined || note.trim() === "" ? { decision } : { decision, note }, 30_000);
+
+/** Answer Claude Code's question with one of its choices or the owner's own words. The server stores it as given and hands it only to the agent. */
+export const answerQuestion = (id: number, answer: string): Promise<{ approval: Approval }> => request("POST", `/api/approvals/${id}/answer`, { answer }, 30_000);
 
 /** Allow this request and give its command standing permission, with the scope its card offered. The server refuses a card that may not offer one. */
 export const grantStanding = (id: number): Promise<{ approval: Approval; grant: StandingGrant }> => request("POST", `/api/approvals/${id}`, { decision: "allow", standing: true }, 30_000);

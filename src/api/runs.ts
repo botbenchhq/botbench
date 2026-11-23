@@ -4,7 +4,7 @@ import { waitingOnApproval } from "../approvals/broker.ts";
 import { runGrants, showWords } from "../approvals/grants.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, type Run } from "../engine/run.ts";
-import { BodyError, builderOnly, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
+import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { resumeNote } from "../engine/task.ts";
 import { decisionOf, leftoversOf } from "./tasks.ts";
 import { deliveryOf } from "../engine/delivery.ts";
@@ -92,9 +92,9 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       const body = await readJsonBody(req);
       if (!isObject(body) || typeof body.repo !== "string") throw new RunError(400, EXPECTED);
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
-      builderOnly(body);
+      const builder = builderChoice(body);
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver });
+      const run = await ctx.runs.start({ repo: body.repo, builder, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });

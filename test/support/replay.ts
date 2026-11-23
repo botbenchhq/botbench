@@ -102,7 +102,8 @@ export class ReplaySession implements DriverSession {
       if (event.type === "turn_ended") return this.end(event.reason, event.detail);
       if (event.type === "permission_resolved") {
         const allowed = typeof given === "object" && given !== null && (given as PermissionResponse).decision === "allow";
-        if ((event.decision === "allowed") !== allowed) {
+        // An answered question went on after an allow that carried the answer, as an allowed request did.
+        if ((event.decision === "allowed" || event.decision === "answered") !== allowed) {
           const detail = `The recording continues only after this request was ${event.decision}; it has nothing for another answer.`;
           this.record({ type: "error", message: detail, raw: null });
           return this.end("error", detail);

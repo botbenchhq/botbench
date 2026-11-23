@@ -40,6 +40,43 @@ export interface Facts {
   hasChecks: boolean | null;
   /** The GitHub issue attached to a run, as it was looked up; null or left out for none. */
   issue?: AttachedIssue | null;
+  /** The repository a chat lets its agents read, and what the server said of it; left out for none. Only a chat has one. */
+  read?: { pick: ReadPick; status: RepoStatus };
+  /** The agents a chat asks, for what a repository to read needs of them; left out when not known. */
+  asked?: readonly Reader[];
+  /** Whether the agents are being checked now, so an agent's `reads` not yet known may still be learned. */
+  agentsChecking?: boolean;
+}
+
+/**
+ * A repository a chat lets its agents read, never change: none, one Botbench knows of, or a folder the owner typed. It is
+ * not the Repository row's, which starts a task or a run: nothing is worked on in it, and it is never remembered.
+ */
+export type ReadPick = { kind: "none" } | { kind: "known"; path: string } | { kind: "other"; path: string };
+
+/** An agent a chat asks, by name, and whether it reads a repository attached to the chat; null while that is not known. */
+export interface Reader {
+  name: string;
+  reads: boolean | null;
+}
+
+/** What the view and the line under the box say of a repository a chat reads. */
+export const READ_ABOUT = "The agents you ask can read its files and its history, and never change it: nothing in it is written, committed or pushed.";
+
+/** Why a chat with a repository to read cannot be sent yet, in words that say what to do; null when it can. */
+function readStop(f: Facts): string | null {
+  if (f.repo.kind !== "none" || f.read === undefined || f.read.pick.kind === "none") return null;
+  if (f.read.pick.path.trim() === "") return "Enter the full path of a git repository on this Mac for the chat to read, or choose None.";
+  if (f.read.status.state === "checking") return "Checking the repository for the chat to read.";
+  if (f.read.status.state === "refused") return `${f.read.status.words} Choose another repository for the chat to read, or choose None.`;
+  const cannot = (f.asked ?? []).filter((a) => a.reads === false);
+  if (cannot.length === 0) {
+    // A check kept from before the server said who reads: wait for the one under way rather than send a likely refusal.
+    if (f.agentsChecking === true && (f.asked ?? []).some((a) => a.reads === null)) return "Checking which agents can read the repository.";
+    return null;
+  }
+  const why = cannot.map((a) => (a.name === "Claude Code" ? "Claude Code works on a repository only as a task, in a separate copy, so a chat does not give it one." : `${a.name} cannot read a repository: it answers from the conversation alone.`));
+  return `${why.join(" ")} The repository is read only by the other agents: ask only them, or choose None for the repository to read.`;
 }
 
 /** An issue the owner looked up and attached: what is sent, and what its row shows. */
@@ -55,9 +92,22 @@ export const ISSUE_NOT_FULL = "A run started from a GitHub issue cannot be fully
 export type Send =
   | { do: "focus" }
   | { do: "blocked"; reason: string }
-  | { do: "chat"; prompt: string; model: string | null | undefined }
-  | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[] }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[] } & ({ prompt: string } | { specPath: string } | {}));
+  | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
+  | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+
+/** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
+export type Builder = "codex";
+
+/** What the Builder view says of each choice (docs/product/voice.md). */
+export const BUILDER_WORDS = {
+  claude: "Works in its own sandbox and asks you before each command the safety rules name. It also plans a run.",
+  codex: "Works in its own sandbox, in the task's copy, with no network. It asks you each time it wants to run something outside that sandbox; a fully autonomous run refuses those. Claude Code still plans a run.",
+  hint: "It cannot be changed once the work starts. The reviewer must be a different model.",
+} as const;
+
+/** The Builder row's value. */
+export const builderName = (builder: Builder | null): string => (builder === "codex" ? "Codex" : "Claude Code");
 
 /**
  * Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens; `connect`
@@ -85,6 +135,8 @@ export function blocked(f: Facts): Blocked | null {
     if (run && f.issue && f.specPath.trim() !== "") return say("A run from an issue takes your message, not a spec file. Clear the spec file, or remove the issue.");
     if (run && f.issue && f.mode === "full") return say(ISSUE_NOT_FULL);
   }
+  const read = readStop(f);
+  if (read !== null) return say(read);
   if (run && f.mode === "full" && f.hasChecks === false) return say("Fully autonomous needs a check command for this repository. Add one to Botbench's settings file, or choose Semi-autonomous.");
   if (!f.model.ok) return say(`Model: ${f.model.why}`);
   if (run && f.buildModel !== null && !f.buildModel.ok) return say(`Build model: ${f.buildModel.why}`);
@@ -98,19 +150,26 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
   // blocked() has made sure the model can be sent.
   const model = f.model.ok ? f.model.model : undefined;
-  if (!inRepository(f.repo)) return prompt === null ? { do: "focus" } : { do: "chat", prompt, model };
+  if (!inRepository(f.repo)) {
+    if (prompt === null) return { do: "focus" };
+    // blocked() has made sure a repository to read is only in a chat, checked, and asked of agents that read it.
+    const read = f.repo.kind === "none" && f.read !== undefined && f.read.pick.kind !== "none" ? { repository: f.read.pick.path.trim() } : {};
+    return { do: "chat", prompt, model, ...read };
+  }
   const repo = f.repo.path.trim();
-  if (f.kind === "task") return prompt === null ? { do: "focus" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
+  // Codex builds on its own default model: the models chosen here are Claude Code's, which still plans a run.
+  const codex = extras.builder === "codex";
+  if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
-  const build = f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
+  const build = codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
@@ -118,15 +177,22 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "kind" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
 
-/** The rows that apply: a chat has a repository and a model; a start in a repository adds what to do, mode and commands; a run adds its own settings. */
-export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean }): Row[] {
+/**
+ * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
+ * do, mode and commands; a run adds its own settings. Come to start a task or a run (a repository needed), there is
+ * nothing to read.
+ */
+export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean }): Row[] {
+  if (f.repo.kind === "none") return ["repository", "read", "models"];
   if (!inRepository(f.repo)) return ["repository", "models"];
   const run = f.kind === "run";
   return [
     "repository",
     "kind",
+    // Only when another agent than Claude Code can build now (Codex, once its check found it can).
+    ...(f.builderOffered === true ? (["builder"] as const) : []),
     // Only a repository whose remote is on GitHub has issues Botbench can read.
     ...(run && f.issueOffered === true ? (["issue"] as const) : []),
     ...(run ? (["spec"] as const) : []),
@@ -208,7 +274,7 @@ export function chipModel(o: { run: boolean; sameBuild: boolean; plan: string; b
  */
 export function returnsToList(o: { view: Row; value: string; run: boolean }): boolean {
   if (o.view === "spec" || o.view === "commands" || o.view === "issue") return false;
-  if (o.view === "repository") return o.value !== "?other";
+  if (o.view === "repository" || o.view === "read") return o.value !== "?other";
   // The Models view holds two choices: the agent and its model in a chat, the planning and build models in a run.
   if (o.view === "models") return false;
   if (o.view === "review") return !o.value.endsWith(" ?other");
@@ -237,6 +303,12 @@ export function repoName(repo: RepoPick, known: readonly KnownRepository[]): str
   if (repo.kind === "needed") return "Choose";
   if (repo.kind === "known") return known.find((k) => k.path === repo.path)?.name ?? folderName(repo.path);
   return folderName(repo.path.trim()) || "Another folder";
+}
+
+/** The Read a repository row's value: None, or the repository's name. */
+export function readName(read: ReadPick, known: readonly KnownRepository[]): string {
+  if (read.kind === "none") return "None";
+  return repoName(read, known);
 }
 
 /** The From an issue row's value: the issue's number and the start of its title, which people outside the project wrote. */

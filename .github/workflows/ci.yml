@@ -1,0 +1,174 @@
+name: CI
+
+# The checks on every pull request and on every push to main. Modelled on jon-lange/settleview's ci.yml.
+# - Linux, on every run: install, typecheck, the client build, the design-system checker, npm audit, and npm test as
+#   far as it runs off a Mac (the tests that start macOS's sandbox-exec are skipped, and counted).
+# - macOS, on every run: the whole of npm test (the sandbox tests need sandbox-exec) but the dictation tests, which need
+#   speech recognition that GitHub's macOS virtual machines do not have.
+# - Secret scan (gitleaks, over the whole history) and CodeQL, on every run.
+# The browser suite (npm run e2e) does not run here, not even without its LIVE and MILESTONE tests: almost every one of
+# them needs Claude Code installed and signed in on the computer (the composer is enabled only then), and CI has no
+# sign-in and gets none. It runs on the owner's Mac, as do the live tests (test/live/), which drive the owner's own
+# signed-in vendor CLIs.
+# No secret is used by any job. Only pull_request, never pull_request_target: a fork's pull request runs with a
+# read-only token and no secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Actions are pinned by full commit hash (the version in the comment): a moved tag cannot change what runs here.
+
+jobs:
+  linux:
+    name: Checks and tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Install (root and web, from the lockfiles)
+        run: |
+          npm ci
+          npm ci --prefix web
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build the client
+        run: npm run build --prefix web
+
+      - name: Design-system checker
+        run: node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json
+
+      - name: npm audit (root and web; fails on high or critical)
+        run: |
+          npm audit --audit-level=high
+          npm audit --prefix web --audit-level=high
+
+      # npm test with the skips counted: test/run-counted.ts fails unless exactly the number expected off a Mac were
+      # skipped (the tests that start sandbox-exec, and the few about macOS alone).
+      - name: npm test off a Mac (sandbox tests skipped and counted)
+        run: npm run test:counted -- --test-timeout=120000
+
+  macos:
+    name: Full tests (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Install (root and web, from the lockfiles)
+        run: |
+          npm ci
+          npm ci --prefix web
+
+      # A short temporary folder for the steps after this one. The default one (/var/folders/<28 characters>/T, and
+      # /private/var/... once resolved) makes the Unix sockets the tests open (a data folder's broker.sock, a socket in a
+      # task's copy) 105 bytes long, past macOS's 104, which Node 24 refuses with EINVAL. Botbench's own
+      # ~/.botbench/broker.sock is far shorter.
+      - name: A short temporary folder
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      # Botbench's dictation looks for ffmpeg before anything else (src/dictation/dictation.ts), so the dictation tests
+      # that do run here, about a speech engine that cannot be built, reach the part they are about.
+      - name: ffmpeg, when the runner has none
+        run: command -v ffmpeg || brew install ffmpeg
+
+      - name: Build the client
+        run: npm run build --prefix web
+
+      # Every test but the dictation ones, which need macOS's speech recognition, and the runner is a virtual machine
+      # without it (test/support/speech.ts); test/run-counted.ts fails unless exactly those were skipped.
+      - name: npm test (the whole suite but dictation, counted)
+        run: npm run test:counted -- --test-timeout=120000
+
+  gitleaks:
+    name: Secret scan (gitleaks, whole history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # From the release's gitleaks_8.30.1_checksums.txt.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # every commit, not only the checked-out tree
+          persist-credentials: false
+
+      - name: Install gitleaks (the release binary, checked against its checksum)
+        run: |
+          curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+
+      # .gitleaks.toml is read from the checkout. --redact: a finding's value is never printed in the log.
+      - name: gitleaks over every commit
+        run: /tmp/gitleaks git --redact --no-banner --verbose --config .gitleaks.toml .
+
+  codeql:
+    name: CodeQL (JavaScript and TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # the upload to code scanning; this job only
+      actions: read  # the upload reads this workflow run
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      # Uploaded to code scanning (the repository's Security tab); a failed analysis or upload fails the job.
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: javascript-typescript
+          output: codeql-results
+
+      - name: What CodeQL found
+        run: |
+          for f in codeql-results/*.sarif; do
+            echo "$f: $(jq '[.runs[].results[]] | length' "$f") results"
+            jq -r '.runs[].results[] | "- \(.ruleId): \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' "$f"
+          done

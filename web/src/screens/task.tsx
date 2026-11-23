@@ -309,10 +309,15 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                 {task.filesProblem}
               </Alert>
             )}
-            {(task.checks !== null || task.status === "verifying") && (
+            {(task.checks !== null || task.status === "verifying" || task.evidence.some((row) => row.kind === "check")) && (
               <section aria-labelledby="checks-heading" className="ds-stack ds-gap-sm">
                 <h2 id="checks-heading">Checks</h2>
                 {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
+                {task.checkFixLine !== null && (
+                  <p data-testid="check-fix-outcome" role="status">
+                    {task.checkFixLine}
+                  </p>
+                )}
                 {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
@@ -388,6 +393,20 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </ul>
                   </>
                 )}
+              </section>
+            )}
+
+            {task.refused.length > 0 && (
+              <section aria-labelledby="refused-heading" data-testid="refused" className="ds-stack ds-gap-sm">
+                <h2 id="refused-heading">Refused without asking</h2>
+                <p>{`Botbench refused ${task.refused.length === 1 ? "this request" : `these ${task.refused.length} requests`} during this task without asking you. Each is shown in full.`}</p>
+                <ul className="ds-stack ds-gap-xs">
+                  {task.refused.map((command, i) => (
+                    <li key={i}>
+                      <code>{command}</code>
+                    </li>
+                  ))}
+                </ul>
               </section>
             )}
 

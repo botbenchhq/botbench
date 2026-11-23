@@ -1,6 +1,6 @@
 # ADR 0004: Peers P5, two workbenches send each other typed messages directly
 
-Date: 2026-11-22. Status: proposed. The plan requires this record and a threat review before any P5 code (Milestone 6, P5). The threat review is "Peers: direct messages between paired workbenches (P5)" in `docs/security/threat-model.md`, boundary B16.
+Date: 2026-11-22. Status: accepted. The build is #154 (P5). The plan requires this record and a threat review before any P5 code (Milestone 6, P5). The threat review is "Peers: direct messages between paired workbenches (P5)" in `docs/security/threat-model.md`, boundary B16.
 
 Context: `docs/product/peers-concept.md` (rules that must hold), findings 5, 6 and 7 of `docs/reviews/design-vs-paperclip.md`. Approaches below are borrowed from Rakazo and Paperclip as described there and in the task that asked for this record. Their source is not in this repository's copy (`.reference/` is absent here), so no file of theirs was re-read for this record and nothing is copied from them.
 

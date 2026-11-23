@@ -12,6 +12,7 @@
     "start": "node src/server.ts",
     "test": "node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json && node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'",
     "test:confined": "node test/run-confined.ts",
+    "test:counted": "node test/run-counted.ts",
     "test:live": "node --test 'test/live/**/*.live.test.ts'",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck",

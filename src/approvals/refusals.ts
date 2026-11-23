@@ -58,6 +58,8 @@ const PATH_FIELDS = ["file_path", "notebook_path", "path", "paths"];
 /** What kind of request was refused. */
 export function refusalKind(r: RefusedRequest): RefusalKind {
   if (r.floor !== undefined && r.floor !== NOT_PLAIN) return "floor";
+  // A request to run outside the agent's sandbox (a Codex escalation) would have left the confinement, whatever it runs.
+  if (r.why === "escalation") return "unconfined";
   if (NETWORK_TOOLS.has(r.tool)) return "network";
   const input = typeof r.input === "object" && r.input !== null && !Array.isArray(r.input) ? (r.input as Record<string, unknown>) : {};
   // A file tool is refused only when it was not shown to stay inside the copy's own files; a tool the gate does not

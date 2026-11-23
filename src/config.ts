@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_REFINE_ROUNDS, MAX_REFINE_ROUNDS } from "./engine/refine.ts";
+import { DEFAULT_CHECK_FIX_ROUNDS, MAX_CHECK_FIX_ROUNDS } from "./engine/check-fix.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -180,6 +181,8 @@ export interface AutonomyConfig {
   mode?: RunMode;
   /** After a review with concerns, how many rounds of fixes the builder may be asked for before the task is Ready for review. 0 to 5; 2 when absent. */
   maxRefineRounds?: number;
+  /** When a check fails on the committed work, how many rounds of fixes for it the builder gets on each version of the work before the task goes on with the check failed. 0 to 5; 2 when absent. */
+  maxCheckFixRounds?: number;
   /**
    * How long, in whole seconds, a builder or a planner may send nothing while it works before Botbench stops it and
    * everything it started. Time spent waiting on the owner's answer to a request does not count. 0 turns the limit
@@ -197,7 +200,7 @@ const OFFER_STANDING_AFTER = 3;
 const SILENCE_LIMIT_SECONDS = 600;
 const MAX_SILENCE_LIMIT_SECONDS = 86_400;
 const MAX_USAGE_LIMIT_WAIT_SECONDS = 86_400;
-const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "silenceLimitSeconds", "usageLimitWaitSeconds"] as const;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "maxCheckFixRounds", "silenceLimitSeconds", "usageLimitWaitSeconds"] as const;
 
 /** How long a builder or planner may send nothing before it is stopped, in milliseconds; 0 when the limit is off. */
 export function silenceLimitMs(config: Config): number {
@@ -213,6 +216,11 @@ export function usageLimitWaitMs(config: Config): number {
 /** How many rounds of fixes a run started now allows after a review with concerns. */
 export function maxRefineRounds(config: Config): number {
   return config.autonomy?.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS;
+}
+
+/** How many rounds of fixes for a failing check the builder gets on each version of a task's work. */
+export function maxCheckFixRounds(config: Config): number {
+  return config.autonomy?.maxCheckFixRounds ?? DEFAULT_CHECK_FIX_ROUNDS;
 }
 
 /** How many approvals of the same command earn the offer of standing permission. */
@@ -352,6 +360,8 @@ function validate(c: Json, where: string): Config {
     if (autonomy.mode !== undefined && !isRunMode(autonomy.mode)) fail(`"autonomy.mode" must be "manual", "semi" or "full": the mode a new run is given when none is chosen.`);
     const rounds = autonomy.maxRefineRounds;
     if (rounds !== undefined && !(typeof rounds === "number" && Number.isSafeInteger(rounds) && rounds >= 0 && rounds <= MAX_REFINE_ROUNDS)) fail(`"autonomy.maxRefineRounds" must be a whole number from 0 to ${MAX_REFINE_ROUNDS}: how many rounds of fixes the builder may be asked for after a review with concerns.`);
+    const fixes = autonomy.maxCheckFixRounds;
+    if (fixes !== undefined && !(typeof fixes === "number" && Number.isSafeInteger(fixes) && fixes >= 0 && fixes <= MAX_CHECK_FIX_ROUNDS)) fail(`"autonomy.maxCheckFixRounds" must be a whole number from 0 to ${MAX_CHECK_FIX_ROUNDS}: how many rounds of fixes the builder gets when a check fails on its work.`);
     const silence = autonomy.silenceLimitSeconds;
     if (silence !== undefined && !(typeof silence === "number" && Number.isSafeInteger(silence) && silence >= 0 && silence <= MAX_SILENCE_LIMIT_SECONDS)) fail(`"autonomy.silenceLimitSeconds" must be a whole number of seconds from 0 to ${MAX_SILENCE_LIMIT_SECONDS}: how long a builder or planner may send nothing while it works before Botbench stops it. 0 turns the limit off.`);
     const wait = autonomy.usageLimitWaitSeconds;

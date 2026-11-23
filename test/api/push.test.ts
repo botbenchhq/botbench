@@ -153,6 +153,25 @@ test("a pending approval sends one encrypted push to each device, which decrypts
   assert.equal(api.endpoint.received.length, 2, "answering sends nothing");
 });
 
+const QUESTION_INPUT = { questions: [{ question: "Which greeting should I use?", header: "Greeting", options: [{ label: "Hello", description: "" }, { label: "Hi", description: "" }], multiSelect: false }] };
+
+test("a newly asked question sends exactly one 'A task has a question' per device, with the task's screen, and no 'An approval is waiting'; the owner's answer over the API sends none", async (t) => {
+  const api = await start(t);
+  const phone = await subscribe(api, "phone");
+  const tablet = await subscribe(api, "tablet");
+  const waiting = api.server.broker.request({ taskId: api.taskId, attemptId: api.attemptId, role: "implementer", tool: "AskUserQuestion", command: JSON.stringify(QUESTION_INPUT), input: QUESTION_INPUT, cwd: ".", reason: null, toolCallId: "tc-q" });
+  await until("two pushes", () => api.endpoint.received.length === 2);
+  for (const [name, device] of [["phone", phone], ["tablet", tablet]] as const) assert.deepEqual(read(api, name, device), [{ title: "A task has a question", path: `/#/tasks/${api.taskId}` }]);
+  for (const r of api.endpoint.received) assert.ok(!r.body.toString("latin1").includes("greeting"), "none of the question's words are sent");
+  const [pending] = api.server.broker.pending();
+  const answered = await call(api, "POST", `/api/approvals/${pending!.id}/answer`, { answer: "Hi" });
+  assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  assert.deepEqual((await waiting).answers, { "Which greeting should I use?": "Hi" });
+  await api.server.push.idle();
+  assert.equal(api.endpoint.received.length, 2, "one per device, and answering sends nothing");
+});
+
+
 test("a subscription the push service answers 404 or 410 for is deleted; the others stay; the approval is unharmed", async (t) => {
   const api = await start(t);
   await subscribe(api, "gone");

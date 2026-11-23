@@ -7,10 +7,18 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import { AntigravityDriver } from "../../src/drivers/antigravity.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
 import { CodexDriver } from "../../src/drivers/codex.ts";
+import { IMPLEMENTER, roleProblem } from "../../src/engine/roles.ts";
 import type { Driver } from "../../src/drivers/contract.ts";
 import { GrokDriver } from "../../src/drivers/grok.ts";
 import { startServer } from "../../src/server.ts";
 import { tempDir } from "../support/repo.ts";
+
+/** Codex's roles here: a reviewer, and a builder too where the installed Codex can build (its probe says so; inside a sandbox, or with no Codex, it cannot). */
+async function codexRoles(): Promise<string[]> {
+  const codex = new CodexDriver();
+  await codex.probe();
+  return roleProblem(IMPLEMENTER, "codex", codex.capabilities) === null ? ["builder", "reviewer"] : ["reviewer"];
+}
 
 // The agents' checks run each agent's own program on this Mac; they are kept for a short time so a screen that opens
 // does not wait for them. The drivers here are the real ones: only their calls to probe() are counted.
@@ -69,11 +77,13 @@ test("GET /api/agents says when the agents were checked, answers a second time f
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const signed = await fetch(`${base}/api/sign-in`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }) });
   const headers = { cookie: signed.headers.getSetCookie()[0]!.split(";")[0]! };
-  const get = async (route: string) => (await (await fetch(`${base}${route}`, { headers })).json()) as { agents: { agent: string; roles: string[] }[]; checkedAt: string; checking: boolean };
+  const get = async (route: string) => (await (await fetch(`${base}${route}`, { headers })).json()) as { agents: { agent: string; roles: string[]; readsRepository: boolean }[]; checkedAt: string; checking: boolean };
 
   const first = await get("/api/agents");
   assert.deepEqual(first.agents.map((a) => a.agent), ["claude-code", "codex", "grok", "antigravity"]);
-  assert.deepEqual(first.agents.map((a) => a.roles), [["planner", "builder"], ["reviewer"], ["reviewer"], ["reviewer"]]);
+  // Which agents read a repository attached to a chat: the rule the chat's own request is checked by (src/api/chat.ts).
+  assert.deepEqual(first.agents.map((a) => a.readsRepository), [false, true, true, false]);
+  assert.deepEqual(first.agents.map((a) => a.roles), [["planner", "builder"], await codexRoles(), ["reviewer"], ["reviewer"]]);
   assert.ok(Number.isFinite(Date.parse(first.checkedAt)), first.checkedAt);
   const again = await get("/api/agents");
   assert.equal(again.checkedAt, first.checkedAt, "the second call answers from the same check");

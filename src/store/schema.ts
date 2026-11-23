@@ -1753,4 +1753,127 @@ CREATE TRIGGER watched_issues_no_delete BEFORE DELETE ON watched_issues
 BEGIN SELECT RAISE(ABORT, 'watched issues are never deleted'); END;
 `,
   },
+  {
+    // `check_fixes`: one row per round of fixes for a failing check that ended (engine/check-fix.ts), kept apart from the
+    // rounds of fixes a review asks for (`refinements`): the round of check evidence it was sent, how many rounds of
+    // fixes for a review the task had then, the builder's attempt, how its turn ended, whether it changed the work, its
+    // reply, the commit it started from and the one Botbench made after it, and the times. Rows are only ever added.
+    // What a task's checks found may now also change for a version of the work such a round made.
+    name: "check fix rounds",
+    sql: `
+CREATE TABLE check_fixes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  round INTEGER NOT NULL CHECK (round >= 1),
+  check_round INTEGER NOT NULL CHECK (check_round >= 1),
+  after_fixes INTEGER NOT NULL CHECK (after_fixes >= 0),
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'failed', 'stopped')),
+  changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+  reply TEXT NOT NULL,
+  problem TEXT,
+  from_commit TEXT NOT NULL,
+  head_commit TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  UNIQUE (task_id, round),
+  UNIQUE (task_id, check_round),
+  CHECK ((outcome = 'finished') = (problem IS NULL))
+);
+CREATE TRIGGER check_fixes_no_update BEFORE UPDATE ON check_fixes
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes for a failing check are append-only'); END;
+CREATE TRIGGER check_fixes_no_delete BEFORE DELETE ON check_fixes
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes for a failing check are append-only'); END;
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+`,
+  },
+  {
+    // A question an agent puts to the owner (src/approvals/question.ts) is an approval of its own kind: `question` holds
+    // the one question as its card shows it (JSON: its text, header and two to four choices), and `answer` the owner's
+    // own text, at most 2000 characters, once. A question belongs to a task or a run's planner, never to a chat; it ends
+    // answered (status `allowed`, with its answer) or superseded, never declined, and an answer stored for a parked one
+    // is stored with its text. The action log gains `owner_answered` (the owner's answer, in `detail`) and
+    // `question_unasked` (a fully autonomous run's question, which nobody was asked: the question in `command`, what the
+    // agent was told in `detail`, written in one row). A check cannot be altered in place, so the action log is made
+    // again with every row kept, ids included, and its indexes and triggers put back.
+    name: "questions",
+    sql: `
+ALTER TABLE approvals ADD COLUMN question TEXT CHECK (question IS NULL OR json_valid(question));
+ALTER TABLE approvals ADD COLUMN answer TEXT CHECK (answer IS NULL OR length(answer) BETWEEN 1 AND 2000);
+CREATE TRIGGER approvals_question_asked BEFORE INSERT ON approvals
+WHEN NEW.answer IS NOT NULL OR (NEW.question IS NOT NULL AND NEW.chat = 1)
+BEGIN SELECT RAISE(ABORT, 'a question is first written unanswered, and never for a chat'); END;
+CREATE TRIGGER approvals_question_fixed BEFORE UPDATE OF question ON approvals
+BEGIN SELECT RAISE(ABORT, 'what a question asks cannot be changed'); END;
+CREATE TRIGGER approvals_answer_once BEFORE UPDATE OF answer ON approvals
+WHEN OLD.answer IS NOT NULL OR OLD.question IS NULL OR NEW.answer IS NULL
+BEGIN SELECT RAISE(ABORT, 'a question is answered once, and only a question has an answer'); END;
+CREATE TRIGGER approvals_question_outcome BEFORE UPDATE OF status ON approvals
+WHEN OLD.question IS NOT NULL AND (NEW.status = 'declined' OR (NEW.status = 'allowed' AND NEW.answer IS NULL))
+BEGIN SELECT RAISE(ABORT, 'a question ends answered or superseded'); END;
+CREATE TRIGGER approvals_question_stored BEFORE UPDATE OF stored_decision ON approvals
+WHEN OLD.question IS NOT NULL AND (NEW.stored_decision IS NOT 'allow' OR NEW.answer IS NULL)
+BEGIN SELECT RAISE(ABORT, 'the answer to a parked question is stored with its text'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_questions;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_questions ORDER BY id;
+DROP TABLE action_log_before_questions;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // Codex can build (src/drivers/codex-app-server.ts). A run and a task name the agent that builds them
+    // (`build_agent`, `builder_agent`): NULL is Claude Code, as every task before this was. Each is chosen when the run
+    // or task starts and never changed after. An approval may be a Codex escalation (`escalation`): Codex asked to run
+    // something outside its own sandbox. Such an approval is asked every time; no grant answers it and it earns none.
+    name: "codex builder",
+    sql: `
+ALTER TABLE runs ADD COLUMN build_agent TEXT CHECK (build_agent IS NULL OR build_agent IN ('codex'));
+CREATE TRIGGER runs_build_agent_fixed BEFORE UPDATE OF build_agent ON runs WHEN NEW.build_agent IS NOT OLD.build_agent
+BEGIN SELECT RAISE(ABORT, 'a run''s builder is chosen when it starts and never changed'); END;
+ALTER TABLE tasks ADD COLUMN builder_agent TEXT CHECK (builder_agent IS NULL OR builder_agent IN ('codex'));
+CREATE TRIGGER tasks_builder_agent_fixed BEFORE UPDATE OF builder_agent ON tasks WHEN NEW.builder_agent IS NOT OLD.builder_agent
+BEGIN SELECT RAISE(ABORT, 'a task''s builder is chosen when it starts and never changed'); END;
+ALTER TABLE approvals ADD COLUMN escalation INTEGER NOT NULL DEFAULT 0 CHECK (escalation IN (0, 1));
+CREATE TRIGGER approvals_escalation_fixed BEFORE UPDATE OF escalation ON approvals WHEN NEW.escalation IS NOT OLD.escalation
+BEGIN SELECT RAISE(ABORT, 'whether an approval is an escalation is fixed when it is asked'); END;
+`,
+  },
 ];

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { ISSUE_NOT_FULL, returnsToList, splitPath, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { BUILDER_WORDS, ISSUE_NOT_FULL, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -16,7 +16,9 @@ export type SheetView = "rows" | Row;
 /** Each row's name on the row, its view's title and its icon. */
 const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   repository: { label: "Repository", title: "Repository", icon: "folder" },
+  read: { label: "Read a repository", title: "Let this chat read a repository", icon: "search" },
   kind: { label: "What to do", title: "What to do", icon: "git-branch" },
+  builder: { label: "Builder", title: "Who builds", icon: "terminal" },
   issue: { label: "From an issue", title: "From an issue", icon: "external-link" },
   spec: { label: "Spec file", title: "Spec file", icon: "file" },
   mode: { label: "Mode", title: "Mode", icon: "shield" },
@@ -39,8 +41,13 @@ export interface SheetState {
   chooseRepo(pick: RepoPick): void;
   setOtherPath(path: string): void;
   repository: RepositoryChoice;
+  /** The repository a chat lets its agents read: what is chosen, the path typed, its check, and who reads it, by name. */
+  read: { pick: ReadPick; choose(pick: ReadPick): void; otherPath: string; setOtherPath(path: string): void; check: RepositoryChoice; readers: string[] };
   kind: Kind;
   setKind(kind: Kind): void;
+  /** Who builds: null for Claude Code, or Codex when its check found it can. */
+  builder: Builder | null;
+  setBuilder(builder: Builder | null): void;
   specPath: string;
   setSpecPath(path: string): void;
   mode: RunMode | null;
@@ -137,6 +144,7 @@ export function ContextSheet({ sheetRef, view, setView, state }: { sheetRef: Ref
 
 function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
   if (row === "repository") return <RepositoryOptions state={state} />;
+  if (row === "read") return <ReadOptions state={state} />;
   if (row === "kind")
     return (
       <fieldset className="ds-option-picker">
@@ -172,6 +180,17 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
         </p>
         <Option group="tasks" id="tasks-one" value="one" checked={state.oneTask} onChange={() => state.setOneTask(true)} name="Keep it to one task" description="Claude Code plans one task that does all of the work. If it plans more, it is asked once more for one; if it still plans more, Botbench joins them into one task." />
         <Option group="tasks" id="tasks-several" value="several" checked={!state.oneTask} onChange={() => state.setOneTask(false)} name="Let it plan several" description="Claude Code splits the work into up to 20 tasks, built one after another." />
+      </fieldset>
+    );
+  if (row === "builder")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="builder-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">Who builds</legend>
+        <p id="builder-hint" className="ds-option-picker__hint">
+          {BUILDER_WORDS.hint}
+        </p>
+        <Option group="builder" id="builder-claude" value="claude-code" checked={state.builder === null} onChange={() => state.setBuilder(null)} name="Claude Code" description={BUILDER_WORDS.claude} />
+        <Option group="builder" id="builder-codex" value="codex" checked={state.builder === "codex"} onChange={() => state.setBuilder("codex")} name="Codex" description={BUILDER_WORDS.codex} />
       </fieldset>
     );
   if (row === "issue") return <IssueOptions state={state.issue} />;
@@ -223,24 +242,68 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
 
 /** None (just chat), the repositories Botbench knows of, recent first, and Another folder…, which reveals the path field. */
 function RepositoryOptions({ state }: { state: SheetState }) {
-  const { repo, known, repository } = state;
-  const listed = repo.kind === "known" && !known.some((k) => k.path === repo.path) ? [{ name: splitPath(repo.path)[1].replace(/\/$/, ""), path: repo.path }, ...known] : known;
   return (
-    <fieldset className="ds-option-picker">
-      <legend className="ds-option-picker__legend ds-visually-hidden">Repository</legend>
-      <Option group="repository" id="repo-none" value="" checked={repo.kind === "none"} onChange={() => state.chooseRepo({ kind: "none" })} name="None (just chat)" description="Claude Code answers in a folder of its own, outside your projects." />
+    <FolderOptions
+      id="repo"
+      legend="Repository"
+      pick={state.repo}
+      choose={state.chooseRepo}
+      none={{ name: "None (just chat)", description: "Claude Code answers in a folder of its own, outside your projects." }}
+      otherPath={state.otherPath}
+      setOtherPath={state.setOtherPath}
+      known={state.known}
+      check={state.repository}
+    />
+  );
+}
+
+/**
+ * A repository a chat's agents read and never change, picked as the Repository row picks one, with the same check. It
+ * is not where a task or run starts: the line says so.
+ */
+function ReadOptions({ state }: { state: SheetState }) {
+  const { read } = state;
+  return (
+    <FolderOptions
+      id="read"
+      legend="Let this chat read a repository"
+      hint={`${READ_ABOUT} ${read.readers.length > 0 ? `${read.readers.join(" and ")} read it; ` : ""}Claude Code is not given it: it works on a repository only as a task, chosen under Repository.`}
+      pick={read.pick}
+      choose={read.choose}
+      none={{ name: "None", description: "The agents answer from the chat alone." }}
+      otherPath={read.otherPath}
+      setOtherPath={read.setOtherPath}
+      known={state.known}
+      check={read.check}
+    />
+  );
+}
+
+/** None, the repositories Botbench knows of, recent first, and Another folder…, which reveals the path field and what the server said of it. */
+function FolderOptions({ id, legend, hint, pick, choose, none, otherPath, setOtherPath, known, check }: { id: string; legend: string; hint?: string; pick: RepoPick; choose(pick: ReadPick): void; none: { name: string; description: string }; otherPath: string; setOtherPath(path: string): void; known: KnownRepository[]; check: Pick<RepositoryChoice, "words" | "refused"> }) {
+  const listed = pick.kind === "known" && !known.some((k) => k.path === pick.path) ? [{ name: splitPath(pick.path)[1].replace(/\/$/, ""), path: pick.path }, ...known] : known;
+  const group = id === "repo" ? "repository" : id;
+  return (
+    <fieldset className="ds-option-picker" {...(hint === undefined ? {} : { "aria-describedby": `${id}-hint` })}>
+      <legend className="ds-option-picker__legend ds-visually-hidden">{legend}</legend>
+      {hint !== undefined && (
+        <p id={`${id}-hint`} data-testid={`${id}-hint`} className="ds-option-picker__hint">
+          {hint}
+        </p>
+      )}
+      <Option group={group} id={`${id}-none`} value="" checked={pick.kind === "none"} onChange={() => choose({ kind: "none" })} name={none.name} description={none.description} />
       {listed.map((k, at) => (
-        <Option key={k.path} group="repository" id={`repo-${at}`} value={k.path} checked={repo.kind === "known" && repo.path === k.path} onChange={() => state.chooseRepo({ kind: "known", path: k.path })} name={k.name} path={splitPath(k.path)} />
+        <Option key={k.path} group={group} id={`${id}-${at}`} value={k.path} checked={pick.kind === "known" && pick.path === k.path} onChange={() => choose({ kind: "known", path: k.path })} name={k.name} path={splitPath(k.path)} />
       ))}
-      <Option group="repository" id="repo-other" value="?other" checked={repo.kind === "other"} onChange={() => state.chooseRepo({ kind: "other", path: state.otherPath })} name="Another folder…" />
+      <Option group={group} id={`${id}-other`} value="?other" checked={pick.kind === "other"} onChange={() => choose({ kind: "other", path: otherPath })} name="Another folder…" />
       <div className="ds-option-picker__reveal">
         <div className="ds-field">
-          <label htmlFor="repo" className="ds-field__label">
+          <label htmlFor={id} className="ds-field__label">
             Folder path
           </label>
-          <input id="repo" name="repo" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={state.otherPath} onChange={(e) => state.setOtherPath(e.target.value)} aria-describedby="repo-state" aria-invalid={repo.kind === "other" && repository.refused} className="ds-field__control" />
-          <p id="repo-state" data-testid="repo-state" role="status" className={repo.kind === "other" && repository.refused ? "ds-field__error" : "ds-field__description"}>
-            {repo.kind === "other" ? repository.words : ""}
+          <input id={id} name={id} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={otherPath} onChange={(e) => setOtherPath(e.target.value)} aria-describedby={`${id}-state`} aria-invalid={pick.kind === "other" && check.refused} className="ds-field__control" />
+          <p id={`${id}-state`} data-testid={`${id}-state`} role="status" className={pick.kind === "other" && check.refused ? "ds-field__error" : "ds-field__description"}>
+            {pick.kind === "other" ? check.words : ""}
           </p>
         </div>
       </div>

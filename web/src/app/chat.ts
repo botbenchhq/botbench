@@ -24,7 +24,17 @@ export interface Offered {
   state: string;
   /** What it can do in a chat, in the server's words (src/api/chat.ts, chatScopeWords); null for Claude Code, or when an older check kept none. */
   chat: string | null;
+  /** Whether it reads a repository attached to a chat, as the server says (src/api/chat.ts, readsChatRepository); left out when not known. */
+  readsRepository?: boolean;
+  /** True for an agent other than Claude Code that can build a task now, as the server's check found it (Codex); left out otherwise. */
+  builds?: true;
 }
+
+/** `builds` for an agent other than Claude Code the server says can build now; nothing otherwise. Never read back from the device. */
+const buildsOf = (a: AgentState): { builds?: true } => (a.agent !== "claude-code" && Array.isArray(a.roles) && a.roles.includes("builder") ? { builds: true } : {});
+
+/** `readsRepository` when the server or the device said it, else nothing: not known. */
+const readsOf = (value: unknown): { readsRepository?: boolean } => (typeof value === "boolean" ? { readsRepository: value } : {});
 
 /** An agent's state in a word or two, from its check: what its own program reported (Settings shows the same words). */
 export function agentState(agent: Pick<AgentState, "problem" | "installed" | "supported" | "signedIn">): string {
@@ -37,7 +47,7 @@ export function agentState(agent: Pick<AgentState, "problem" | "installed" | "su
 
 export function chatOffer(agents: readonly AgentState[]): Offered[] {
   const rank = (agent: string): number => (ORDER.includes(agent) ? ORDER.indexOf(agent) : ORDER.length);
-  return [...agents].sort((a, b) => rank(a.agent) - rank(b.agent)).map((a) => ({ agent: a.agent, name: agentName(a.agent), problem: a.problem, version: a.version, state: agentState(a), chat: typeof a.chat === "string" ? a.chat : null }));
+  return [...agents].sort((a, b) => rank(a.agent) - rank(b.agent)).map((a) => ({ agent: a.agent, name: agentName(a.agent), problem: a.problem, version: a.version, state: agentState(a), chat: typeof a.chat === "string" ? a.chat : null, ...readsOf(a.readsRepository), ...buildsOf(a) }));
 }
 
 /** The agents last checked, as this device kept them: read part by part; anything else is nothing known. */
@@ -51,9 +61,9 @@ export function readKnownAgents(raw: string | null): Offered[] | null {
   if (!Array.isArray(parsed)) return null;
   const kept = parsed.flatMap((a: unknown): Offered[] => {
     if (typeof a !== "object" || a === null) return [];
-    const { agent, problem, version, state, chat } = a as Record<string, unknown>;
+    const { agent, problem, version, state, chat, readsRepository } = a as Record<string, unknown>;
     if (typeof agent !== "string" || agent === "" || !(problem === null || typeof problem === "string")) return [];
-    return [{ agent, name: agentName(agent), problem, version: typeof version === "string" ? version : null, state: typeof state === "string" ? state : problem === null ? "Available" : "Unavailable", chat: typeof chat === "string" ? chat : null }];
+    return [{ agent, name: agentName(agent), problem, version: typeof version === "string" ? version : null, state: typeof state === "string" ? state : problem === null ? "Available" : "Unavailable", chat: typeof chat === "string" ? chat : null, ...readsOf(readsRepository) }];
   });
   return kept.length > 0 ? kept : null;
 }

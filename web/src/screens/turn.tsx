@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, builderName, chipModel, type Builder, commandsWords, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
@@ -178,6 +178,8 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const repoPath = repo.kind === "known" || repo.kind === "other" ? repo.path.trim() : "";
   const mode = modeFor(chosenMode, repoPath, defaultMode);
   const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
+  /** Who the owner chose to build; Claude Code unless Codex was chosen here. Not remembered: each start chooses again. */
+  const [builderPick, setBuilderPick] = useState<Builder | null>(null);
   /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
   const [chosenOneTask, setChosenOneTask] = useState<boolean | null>(null);
   const oneTask = oneTaskFor(chosenOneTask, mode);
@@ -190,6 +192,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const review = useReviewChoice(onSignedOut, remembered.review, runWanted);
   const known = useKnownRepositories(onSignedOut);
   const repository = useRepository(inRepository(repo) ? repo.path.trim() : "", onSignedOut);
+  /** A repository the chat lets its agents read, never change. Not remembered: each is chosen for the chat at hand. */
+  const [readPick, setReadPick] = useState<ReadPick>({ kind: "none" });
+  const [readOther, setReadOther] = useState("");
+  const readPath = repo.kind === "none" && readPick.kind !== "none" ? readPick.path.trim() : "";
+  const reading = useRepository(readPath, onSignedOut);
   /** The issue proposed on Work that Start was chosen on, once read: its repository and number. */
   const [preset, setPreset] = useState<{ repo: string; number: number } | null>(null);
   // Only a run can start from an issue, and only in a usable repository whose remote is on GitHub.
@@ -434,8 +441,12 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const targets = chatTargets(agents.choice, models.request(), offered);
   const asksClaude = !targets.ok || targets.targets.some((t) => t.agent === CLAUDE);
   const claudeState: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
-  // A chat that asks only other agents does not wait on Claude Code.
-  const builder: Facts["builder"] = !inRepository(repo) && !asksClaude ? { state: "ready" } : claudeState;
+  // Codex is offered as the builder only once the server's check found it can build; a choice it no longer has is Claude Code.
+  const codexBuilds = (offered ?? []).some((a) => a.agent === "codex" && a.builds === true);
+  const chosenBuilder: Builder | null = codexBuilds && builderPick === "codex" ? "codex" : null;
+  // A chat that asks only other agents, and a task on its own that Codex builds, do not wait on Claude Code; a run does,
+  // as Claude Code plans it.
+  const builder: Facts["builder"] = (!inRepository(repo) && !asksClaude) || (inRepository(repo) && kind === "task" && chosenBuilder === "codex") ? { state: "ready" } : claudeState;
   const facts: Facts = {
     text: prompt,
     repo,
@@ -449,7 +460,14 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     commandTyped: repository.listed !== null && repository.adding.trim() !== "",
     hasChecks: repository.listed?.hasChecks ?? null,
     issue: kind === "run" ? issue.attached : null,
+    read: { pick: readPick, status: reading.status },
+    agentsChecking: agents.offer.checking,
+    // Claude Code is never given a repository in a chat; another agent reads one as the server said (src/api/chat.ts).
+    ...(targets.ok ? { asked: targets.targets.map((t) => ({ name: agentName(t.agent), reads: t.agent === CLAUDE ? false : (offered?.find((o) => o.agent === t.agent)?.readsRepository ?? null) })) } : {}),
   };
+  /** The agents that read a repository attached to a chat, by name, as their last check said. */
+  const readers = (offered ?? []).filter((o) => o.readsRepository === true).map((o) => o.name);
+  const readAttached = repo.kind === "none" && readPick.kind !== "none";
   const chatting = !inRepository(repo);
   const peerWarnings = chatting ? [] : issueWarnings(peers, { attached: kind === "run" ? (issue.attached?.number ?? null) : null, message: prompt });
   // A run may take over another workbench's claim on its issue once the claim is old (Peers P3); only those still offered are sent.
@@ -462,12 +480,12 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const showStop = chatting && running;
 
   /** Send a chat message to the agents asked, or, with `compare`, ask one to compare a round's answers. */
-  const sendChat = (text: string, to: readonly ChatTarget[], compare?: number): void => {
+  const sendChat = (text: string, to: readonly ChatTarget[], compare?: number, repository?: string): void => {
     setError(null);
     setStarting(true);
     // Whoever sends wants to see the answer: the transcript follows again.
     jumpToLatest();
-    const started = sendChatMessage({ prompt: text, conversation: conversationRef.current, agents: to, ...(compare === undefined ? {} : { compare }) });
+    const started = sendChatMessage({ prompt: text, conversation: conversationRef.current, agents: to, ...(compare === undefined ? {} : { compare }), ...(repository === undefined ? {} : { repository }) });
     const turns = started.then((replies) => replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
     startRef.current = turns;
     started.then(
@@ -520,11 +538,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const send = (): void => {
     if (starting || showStop) return;
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver });
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver, builder: chosenBuilder });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
-    if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets) : undefined;
-    if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved).then(({ taskId }) => `#/tasks/${taskId}`));
+    if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets, undefined, action.repository) : undefined;
+    if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved, action.agent).then(({ taskId }) => `#/tasks/${taskId}`));
     const { do: _, ...run } = action;
     startWork("run", () => startRun(run).then(({ runId }) => `#/runs/${runId}`));
   };
@@ -573,6 +591,8 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     setConversation([]);
     saveConversation([]);
     setActive([]);
+    // A new chat reads no repository until one is chosen for it.
+    setReadPick({ kind: "none" });
     setError(null);
     jumpToLatest();
     promptRef.current?.focus();
@@ -605,7 +625,9 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const chip = chatting ? chatChip(agents, models) : chipWords(chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }), "Claude Code");
   const values: Record<Row, string> = {
     repository: repoName(repo, known),
+    read: readName(readPick, known),
     kind: kind === "task" ? "One task" : "Plan a run",
+    builder: builderName(chosenBuilder),
     spec: specPath.trim() === "" ? "None" : (specPath.trim().split("/").at(-1) ?? specPath.trim()),
     mode: kind === "task" ? "Manual" : (MODES.find((m) => m.mode === mode)?.name ?? "Reading"),
     tasks: oneTask ? "One task" : "Several",
@@ -615,7 +637,7 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     models: chatting ? agentRowValue(agents.choice.pick) : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
   };
-  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
+  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered", builderOffered: codexBuilds });
   // Come to start a task or a run, the box is named for it while the repository is still to be chosen.
   const label = repo.kind === "none" ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
@@ -699,8 +721,8 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
               ) : !chatting && (
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
-                    ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
-                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
+                    ? `A task in ${name}: ${builderName(chosenBuilder)} works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
+                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change.${chosenBuilder === "codex" ? " Codex builds them." : ""} ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
                 </p>
               )
             )}
@@ -783,6 +805,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
               {sendWords(askedCount).line}
             </p>
           )}
+          {!showStop && readAttached && (
+            <p data-testid="read-line" className="ds-composer__reason">
+              {`For the chat to read: ${readName(readPick, known)}. ${READ_ABOUT}`}
+            </p>
+          )}
           {peerWarnings.map((line) => (
             <p key={line} data-testid="peer-warning" className="ds-composer__reason">
               {line}
@@ -855,8 +882,21 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
               setRepo({ kind: "other", path });
             },
             repository,
+            read: {
+              pick: readPick,
+              choose: setReadPick,
+              otherPath: readOther,
+              setOtherPath: (path) => {
+                setReadOther(path);
+                setReadPick({ kind: "other", path });
+              },
+              check: reading,
+              readers,
+            },
             kind,
             setKind,
+            builder: chosenBuilder,
+            setBuilder: setBuilderPick,
             specPath,
             setSpecPath,
             mode,
