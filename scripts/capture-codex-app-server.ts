@@ -102,7 +102,8 @@ const text = JSON.stringify(kept).replaceAll(realDir, "$TMP").replaceAll(dir, "$
 const SECRET = /sk-[A-Za-z0-9]|eyJ[A-Za-z0-9_-]{10}|account[_-]?id|@[a-z0-9-]+\.[a-z]{2,}|bearer\s+[A-Za-z0-9]|refresh_token|access_token/i;
 if (text.includes(DECOY)) throw new Error("The decoy's text reached a recorded message: the sandbox did not keep it unreadable. Nothing was written.");
 const suspect = SECRET.exec(text);
-if (suspect !== null) throw new Error(`A recorded message looks like it holds a secret (${text.slice(Math.max(0, suspect.index - 80), suspect.index + 80)}); nothing was written.`);
+// Only where it was found is said: the text itself could be the secret.
+if (suspect !== null) throw new Error(`A recorded message looks like it holds a secret, at character ${suspect.index} of the recording; nothing was written, and the text is not shown.`);
 
 fs.writeFileSync(
   OUT,

@@ -336,6 +336,8 @@ export class CodexAppServerSession implements DriverSession {
   private threadId: string | null = null;
   private turnId: string | null = null;
   private reported: ReportedSettings | null = null;
+  /** The first looser report Codex made in this session, if any: no message is started after it. */
+  private unsafe: string | null = null;
   private usage: Extract<DriverEvent, { type: "usage" }> | null = null;
   private running: { resolve: (reason: TurnEndReason) => void; done: Promise<TurnEndReason> } | null = null;
   private interrupting = false;
@@ -411,7 +413,7 @@ export class CodexAppServerSession implements DriverSession {
     this.interrupting = false;
     this.record({ type: "user_prompt", text: prompt });
     // Before every turn: what Codex reports must be what Botbench set, or the turn does not start.
-    const problem = this.reported === null ? "Codex did not report its settings, so it was stopped." : settingsProblem(this.reported, this.cwd);
+    const problem = this.unsafe ?? (this.reported === null ? "Codex did not report its settings, so it was stopped." : settingsProblem(this.reported, this.cwd));
     if (problem !== null) {
       // Ended once the caller's step is over: it may have sent this message inside a transaction of its own.
       queueMicrotask(() => {
@@ -548,6 +550,8 @@ export class CodexAppServerSession implements DriverSession {
         this.reported = { approvalPolicy: settings.approvalPolicy, approvalsReviewer: settings.approvalsReviewer, sandbox: settings.sandboxPolicy, profile: settings.activePermissionProfile ?? null };
         this.settingsListener?.();
         const problem = settingsProblem(this.reported, this.cwd);
+        // A looser report stops the session for good: a later one that looks right does not undo it.
+        if (problem !== null && this.unsafe === null) this.unsafe = problem;
         if (problem !== null && this.running) this.stopFor(problem);
         return;
       }

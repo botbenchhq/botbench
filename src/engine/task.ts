@@ -1091,7 +1091,11 @@ export function createTasks(options: TasksOptions): Tasks {
           .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId, ...(event.escalation === true ? { escalation: true } : {}), ...(event.cwd !== undefined ? { cwd: path.relative(task.worktreePath!, event.cwd) || "." } : {}) })
           // A request the CLI has stopped waiting for has no one to tell.
           .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
-          .catch(report(`Answering a permission request of task ${id}`));
+          .catch((err: unknown) => {
+            report(`Answering a permission request of task ${id}`)(err);
+            // Whatever failed, the CLI is told no at once rather than left waiting.
+            if (asking.has(event.id)) void session.respondToRequest(event.id, { decision: "decline", refused: "Botbench's permission check failed, so this was refused. Nothing was run." }).catch(() => {});
+          });
       }
       if (event.type === "permission_resolved") {
         asking.delete(event.id);

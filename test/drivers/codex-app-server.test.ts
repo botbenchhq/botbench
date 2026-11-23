@@ -210,6 +210,11 @@ test("a looser sandbox reported before the message stops it before Codex starts 
   assert.equal(await first.s.sendTurn("Run test.sh."), "error");
   assert.equal(first.transport.sent.some((m) => m.method === "turn/start"), false);
 
+  // After a looser report has stopped a message, the session takes no further one.
+  const sticky = await session(t, ["looser", "inside"]);
+  assert.equal(await sticky.s.sendTurn("Read a key."), "error");
+  await assert.rejects(sticky.s.sendTurn("Run test.sh."), /has ended/);
+
   const silent = await session(t, ["inside"], { noSettings: true });
   assert.equal(await silent.s.sendTurn("Run test.sh."), "error");
   assert.ok(silent.events.some((e) => e.type === "error" && /did not report Botbench's permissions profile/.test(e.message)));

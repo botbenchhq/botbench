@@ -734,7 +734,9 @@ export function createBroker(options: {
    */
   const escalationRequestVerdict = (r: ApprovalRequest, ticket: Ticket, cwd: string, mode: RunMode): RequestVerdict => {
     try {
-      const input = r.tool === "Bash" ? { command: r.command } : isObject(r.input) ? r.input : {};
+      // The floor reads the shell command itself, not the card's text, which is the whole input when the request
+      // carries more than the command (network, more permissions).
+      const input = r.tool === "Bash" ? { command: isObject(r.input) && typeof r.input.command === "string" && r.input.command !== "" ? r.input.command : r.command } : isObject(r.input) ? r.input : {};
       const verdict = gate({ tool: r.tool, input, worktree: ticket.worktree, cwd: path.resolve(ticket.worktree, cwd === "" ? "." : cwd), mode, escalation: true }, [], floorSettings);
       return verdict.verdict === "allow" ? (mode === "full" ? { verdict: "refuse", reason: ESCALATION_REFUSED, why: "escalation" } : { verdict: "ask", why: "escalation" }) : verdict;
     } catch (err) {

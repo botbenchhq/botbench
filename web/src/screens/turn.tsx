@@ -441,11 +441,12 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const targets = chatTargets(agents.choice, models.request(), offered);
   const asksClaude = !targets.ok || targets.targets.some((t) => t.agent === CLAUDE);
   const claudeState: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
-  // A chat that asks only other agents does not wait on Claude Code.
-  const builder: Facts["builder"] = !inRepository(repo) && !asksClaude ? { state: "ready" } : claudeState;
   // Codex is offered as the builder only once the server's check found it can build; a choice it no longer has is Claude Code.
   const codexBuilds = (offered ?? []).some((a) => a.agent === "codex" && a.builds === true);
   const chosenBuilder: Builder | null = codexBuilds && builderPick === "codex" ? "codex" : null;
+  // A chat that asks only other agents, and a task on its own that Codex builds, do not wait on Claude Code; a run does,
+  // as Claude Code plans it.
+  const builder: Facts["builder"] = (!inRepository(repo) && !asksClaude) || (inRepository(repo) && kind === "task" && chosenBuilder === "codex") ? { state: "ready" } : claudeState;
   const facts: Facts = {
     text: prompt,
     repo,

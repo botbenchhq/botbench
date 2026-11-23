@@ -128,6 +128,18 @@ test("Semi-autonomous: a Codex escalation the floor names asks, and its card nam
   assert.equal((await answer).decision, "decline");
 });
 
+test("the floor reads an escalation's shell command, also when the request carries network or more permissions beside it", async (t) => {
+  const r = rig(t);
+  const c = codex(r, "semi");
+  const answer = c.escalate("Bash", { command: "git push origin main", network: { host: "github.com", protocol: "https" } }, "item-5b");
+  await settle();
+  const [card] = listApprovals(r.db, "pending");
+  assert.equal(card!.asksBecause, `${ESCALATION_WORDS} On the always-ask list: it sends commits to another computer.`);
+  assert.match(card!.command, /"network"/, "the card shows all of what an allow lets out");
+  r.broker.answer(card!.id, "decline");
+  assert.equal((await answer).decision, "decline");
+});
+
 test("a run started from an issue: a Codex escalation still asks, and no grant applies", async (t) => {
   const r = rig(t);
   const c = codex(r, "semi", { outside: true, preapproved: ["npm test"] });
