@@ -60,7 +60,7 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     await memory.getByRole("button", { name: "Forget note 1: run npm run lint before committing" }).click();
     const dialog = page.getByTestId(`memory-forget-${first.id}`);
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("Botbench removes it from this Mac and keeps no copy.");
+    await expect(dialog).toContainText("Botbench removes it from memory and keeps no copy there. Agents are no longer given it. Chats and runs that already had it keep their words.");
     await checkDesign(page, "settings, memory, forget this note?");
     await dialog.getByRole("button", { name: "Forget" }).click();
     await expect(rows).toHaveCount(1);

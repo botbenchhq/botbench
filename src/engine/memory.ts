@@ -285,7 +285,7 @@ export function captureNote(db: DatabaseSync, home: string, text: string): Memor
   const name = noteName(id);
   const raw = `${note}\n`;
   const savedAt = now();
-  const index = indexText({ entries: [...was.entries, { id, savedAt, editedAt: null }], next: id + 1 });
+  const index = indexText({ entries: [...liveEntries(home, was.entries), { id, savedAt, editedAt: null }], next: id + 1 });
   checkRoom(home, { [name]: raw, [MEMORY_INDEX]: index });
   ensureFolder(home);
   const file = memoryPath(home, name);
@@ -308,7 +308,7 @@ export function editNote(db: DatabaseSync, home: string, id: number, text: strin
   const raw = `${note}\n`;
   const editedAt = now();
   const was = readIndex(home);
-  const index = indexText({ ...was, entries: was.entries.map((e) => (e.id === id ? { ...e, editedAt } : e)) });
+  const index = indexText({ ...was, entries: liveEntries(home, was.entries).map((e) => (e.id === id ? { ...e, editedAt } : e)) });
   checkRoom(home, { [noteName(id)]: raw, [MEMORY_INDEX]: index });
   const file = memoryPath(home, noteName(id));
   logged(db, home, { kind: "edit", id, detail: `You edited a note in Settings (${count(note.length)} characters).` }, () => {
@@ -326,17 +326,27 @@ export function editNote(db: DatabaseSync, home: string, id: number, text: strin
 
 /**
  * Forget note `id`, when `hash` is the version of it its writer read: its file is removed, then its line leaves the
- * index. The file goes first, so a removal that fails leaves the note listed and a retry can forget it; an index that
- * still names a removed file lists nothing for it (readNotes). No copy, backup or trash is kept, and the action log
- * holds none of its text.
+ * index. The file goes first, so a removal that fails leaves the note listed, logs nothing, and a retry can forget it.
+ * Once the file is gone the note is forgotten, and logged: an index that still names a removed file lists nothing for
+ * it (readNotes), so an index rewrite that fails then is said on stdout, and the stale line is dropped by the next
+ * write of the index (liveEntries). No copy, backup or trash is kept, and the action log holds none of its text.
  */
 export function forgetNote(db: DatabaseSync, home: string, id: number, hash: string): void {
   current(home, id, hash, "it was not forgotten");
   const was = readIndex(home);
-  logged(db, home, { kind: "forget", id, detail: "You forgot a note in Settings. Its file was removed, and no copy of it was kept." }, () => {
+  logged(db, home, { kind: "forget", id, detail: "You forgot a note in Settings. Its file was removed, and no copy of it was kept in memory." }, () => {
     fs.rmSync(memoryPath(home, noteName(id)), { force: true });
-    writeFileAtomic(memoryPath(home, MEMORY_INDEX), indexText({ ...was, entries: was.entries.filter((e) => e.id !== id) }), 0o600);
+    try {
+      writeFileAtomic(memoryPath(home, MEMORY_INDEX), indexText({ ...was, entries: liveEntries(home, was.entries) }), 0o600);
+    } catch (err) {
+      console.error(`Note ${id} was forgotten, but the memory index could not be rewritten; its line is dropped at the next change to memory: ${err instanceof Error ? err.message : String(err)}`);
+    }
   });
+}
+
+/** The entries whose note file is still there: a line left by a forget whose index rewrite failed is dropped. */
+function liveEntries(home: string, entries: readonly IndexEntry[]): IndexEntry[] {
+  return entries.filter((e) => fs.existsSync(memoryPath(home, noteName(e.id))));
 }
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;

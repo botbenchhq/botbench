@@ -21,7 +21,7 @@ function NoteRow({ note, number, busy, onEdit, onForget }: { note: MemoryNote; n
           Edit
         </button>
         <ConfirmAction label="Forget" opener={{ small: true, name: `Forget note ${number}: ${note.text}` }} title="Forget this note?" confirmLabel="Forget" cancelLabel="Keep it" disabled={busy} losing testId={`memory-forget-${note.id}`} onConfirm={onForget}>
-          <p>Botbench removes it from this Mac and keeps no copy. Agents are no longer given it.</p>
+          <p>Botbench removes it from memory and keeps no copy there. Agents are no longer given it. Chats and runs that already had it keep their words.</p>
         </ConfirmAction>
       </span>
     </>
