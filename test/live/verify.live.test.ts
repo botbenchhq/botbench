@@ -30,7 +30,7 @@ async function start(t: TestContext, check: string): Promise<Live> {
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo, { "README.md": "# Sample\n", "check.sh": CHECK_SCRIPT });
-  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": { model: "haiku" } }, roles: { implementer: { driver: "claude-code" } }, repositories: { [repo]: { checks: [{ command: check, timeoutSeconds: 60 }] } } };
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": { model: "haiku" } }, roles: { implementer: { driver: "claude-code" } }, autonomy: { maxCheckFixRounds: 0 }, repositories: { [repo]: { checks: [{ command: check, timeoutSeconds: 60 }] } } };
   const server = await startServer({ config, home, signInDelayMs: 1 });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;

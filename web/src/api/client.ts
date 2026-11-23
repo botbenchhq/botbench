@@ -431,6 +431,19 @@ export interface FileChange {
   protected: boolean;
 }
 
+/** One round of fixes for a failing check: the round of checks it was sent, how it ended, and whether it changed the work. */
+export interface CheckFix {
+  round: number;
+  checkRound: number;
+  outcome: "finished" | "failed" | "stopped";
+  changed: boolean;
+  problem: string | null;
+  fromCommit: string;
+  headCommit: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
 export interface TaskDetail extends TaskSummary {
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
@@ -441,6 +454,12 @@ export interface TaskDetail extends TaskSummary {
   evidence: Evidence[];
   /** How many commands each round of setup and checks holds, recorded as it starts. */
   commandLists: CommandList[];
+  /** The rounds of fixes for a failing check on the latest version of the work, in order. */
+  checkFixes: CheckFix[];
+  /** What came of those rounds, in a plain line, once they are over; null before, or with none. */
+  checkFixLine: string | null;
+  /** Every request Botbench refused without asking during the task, in full, oldest first. */
+  refused: string[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
   /** Its latest review, once there is one. */

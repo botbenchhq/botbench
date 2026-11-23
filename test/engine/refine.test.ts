@@ -55,7 +55,8 @@ async function line(t: T, builds: (BuildTurn | FixtureTurn)[], reviews: ReviewSe
   const builder = buildReplayDriver(builds, { hold: o.hold ?? [], ...(o.holdAt ? { holdAt: o.holdAt } : {}) });
   const reviewer = reviewReplayDriver(reviews);
   const states: string[] = [];
-  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", reviewers: { codex: reviewer }, repoCommands: () => ({ setup: SETUP, checks: o.checks ?? CHECKS }), onEvent: () => {}, onTaskChange: (task) => states.push(task.status) });
+  // The check fails on the first build by design; rounds of fixes for it are another loop (check-fix.test.ts), left out here.
+  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", checkFixRounds: 0, reviewers: { codex: reviewer }, repoCommands: () => ({ setup: SETUP, checks: o.checks ?? CHECKS }), onEvent: () => {}, onTaskChange: (task) => states.push(task.status) });
   const runs = createRuns({ db, home, driver: builder, broker, model: "haiku", implementerModel: "haiku", reviewers: { codex: reviewer }, line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   const engines: Tasks[] = [];
   t.after(async () => {
@@ -228,14 +229,14 @@ test("a restart while the builder works on fixes takes the round up again once, 
   const { taskId } = approved(e);
   await e.builder.held(1);
   // A new start on the same store, as after Botbench was killed in the round of fixes: it takes the round up again once.
-  const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
+  const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", checkFixRounds: 0, reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
   e.engines.push(after);
   await e.builder.held(2);
   assert.equal(getTask(e.db, taskId)!.restarts, 1);
   assert.match(e.builder.prompts[2]!, /Botbench stopped before you finished this round of fixes/);
   assert.match(e.builder.prompts[2]!, /<review>\nVerdict: concerns/);
   // Killed again in the same round: stopped for the owner, with Resume.
-  const again = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
+  const again = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", checkFixRounds: 0, reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
   e.engines.push(again);
   await again.idle();
   const stopped = getTask(e.db, taskId)!;
@@ -379,7 +380,7 @@ test("the one retry in a new session is counted per round: a restart that takes 
   const { taskId } = approved(e);
   await e.builder.held(2);
   // Botbench is started again while the retry's session is under way: the round is taken up again in that session.
-  const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
+  const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, model: "haiku", checkFixRounds: 0, reviewers: { codex: e.reviewer }, repoCommands: () => ({ setup: SETUP, checks: CHECKS }), onEvent: () => {}, onTaskChange: () => {} });
   e.engines.push(after);
   await until("ready for review", () => getTask(e.db, taskId)!.status === "awaiting_decision");
   assert.equal(e.builder.started.length, 4, "the build, the resumed round, its retry, and the retry taken up after the restart");

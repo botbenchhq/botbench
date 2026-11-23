@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Config } from "../config.ts";
 import type { DriverCapabilities } from "../drivers/contract.ts";
+import { firstLine } from "../shorten.ts";
 
 /*
  * The roles an agent works in, and what Botbench and the planner say to each other. A role is who is asking when a
@@ -58,9 +59,11 @@ const count = (n: number, one: string, many: string): string => `${n} ${n === 1 
  * acceptance criteria, all within their length limits. With `oneTask` (a run kept to one task), a plan of one task may
  * hold up to `MAX_ONE_TASK_CRITERIA` criteria and a title of up to `MAX_ONE_TASK_TITLE` characters. Returns the plan
  * with surrounding blanks removed and nothing else in it, or every problem found, in words the planner or the owner
- * can act on.
+ * can act on. With `shortenCriteria` (a planner's reply, `parsePlan`), a criterion over `MAX_CRITERION` characters is
+ * shortened to fit, at its last whole word with an ellipsis, rather than refused; the owner reads the plan as shortened
+ * before approving it. The owner's own edit is never shortened: the text the owner approves is the text that is sent.
  */
-export function validatePlan(value: unknown, o: { oneTask?: boolean } = {}): PlanResult {
+export function validatePlan(value: unknown, o: { oneTask?: boolean; shortenCriteria?: boolean } = {}): PlanResult {
   if (!isObject(value)) return { ok: false, errors: ['The plan must be a JSON object of the form {"tasks":[{"title":"...","criteria":["..."]}]}.'] };
   const given = value.tasks;
   if (!Array.isArray(given)) return { ok: false, errors: ['The plan must hold "tasks": a list of tasks, each {"title":"...","criteria":["..."]}.'] };
@@ -90,6 +93,7 @@ export function validatePlan(value: unknown, o: { oneTask?: boolean } = {}): Pla
         const text = typeof criterion === "string" ? criterion.trim() : "";
         if (text === "") errors.push(`${name}, criterion ${j + 1} must be a sentence of text.`);
         else if (NOT_PLAIN.test(text)) errors.push(`${name}, criterion ${j + 1} ${PLAIN_RULE}.`);
+        else if (text.length > MAX_CRITERION && o.shortenCriteria === true) criteria.push(firstLine(text, MAX_CRITERION - 1));
         else if (text.length > MAX_CRITERION) errors.push(`${name}, criterion ${j + 1} may be at most ${MAX_CRITERION} characters long; it is ${text.length}.`);
         else criteria.push(text);
       }
@@ -103,7 +107,8 @@ const FENCED = /```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```/g;
 
 /**
  * Read a planner's reply. The plan is the JSON object in the reply's last fenced block, or the reply itself when
- * it is that object and nothing else. Everything around it is the planner talking and is not read.
+ * it is that object and nothing else. Everything around it is the planner talking and is not read. A criterion that is
+ * too long is shortened to fit (`validatePlan`), so one wordy sentence does not fail the run.
  */
 export function parsePlan(reply: string, o: { oneTask?: boolean } = {}): PlanResult {
   const blocks = [...reply.matchAll(FENCED)].map((match) => match[1]!);
@@ -115,7 +120,7 @@ export function parsePlan(reply: string, o: { oneTask?: boolean } = {}): PlanRes
   } catch {
     return { ok: false, errors: [blocks.length > 0 ? "The last ```json block of the reply is not valid JSON." : "The reply holds no ```json block with the plan in it."] };
   }
-  return validatePlan(parsed, o);
+  return validatePlan(parsed, { ...o, shortenCriteria: true });
 }
 
 /** A plan of several tasks as the one task of a run kept to one: the titles joined in order, the criteria one after another. */

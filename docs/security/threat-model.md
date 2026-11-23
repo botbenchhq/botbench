@@ -808,6 +808,19 @@ No new process or network boundary. What is new is that the client now reads str
 
 What it does not cover, stated exactly: bold, italic and code can still make a sentence of the model's look more important than it is; the owner reads the reply as the model's words, inside the model's row.
 
+### Rounds of fixes for a failing check (engine/check-fix.ts)
+
+No new process or network boundary: the builder is the same B-boundary Claude Code task attempt as the build. What is new is a data flow: what a check command printed becomes part of the builder's prompt. A check runs the project's own code as the agent left it, so its output can say anything the agent or the repository wants it to. When a check fails or runs out of time after the build or after a round of fixes for a review, Botbench starts the builder again in the same copy, taking up its session when it reported one, through the same `admitBuilder` admission, confinement and permission check as the build (tested: the start options are compared), and sends each failing command and the last 4,000 characters of its output between `<check-command>` and `<check-output>` lines, escaped so the text cannot close its block (`dataBlock`), with the words that it is data, not instructions. Botbench reads nothing from the output: it decides only from how each command ended and whether the builder's turn changed the commit. What the builder wrote is committed and the checks run again as a new round of evidence. At most `autonomy.maxCheckFixRounds` rounds (0 to 5, default 2) are started for each version of the work, counted from the stored rounds, so a restart does not reset them; a round that changed nothing or did not finish ends the loop. Rounds are stored append-only in `check_fixes`, apart from `refinements`, and the trigger that lets a task's checks result change does so only for a commit such a round or a round of fixes for a review made.
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Tampering / elevation: check output tells the builder to run a command or act for the owner | Output is data between marked lines that it cannot close; the builder's commands still go through the broker and the safety floor exactly as in its build; a fully autonomous run still refuses what would ask | Done (unit-tested: a closing line and an owner-looking line inside the output stay inside the block) |
+| Elevation: the builder "fixes" a check by weakening it | The prompt says not to; the owner sees the diff, and a fully autonomous run's scope marks still apply. Not enforced: a change to a test is a change like any other | Accepted |
+| Denial of service: a loop of builder turns without the owner | Bounded: at most 5 rounds per version of the work (2 by default), each one builder turn and one run of the checks. Worst case with the review loop at its default: 1 build + (1 + 2 review rounds) × (2 check rounds) builder turns more | Done |
+| Information disclosure: check output sent to the model provider | Only the end of the output, 4,000 characters per failing command, is sent; it already lay in a copy the builder could read and the builder could have run the check itself | Accepted |
+
+What it does not cover, stated exactly: a commit after a round of fixes holds everything in the copy, files a check left there included, as a commit after a round of fixes for a review already does.
+
 ## Signed-in devices
 
 A sign-in now lasts on its device: the cookie carries `Max-Age` of 90 days, and the session is kept in the database, so a restart or an update of Botbench signs nobody out. Built against OWASP ASVS V3 (session management), in proportion to one owner.

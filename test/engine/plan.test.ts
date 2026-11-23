@@ -901,3 +901,25 @@ test("critique: Botbench stopping while a planner is still being started sends t
   assert.deepEqual(planTasks(s.db, run.id), []);
   assert.deepEqual(worktreeDirs(s.home), []);
 });
+
+test("a planner's criterion over the length limit is shortened to fit at a whole word and the plan validates; the owner's own edit and every other plan error are still refused", () => {
+  const long = `${"calc.py defines add(a, b), which returns the sum of a and b ".repeat(12)}and nothing else`;
+  assert.ok(long.length > MAX_CRITERION);
+  const reply = "```json\n" + JSON.stringify({ tasks: [{ title: "Add a function", criteria: ["short one", long] }] }) + "\n```";
+  const plan = parsePlan(reply);
+  assert.equal(plan.ok, true, plan.ok ? "" : plan.errors.join(" "));
+  if (!plan.ok) return;
+  const shortened = plan.tasks[0]!.criteria[1]!;
+  assert.ok(shortened.length <= MAX_CRITERION, `${shortened.length}`);
+  assert.ok(shortened.endsWith("…"));
+  assert.ok(long.startsWith(shortened.slice(0, -1)), "the start of the criterion, as the planner wrote it");
+  assert.equal(plan.tasks[0]!.criteria[0], "short one");
+  // The shortened plan is one the owner's edit check accepts as it stands.
+  assert.equal(validatePlan({ tasks: plan.tasks }).ok, true);
+  // The owner's own edit is not shortened, and a title or any other error is refused from a planner as before.
+  assert.equal(validatePlan({ tasks: [{ title: "t", criteria: [long] }] }).ok, false);
+  const badTitle = parsePlan("```json\n" + JSON.stringify({ tasks: [{ title: "x".repeat(MAX_TITLE + 1), criteria: [long] }] }) + "\n```");
+  assert.equal(badTitle.ok, false);
+  if (!badTitle.ok) assert.equal(badTitle.errors.length, 1, badTitle.errors.join(" "));
+  assert.equal(parsePlan("```json\n" + JSON.stringify({ tasks: [{ title: "t", criteria: ["two\nlines"] }] }) + "\n```").ok, false);
+});

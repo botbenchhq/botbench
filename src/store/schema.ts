@@ -1753,4 +1753,42 @@ CREATE TRIGGER watched_issues_no_delete BEFORE DELETE ON watched_issues
 BEGIN SELECT RAISE(ABORT, 'watched issues are never deleted'); END;
 `,
   },
+  {
+    // `check_fixes`: one row per round of fixes for a failing check that ended (engine/check-fix.ts), kept apart from the
+    // rounds of fixes a review asks for (`refinements`): the round of check evidence it was sent, how many rounds of
+    // fixes for a review the task had then, the builder's attempt, how its turn ended, whether it changed the work, its
+    // reply, the commit it started from and the one Botbench made after it, and the times. Rows are only ever added.
+    // What a task's checks found may now also change for a version of the work such a round made.
+    name: "check fix rounds",
+    sql: `
+CREATE TABLE check_fixes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  round INTEGER NOT NULL CHECK (round >= 1),
+  check_round INTEGER NOT NULL CHECK (check_round >= 1),
+  after_fixes INTEGER NOT NULL CHECK (after_fixes >= 0),
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'failed', 'stopped')),
+  changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+  reply TEXT NOT NULL,
+  problem TEXT,
+  from_commit TEXT NOT NULL,
+  head_commit TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  UNIQUE (task_id, round),
+  UNIQUE (task_id, check_round),
+  CHECK ((outcome = 'finished') = (problem IS NULL))
+);
+CREATE TRIGGER check_fixes_no_update BEFORE UPDATE ON check_fixes
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes for a failing check are append-only'); END;
+CREATE TRIGGER check_fixes_no_delete BEFORE DELETE ON check_fixes
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes for a failing check are append-only'); END;
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+`,
+  },
 ];
