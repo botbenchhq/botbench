@@ -171,7 +171,9 @@ test("an agent's draft on one workbench is a card for its owner, sent only on Se
   assert.equal(started.status, 200, JSON.stringify(started.body));
   const draft = await until("the draft's card", async () => (await cards(alice)).find((c) => c.direction === "out"));
   assert.equal(draft.title, "Send this to bob?");
-  assert.match(alice.prompts()[0]!, /```botbench-peer-message/, "the builder was told how to draft");
+  // The replayed builder writes down the prompt it was given; that file can land a moment after the card does.
+  const prompt = await until("the builder's prompt", async () => alice.prompts()[0]);
+  assert.match(prompt, /```botbench-peer-message/, "the builder was told how to draft");
   await new Promise((resolve) => setTimeout(resolve, 1500));
   assert.equal((await cards(bob)).length, 0, "nothing left before Send");
   // The builder changed no file and drafted a message: the task ends there, as drafted, not as failed.
