@@ -39,7 +39,8 @@ export function oldClaims(view: PeersView | null, o: { attached: number | null; 
   const named = spottedIssues(o.message);
   const issue = o.attached ?? (named.length === 1 ? named[0]! : null);
   const now = o.now ?? Date.now();
-  return issue === null ? [] : view.claims.filter((c) => c.issue === issue && now - Date.parse(c.startedAt) >= OLD_CLAIM_MS);
+  // A claim already taken over, or whose run has its pull request open, is not offered: taking it over would only make a second one.
+  return issue === null ? [] : view.claims.filter((c) => c.issue === issue && c.takenOverBy === null && c.pullRequest === null && now - Date.parse(c.startedAt) >= OLD_CLAIM_MS);
 }
 
 /**
@@ -64,6 +65,25 @@ export function agoWords(startedAt: string, now: number): string {
   return unit(Math.floor(minutes / (24 * 60)), "day");
 }
 
+/** How long a claim may say nothing of its work before the screens say its workbench may have stopped: a workbench at work on it says so every 10 minutes (src/engine/claim-branch.ts WORKED_EVERY_MS). */
+export const QUIET_CLAIM_MS = 25 * 60_000;
+
+/**
+ * What a claim says of its issue, after the workbench's name and before the issue: the run's open pull request, a
+ * take-over, or when it started and how long its workbench has said nothing of its work.
+ */
+export function claimWords(c: Extract<PeersView, { state: "ready" }>["claims"][number], now: number): { lead: string; tail: string } {
+  if (c.pullRequest !== null) return { lead: `has pull request #${c.pullRequest} open for`, tail: "" };
+  const started = "started on";
+  const ago = agoWords(c.startedAt, now);
+  if (c.takenOverBy !== null) return { lead: started, tail: ` ${ago}; ${c.takenOverBy} took it over` };
+  const quiet = now - Date.parse(c.workedAt);
+  if (quiet >= QUIET_CLAIM_MS) return { lead: started, tail: ` ${ago} and has shown no work on it since ${agoWords(c.workedAt, now)}: it may have stopped, or be waiting for its owner` };
+  // A claim that has said nothing since it was made says only when it started.
+  if (Date.parse(c.workedAt) - Date.parse(c.startedAt) < 60_000) return { lead: started, tail: ` ${ago}` };
+  return { lead: started, tail: ` ${ago}; it last worked on it ${agoWords(c.workedAt, now)}` };
+}
+
 /**
  * The composer's warnings: another workbench's open pull request for the attached issue or for an issue the message
  * names, and another workbench's claim on it (it started a run on that issue, Peers P3).
@@ -73,13 +93,19 @@ export function issueWarnings(view: PeersView | null, o: { attached: number | nu
   const now = o.now ?? Date.now();
   const { claims } = view;
   const lines: string[] = [];
+  // A claim whose pull request is already said by its own line is not said twice.
+  const shown = (c: (typeof claims)[number]): boolean => c.pullRequest !== null && view.pullRequests.some((p) => p.number === c.pullRequest && p.closes.includes(c.issue));
+  const claimLine = (c: (typeof claims)[number]): string => {
+    const w = claimWords(c, now);
+    return `${c.workbench} ${w.lead} this issue${w.tail}`;
+  };
   if (o.attached !== null) {
     for (const pr of view.pullRequests.filter((p) => p.closes.includes(o.attached!))) lines.push(`${pr.workbench} already has pull request #${pr.number} open for this issue.`);
-    for (const c of claims.filter((c) => c.issue === o.attached)) lines.push(`${c.workbench} started on this issue ${agoWords(c.startedAt, now)}.`);
+    for (const c of claims.filter((c) => c.issue === o.attached && !shown(c))) lines.push(`${claimLine(c)}.`);
   }
   for (const n of spottedIssues(o.message).filter((n) => n !== o.attached)) {
     for (const pr of view.pullRequests.filter((p) => p.closes.includes(n))) lines.push(`A best-effort match on #${n} in your message: ${pr.workbench} already has pull request #${pr.number} open for issue #${n}.`);
-    for (const c of claims.filter((c) => c.issue === n)) lines.push(`A best-effort match on #${n} in your message: ${c.workbench} started on this issue ${agoWords(c.startedAt, now)}.`);
+    for (const c of claims.filter((c) => c.issue === n && !shown(c))) lines.push(`A best-effort match on #${n} in your message: ${claimLine(c)}.`);
   }
   return lines.slice(0, MAX_WARNINGS);
 }
@@ -112,9 +138,16 @@ export function peerRows(view: Extract<PeersView, { state: "ready" }>, now: numb
   const repository = view.repository;
   return [
     ...view.pullRequests.map((pr): PeerRow => ({ key: `pr ${pr.number}`, kind: "pull-request", url: pr.url, lead: `Pull request #${pr.number}: `, title: pr.title, branch: null, workbench: pr.workbench, rest: `${pr.closes.length === 0 ? "" : ` · Closes ${pr.closes.map((n) => `#${n}`).join(", ")}`} · `, repository, after: " (opens GitHub in a new tab)" })),
-    ...view.claims.map((c): PeerRow => ({ key: `claim ${c.branch}`, kind: "claim", url: null, lead: "", title: null, branch: c.branch, workbench: c.workbench, rest: ` · Started on issue #${c.issue} ${agoWords(c.startedAt, now)} · `, repository, after: "" })),
+    ...view.claims.map((c): PeerRow => ({ key: `claim ${c.branch}`, kind: "claim", url: null, lead: "", title: null, branch: c.branch, workbench: c.workbench, rest: ` · ${claimRest(c, now)} · `, repository, after: "" })),
     ...view.branches.map((b): PeerRow => ({ key: `branch ${b.branch}`, kind: "branch", url: null, lead: "", title: null, branch: b.branch, workbench: b.workbench, rest: " · Pushed, no pull request yet · ", repository, after: "" })),
   ];
+}
+
+/** A claim's row on Work, after the workbench: "Pull request #31 open for issue #4", or its start, take-over or quiet. */
+function claimRest(c: Extract<PeersView, { state: "ready" }>["claims"][number], now: number): string {
+  if (c.pullRequest !== null) return `Pull request #${c.pullRequest} open for issue #${c.issue}`;
+  const w = claimWords(c, now);
+  return `Started on issue #${c.issue}${w.tail}`;
 }
 
 /** The most file names one overlap line lists. */
