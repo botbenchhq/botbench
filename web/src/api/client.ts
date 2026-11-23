@@ -137,6 +137,8 @@ export interface AgentState extends Omit<DriverState, "driver"> {
   roles: string[];
   /** What it can do in a chat, in one sentence; null for Claude Code. */
   chat?: string | null;
+  /** Whether it reads a repository attached to a chat (never changing it); false for Claude Code. */
+  readsRepository?: boolean;
 }
 /** The agents as their last check found them, when it ended, whether a new check is running, and the cap on rounds of fixes. */
 export interface AgentsAnswer {
@@ -273,8 +275,9 @@ export interface ChatReply {
   roundId: number | null;
 }
 /** Send a chat message to one agent or several, with the chat so far; or, with `compare`, ask one to compare a round's answers. Each agent is checked first, which takes seconds. */
-export const sendChatMessage = (o: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number }): Promise<ChatReply[]> =>
-  request<{ replies: ChatReply[] }>("POST", "/api/chat", o, 60_000).then((r) => r.replies);
+/** `repository`: the full path of a repository attached to the chat, which the agents asked read and never change; left out for none. */
+export const sendChatMessage = ({ repository, ...o }: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number; repository?: string }): Promise<ChatReply[]> =>
+  request<{ replies: ChatReply[] }>("POST", "/api/chat", { ...o, ...(repository === undefined || repository === "" ? {} : { repository }) }, 60_000).then((r) => r.replies);
 
 export async function interruptTurn(attemptId: number): Promise<void> {
   await request("POST", `/api/turns/${attemptId}/interrupt`, {});
@@ -431,6 +434,19 @@ export interface FileChange {
   protected: boolean;
 }
 
+/** One round of fixes for a failing check: the round of checks it was sent, how it ended, and whether it changed the work. */
+export interface CheckFix {
+  round: number;
+  checkRound: number;
+  outcome: "finished" | "failed" | "stopped";
+  changed: boolean;
+  problem: string | null;
+  fromCommit: string;
+  headCommit: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
 export interface TaskDetail extends TaskSummary {
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
@@ -441,6 +457,12 @@ export interface TaskDetail extends TaskSummary {
   evidence: Evidence[];
   /** How many commands each round of setup and checks holds, recorded as it starts. */
   commandLists: CommandList[];
+  /** The rounds of fixes for a failing check on the latest version of the work, in order. */
+  checkFixes: CheckFix[];
+  /** What came of those rounds, in a plain line, once they are over; null before, or with none. */
+  checkFixLine: string | null;
+  /** Every request Botbench refused without asking during the task, in full, oldest first. */
+  refused: string[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
   /** Its latest review, once there is one. */

@@ -44,7 +44,7 @@ interface Line {
   taskChanges: string[];
 }
 
-async function line(t: T, script: BuildTurn[], o: { setup?: StationCommand[]; checks?: StationCommand[]; files?: Record<string, string>; hold?: number[] } = {}): Promise<Line> {
+async function line(t: T, script: BuildTurn[], o: { setup?: StationCommand[]; checks?: StationCommand[]; files?: Record<string, string>; hold?: number[]; checkFixRounds?: number } = {}): Promise<Line> {
   const dir = tempDir("botbench-verify-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -54,7 +54,8 @@ async function line(t: T, script: BuildTurn[], o: { setup?: StationCommand[]; ch
   await broker.listen();
   const driver = buildReplayDriver(script, { hold: o.hold ?? [] });
   const taskChanges: string[] = [];
-  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [SETUP_WRITES], checks: o.checks ?? [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`) });
+  // No rounds of fixes for a failing check: this is the station itself (the loop is in check-fix.test.ts).
+  const tasks = createTasks({ db, home, driver, broker, model: "haiku", checkFixRounds: o.checkFixRounds ?? 0, repoCommands: () => ({ setup: o.setup ?? [SETUP_WRITES], checks: o.checks ?? [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`) });
   const runs = createRuns({ db, home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();

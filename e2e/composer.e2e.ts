@@ -45,9 +45,9 @@ test("the composer is one box with no label above it; Add context's rows follow 
     expect(await primaries(page)).toEqual(["Send"]);
     await tempShot(page, "composer-empty");
 
-    // A chat: the repository and the model, nothing else.
+    // A chat: the repository, one for it to read, and the model, nothing else.
     const sheet = await openContext(page);
-    expect(await rows(page)).toEqual(["Repository None (just chat)", expect.stringMatching(/^Model .+/)]);
+    expect(await rows(page)).toEqual(["Repository None (just chat)", "Read a repository None", expect.stringMatching(/^Model .+/)]);
     await checkDesign(page, "add context, a chat");
     await tempShot(page, "sheet-open");
 

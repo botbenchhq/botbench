@@ -200,8 +200,9 @@ test("a fully autonomous run accepts only when every check passed, the review is
   assert.equal(no({ checks: "failed", review: "unresolved", refusals: [{ command: "sudo ls", kind: "floor" }, { command: "WebFetch https://x", kind: "network" }] }), "It needs your review: A check failed. The reviewer raised concerns. Botbench refused 2 things an agent asked to do during this task (sudo ls; WebFetch https://x).");
   // A refusal recorded before kinds were blocks, as every refusal did then.
   assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls", kind: null }] }), "It needs your review: Botbench refused something an agent asked to do during this task (ls).");
-  // Only the refusals that block are named; a harmless one beside them is not counted.
-  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "npm test", kind: "unconfined" }] }), "It needs your review: Botbench refused something an agent asked to do during this task (npm test).");
+  // Only the refusals that block are counted; a harmless one beside them is still named, apart.
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "npm test", kind: "unconfined" }] }), "It needs your review: Botbench refused something an agent asked to do during this task (npm test). Botbench also refused, without that keeping it from being accepted: ls src.");
+  assert.equal(no({ checks: "failed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }] }), "It needs your review: A check failed. Botbench also refused, without that keeping it from being accepted: ls src.");
 });
 
 test("a fully autonomous run accepts when what was refused was harmless, and its reasons name what was refused", () => {
@@ -209,6 +210,21 @@ test("a fully autonomous run accepts when what was refused was harmless, and its
     accept: true,
     reasons: "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src; TodoWrite {}) was not on the always-ask list and would not have reached outside the task's copy.",
   });
+});
+
+test("every command a run refused is named in full, with no cut and no trailing ellipsis, however long the list", () => {
+  const long = Array.from({ length: 6 }, (_, i) => ({ command: `git push origin HEAD:refs/heads/botbench/some-long-branch-name-${i} --set-upstream --verbose`, kind: "floor" as const }));
+  const verdict = autoAccept({ checks: "passed", review: "none", refusals: long });
+  assert.equal(verdict.accept, false);
+  if (verdict.accept) return;
+  assert.ok(verdict.why.endsWith(`(${long.map((r) => r.command).join("; ")}).`), verdict.why);
+  assert.equal(verdict.why.includes("…"), false);
+  const harmless = Array.from({ length: 6 }, (_, i) => ({ command: `cat some/rather/long/path/to/a/file-number-${i}-that-was-read-outside-the-copy.txt`, kind: "read_only" as const }));
+  const accepted = autoAccept({ checks: "passed", review: "none", refusals: harmless });
+  assert.equal(accepted.accept, true);
+  if (!accepted.accept) return;
+  for (const r of harmless) assert.ok(accepted.reasons.includes(r.command), r.command);
+  assert.equal(accepted.reasons.includes("…"), false);
 });
 
 // A run that read outside text (a GitHub issue, engine/intake.ts): no pre-approved command and no standing permission

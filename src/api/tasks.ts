@@ -8,10 +8,11 @@ import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositoryClaims, repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
 import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
-import { runModeOf } from "../engine/modes.ts";
+import { modeRefusals, runModeOf } from "../engine/modes.ts";
 import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
 import { reviewAssignment, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
+import { checkFixView } from "../engine/check-fix.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
@@ -215,11 +216,22 @@ function earlierAttempts(db: DatabaseSync, task: Task): number {
   return ids.size;
 }
 
+/**
+ * The rounds of fixes for a failing check on the task's latest version of its work (engine/check-fix.ts), without the
+ * builder's reply, which is in the transcript, and the plain line about them once that loop is over; null before.
+ */
+function checkFixesOf(db: DatabaseSync, task: Task): { checkFixes: Record<string, unknown>[]; checkFixLine: string | null } {
+  const view = checkFixView(db, task.id, task.status === "building" || task.status === "verifying" || task.status === "waiting_for_limit");
+  return { checkFixes: view.fixes.map(({ round, checkRound, outcome, changed, problem, fromCommit, headCommit, startedAt, endedAt }) => ({ round, checkRound, outcome, changed, problem, fromCommit, headCommit, startedAt, endedAt })), checkFixLine: view.line };
+}
+
 async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unknown>> {
   const { db } = ctx;
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
+    // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
+    refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {

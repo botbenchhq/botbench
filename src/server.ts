@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -95,6 +95,8 @@ export interface StartOptions {
   chatClaude?: Driver;
   /** Claude Code for everything it does here: tasks, runs and chat. The real one unless a test replays turns captured from it. */
   claudeCode?: Driver;
+  /** Codex, Grok and Antigravity, for review and chat. The real ones unless a test replays sessions captured from them. */
+  reviewers?: { [CODEX]: Driver; [GROK]: Driver; [ANTIGRAVITY]: Driver };
   /** The gh the issue watch lists labelled issues with. The owner's own unless a test replays output captured from it. */
   watchGh?: RunGh;
 }
@@ -117,7 +119,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const driver = options.claudeCode ?? new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
   // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
-  const reviewers = { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
+  const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
   let broker: Broker;
   let push: Push;
   try {
@@ -174,7 +176,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     onTaskChange: stream.announceTask,
     onPassed: (taskId) => void tasks.reconsider(taskId),
   });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
