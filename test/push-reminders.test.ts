@@ -165,7 +165,10 @@ test("after a restart, an approval still pending sends nothing more, not even th
   const answered = building(b);
   const answering = answered.ask("npm publish");
   await waiting(b, 2);
-  const [left, toAnswer] = listApprovals(b.db, "pending");
+  // By command: the two requests cross the socket at the same time, in either order.
+  const pending = listApprovals(b.db, "pending");
+  const left = pending.find((a) => a.command.startsWith("git"));
+  const toAnswer = pending.find((a) => a.command === "npm publish");
   b.broker.answer(toAnswer!.id, "decline");
   await answering;
   await b.restart();

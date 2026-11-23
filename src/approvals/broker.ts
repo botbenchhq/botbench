@@ -840,14 +840,11 @@ export function createBroker(options: {
 
   /** When an approval of this request expires:its run's limit after `askedAt`, or null for none. A limit that cannot be read is none: the owner is still asked. */
   const expiryOf = (r: ApprovalRequest, askedAt: string): string | null => {
-    try {
-      const row = r.taskId !== null ? db.prepare("SELECT r.approval_limit_minutes AS minutes FROM tasks t JOIN runs r ON r.id = t.run_id WHERE t.id = ?").get(r.taskId) : r.runId === undefined || r.runId === null ? undefined : db.prepare("SELECT approval_limit_minutes AS minutes FROM runs WHERE id = ?").get(r.runId);
-      const minutes = int(row?.minutes);
-      return minutes === null ? null : new Date(Date.parse(askedAt) + minutes * minuteMs).toISOString();
-    } catch (err) {
-      console.error(`The approval time limit of a request could not be read, so its approval waits for you with none: ${words(err)}`);
-      return null;
-    }
+    // Read in the approval's own write: one that cannot be read throws, and the request is then denied as any approval
+    // that cannot be recorded is, never left waiting without the limit its run was given.
+    const row = r.taskId !== null ? db.prepare("SELECT r.approval_limit_minutes AS minutes FROM tasks t JOIN runs r ON r.id = t.run_id WHERE t.id = ?").get(r.taskId) : r.runId === undefined || r.runId === null ? undefined : db.prepare("SELECT approval_limit_minutes AS minutes FROM runs WHERE id = ?").get(r.runId);
+    const minutes = int(row?.minutes);
+    return minutes === null ? null : new Date(Date.parse(askedAt) + minutes * minuteMs).toISOString();
   };
 
   /**
@@ -1274,9 +1271,10 @@ export function createBroker(options: {
     }
     let id: number;
     const askedAt = now();
-    const expiresAt = r.chat === true ? null : expiryOf(r, askedAt);
+    let expiresAt: string | null = null;
     try {
       id = transaction(db, () => {
+        expiresAt = r.chat === true ? null : expiryOf(r, askedAt);
         const inserted = db
           .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target, escalation, expires_at, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)")
           .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, askedAt, asksBecause, target, escalation ? 1 : 0, expiresAt, ...askedByValues(askedByFor(db, r.taskId, r.runId)));
