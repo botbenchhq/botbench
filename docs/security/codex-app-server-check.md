@@ -1,6 +1,6 @@
 # Can Codex be a builder through `codex app-server`? (checked 2026-11-23, Codex 0.171.0)
 
-**Answer: not yet.** `codex app-server` does send its approval requests to the client, and Botbench could answer them. But on 0.171.0, a command the client accepts then runs **outside Codex's sandbox**. Botbench's permission check allows a confined command without asking, so if Botbench answered "accept", the command could read the decoys for the vendor sign-ins, keys and Botbench's data folder, and reach the network. That breaks R27 and the rule that a mode never loosens the safety floor. The Codex driver therefore stays as it was: `edits: false`, `permissionRequests: false`, review and chat only on `codex exec` (`src/drivers/codex.ts`, `CODEX_CAPABILITIES`). Per the first criterion of the "Make Codex a builder" task, the work stopped at this check.
+**Answer: not yet.** `codex app-server` does send its approval requests to the client, for commands (`item/commandExecution/requestApproval`) and for file changes (`item/fileChange/requestApproval`), and Botbench could answer them. But on 0.171.0, a command or patch the client accepts then runs **outside Codex's sandbox**. Botbench's permission check allows a confined command without asking, so if Botbench answered "accept", the command could read the decoys for the vendor sign-ins, keys and Botbench's data folder, and reach the network. That breaks R27 and the rule that a mode never loosens the safety floor. The Codex driver therefore stays as it was: `edits: false`, `permissionRequests: false`, review and chat only on `codex exec` (`src/drivers/codex.ts`, `CODEX_CAPABILITIES`). Per the first criterion of the "Make Codex a builder" task, the work stopped at this check.
 
 ## What was checked, and how
 
@@ -30,7 +30,16 @@ Other things seen:
 - `exec_command` takes `sandbox_permissions: "require_escalated"` ("unsandboxed execution"). The approval request for such a command carries only `reason` (the model's justification). Nothing in it marks the command as escalated, so a client cannot tell an escalated request from an ordinary one.
 - `decline` is honoured although `availableDecisions` lists only `accept`, `acceptWithExecpolicyAmendment` and `cancel`.
 - A declined command is reported as an item (`commandExecution`, `status:"declined"`). `codex exec` prints nothing for a refused command that exits non-zero, so this would improve the transcript.
-- A file change was not seen. Under the fallback model settings the scripted endpoint got, Codex offered no `apply_patch` tool, and a known model name offered no tools to it at all. `item/fileChange/requestApproval` is in the protocol but was not observed.
+- File changes, exercised live. Codex offers `apply_patch` only for a model whose catalog entry has an `apply_patch_tool_type`, and the bundled models are `tool_mode: "code_mode_only"`, so they send no tools to a scripted endpoint. So the scripted model was a copy of the bundled `gpt-5.6-luna` entry under a new name, given with `-c model_catalog_json=<file>`, without `tool_mode`, with `use_responses_lite = false` and `apply_patch_tool_type = "freeform"`. It made one `apply_patch` call that adds `patched.txt`:
+
+  | Approval policy | Sandbox | Asked the client? | Answer | What happened |
+  | --- | --- | --- | --- | --- |
+  | `untrusted` | workspace-write | yes, `item/fileChange/requestApproval` | `decline` | nothing written; model told "patch rejected by user" |
+  | `untrusted` | workspace-write | yes | `accept` | `patched.txt` written |
+  | `untrusted` | read-only | yes | `accept` | **`patched.txt` written in a read-only sandbox**, so outside the sandbox, as for commands |
+  | `never` | workspace-write | no | none | inside the sandbox: "Failed to write file" (the nested sandbox cannot start here) |
+
+  The request's params carry only `threadId`, `turnId`, `itemId`, `startedAtMs`, `reason` and `grantRoot`. The paths and diff come before it, in the `item/started` notification of the `fileChange` item with the same id, so a client must match the two to know what it is approving.
 
 ## Why this stops the builder
 
