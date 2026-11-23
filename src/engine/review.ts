@@ -190,8 +190,9 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
     return store();
   }
   let session: DriverSession;
-  // A reviewer that asks (Antigravity) is admitted as the task's review step: read-only, its commands confined.
-  const asks = tools && o.driver.capabilities.permissionRequests && o.driver.capabilities.chatTools === true;
+  // A reviewer that asks (Antigravity) is admitted as the task's review step: read-only, its commands confined. Codex asks
+  // only when it builds, to leave its sandbox (`escalationsOnly`); its review is kept by its sandbox alone and has no gate.
+  const asks = tools && o.driver.capabilities.permissionRequests && o.driver.capabilities.chatTools === true && o.driver.capabilities.escalationsOnly !== true;
   const admission = asks && o.broker !== undefined ? o.broker.admit({ taskId: o.taskId, role: REVIEWER, worktree: o.worktree, readOnly: true, confined: o.driver.capabilities.confinedCommands === true }) : null;
   try {
     session = await o.driver.startAttempt({ db: o.db, cwd: o.worktree, readOnly: true, ...(admission === null ? {} : { gate: { socketPath: admission.socketPath, secret: admission.secret } }), confinement: { ...o.confinement, allowedHosts: [] }, ...(webSearch ? { webSearch } : {}), ...(o.model === null ? {} : { model: o.model }) });
