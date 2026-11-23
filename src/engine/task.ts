@@ -21,7 +21,7 @@ import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
-import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, MAX_TIMER_MS, retryTime, USAGE_LIMIT_WAIT_MS } from "./usage-limit.ts";
+import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, limitNoSessionReason, MAX_TIMER_MS, retryTime, USAGE_LIMIT_WAIT_MS } from "./usage-limit.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
@@ -1127,6 +1127,8 @@ export function createTasks(options: TasksOptions): Tasks {
     if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
     const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    // Botbench starts a builder by itself only to take up the same session: with none to take up, the owner decides.
+    if (by === "limit" && cursor === null) return finish(task, "interrupted", limitNoSessionReason(agentName(driver.name)));
     const admission = admitBuilder(task);
     let session: DriverSession;
     try {

@@ -33,6 +33,10 @@ export const LIMIT_ROUND_NOTE =
 export const limitAgainReason = (agent: string): string =>
   `${agent} reached its usage limit again when Botbench tried once more after waiting for it to reset, so Botbench stopped this task instead of waiting a second time. The work done up to then is committed. Resume tries again when you choose.`;
 
+/** Why a task stops after the wait when its builder had reported no session to take up, so the same one cannot be resumed. */
+export const limitNoSessionReason = (agent: string): string =>
+  `${agent} reached its usage limit before it had started a session Botbench could take up again, so Botbench did not start it again by itself. The work done up to then is committed. Resume starts it again when you choose.`;
+
 /** Why a task that waited for a usage limit ends when its run is cancelled. */
 export const LIMIT_CANCELLED = "The run was cancelled while this task waited for a usage limit to reset. The work done up to then is committed to its branch.";
 

@@ -9,7 +9,7 @@ import type { RunMode } from "../../src/engine/modes.ts";
 import { createRun, createRuns, getRun, storePlan, type Runs } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, TaskError, type Tasks } from "../../src/engine/task.ts";
-import { LIMIT_CANCELLED, LIMIT_PROMPT, limitAgainReason, retryTime, USAGE_LIMIT_WAIT_MS } from "../../src/engine/usage-limit.ts";
+import { LIMIT_CANCELLED, LIMIT_PROMPT, limitAgainReason, limitNoSessionReason, retryTime, USAGE_LIMIT_WAIT_MS } from "../../src/engine/usage-limit.ts";
 import { processGroupAlive } from "../../src/drivers/launch.ts";
 import { openStore } from "../../src/store/db.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
@@ -62,7 +62,7 @@ interface Line {
   open(scripts: readonly string[]): Promise<Engine>;
 }
 
-async function line(t: T, o: { waitMs?: number; checks?: StationCommand[] } = {}): Promise<Line> {
+async function line(t: T, o: { waitMs?: number; checks?: StationCommand[]; resume?: boolean } = {}): Promise<Line> {
   // A short name: the broker's socket goes below it, and a socket's path has a length limit.
   const dir = tempDir("bb-limit-");
   const home = path.join(dir, "home");
@@ -74,7 +74,7 @@ async function line(t: T, o: { waitMs?: number; checks?: StationCommand[] } = {}
   const open = async (scripts: readonly string[]): Promise<Engine> => {
     const broker = createBroker({ db, home, onChange: () => {} });
     await broker.listen();
-    const driver = processDriver(scripts, { resume: true });
+    const driver = processDriver(scripts, { resume: o.resume ?? true });
     const announced: { id: number; status: string }[] = [];
     const tasks = createTasks({ db, home, driver, broker, repoCommands, usageLimitWaitMs: o.waitMs ?? USAGE_LIMIT_WAIT_MS, onEvent: () => {}, onTaskChange: (task) => void announced.push({ id: task.id, status: task.status }) });
     const runs = createRuns({ db, home, driver, broker, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
@@ -180,6 +180,19 @@ test("a resumed turn that reaches the usage limit again stops the task for the o
   engine.tasks.resume(started.id);
   await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the resumed task is ready for review");
   assert.equal(engine.driver.starts.length, 3);
+});
+
+test("after the wait, a builder that had reported no session to take up is not started again by Botbench in a new one: the task is stopped for the owner", WITHIN, async (t) => {
+  const e = await line(t, { waitMs: 300, resume: false });
+  const engine = await e.open([limited("one", null), finishes("two")]);
+  const started = await engine.tasks.start(e.repo, "Add two files");
+  await until(() => getTask(e.db, started.id)!.status === "interrupted", "the task is stopped");
+  const stopped = getTask(e.db, started.id)!;
+  assert.equal(stopped.reason, limitNoSessionReason("Claude Code"));
+  assert.deepEqual(history(e.db, started.id).filter((s) => s === "waiting_for_limit"), ["waiting_for_limit"]);
+  assert.deepEqual(filesOn(e.repo, e.base, stopped.branch!), ["one.txt"]);
+  await pause(400);
+  assert.equal(engine.driver.starts.length, 1, "no new session was started without the owner");
 });
 
 test("a restart during the turn that resumed after the wait gives the task no second wait: reaching the limit again stops it for the owner", WITHIN, async (t) => {
