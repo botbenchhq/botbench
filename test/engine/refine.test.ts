@@ -343,7 +343,10 @@ test("a resumed round of fixes that ends with no reply and no change is noted an
   assert.match(e.builder.prompts[2]!, /<task>\nAdd a function/, "the retry is sent the whole task");
   assert.match(e.builder.prompts[2]!, /<review>\nVerdict: concerns/);
   const said = notes(e.db, taskId);
-  assert.ok(said.some((note) => /^round 1 of fixes: Claude Code took up its earlier session \(attempt \d+\) and ended its turn with no reply and no change; the round runs once more in a new session$/.test(note)), said.join("\n"));
+  assert.ok(said.some((note) => /^round 1 of fixes: Claude Code took up its earlier session \(attempt \d+\) and ended its turn with no reply and no change; the round runs once more in a new session; attempt \d+$/.test(note)), said.join("\n"));
+  // The note is stored with the retry's own attempt, in one write: a restart before that attempt started finds no note.
+  const retry = said.find((note) => note.includes("runs once more in a new session"))!;
+  assert.equal(retry.slice(retry.lastIndexOf("attempt ")), `attempt ${task.attemptId}`);
   // One round, recorded once, as the new session's: it changed the work, so it was checked and reviewed again.
   const fixes = taskRefinements(e.db, taskId);
   assert.equal(fixes.length, 1);
@@ -378,7 +381,7 @@ test("the one retry in a new session is counted per round: a restart that takes 
   await until("ready for review", () => getTask(e.db, taskId)!.status === "awaiting_decision");
   assert.equal(e.builder.started.length, 4, "the build, the resumed round, its retry, and the retry taken up after the restart");
   assert.ok(e.builder.started[3]!.resumeCursor !== undefined, "the restart took up the retry's own session");
-  assert.equal(notes(e.db, taskId).filter((note) => note.endsWith("the round runs once more in a new session")).length, 1, "retried once");
+  assert.equal(notes(e.db, taskId).filter((note) => note.includes("the round runs once more in a new session")).length, 1, "retried once");
   const [fix, ...more] = taskRefinements(e.db, taskId);
   assert.deepEqual(more, []);
   assert.deepEqual([fix!.outcome, fix!.changed, fix!.reply], ["finished", false, ""]);

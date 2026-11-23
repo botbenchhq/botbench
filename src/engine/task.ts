@@ -624,8 +624,11 @@ export function createTasks(options: TasksOptions): Tasks {
     await startRound(at, reviewer, false, stopped);
   };
 
-  /** Start the builder on the round of fixes of a task at `building`: in its earlier session when it has one, unless `fresh`. */
-  const startRound = async (at: Task, reviewer: string, fresh: boolean, stopped?: AbortSignal): Promise<void> => {
+  /**
+   * Start the builder on the round of fixes of a task at `building`: in its earlier session when it has one, unless
+   * `fresh`. `note`, for the task's history, is stored with the new attempt once it has started.
+   */
+  const startRound = async (at: Task, reviewer: string, fresh: boolean, stopped?: AbortSignal, note?: string): Promise<void> => {
     const attempt = fresh || at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
     const admission = admitBuilder(at);
@@ -639,7 +642,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
       return refined(at, refineRoundOf(db, at.id)!, null, "error", "", `${agentName(driver.name)} could not be started for the round of fixes: ${words(err)}`, stopped);
     }
-    await drive(at, session, admission, await refinePromptFor(at, reviewer, cursor === null), null, stopped, cursor !== null);
+    await drive(at, session, admission, await refinePromptFor(at, reviewer, cursor === null), null, stopped, cursor !== null, note);
   };
 
   /**
@@ -657,12 +660,15 @@ export function createTasks(options: TasksOptions): Tasks {
     const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
     const headCommit = (await commit(task))?.headCommit ?? null;
     const reviewer = reviewAssignment(db, task.id)?.agent ?? null;
-    // Once per round, read from the task's history: a retry that a restart takes up again in its own session is still the retry.
-    const retried = db.prepare("SELECT 1 FROM task_events WHERE task_id = ? AND detail LIKE ? LIMIT 1").get(task.id, `round ${round} of fixes: %${FRESH_RETRY}`) !== undefined;
+    // Once per round, read from the task's history: a retry that a restart takes up again in its own session is still the
+    // retry. Its note is stored with the new session's attempt, in one write (`drive`), so a restart before that session
+    // started finds no note and the round still gets its retry.
+    const retried = db.prepare("SELECT 1 FROM task_events WHERE task_id = ? AND detail LIKE ? LIMIT 1").get(task.id, `round ${round} of fixes: %${FRESH_RETRY}%`) !== undefined;
     if (resumed && !retried && end === "completed" && reply.trim() === "" && headCommit === from && reviewer !== null && !closed && stopped?.aborted !== true && !cancelled(task)) {
+      const at = getTask(db, task.id);
       // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
-      const at = moveFrom(task.id, "building", "building", { note: `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; ${FRESH_RETRY}` });
-      if (at !== null) return startRound(at, reviewer, true, stopped);
+      const note = `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; ${FRESH_RETRY}`;
+      if (at?.status === "building") return startRound(at, reviewer, true, stopped, note);
     }
     const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
     insertRefinement(db, { taskId: task.id, round, attemptId, outcome: end === "completed" ? "finished" : "failed", changed: headCommit !== null && headCommit !== from, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
@@ -784,7 +790,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * the turn waits for the owner, the task is parked: its approvals stay pending and it stays at `building` for the
    * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | null, stopped?: AbortSignal, fromSession = resumed === "answer"): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -821,7 +827,8 @@ export function createTasks(options: TasksOptions): Tasks {
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner" } as const;
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    move(id, "building", { attemptId: session.attemptId, ...(resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
+    // `note`: the caller's own, stored in the same write as the attempt (a round's retry in a new session, `refined`).
+    move(id, "building", { attemptId: session.attemptId, ...(note !== undefined ? { note } : resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
     let end: TurnEndReason | "not sent";
     let silence: SilenceWatch | null = null;
     try {
