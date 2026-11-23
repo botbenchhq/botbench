@@ -334,6 +334,7 @@ Do not put Botbench on the public internet. Its sign-in is one token, made for a
 | I want to | Go to |
 |---|---|
 | Know exactly what is protected and what is not | [`docs/security/threat-model.md`](docs/security/threat-model.md) |
+| See how it is put together, in three diagrams | [`docs/architecture/`](docs/architecture/README.md) |
 | Know why it drives the vendors' programs, and how secrets are kept from agents | [`docs/adr/`](docs/adr/) |
 | Add another agent | [`CONTRIBUTING.md`, Adding an agent](CONTRIBUTING.md#adding-an-agent) |
 | Contribute a fix, run the tests | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
