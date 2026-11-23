@@ -402,6 +402,10 @@ export interface TaskSummary {
   pullRequest: PullRequestView;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
+  /** The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of another. */
+  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean } | null;
+  /** The latest note, when it was not delivered, with why. */
+  undeliveredNote: { id: number; text: string; sentAt: string; reason: string } | null;
   /** The mode of its run; manual for a task started on its own. */
   mode: RunMode;
   /** What the refine loop came to, and how many reviews and rounds of fixes there were. */
@@ -516,6 +520,14 @@ export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftove
 export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
 /** Take up a stopped task again. Refused (409, with the reason) for a task in any other state. */
 export const resumeTask = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/resume`, {}, 30_000);
+/** A note as the server stored it. */
+export interface TaskNote {
+  id: number;
+  text: string;
+  state: "waiting" | "delivered" | "replaced" | "not_delivered";
+}
+/** The owner's note for a building task's builder; the answer says which waiting note it replaced, if one waited. */
+export const sendTaskNote = (id: number, text: string): Promise<{ note: TaskNote; replaced: TaskNote | null }> => request("POST", `/api/tasks/${id}/notes`, { text }, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 

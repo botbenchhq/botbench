@@ -90,6 +90,8 @@ export interface StartOptions {
   github?: GitHub;
   /** Claude Code for chat turns only. The real one unless a test replays a chat turn captured from it. */
   chatClaude?: Driver;
+  /** Claude Code for everything it does here: tasks, runs and chat. The real one unless a test replays turns captured from it. */
+  claudeCode?: Driver;
 }
 
 
@@ -107,7 +109,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
-  const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
+  const driver = options.claudeCode ?? new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
   // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
   const reviewers = { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };

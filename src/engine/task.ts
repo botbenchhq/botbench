@@ -20,6 +20,7 @@ import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
+import { deliverNoteIn, leftBuilding, NOT_DELIVERED, NOTE_REFUSED, NOTE_TOO_LATE, noteProblem, queueNoteIn, settleWaiting, settleWaitingIn, waitingNote, type TaskNote } from "./notes.ts";
 import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
@@ -257,6 +258,9 @@ export function moveTaskIn(db: DatabaseSync, id: number, to: TaskStatus, change:
       details.unshift(change.reason);
     }
     if (change.note !== undefined) details.unshift(change.note);
+    // A note waits only for a building task's builder: a task that leaves building with one still waiting, by any way
+    // the builder's turn did not settle it (engine/notes.ts), has it marked not delivered with the move.
+    if (task.status === "building" && to !== "building") settleWaitingIn(db, id, leftBuilding(to));
     db.prepare(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ?`).run(...values, id);
     insertEvent(db, id, at, to, details.length === 0 ? null : details.join("; "));
     return getTask(db, id)!;
@@ -392,6 +396,13 @@ export interface Tasks {
    * its turn, from where it was. Throws a TaskError (404, 409) for a task that does not exist or cannot be resumed.
    */
   resume(id: number): Task;
+  /**
+   * The owner's note to a task that is building (engine/notes.ts): stored as the one waiting for its builder, replacing
+   * one that waits already, and sent as the builder's next message once its current turn ends normally. Throws a
+   * TaskError for a task that does not exist (404), one that is not building or whose builder has just finished (409),
+   * and a note that is empty or too long (400); nothing is stored then.
+   */
+  sendNote(id: number, text: string): { note: TaskNote; replaced: TaskNote | null };
   /** A blocker of a fully autonomous run's task was cleared: its mode looks at it again. Resolves once it has. */
   reconsider(taskId: number): Promise<void>;
   /** Resolves when nothing is being built or recovered. */
@@ -477,6 +488,11 @@ export function createTasks(options: TasksOptions): Tasks {
   let parkCurrent: (() => void) | null = null;
   /** The task being built now, the run it belongs to, and the way to stop its setup command or turn. */
   let active: { taskId: number; runId: number | null; stop: AbortController } | null = null;
+  /**
+   * The tasks whose builder's turn is over and whose work is on its way to being committed and checked: still building,
+   * but a note can no longer reach their builder, so one is refused (`sendNote`) rather than left to wait for nothing.
+   */
+  const finishing = new Set<number>();
   /** When this engine began. What the store holds from before it is the last run's. */
   const began = now();
 
@@ -867,7 +883,8 @@ export function createTasks(options: TasksOptions): Tasks {
   };
 
   /**
-   * Run one turn of a task's attempt to its end and record where that leaves the task. `resumed` says why a task is
+   * Run one turn of a task's attempt to its end, and then the owner's note, when one waits, as the next turn of the same
+   * session (`driveTurns`), and record where that leaves the task. `resumed` says why a task is
    * driven again: the owner's answer to a request from before a restart, a restart, the owner's Resume, or the end of a
    * wait for a usage limit; null for its first turn. A turn that ends on the usage limit makes the task wait for it, once:
    * the turn that resumed it after that wait stops it for the owner instead. `fromSession`: the attempt takes up the session of the one before. If Botbench is stopped while
@@ -875,6 +892,24 @@ export function createTasks(options: TasksOptions): Tasks {
    * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
   const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | "limit" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
+    // A turn starts: a note may reach this builder again, as after its build's checks and review, on a round of fixes.
+    finishing.delete(task.id);
+    try {
+      await driveTurns(task, session, admission, prompt, resumed, stopped, fromSession, note);
+    } finally {
+      finishing.delete(task.id);
+    }
+  };
+
+  /**
+   * `drive`'s work. The prompt is sent, and then, while each turn ends normally and the owner's note waits
+   * (engine/notes.ts), the note is sent as the next message of the same session, and marked delivered with the session's
+   * record of it (`sendNote`): the same attempt, its
+   * admission, confinement and permission check, so it adds no permission beyond the build's. Only once no note waits
+   * does the task go on to be committed and checked. A turn that ends any other way leaves a waiting note unsent, marked
+   * not delivered with the reason.
+   */
+  const driveTurns = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | "limit" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -919,23 +954,62 @@ export function createTasks(options: TasksOptions): Tasks {
     // `note`: the caller's own, stored in the same write as the attempt (a round's retry in a new session, `refined`).
     move(id, "building", { attemptId: session.attemptId, ...(note !== undefined ? { note } : resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
     let end: TurnEndReason | "not sent";
-    let silence: SilenceWatch | null = null;
+    /** The silence watch of each turn sent, the last one's turn the one that ended last. */
+    const watches: SilenceWatch[] = [];
+    /** Send one message, with the silence limit watching its turn; resolves with how the turn ended. */
+    const startTurn = (message: string): Promise<TurnEndReason> => {
+      // Registered after the listener above, so it reads the requests the CLI waits on as they stand after each event.
+      const silence = watchSilence(session, silenceLimit, () => asking.size > 0);
+      watches.push(silence);
+      return session.sendTurn(message).finally(() => silence.clear());
+    };
+    /**
+     * Send the waiting note as the next message, and mark it delivered in the same transaction as the session's record of
+     * it: a driver records the message it takes before it hands it on, in the same step as `sendTurn`, and records
+     * nothing for one it refuses. So the note is marked delivered only once the session took it, and the record and the
+     * mark are stored together or not at all. One the session refused stays waiting, and is settled when the turn ends.
+     */
+    const sendNote = (note: TaskNote): Promise<TurnEndReason> =>
+      transaction(db, () => {
+        const before = Number(db.prepare("SELECT coalesce(max(id), 0) AS id FROM events WHERE attempt_id = ?").get(session.attemptId)!.id);
+        const turn = startTurn(note.text);
+        const took = db.prepare("SELECT 1 FROM events WHERE attempt_id = ? AND id > ? AND type = 'user_prompt' LIMIT 1").get(session.attemptId, before) !== undefined;
+        if (took) deliverNoteIn(db, note.id, session.attemptId);
+        return turn;
+      });
+    /** Whether the task goes on after a turn that ended normally: Botbench is not stopping and its run was not cancelled. */
+    const goesOn = (): boolean => !closed && stopped?.aborted !== true && !cancelled(task);
+    /** The builder's reply to this drive's own prompt: a round of fixes is recorded from it, not from its answer to a note. */
+    let ownReply: string | null = null;
     try {
       // Botbench began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
-      if (closed || stopped?.aborted === true || cancelled(task)) end = "not sent";
+      if (!goesOn()) end = "not sent";
       else {
-        // Registered after the listener above, so it reads the requests the CLI waits on as they stand after each event.
-        silence = watchSilence(session, silenceLimit, () => asking.size > 0);
-        end = await session.sendTurn(prompt);
+        let last = await startTurn(prompt);
+        ownReply = reply;
+        // The owner's note, as the next message of this session (`sendNote`); one sent meanwhile waits for this turn.
+        while (last === "completed" && goesOn()) {
+          const next = waitingNote(db, id);
+          if (next === null) break;
+          const turn = sendNote(next);
+          options.onTaskChange(getTask(db, id)!);
+          last = await turn;
+          // The session did not take it (the note still waits): it is not sent again; the end below settles it.
+          if (waitingNote(db, id)?.id === next.id) {
+            if (last === "completed") last = "error";
+            break;
+          }
+        }
+        end = last;
       }
     } catch (err) {
       end = "error";
       detail = words(err);
-    } finally {
-      silence?.clear();
     }
+    // In the same step as the last look for a note: from here no note reaches this builder, and one sent is refused.
+    finishing.add(id);
     // Stopped for silence, unless the turn finished meanwhile: its end is the silence, whatever the CLI said as it was stopped.
-    const silent = silence?.fired() === true && end !== "completed";
+    const silent = watches.at(-1)?.fired() === true && end !== "completed";
     let leftover: string | null = null;
     try {
       // A task is one turn for now, so its CLI process is not kept.
@@ -949,6 +1023,9 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     current = null;
     parkCurrent = null;
+    // A note still waiting now is not sent: the turn did not end normally, or the task does not go on to its next message.
+    const notSent = leftover !== null ? NOT_DELIVERED.leftover : closed ? NOT_DELIVERED.stopping : !goesOn() ? NOT_DELIVERED.cancelled : silent ? NOT_DELIVERED.silent : end === "interrupted" ? NOT_DELIVERED.interrupted : end === "completed" ? null : NOT_DELIVERED.error;
+    if (notSent !== null && settleWaiting(db, id, notSent) !== null) options.onTaskChange(getTask(db, id)!);
     // Parked only if the owner's answer is still outstanding now: it may have come in while Botbench was stopping.
     if (parking && leftover === null && end === "interrupted" && waitingOnApproval(db, id)) {
       // Botbench is stopping while the owner's answer is outstanding. Nothing is committed and nothing ends: the next start finds it.
@@ -980,7 +1057,7 @@ export function createTasks(options: TasksOptions): Tasks {
       else await waitForLimit(task, usageLimit.resetsAt);
     }
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
-    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped, fromSession);
+    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, ownReply ?? reply, detail, stopped, fromSession);
     else if (end === "completed") await verify(task, reply, stopped);
     // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
     else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");
@@ -1379,6 +1456,22 @@ export function createTasks(options: TasksOptions): Tasks {
     return resumed;
   };
 
+  const sendNote = (id: number, text: string): { note: TaskNote; replaced: TaskNote | null } => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const queued = transaction(db, () => {
+      // Read and written in one transaction, so a note is stored only for a task that is building at that moment.
+      const task = getTask(db, id);
+      if (!task) throw new TaskError(404, "No such task.");
+      if (task.status !== "building") throw new TaskError(409, NOTE_REFUSED[task.status]);
+      if (finishing.has(id)) throw new TaskError(409, NOTE_TOO_LATE);
+      const problem = noteProblem(text);
+      if (problem !== null) throw new TaskError(400, problem);
+      return queueNoteIn(db, id, text);
+    });
+    options.onTaskChange(getTask(db, id)!);
+    return queued;
+  };
+
   const buildRun = (runId: number): void => {
     if (closed) return;
     chain = chain.then(() => runLine(runId)).catch(report(`Building run ${runId}`));
@@ -1449,5 +1542,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, buildRun, stopRun, resume, reconsider, idle, close };
+  return { start, buildRun, stopRun, resume, sendNote, reconsider, idle, close };
 }
