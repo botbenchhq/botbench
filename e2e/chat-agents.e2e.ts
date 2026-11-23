@@ -65,7 +65,9 @@ test("the agent choice offers each agent with its state and Ask several; a chat 
   // The agent view: each agent from its own check, the one line about what the others cannot do, and Ask several.
   let sheet = await openRow(page, "Model");
   await expect(sheet.getByRole("heading", { name: "Agent and model" })).toBeVisible();
-  for (const name of ["Claude Code", "Codex", "Grok", "Antigravity"]) await expect(sheet.getByRole("radio", { name, exact: true })).toBeVisible({ timeout: 60_000 });
+  for (const name of ["Claude Code", "Codex", "Grok"]) await expect(sheet.getByRole("radio", { name, exact: true })).toBeVisible({ timeout: 60_000 });
+  // Antigravity answers once it is connected in Botbench; a new data folder is not, so it may read "Antigravity: Signed out".
+  await expect(sheet.getByRole("radio", { name: /^Antigravity(: .+)?$/ })).toBeVisible({ timeout: 60_000 });
   await sheet.getByRole("radio", { name: "Ask several" }).check();
   await expect(sheet.getByTestId("several-about")).toHaveText("Your message and the chat so far, with what each agent wrote, go to every agent you tick.");
   await sheet.getByRole("checkbox", { name: /^Claude Code/ }).uncheck();
@@ -96,7 +98,9 @@ test("the agent choice offers each agent with its state and Ask several; a chat 
 });
 
 /** An agent's chip in the row at the top of the view, by its words. */
-const drawn = (sheet: import("@playwright/test").Locator, name: string) => sheet.getByTestId("agent-options").locator(".ds-filter-chips__chip", { hasText: new RegExp(`^${name}$`) });
+// Each agent by its name, with its state when it cannot answer: Antigravity answers only once it is connected in Botbench
+// (its own sign-in, src/drivers/antigravity.ts), which a new data folder is not, so it may read "Antigravity: Signed out".
+const drawn = (sheet: import("@playwright/test").Locator, name: string) => sheet.getByTestId("agent-options").locator(".ds-filter-chips__chip", { hasText: new RegExp(`^${name}(: .+)?$`) });
 const AGENTS = ["Claude Code", "Codex", "Grok", "Antigravity", "Ask several"];
 
 test("the agent choice lists every agent and Ask several at once on a phone, the chosen agent's models show five before More models…, and with a repository the others are Chat only with a way to remove it", async ({ page, botbench, dir }) => {

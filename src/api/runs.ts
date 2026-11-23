@@ -4,7 +4,8 @@ import { waitingOnApproval } from "../approvals/broker.ts";
 import { runGrants, showWords } from "../approvals/grants.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, type Run } from "../engine/run.ts";
-import { BodyError, builderOnly, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
+import { modeChanges, stricterModes } from "../engine/modes.ts";
+import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { resumeNote } from "../engine/task.ts";
 import { decisionOf, leftoversOf } from "./tasks.ts";
 import { deliveryOf } from "../engine/delivery.ts";
@@ -55,6 +56,8 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
     issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
     // Whether the run told other workbenches it started on its issue, and what became of that (engine/claims.ts).
     claim: claimOf(db, id),
+    // The stricter modes the owner may move the run to now (none for a manual or finished run), and each change made.
+    modeChoices: stricterModes(mode, status), modeChanges: modeChanges(db, id),
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
@@ -78,23 +81,23 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
 const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full", "delivery"?: "branch" | "pull_request", "issue"?: null | { "fetchId": number, "allowHosts": boolean }, "oneTask"?: boolean }';
 
 /**
- * The run routes: start one, list them, describe one, and the owner's decisions at the plan gate (edit, approve,
- * request changes, cancel). Returns false when the request is for none of them. Called only for requests the auth
+ * The run routes: start one, list them, describe one, the owner's decisions at the plan gate (edit, approve,
+ * request changes, cancel), and making its mode stricter. Returns false when the request is for none of them. Called only for requests the auth
  * gate let through, which is the only way a plan is ever approved.
  */
 export async function runRoutes(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, url: URL): Promise<boolean> {
   const { pathname } = url;
   const method = req.method;
   // An id is 1 to 15 digits with no leading zero, so it is always a number SQLite stores exactly.
-  const one = /^\/api\/runs\/([1-9]\d{0,14})(\/plan|\/plan\/approve|\/plan\/request-changes|\/cancel)?$/.exec(pathname);
+  const one = /^\/api\/runs\/([1-9]\d{0,14})(\/plan|\/plan\/approve|\/plan\/request-changes|\/cancel|\/mode)?$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/runs") {
       const body = await readJsonBody(req);
       if (!isObject(body) || typeof body.repo !== "string") throw new RunError(400, EXPECTED);
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
-      builderOnly(body);
+      const builder = builderChoice(body);
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver });
+      const run = await ctx.runs.start({ repo: body.repo, builder, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });
@@ -112,6 +115,8 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
         if (action === "/plan") ctx.runs.editPlan(id, body.tasks, body.planVersion);
         else if (action === "/plan/approve") ctx.runs.approve(id, body.planVersion);
         else if (action === "/plan/request-changes") ctx.runs.requestChanges(id, body.feedback, body.planVersion);
+        // Only ever stricter, and only on this request of the owner's: never looser (engine/run.ts, `tightenMode`).
+        else if (action === "/mode") ctx.runs.tightenMode(id, body.mode);
         else ctx.runs.cancel(id);
         json(res, 200, await detail(ctx, getRun(ctx.db, id)!));
       } else {

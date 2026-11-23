@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { pendingApprovals, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
+import { logSandboxedCall, pendingApprovals, permissionResponse, waitingOnApproval, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import { insertPreapproved, realRepo } from "../approvals/grants.ts";
 import { chatWebAccess } from "../approvals/web-access.ts";
@@ -10,22 +10,24 @@ import { allowedHostsFor, outsideTextPrompt, runIssue, runOutside } from "./inta
 import { learningsSection } from "./learnings.ts";
 import { memorySection } from "./memory.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
-import type { TurnEndReason } from "../drivers/events.ts";
+import type { DriverEvent, TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
-import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
+import { askEveryCommand, autoAccept, modeRefusals, reviewOutcome, runModeOf, unaskedQuestions, type RunMode } from "./modes.ts";
 import { checkFixesUsed, checkFixPrompt, checkFixRoundOf, DEFAULT_CHECK_FIX_ROUNDS, endedCheckFix, insertCheckFix, workVersion, type OpenCheckFix } from "./check-fix.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
-import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
+import { agentName, IMPLEMENTER, refinePrompt, roleProblem } from "./roles.ts";
 import { deliverNoteIn, leftBuilding, NOT_DELIVERED, NOTE_REFUSED, NOTE_TOO_LATE, noteProblem, queueNoteIn, settleWaiting, settleWaitingIn, waitingNote, type TaskNote } from "./notes.ts";
 import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
-import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
+import { commandProblem, insertEvidence, nextRound, notRun, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
+import { HOST_EXECUTION, type Execution, type TaskContainer } from "../execution.ts";
+import { builderContainerProblem, createContainers, type Containers } from "./containers.ts";
 import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, limitNoSessionReason, MAX_TIMER_MS, retryTime, USAGE_LIMIT_WAIT_MS } from "./usage-limit.ts";
 
 /**
@@ -71,6 +73,8 @@ export interface Task {
   prompt: string;
   /** The model asked for when the task was started. Null means the CLI's own default. */
   requestedModel: string | null;
+  /** The agent that builds it, chosen when it was started: "codex", or null for Claude Code. */
+  builderAgent: string | null;
   status: TaskStatus;
   /** Why the task was interrupted or failed, in words for the owner. */
   reason: string | null;
@@ -104,6 +108,14 @@ function unknownReviewer(agent: string): Driver {
   return { name: agent, capabilities: { resume: false, interrupt: false, permissionRequests: false, edits: false }, probe: refuse, models: refuse, startAttempt: async () => refuse() };
 }
 
+/** A builder a task names and this Botbench cannot start: its build fails, saying so. */
+function unavailableBuilder(agent: string): Driver {
+  const refuse = (): never => {
+    throw new Error(`Botbench cannot start ${agentName(agent)} to build.`);
+  };
+  return { name: agent, capabilities: { resume: false, interrupt: false, permissionRequests: false, edits: false }, probe: refuse, models: refuse, startAttempt: async () => refuse() };
+}
+
 /** A request about a task that cannot be met; `status` is the HTTP answer for it. */
 export class TaskError extends Error {
   readonly status: number;
@@ -123,6 +135,7 @@ function toTask(row: Record<string, unknown>): Task {
     repo: String(row.repo_path),
     prompt: String(row.prompt),
     requestedModel: text(row.requested_model),
+    builderAgent: text(row.builder_agent),
     status: String(row.status) as TaskStatus,
     reason: text(row.reason),
     worktreePath: text(row.worktree_path),
@@ -166,11 +179,21 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: TaskStatu
  * Write one queued task of a run, with its first event, and return its id. Call it inside the transaction that
  * creates the run or approves its plan, so the task exists only together with what it belongs to.
  */
-export function insertQueuedTask(db: DatabaseSync, o: { runId: number; repo: string; prompt: string; requestedModel: string | null }): number {
+export function insertQueuedTask(db: DatabaseSync, o: { runId: number; repo: string; prompt: string; requestedModel: string | null; builderAgent?: string | null }): number {
   const at = now();
-  const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(o.runId, o.repo, o.prompt, o.requestedModel, at, at).lastInsertRowid);
+  const id = Number(db.prepare("INSERT INTO tasks (run_id, repo_path, prompt, requested_model, builder_agent, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)").run(o.runId, o.repo, o.prompt, o.requestedModel, o.builderAgent ?? null, at, at).lastInsertRowid);
   insertEvent(db, id, at, "queued", null);
   return id;
+}
+
+/** A peer's message the owner gave to Claude Code (Peers P5, ADR 0004 decision 8): the work is outside text, its rows the peer's. */
+export interface GivenMessage {
+  pairingId: string;
+  messageId: string;
+  peerName: string;
+  peerFingerprint: string;
+  /** The owner ticked the repository's network hosts for it; none otherwise. */
+  allowHosts: boolean;
 }
 
 /**
@@ -178,16 +201,24 @@ export function insertQueuedTask(db: DatabaseSync, o: { runId: number; repo: str
  * that run, and the task's first event are written together: none exists without the others.
  * Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null; preapproved?: readonly string[] }): Task {
+export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null; preapproved?: readonly string[]; builderAgent?: string | null; given?: GivenMessage; inWrite?: (taskId: number) => void }): Task {
   return transaction(db, () => {
     const at = now();
     // The repository is kept by its real path as it is now. Grants and counts compare this stored path, so a link
     // that is pointed elsewhere later does not carry one repository's trust to another.
     const repo = realRepo(o.repo);
     // A task started on its own is a run of one: it takes the next run id, which no other run or task ever gets.
-    const runId = Number(db.prepare("INSERT INTO runs (kind, repo_path, prompt, created_at, updated_at) VALUES ('single', ?, ?, ?, ?)").run(repo, o.prompt, at, at).lastInsertRowid);
-    const id = insertQueuedTask(db, { runId, repo, prompt: o.prompt, requestedModel: o.requestedModel ?? null });
+    // A task given a peer's message is marked as having read outside text, with the peer, for good (store/schema.ts).
+    const g = o.given;
+    const runId = Number(
+      db
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, build_agent, created_at, updated_at, outside_text, outside_hosts, peer_pairing_id, peer_message_id, peer_name, peer_fingerprint) VALUES ('single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt, o.builderAgent ?? null, at, at, g === undefined ? 0 : 1, g?.allowHosts === true ? 1 : 0, g?.pairingId ?? null, g?.messageId ?? null, g?.peerName ?? null, g?.peerFingerprint ?? null).lastInsertRowid,
+    );
+    const id = insertQueuedTask(db, { runId, repo, prompt: o.prompt, requestedModel: o.requestedModel ?? null, builderAgent: o.builderAgent ?? null });
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId, taskId: id, commands: o.preapproved ?? [] });
+    // The caller's own write, in the same transaction: the card given to this task is decided with it, or neither is stored.
+    o.inWrite?.(id);
     return getTask(db, id)!;
   });
 }
@@ -388,7 +419,11 @@ export interface Tasks {
    * `model` is the model asked for: a name, null for the CLI's own default, or left out for the configured one.
    * `preapproved` are the commands the owner lets this task's run use without asking; each must be one plain command.
    */
-  start(repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task>;
+  start(repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[], builder?: string | null): Promise<Task>;
+  /** A task of the main agent given a peer's message: manual, with no command allowed in advance, marked as having read outside text. */
+  startGiven(repo: string, prompt: string, given: GivenMessage, inWrite: (taskId: number) => void): Promise<Task>;
+  /** Why `builder` (an agent's name, or null for the main agent) cannot build a task of a run in `mode` (manual when left out) now, in words for the owner; null when it can. */
+  builderProblem(builder: string | null, mode?: RunMode): string | null;
   /** Build a running run's queued tasks, one at a time, in plan order, after whatever is being built now. */
   buildRun(runId: number): void;
   /** The run was cancelled: stop what is being done for it now (a setup command or a turn). Resolves once it has stopped. */
@@ -421,6 +456,8 @@ export interface TasksOptions {
   /** Botbench's data directory; worktrees go under it. */
   home: string;
   driver: Driver;
+  /** Agents other than `driver` that can build a task chosen for them (Codex), by name. None when left out. */
+  builders?: Partial<Record<string, Driver>>;
   /** Where the attempt's permission requests go to wait for the owner. */
   broker: Broker;
   model?: string;
@@ -428,6 +465,10 @@ export interface TasksOptions {
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
   repoHosts?: (repo: string) => readonly string[];
+  /** Where a repository's commands run (src/execution.ts): on this Mac when left out. */
+  execution?: (repo: string) => Execution;
+  /** The task containers, for a repository whose commands run in one (engine/containers.ts). Made here when left out. */
+  containers?: Containers;
   /** The paths of a repository that only the owner may accept a change to (engine/scope.ts). None when left out. */
   protectedPaths?: (repo: string) => readonly string[];
   /** The agents that can review a run's tasks, by name. A run whose reviewer is not among them has its tasks' reviews fail, saying so. */
@@ -452,6 +493,20 @@ export interface TasksOptions {
   onTaskChange: (task: Task) => void;
   /** Called when a run's build reaches its end. */
   onRunChange?: (run: { id: number; status: string }) => void;
+  /** Messages to a paired workbench (src/peers/drafts.ts). None, and no word of them in a prompt, when left out. */
+  peerMessages?: PeerMessageHooks;
+}
+
+/** What a builder's turns have to do with a paired workbench (Peers P5, ADR 0004 decisions 8, 9 and 12). */
+export interface PeerMessageHooks {
+  /**
+   * Botbench's words added to a builder's prompt: the peer's message as outside text for work given one, how to draft a
+   * message (where a pairing is in force for the repository and the run is not fully autonomous), and word of a draft
+   * refused over the cap per run. `fresh`: a new session, which has not seen what an earlier prompt gave it.
+   */
+  promptFor(task: Task, fresh: boolean): Promise<string>;
+  /** The texts of a builder's turns: each `botbench-peer-message` block in them is a draft, counted and logged, then a card or refused. */
+  takeDrafts(task: Task, attemptId: number, texts: readonly string[]): Promise<void>;
 }
 
 /**
@@ -468,25 +523,78 @@ export function createTasks(options: TasksOptions): Tasks {
   const checkFixCap = options.checkFixRounds ?? DEFAULT_CHECK_FIX_ROUNDS;
   /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
+  let ownContainers: Containers | null = null;
+  /**
+   * The container a task's commands run in (src/execution.ts), started or found running as it was started; null for a
+   * repository whose commands run on this Mac. Throws, with why in words for the owner, when it cannot be had: the task
+   * then does not go on, and nothing runs on this Mac instead.
+   */
+  const containerFor = async (task: Task): Promise<TaskContainer | null> => {
+    const execution = options.execution?.(task.repo) ?? HOST_EXECUTION;
+    if (execution.kind === "host") return null;
+    // The task's own builder, which may not be the workbench's default (a task built by Codex).
+    const cannot = builderContainerProblem(execution, builderOf(task));
+    if (cannot !== null) throw new Error(cannot);
+    const containers = options.containers ?? (ownContainers ??= createContainers({ db, home, workbench: () => workbenchName(db) }));
+    const started = await containers.start({ taskId: task.id, image: execution.image, mount: fs.realpathSync(task.worktreePath!), allowedHosts: confinement(task).allowedHosts });
+    if (!started.ok) throw new Error(started.why);
+    return started.container;
+  };
+  /** A builder attempt's `container` option: set for a repository whose commands run in one. */
+  const inContainer = async (task: Task): Promise<{ container?: TaskContainer }> => {
+    const container = await containerFor(task);
+    return container === null ? {} : { container };
+  };
   /**
    * A builder's first prompt: the task's own, then the notes in docs/solutions/ of the task's copy when it has any
    * (engine/learnings.ts), then the owner's notes on this workbench when there are any (engine/memory.ts), then, for a
    * run started from an issue, the issue as outside text.
    */
-  const builderPrompt = (task: Task): string => {
+  const builderPrompt = async (task: Task): Promise<string> => {
     const issue = runIssue(db, task.runId);
     const learnings = learningsSection(task.worktreePath ?? task.repo);
     const memory = memorySection(home);
-    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${memory === undefined ? "" : `\n\n${memory}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${memory === undefined ? "" : `\n\n${memory}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}${await peerSection(task, true)}`;
   };
-  /** Whether the builder's driver runs every shell command confined: only then may a command run without asking. */
-  const confined = driver.capabilities.confinedCommands === true;
+  /** The peer's part of a builder's prompt (`PeerMessageHooks.promptFor`), set apart; nothing when there is none or it cannot be read. */
+  const peerSection = async (task: Task, fresh: boolean): Promise<string> => {
+    if (options.peerMessages === undefined) return "";
+    const words = await options.peerMessages.promptFor(task, fresh);
+    return words === "" ? "" : `\n\n${words}`;
+  };
+  /**
+   * The agent that builds a task: the one it was started with (`builderAgent`), or the main agent for a task that names
+   * none. A builder this Botbench cannot start fails the task's start, saying so.
+   */
+  const builderOf = (task: Pick<Task, "builderAgent">): Driver => (task.builderAgent === null ? driver : (options.builders?.[task.builderAgent] ?? unavailableBuilder(task.builderAgent)));
   /**
    * The builder's way to the permission gate, the same for its build, a round of fixes, a resume and an answer after a
    * restart: one place, so no kind of builder attempt is admitted as less confined than it is (run 3 of the self-review:
-   * a round of fixes was, and asked the owner about every command).
+   * a round of fixes was, and asked the owner about every command). Only a driver that runs every shell command
+   * confined is admitted as one: only then may a command run without asking.
    */
-  const admitBuilder = (task: Task, resumes?: number): Admission => broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath!, confined, ...(resumes === undefined ? {} : { resumes }) });
+  /**
+   * Why an agent other than the main one cannot build now, in a run of `mode` (a task on its own is manual): it is not
+   * one Botbench drives as a builder, its probe found it cannot, or it asks only to leave its sandbox (Codex) while the
+   * owner's "Ask before every command" is on for a manual run, which such an agent cannot keep.
+   */
+  const builderProblem = (builder: string | null, mode: RunMode = "manual"): string | null => {
+    if (builder === null) return null;
+    const found = options.builders?.[builder];
+    if (found === undefined) return `${agentName(builder)} cannot build a task in Botbench. Choose Claude Code or Codex.`;
+    const cannot = roleProblem(IMPLEMENTER, found.name, found.capabilities);
+    if (cannot !== null) return cannot;
+    let every = true;
+    try {
+      every = mode === "manual" && askEveryCommand(db);
+    } catch (err) {
+      // Not known to be off: it counts as on.
+      console.error(`The setting Ask before every command could not be read: ${words(err)}`);
+    }
+    if (found.capabilities.escalationsOnly === true && every) return `${agentName(found.name)} cannot build with Ask before every command on: it asks you only before it runs something outside its sandbox, never before a command inside it. Switch the setting off in Settings, choose Semi-autonomous, or choose Claude Code.`;
+    return null;
+  };
+  const admitBuilder = (task: Task, resumes?: number): Admission => broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath!, confined: builderOf(task).capabilities.confinedCommands === true, ...(resumes === undefined ? {} : { resumes }) });
   let closed = false;
   let current: DriverSession | null = null;
   /** Set while a turn runs: called when Botbench begins to stop, it decides whether that turn's task is parked. */
@@ -559,14 +667,30 @@ export function createTasks(options: TasksOptions): Tasks {
    * stops at the first that does not pass; checks all run. `stopped`: a command was stopped (a cancel, or Botbench
    * stopping) and the rest were not run.
    */
-  const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
+  const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal, given?: TaskContainer | null): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
     const round = nextRound(db, task.id, kind);
     // The whole list is known before its first command runs, so a count shown meanwhile is out of all of it.
     if (commands.length > 0) startCommandList(db, task.id, kind, round, commands.length);
     let failed: CommandRun | null = null;
+    // Where the commands run: on this Mac, or in the task's container. One that cannot be had runs none of them, and each says why.
+    let container: TaskContainer | null = given ?? null;
+    if (given === undefined && commands.length > 0) {
+      try {
+        container = await containerFor(task);
+      } catch (err) {
+        for (const [i, command] of commands.entries()) {
+          const run = notRun(command, `Botbench did not run this command. ${words(err)}`);
+          insertEvidence(db, task.id, kind, i + 1, run, round);
+          failed ??= run;
+          if (kind === "setup") break;
+        }
+        options.onTaskChange(getTask(db, task.id)!);
+        return { stopped: false, failed };
+      }
+    }
     for (const [i, command] of commands.entries()) {
       if (signal?.aborted || closed) return { stopped: true, failed };
-      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
+      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), ...(container === null ? {} : { container }), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
       options.onTaskChange(getTask(db, task.id)!);
       if (result.outcome === "stopped") return { stopped: true, failed };
       if (result.outcome !== "passed") {
@@ -639,17 +763,17 @@ export function createTasks(options: TasksOptions): Tasks {
     // The failing round is read back from the store, as a restart reads it; without one there is nothing to send.
     if (open === null) return review(at, "building", { checks: "failed" }, stopped);
     const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
-    const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const cursor = builderOf(at).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
     const admission = admitBuilder(at);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes for a failing check was being started");
-      return checkFixed(at, open, null, "error", "", `${agentName(driver.name)} could not be started for the round of fixes for a failing check: ${words(err)}`, stopped);
+      return checkFixed(at, open, null, "error", "", `${agentName(builderOf(at).name)} could not be started for the round of fixes for a failing check: ${words(err)}`, stopped);
     }
     await drive(at, session, admission, await checkFixPromptFor(at, open, cursor === null), null, stopped, cursor !== null);
   };
@@ -663,7 +787,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let files: string[] = [];
     if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
     const issue = fresh ? runIssue(db, task.runId) : null;
-    const prompt = `${checkFixPrompt({ failed: open.failed, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    const prompt = `${checkFixPrompt({ failed: open.failed, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}${await peerSection(task, fresh)}`;
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
     const note = again === "limit" ? LIMIT_ROUND_NOTE : "Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.";
     return again !== null ? prompt.replace("[From Botbench, not from the owner] ", `[From Botbench, not from the owner] ${note}\n\n`) : prompt;
@@ -680,7 +804,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
     const headCommit = (await commit(task))?.headCommit ?? null;
     const changed = headCommit !== null && headCommit !== from;
-    const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes for a failing check ended with an error${detail === null ? "." : `: ${detail}`}`;
+    const problem = end === "completed" ? null : `${agentName(builderOf(task).name)}'s round of fixes for a failing check ended with an error${detail === null ? "." : `: ${detail}`}`;
     const record = (): void => insertCheckFix(db, { taskId: task.id, checkRound: open.checkRound, afterFixes: workVersion(db, task.id), attemptId, outcome: end === "completed" ? "finished" : "failed", changed, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
     const checks = options.repoCommands?.(task.repo).checks ?? [];
     if (end === "completed" && changed && checks.length > 0) {
@@ -731,7 +855,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const done = await runReview({
       db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, round, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
       ...(before === undefined ? {} : { previous: { round, review: before.text, reasons: parseRefineReply(lastFix?.reply ?? "")?.notAddressed ?? null } }),
-      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, webSearch: reviewerWebSearch(task), ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
+      confinement: { ...confinement(task), gitDir: await sharedGitDir(task.repo) }, webSearch: reviewerWebSearch(task), broker, ...(options.reviewLimitMs ? { limitMs: options.reviewLimitMs } : {}), ...(stopped ? { signal: stopped } : {}), onEvent: options.onEvent,
     });
     options.onTaskChange(getTask(db, task.id)!);
     if (done.outcome === "stopped" && cancelled(task)) return void moveFrom(task.id, "reviewing", "cancelled", { reason: "The run was cancelled while this task was being reviewed. The work is committed to its branch; the review did not finish." });
@@ -742,7 +866,7 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now and the marks of its changed files. */
   const qualifies = (id: number, checks: Task["checks"], scope: readonly FileScope[]): ReturnType<typeof autoAccept> =>
-    autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id), protectedFiles: scope.filter((f) => f.protected).map((f) => f.path), unexpectedFiles: scope.filter((f) => !f.expected && !f.protected).map((f) => f.path) });
+    autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id), questions: unaskedQuestions(db, id), protectedFiles: scope.filter((f) => f.protected).map((f) => f.path), unexpectedFiles: scope.filter((f) => !f.expected && !f.protected).map((f) => f.path) });
 
   /**
    * The task is ready for review. First the files it changed, from its start commit to its head commit, are read and
@@ -794,7 +918,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
     const issue = fresh ? runIssue(db, task.runId) : null;
     // A new session has not seen the issue a run was started from: it is given again, as the first build's prompt gives it.
-    const prompt = `${refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    const prompt = `${refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}${await peerSection(task, fresh)}`;
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
     const note = again === "limit" ? LIMIT_ROUND_NOTE : "Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.";
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
@@ -818,17 +942,17 @@ export function createTasks(options: TasksOptions): Tasks {
    */
   const startRound = async (at: Task, reviewer: string, fresh: boolean, stopped?: AbortSignal, note?: string): Promise<void> => {
     const attempt = fresh || at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
-    const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const cursor = builderOf(at).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
     const admission = admitBuilder(at);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
-      return refined(at, refineRoundOf(db, at.id)!, null, "error", "", `${agentName(driver.name)} could not be started for the round of fixes: ${words(err)}`, stopped);
+      return refined(at, refineRoundOf(db, at.id)!, null, "error", "", `${agentName(builderOf(at).name)} could not be started for the round of fixes: ${words(err)}`, stopped);
     }
     await drive(at, session, admission, await refinePromptFor(at, reviewer, cursor === null), null, stopped, cursor !== null, note);
   };
@@ -857,10 +981,10 @@ export function createTasks(options: TasksOptions): Tasks {
     if (resumed && !retried && end === "completed" && reply.trim() === "" && headCommit === from && reviewer !== null && !closed && stopped?.aborted !== true && !cancelled(task)) {
       const at = getTask(db, task.id);
       // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
-      const note = `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; ${FRESH_RETRY}`;
+      const note = `round ${round} of fixes: ${agentName(builderOf(task).name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; ${FRESH_RETRY}`;
       if (at?.status === "building") return startRound(at, reviewer, true, stopped, note);
     }
-    const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
+    const problem = end === "completed" ? null : `${agentName(builderOf(task).name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
     insertRefinement(db, { taskId: task.id, round, attemptId, outcome: end === "completed" ? "finished" : "failed", changed: headCommit !== null && headCommit !== from, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
     options.onTaskChange(getTask(db, task.id)!);
     if (headCommit === null) return;
@@ -922,7 +1046,14 @@ export function createTasks(options: TasksOptions): Tasks {
   const setUpAndDrive = async (task: Task, stop: AbortController): Promise<void> => {
     const id = task.id;
     const setup = options.repoCommands?.(task.repo).setup ?? [];
-    const ran = await runList(task, "setup", setup, stop.signal);
+    // A repository whose commands run in a container has the task's container before its setup, or the task does not go on.
+    let container: TaskContainer | null;
+    try {
+      container = await containerFor(task);
+    } catch (err) {
+      return void moveFrom(id, "building", "failed", { reason: words(err) });
+    }
+    const ran = await runList(task, "setup", setup, stop.signal, container);
     if (ran.failed !== null) return void moveFrom(id, "building", "failed", { reason: commandProblem("setup", ran.failed) });
     if (ran.stopped || stop.signal.aborted) {
       if (cancelled(task)) return finish(task, "cancelled", "The run was cancelled while this task was being prepared. What setup wrote is committed to its branch.");
@@ -935,7 +1066,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       // No agent started: the next start takes the task up from its setup.
@@ -952,7 +1083,7 @@ export function createTasks(options: TasksOptions): Tasks {
       return void move(id, cancelled(task) ? "cancelled" : "failed", { reason });
     }
 
-    await drive(task, session, admission, builderPrompt(task), null, stop.signal);
+    await drive(task, session, admission, await builderPrompt(task), null, stop.signal);
   };
 
   /**
@@ -1009,6 +1140,8 @@ export function createTasks(options: TasksOptions): Tasks {
     /** Set when the turn ended on the agent's usage limit (`limitedEnd`): the reset time it gave, or null. */
     let usageLimit = null as { resetsAt: string | null } | null;
     let reply = "";
+    /** Every text the builder wrote in this drive's turns: a draft to a paired workbench may be in any of them. */
+    const texts: string[] = [];
     // A task with a review whose round has no fixes yet is on a round of fixes (engine/refine.ts).
     const refineRound = refineRoundOf(db, id);
     // One not on a round of fixes for a review, with a failed check no round has ended for, is on a round of fixes for that check.
@@ -1018,9 +1151,31 @@ export function createTasks(options: TasksOptions): Tasks {
     parkCurrent = () => void (parking = waitingOnApproval(db, id));
     /** Permission requests the CLI is still waiting on, by request id. */
     const asking = new Set<string>();
+    // A builder that asks only to leave its sandbox (Codex): what ran inside it never reaches the broker, so each call it
+    // reports as done is logged from the event stream, as one that ran without asking under its own sandbox. A call it
+    // asked to run outside is logged by the broker with the owner's answer instead, and a declined one did not run.
+    const sandboxedOnly = session.capabilities.escalationsOnly === true;
+    // It ran already: an entry that cannot be written is said on Botbench's output, and the work goes on.
+    const logOrSay = (write: () => void): void => {
+      try {
+        write();
+      } catch (err) {
+        console.error(`A call task ${id}'s builder ran in its sandbox could not be logged: ${words(err)}`);
+      }
+    };
+    const escalated = new Set<string>();
+    const calls = new Map<string, Extract<DriverEvent, { type: "tool_call" }>>();
     session.onEvent((event) => {
+      if (sandboxedOnly) {
+        if (event.type === "permission_request") escalated.add(event.toolCallId.split(":")[0]!);
+        if (event.type === "tool_call") calls.set(event.id, event);
+        if (event.type === "tool_result" && !escalated.has(event.id) && calls.has(event.id)) logOrSay(() => logSandboxedCall(db, calls.get(event.id)!, { taskId: id, runId: task.runId, attemptId: session.attemptId, cwd: ".", detail: `${agentName(builderOf(task).name)} ran this without asking, kept by its own sandbox to the task's copy, away from your sign-ins and the network.` }));
+      }
       if (event.type === "session_started") sessionStarted = true;
-      if (event.type === "text") reply = event.text;
+      if (event.type === "text") {
+        reply = event.text;
+        texts.push(event.text);
+      }
       if (event.type === "turn_ended") {
         detail = event.detail;
         usageLimit = event.usageLimit ?? null;
@@ -1029,10 +1184,14 @@ export function createTasks(options: TasksOptions): Tasks {
         asking.add(event.id);
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
-          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
+          .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId, ...(event.escalation === true ? { escalation: true } : {}), ...(event.cwd !== undefined ? { cwd: path.relative(task.worktreePath!, event.cwd) || "." } : {}) })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
-          .catch(report(`Answering a permission request of task ${id}`));
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, permissionResponse(answer)) : undefined))
+          .catch((err: unknown) => {
+            report(`Answering a permission request of task ${id}`)(err);
+            // Whatever failed, the CLI is told no at once rather than left waiting.
+            if (asking.has(event.id)) void session.respondToRequest(event.id, { decision: "decline", refused: "Botbench's permission check failed, so this was refused. Nothing was run." }).catch(() => {});
+          });
       }
       if (event.type === "permission_resolved") {
         asking.delete(event.id);
@@ -1112,8 +1271,8 @@ export function createTasks(options: TasksOptions): Tasks {
       if (silent) await confirmGroupGone(db, session.attemptId);
     } catch (err) {
       leftover = silent
-        ? `${agentName(driver.name)} went silent for ${durationWords(silenceLimit)}, the silence limit in Botbench's settings, and Botbench could not stop its process: ${words(err)}`
-        : `Its ${agentName(driver.name)} process could not be stopped: ${words(err)}`;
+        ? `${agentName(builderOf(task).name)} went silent for ${durationWords(silenceLimit)}, the silence limit in Botbench's settings, and Botbench could not stop its process: ${words(err)}`
+        : `Its ${agentName(builderOf(task).name)} process could not be stopped: ${words(err)}`;
     }
     current = null;
     parkCurrent = null;
@@ -1129,6 +1288,11 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     admission.release();
     options.onEvent();
+    // Drafts to a paired workbench become cards, or are refused, whatever became of the turn. A failure here makes no
+    // card and sends nothing (broker failure means deny); the task goes on.
+    if (options.peerMessages !== undefined && texts.length > 0) {
+      await options.peerMessages.takeDrafts(getTask(db, id) ?? task, session.attemptId, texts).catch((err: unknown) => console.error(`The drafts in task ${id}'s reply to a paired workbench were not taken: ${words(err)}. Nothing was sent.`));
+    }
 
     // However the turn ended, what it wrote is committed and the task says where it stands.
     if (leftover !== null) await finish(task, "failed", leftover);
@@ -1142,13 +1306,13 @@ export function createTasks(options: TasksOptions): Tasks {
       await finish(task, "cancelled", CANCELLED);
     }
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
-    else if (silent) await finish(task, "interrupted", silenceReason(agentName(driver.name), silenceLimit));
+    else if (silent) await finish(task, "interrupted", silenceReason(agentName(builderOf(task).name), silenceLimit));
     // The usage limit, in any kind of builder turn: the task waits for it and is resumed once. Reached again after that
     // wait (by the resumed turn, or any later turn, also across a restart) it stops the task for the owner; only the
     // owner's Resume allows another wait. Botbench stopping ends a turn as interrupted, never as a limit; a limit reached
     // just as Botbench stops is still stored, and the next start arms its time.
     else if (end === "error" && usageLimit !== null) {
-      if (resumed === "limit" || waitedForLimit(id)) await finish(task, "interrupted", limitAgainReason(agentName(driver.name)));
+      if (resumed === "limit" || waitedForLimit(id)) await finish(task, "interrupted", limitAgainReason(agentName(builderOf(task).name)));
       else await waitForLimit(task, usageLimit.resetsAt);
     }
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
@@ -1277,7 +1441,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (parked.some((approval) => approval.storedDecision === null)) return;
     // Botbench is stopping: the next start says what became of the answer.
     if (closed) return;
-    const problem = (await stopSurvivors(task, parked)) ?? resumeProblem(db, task, parked, driver.capabilities);
+    const problem = (await stopSurvivors(task, parked)) ?? resumeProblem(db, task, parked, builderOf(task).capabilities);
     if (problem !== null) return giveUp(task, `This task waited for your answer across a restart and cannot be resumed: ${problem} Your answer was not applied and nothing was run.`);
 
     // The model stays the one the task was started with, whatever is configured by now.
@@ -1287,7 +1451,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let session: DriverSession;
     try {
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
@@ -1295,7 +1459,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const stop = new AbortController();
     active = { taskId: id, runId: task.runId, stop };
     try {
-      await drive(task, session, admission, RESUME_PROMPT, "answer", stop.signal);
+      await drive(task, session, admission, `${RESUME_PROMPT}${await peerSection(task, false)}`, "answer", stop.signal);
     } finally {
       active = null;
     }
@@ -1332,16 +1496,16 @@ export function createTasks(options: TasksOptions): Tasks {
     const problem = await stopSurvivors(task, []);
     if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
     const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
-    const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const cursor = builderOf(task).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
     // Botbench starts a builder by itself only to take up the same session: with none to take up, the owner decides.
-    if (by === "limit" && cursor === null) return finish(task, "interrupted", limitNoSessionReason(agentName(driver.name)));
+    if (by === "limit" && cursor === null) return finish(task, "interrupted", limitNoSessionReason(agentName(builderOf(task).name)));
     const admission = admitBuilder(task);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
       // The model stays the one the task was started with, whatever is configured by now.
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(task.id, "building", "this task was being taken up again");
@@ -1352,14 +1516,16 @@ export function createTasks(options: TasksOptions): Tasks {
     const reviewer = onRefine ? reviewAssignment(db, task.id)?.agent ?? null : null;
     // A round of fixes for a failing check is sent the failing check again, the same way.
     const checkFix = onRefine ? null : checkFixRoundOf(db, task.id);
-    const prompt =
+    const sent =
       reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, by === "limit" ? "limit" : "restart")
       : checkFix !== null ? await checkFixPromptFor(task, checkFix, cursor === null, by === "limit" ? "limit" : "restart")
-      : cursor === null ? builderPrompt(task)
+      : cursor === null ? await builderPrompt(task)
       : by === "limit" ? LIMIT_PROMPT
       : before === "changed nothing" ? CHANGED_NOTHING_PROMPT
       : before === "silent" ? silentPrompt(durationWords(silenceLimit))
       : CONTINUE_PROMPT;
+    // The same session is told what Botbench refused since (a draft over the cap per run); the other prompts say it themselves.
+    const prompt = reviewer === null && checkFix === null && cursor !== null ? `${sent}${await peerSection(task, false)}` : sent;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 
@@ -1419,7 +1585,7 @@ export function createTasks(options: TasksOptions): Tasks {
           const unapplied = db.prepare("SELECT 1 FROM approvals WHERE task_id = ? AND status = 'pending' AND stored_decision IS NOT NULL AND stored_at < ? LIMIT 1").get(task.id, began) !== undefined;
           const problem =
             (await stopSurvivors(task, parked)) ??
-            (unapplied ? "Botbench stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, driver.capabilities));
+            (unapplied ? "Botbench stopped after you answered and before the answer could be given to the agent. Your answer was not applied." : resumeProblem(db, task, parked, builderOf(task).capabilities));
           if (problem === null) {
             // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
             move(task.id, "building", { note: "parked across a restart: waiting for the owner's answer to a request made before it" });
@@ -1512,11 +1678,27 @@ export function createTasks(options: TasksOptions): Tasks {
     chain = chain.then(() => redrive(taskId)).catch(report(`Resuming task ${taskId}`));
   });
 
-  const start = async (repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[]): Promise<Task> => {
+  const start = async (repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[], builder: string | null = null): Promise<Task> => {
     if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const cannot = builderProblem(builder);
+    if (cannot !== null) throw new TaskError(400, cannot);
     const checked = await checkRepository(repo);
     if (closed) throw new TaskError(503, "Botbench is shutting down.");
-    const task = createTask(db, { repo: checked, prompt, requestedModel: model === undefined ? (options.model ?? null) : model, ...(preapproved ? { preapproved } : {}) });
+    // A model given for the task is the builder's; with another builder and none given, that builder's own default.
+    const requestedModel = model !== undefined ? model : builder === null ? (options.model ?? null) : null;
+    const task = createTask(db, { repo: checked, prompt, requestedModel, ...(preapproved ? { preapproved } : {}), builderAgent: builder });
+    options.onTaskChange(task);
+    chain = chain.then(() => build(task.id)).catch(report(`Building task ${task.id}`));
+    return task;
+  };
+
+  const startGiven = async (repo: string, prompt: string, given: GivenMessage, inWrite: (taskId: number) => void): Promise<Task> => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const cannot = builderProblem(null);
+    if (cannot !== null) throw new TaskError(400, cannot);
+    const checked = await checkRepository(repo);
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = createTask(db, { repo: checked, prompt, requestedModel: options.model ?? null, given, inWrite });
     options.onTaskChange(task);
     chain = chain.then(() => build(task.id)).catch(report(`Building task ${task.id}`));
     return task;
@@ -1646,5 +1828,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, buildRun, stopRun, resume, sendNote, reconsider, idle, close };
+  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, reconsider, idle, close };
 }

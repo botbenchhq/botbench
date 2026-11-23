@@ -5,13 +5,21 @@ import path from "node:path";
 import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
-import type { PlanTask } from "../../src/engine/roles.ts";
+import { IMPLEMENTER, roleProblem, type PlanTask } from "../../src/engine/roles.ts";
+import { CodexDriver } from "../../src/drivers/codex.ts";
 import { approvePlan, createRun, MAX_SPEC_BYTES, storePlan } from "../../src/engine/run.ts";
 import { insertEvidence } from "../../src/engine/stations.ts";
 import { moveTask } from "../../src/engine/task.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
+
+/** Codex's roles here: a reviewer, and a builder too where the installed Codex can build (its probe says so; inside a sandbox, or with no Codex, it cannot). */
+async function codexRoles(): Promise<string[]> {
+  const codex = new CodexDriver();
+  await codex.probe();
+  return roleProblem(IMPLEMENTER, "codex", codex.capabilities) === null ? ["builder", "reviewer"] : ["reviewer"];
+}
 
 // No test in this file starts a driver: a run that is started for real reaches Claude Code, and is in
 // test/live/plan.live.test.ts. Here runs are put in the store as the engine stores them, and the routes act on them.
@@ -185,6 +193,8 @@ test("a run is read with its plan and listed newest first; an unknown run is 404
     {
       id: first.id, repo: fs.realpathSync(api.repo), prompt: "Add two files and describe them", specPath: null, specText: null, title: "Add two files and describe them",
       status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, issue: null, outsideText: false, outsideHosts: false, oneTask: false, issueHosts: [], claim: null,
+      // A manual run can be made no stricter, and its mode was never changed.
+      modeChoices: [], modeChanges: [],
       plan: THREE, tasks: [], preapproved: ["npm test"], waitingOnApproval: false, createdAt: null, updatedAt: null,
     },
   );
@@ -420,7 +430,7 @@ test("the agents are listed with what each reports about itself, and each review
   const agents = (await call(api, "GET", "/api/agents")).body.agents as Record<string, unknown>[];
   assert.deepEqual(agents.map((agent) => agent.agent), ["claude-code", "codex", "grok", "antigravity"]);
   for (const agent of agents) for (const key of ["installed", "version", "supported", "signedIn", "billing", "problem"]) assert.ok(key in agent, `${String(agent.agent)}: ${key}`);
-  assert.deepEqual(agents.map((agent) => agent.roles), [["planner", "builder"], ["reviewer"], ["reviewer"], ["reviewer"]]);
+  assert.deepEqual(agents.map((agent) => agent.roles), [["planner", "builder"], await codexRoles(), ["reviewer"], ["reviewer"]]);
   for (const reviewer of ["codex", "grok", "antigravity"]) {
     const models = (await call(api, "GET", `/api/agents/${reviewer}/models`)).body;
     assert.ok(models.source === "cli" || models.source === "config", reviewer);

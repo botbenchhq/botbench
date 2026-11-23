@@ -4,6 +4,7 @@ import path from "node:path";
 import type { RunMode } from "../engine/modes.ts";
 import { floor, NOT_PLAIN, type FloorEntry } from "./floor.ts";
 import { matchGrant, type Grant } from "./grants.ts";
+import { QUESTION_TOOL } from "./question.ts";
 import { splitPlain } from "./shell.ts";
 
 /*
@@ -60,6 +61,13 @@ export interface GateRequest {
    * allowed: the CLI wrote it there from this session's own calls and told the agent to read it. Left out, none is.
    */
   sessionOutput?: string;
+  /**
+   * The agent asks to run this outside its own sandbox (Codex's approval requests, src/drivers/codex-app-server.ts: on
+   * `on-request` Codex asks only to leave its sandbox, and an accepted request runs unsandboxed). It always asks the
+   * owner, or is refused in a fully autonomous run: no grant, no mode and no rule about the copy lets it run, and the
+   * floor is still read for a command, so that its card names the rule. Left out, it is not one.
+   */
+  escalation?: boolean;
 }
 
 /** Why a request asks the owner. The card says it in words (`askWords`). */
@@ -81,7 +89,9 @@ export type AskWhy =
   /** A tool that is neither the shell nor a file tool, which always asks. */
   | "other_tool"
   /** The request does not say what it would run, or comes from an agent Botbench cannot place. */
-  | "unknown";
+  | "unknown"
+  /** Codex asks to run it outside its own sandbox (`escalation`). */
+  | "escalation";
 
 /** The part of the floor that is not the request: the owner's home, and the entries the owner's config adds. */
 export interface FloorSettings {
@@ -89,6 +99,11 @@ export interface FloorSettings {
   /** Botbench's data directory, which the floor guards. */
   dataDir?: string;
   extra?: readonly FloorEntry[];
+  /**
+   * How the floor follows the links in a full path. Left out, as the broker leaves it, they are followed on disk (`real`).
+   * Only the Permissions screen's check (preview.ts) sets it, for a task's copy that does not exist yet.
+   */
+  followLinks?: (absolute: string) => string;
 }
 
 export type GateVerdict =
@@ -115,6 +130,14 @@ export function fullAutonomyRefusal(tool: string, floorRule?: string): string {
   if (tool === "Bash") return "This run is fully autonomous, so a command runs without you only inside the protected copy, and this one could not be shown to run kept away from your sign-ins and the network. It was not run.";
   return `This run is fully autonomous, so nothing is put to you for approval, and ${tool.slice(0, 100)} was refused. It was not run.`;
 }
+
+/** The shell Codex wraps each command in, with the command in single quotes and nothing else; group 1 is the command. */
+const CODEX_SHELL = /^(?:\/bin\/)?(?:zsh|bash|sh) -l?c '([^']*)'$/;
+
+/** Why a fully autonomous run refused a Codex escalation, in words for the agent and the record. */
+export const ESCALATION_REFUSED = "This run is fully autonomous, so Botbench refuses every request of Codex to run something outside its sandbox. It was not run.";
+/** What a card says about a Codex escalation. */
+export const ESCALATION_WORDS = "Codex asks to run it outside its sandbox, beyond the protection of the task's copy.";
 
 /** What each rule of the safety rules is about, as the card's reason line says it. An entry the owner's config adds is shown by its own name. */
 const FLOOR_WORDS: Record<string, string> = {
@@ -152,13 +175,18 @@ export function askWords(why: AskWhy, o: { tool: string; floor?: string; chat?: 
       return `Botbench asks you each time ${o.tool.slice(0, 100)} is used.`;
     case "unknown":
       return "Botbench could not tell what this would run, or which of its agents asked.";
+    case "escalation":
+      return o.floor === undefined ? ESCALATION_WORDS : `${ESCALATION_WORDS} On the always-ask list: ${FLOOR_WORDS[o.floor] ?? o.floor.slice(0, 100)}.`;
   }
 }
 
 /** The tools that change a file, and the field of their input that names it. */
 const EDIT_TOOLS: Record<string, string> = { Edit: "file_path", Write: "file_path", NotebookEdit: "notebook_path" };
-/** All a read-only role may use: reading and searching files, and the shell, each command of which goes through the gate. */
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "Bash"]);
+/**
+ * All a read-only role may use: reading and searching files, the shell, each command of which goes through the gate, and
+ * the question tool, which changes nothing and goes to the owner as a question (approvals/question.ts).
+ */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "Bash", QUESTION_TOOL]);
 /** The tools that only read, and the field that names where. A search may leave it out and then means the directory it stands in. */
 const READ_TOOLS: Record<string, string> = { Read: "file_path", Glob: "path", Grep: "path" };
 /** In a worktree these are git's own entry and the CLI's settings: a change to either is not an ordinary edit. */
@@ -236,7 +264,7 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
   const { command } = input;
   if (typeof command !== "string" || command === "") return { verdict: "ask", why: "unknown" };
   if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
-  const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
+  const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real: settings.followLinks ?? real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
   // What runs without asking: a confined command with nothing beside it that could take it out, unless the owner asked
   // to be asked before every command of a manual run (a run left without a mode is manual).
   const everyCommand = request.askEveryCommand === true && (request.mode ?? "manual") === "manual";
@@ -259,10 +287,28 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
  * to the owner. Without grants nothing but edits and reads inside the worktree is allowed.
  */
 export function gate(request: GateRequest, grants: readonly Grant[] = [], settings: FloorSettings = { home: os.homedir() }): GateVerdict {
-  const verdict = decide(request, grants, settings);
+  const verdict = request.escalation === true ? escalationVerdict(request, settings) : decide(request, grants, settings);
   // A fully autonomous run puts nothing to the owner: what would ask is refused, and says why.
   if (request.mode !== "full" || verdict.verdict !== "ask") return verdict;
-  return { verdict: "refuse", reason: fullAutonomyRefusal(request.tool, verdict.floor), why: verdict.why, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) };
+  // An escalation is refused as one, whatever the floor says of it; the floor's rule is still named on the record.
+  const reason = request.escalation === true ? ESCALATION_REFUSED : fullAutonomyRefusal(request.tool, verdict.floor);
+  return { verdict: "refuse", reason, why: verdict.why, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) };
+}
+
+/**
+ * A request to run outside the agent's sandbox: the owner decides, every time. Grants are not looked at, nor the mode,
+ * the confinement or the copy. A command is read by the floor only so that its card names the rule; a NUL in it is
+ * refused, as in any command.
+ */
+function escalationVerdict(request: GateRequest, settings: FloorSettings): GateVerdict {
+  const input = isObject(request.input) ? request.input : {};
+  const command = input.command;
+  if (request.tool !== "Bash" || typeof command !== "string" || command === "") return { verdict: "ask", why: "escalation" };
+  if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
+  // Codex runs every command as `/bin/zsh -lc '<command>'` (docs/security/codex-app-server-check.md): the floor reads
+  // what that shell is handed, so that its rule names what the command does rather than the wrapper every one has.
+  const rule = floor(CODEX_SHELL.exec(command)?.[1] ?? command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real: settings.followLinks ?? real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
+  return rule === null || rule === NOT_PLAIN ? { verdict: "ask", why: "escalation" } : { verdict: "ask", floor: rule, why: "escalation" };
 }
 
 function decide(request: GateRequest, grants: readonly Grant[], settings: FloorSettings): GateVerdict {

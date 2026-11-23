@@ -2,7 +2,7 @@ import { DEFAULT_MAX_REFINE_ROUNDS } from "./refine.ts";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { Admission, Broker } from "../approvals/broker.ts";
+import { permissionResponse, type Admission, type Broker } from "../approvals/broker.ts";
 import { summarize } from "../approvals/gate.ts";
 import { entryProblem, insertPreapproved, MAX_ENTRIES, realRepo } from "../approvals/grants.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
@@ -14,7 +14,7 @@ import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS
 import { agentName, correctionPrompt, IMPLEMENTER, mergePlan, oneTaskPrompt, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
-import { isRunMode, MODE_WORDS, planApprovedByMode, type RunMode } from "./modes.ts";
+import { isRunMode, MODE_WORDS, planApprovedByMode, stricterModes, type RunMode } from "./modes.ts";
 import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
@@ -65,6 +65,8 @@ export interface Run {
    * Undefined for a run started before a run recorded one, whose tasks took the configured model.
    */
   buildModel?: string | null;
+  /** The agent the run's tasks are built by, chosen when it starts: "codex", or null for the main agent. */
+  buildAgent: string | null;
   /** The commit the plan was made from. */
   baseCommit: string;
   /** The newest planner attempt: its events are the planner's transcript. */
@@ -135,6 +137,7 @@ function toRun(row: Record<string, unknown>): Run {
     requestedModel: text(row.requested_model),
     plannerModel: text(row.planner_model),
     ...(row.build_model_set === 1 ? { buildModel: text(row.build_model) } : {}),
+    buildAgent: text(row.build_agent),
     baseCommit: String(row.base_commit),
     attemptId: int(row.attempt_id),
     planVersion: Number(row.plan_version),
@@ -194,7 +197,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -203,8 +206,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
@@ -326,7 +329,7 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
     if (run.oneTask && checked.tasks.length !== 1) throw new RunError(409, `The plan cannot be approved as it is: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     const link = db.prepare("UPDATE plan_tasks SET task_id = ? WHERE run_id = ? AND position = ?");
     const tasks = plan.map((task) => {
-      const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: run.buildModel === undefined ? implementerModel : run.buildModel });
+      const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: run.buildModel === undefined ? implementerModel : run.buildModel, builderAgent: run.buildAgent });
       link.run(made, runId, task.position);
       return made;
     });
@@ -356,6 +359,29 @@ export function cancelRun(db: DatabaseSync, runId: number, by = "cancelled by th
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'waiting_for_limit' ORDER BY id").all(runId)) {
       moveTaskIn(db, Number(row.id), "cancelled", { reason: LIMIT_CANCELLED });
     }
+    return getRun(db, runId)!;
+  });
+}
+
+/**
+ * The owner makes a run's mode stricter while it has not finished: fully autonomous to semi-autonomous or manual,
+ * semi-autonomous to manual. The mode and the history's record of the owner's change, naming both modes, are written
+ * together. Nothing else is touched: a request waiting for the owner stays, a turn under way finishes, and from the
+ * next request and the next result on, the broker and the engine read the new mode from the store (engine/modes.ts).
+ * Throws for a mode that is none of the three (400), a run that does not exist (404), one that has finished, and the
+ * same or a looser mode (409); then nothing is written.
+ */
+export function tightenMode(db: DatabaseSync, runId: number, given: unknown): Run {
+  const mode = modeChoice(given);
+  return transaction(db, () => {
+    const run = known(db, runId);
+    if (run.status === "done" || run.status === "cancelled" || run.status === "failed") throw new RunError(409, `Run ${run.id} has finished, so its mode can no longer be changed.`);
+    if (mode === run.mode) throw new RunError(409, `Run ${run.id} is already ${MODE_WORDS[mode]}.`);
+    if (!stricterModes(run.mode, run.status).includes(mode)) throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}. A run's mode can be made stricter while it works, never looser, so it cannot become ${MODE_WORDS[mode]}.`);
+    const at = now();
+    db.prepare("UPDATE runs SET mode = ?, updated_at = ? WHERE id = ?").run(mode, at, runId);
+    // voice: not on screen. A note in the stored history of the run; the run screen says it from `modeChanges`.
+    db.prepare("INSERT INTO run_events (run_id, ts, status, detail, actor, mode_from, mode_to) VALUES (?, ?, ?, ?, 'owner', ?, ?)").run(runId, at, run.status, `mode changed by the owner from ${MODE_WORDS[run.mode]} to ${MODE_WORDS[mode]}`, run.mode, mode);
     return getRun(db, runId)!;
   });
 }
@@ -459,6 +485,8 @@ export interface StartRun {
   model?: string | null;
   /** The model the tasks are built on: a name, null for the CLI's own default, or left out for the planner's choice when one was given, else the configured one. */
   buildModel?: unknown;
+  /** The agent that builds the tasks: "codex", or left out or null for the main agent, which also plans. */
+  builder?: string | null;
   /** The commands the run's builders may use without asking; each must be one plain command. */
   preapproved?: unknown;
   /** Who reviews each built task: null or left out for nobody, else `{ agent, model }` (a model name, or null for the agent's own default). */
@@ -485,6 +513,8 @@ export interface Runs {
   requestChanges(id: number, feedback: unknown, planVersion: unknown): Run;
   /** Cancel a run that is planning, waits for approval or is building. A planner or a builder at work is stopped. */
   cancel(id: number, by?: string): Run;
+  /** Make the run's mode stricter, on the owner's request (`tightenMode`). Nothing at work is stopped and no request waiting is answered. */
+  tightenMode(id: number, mode: unknown): Run;
   /** Resolves when no planner is at work and nothing is being recovered. */
   idle(): Promise<void>;
   /** Stop the planner at work and leave no CLI process and no planning worktree behind. */
@@ -513,7 +543,9 @@ export interface RunsOptions {
   /** Called for each task an approval queued or a cancel ended. */
   onTaskChange: (task: Task) => void;
   /** The build line: it builds an approved run's tasks and stops what it does for a cancelled run. */
-  line: Pick<Tasks, "buildRun" | "stopRun">;
+  line: Pick<Tasks, "buildRun" | "stopRun"> & Partial<Pick<Tasks, "builderProblem">>;
+  /** Agents other than `driver` that can build a run's tasks (Codex), by name, for what a fully autonomous run asks of them. None when left out. */
+  builders?: Partial<Record<string, Driver>>;
   /** The check commands of a repository. A run with none cannot be fully autonomous. None when left out. */
   repoCommands?: (repo: string) => { checks: readonly StationCommand[] };
   /** The mode a run is given when the request names none; manual when left out. */
@@ -591,7 +623,7 @@ export function createRuns(options: RunsOptions): Runs {
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
           .request({ taskId: null, runId: run.id, attemptId: session.attemptId, role: PLANNER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, permissionResponse(answer)) : undefined))
           .catch(report(`Answering a permission request of run ${run.id}'s planner`));
       }
       if (event.type === "permission_resolved") {
@@ -784,8 +816,8 @@ export function createRuns(options: RunsOptions): Runs {
    * A reviewer must not be the builder's own agent and model (R5), must be an agent that can review, and must be usable
    * now, as its own probe says: a run is not started with a reviewer that could only fail.
    */
-  const reviewerUsable = async (reviewer: RoleChoice, buildModel: string | null): Promise<void> => {
-    const same = sameModelProblem({ agent: driver.name, model: buildModel }, reviewer);
+  const reviewerUsable = async (reviewer: RoleChoice, buildModel: string | null, builder: string): Promise<void> => {
+    const same = sameModelProblem({ agent: builder, model: buildModel }, reviewer);
     if (same !== null) throw new RunError(400, same);
     const found = options.reviewers?.[reviewer.agent];
     if (found === undefined) throw new RunError(400, `${agentName(reviewer.agent)} cannot review a run. Choose ${Object.keys(options.reviewers ?? {}).map(agentName).join(", ")}, or no review.`);
@@ -799,11 +831,15 @@ export function createRuns(options: RunsOptions): Runs {
    * A fully autonomous run accepts work when its checks pass, so a repository with none cannot have one; and its
    * commands run without the owner only confined, so neither can an agent whose commands cannot be confined here.
    */
-  const fullyAutonomousUsable = (repo: string): void => {
+  const fullyAutonomousUsable = (repo: string, builder: Driver): void => {
     if ((options.repoCommands?.(repo).checks.length ?? 0) === 0) {
       throw new RunError(400, 'This repository has no checks set up, so a run on it cannot be fully autonomous: without checks, "fully autonomous" would mean agents agreeing with each other. Add check commands for it to Botbench\'s settings file, or choose semi-autonomous.');
     }
-    const unconfined = driver.capabilities.confinedCommands === true ? confinementProblem() : `${agentName(driver.name)} does not run every command it is given inside Botbench's protection.`;
+    // The planner is the main agent and the tasks are built by `builder`. A builder that asks only to leave its own
+    // sandbox (Codex) keeps every command inside it there: what it asks to run outside, the run refuses.
+    const keeps = (d: Driver): boolean => d.capabilities.confinedCommands === true || d.capabilities.escalationsOnly === true;
+    const loose = [driver, builder].find((d) => !keeps(d));
+    const unconfined = loose === undefined ? confinementProblem() : `${agentName(loose.name)} does not run every command it is given inside Botbench's protection.`;
     if (unconfined !== null) throw new RunError(400, `A run cannot be fully autonomous here: the commands its agents run cannot be kept away from your sign-ins and the network. ${unconfined}`);
   };
 
@@ -824,8 +860,16 @@ export function createRuns(options: RunsOptions): Runs {
     const reviewer = reviewerChoice(input.reviewer);
     const mode = input.mode === undefined ? (options.defaultMode?.() ?? "manual") : modeChoice(input.mode);
     if (input.buildModel !== undefined && input.buildModel !== null && modelNameProblem(input.buildModel) !== null) throw new RunError(400, `The build model is not a model name. ${modelNameProblem(input.buildModel)}`);
+    // The builder: the main agent, or one the owner chose (Codex), which must be able to build now.
+    const builderName = input.builder ?? null;
+    // A line that can say why a builder cannot build decides; one that cannot accepts only the main agent.
+    const cannot = options.line.builderProblem !== undefined ? options.line.builderProblem(builderName, mode) : builderName === null ? null : `${agentName(builderName)} cannot build a run's tasks in Botbench.`;
+    if (cannot !== null) throw new RunError(400, cannot);
+    const builder = builderName === null ? driver : options.builders?.[builderName];
+    if (builder === undefined) throw new RunError(400, `${agentName(builderName!)} cannot build a run's tasks in Botbench.`);
     // Left out: the same choice as planning when one was made, as the New run screen offers it; else the configured one.
-    const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : input.model !== undefined ? input.model : (options.implementerModel ?? null);
+    // Another agent than the planner's builds on its own default, unless a build model was chosen for it.
+    const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : builderName !== null ? null : input.model !== undefined ? input.model : (options.implementerModel ?? null);
     const delivery = deliveryChoice(input.delivery);
     const oneTask = oneTaskChoice(input.oneTask, mode);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
@@ -854,10 +898,10 @@ export function createRuns(options: RunsOptions): Runs {
     } catch (err) {
       throw new RunError(400, words(err));
     }
-    if (mode === "full") fullyAutonomousUsable(repo);
-    if (reviewer !== null) await reviewerUsable(reviewer, buildModel);
+    if (mode === "full") fullyAutonomousUsable(repo, builder);
+    if (reviewer !== null) await reviewerUsable(reviewer, buildModel, builder.name);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -921,7 +965,7 @@ export function createRuns(options: RunsOptions): Runs {
     await chain;
   };
 
-  return { start, editPlan: (id, tasks, planVersion) => announce(editPlan(db, id, tasks, planVersion)), approve, requestChanges, cancel, idle: () => chain, close };
+  return { start, editPlan: (id, tasks, planVersion) => announce(editPlan(db, id, tasks, planVersion)), approve, requestChanges, cancel, tightenMode: (id, mode) => announce(tightenMode(db, id, mode)), idle: () => chain, close };
 }
 
 /**

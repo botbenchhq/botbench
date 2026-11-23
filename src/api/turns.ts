@@ -34,6 +34,8 @@ export interface Turns {
   interrupt(attemptId: number): Promise<void>;
   /** Whether a turn is running in the attempt right now. */
   turnRunning(attemptId: number): boolean;
+  /** Whether any turn is running now. */
+  anyRunning(): boolean;
   /** Close every open session, leaving no CLI process behind. */
   close(): Promise<void>;
 }
@@ -190,5 +192,5 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
     await Promise.allSettled([...closing]);
   };
 
-  return { probe: () => driver.probe(), start, interrupt, turnRunning: (id) => open.get(id)?.busy === true, close };
+  return { probe: () => driver.probe(), start, interrupt, turnRunning: (id) => open.get(id)?.busy === true, anyRunning: () => [...open.values()].some((e) => e.busy), close };
 }

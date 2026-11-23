@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { FLOOR_RULES, type FloorEntry } from "./approvals/floor.ts";
 import { entryProblem, realRepo } from "./approvals/grants.ts";
 import { HOST_RULE, hostProblem } from "./confinement.ts";
+import { executionProblem, HOST_EXECUTION, type Execution } from "./execution.ts";
 import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem, type DriverCapabilities } from "./drivers/contract.ts";
 import { ANTIGRAVITY, ANTIGRAVITY_CAPABILITIES } from "./drivers/antigravity.ts";
@@ -19,6 +20,7 @@ import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 import { workbenchProblem } from "./workbench.ts";
 import { labelProblem } from "./github.ts";
 import { USAGE_LIMIT_WAIT_MS } from "./engine/usage-limit.ts";
+import { peerAddressProblem } from "./peers/address.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_CONFIG_FILE = path.join(ROOT, "botbench.config.json");
@@ -127,6 +129,13 @@ export interface RepositoryConfig {
    * should be able to apply this one: the label is what makes an issue a proposal. Not watched when absent.
    */
   watch?: WatchConfig;
+  /**
+   * Where this repository's commands run (src/execution.ts, ADR 0009): `{ "kind": "host" }`, on this Mac, kept away
+   * from the owner's sign-ins and the network, or `{ "kind": "container", "image": "node:24" }`, in one Docker container
+   * per task of an image already on this Mac, with the task's copy as its one mount and no network. "host" when absent.
+   * A container is refused with "allowedHosts", and nothing ever falls back to the host.
+   */
+  execution?: Execution;
 }
 /** What a repository's watch is set to. */
 export interface WatchConfig {
@@ -173,6 +182,19 @@ export interface Config {
    * owner in every mode, saying which files (engine/scope.ts). None when absent.
    */
   protectedPaths?: string[];
+  /** Talking to a paired workbench directly (Peers P5, ADR 0004). Off when absent. */
+  peers?: PeersConfig;
+}
+export interface PeersConfig {
+  /**
+   * Where the peer listener listens: one loopback, private or 100.64.0.0/10 address and a port (src/peers/address.ts).
+   * No peer listener, and so no pairing, when absent. Keep the port fixed: a paired workbench reaches this one there.
+   */
+  listen?: { address: string; port: number };
+  /** The most messages an agent may draft to paired workbenches in one run, a chat counting as one (ADR 0004 decision 12): 0 to 50; 5 when absent. */
+  messagesPerRun?: number;
+  /** The most round trips in one thread with a paired workbench (decision 6): 1 to 10; 3 when absent. */
+  roundTripsPerThread?: number;
 }
 export interface AutonomyConfig {
   /** After the owner has allowed the same command this many times, its next card offers standing permission. A whole number of at least 1; 3 when absent. */
@@ -246,7 +268,9 @@ const isDriverName = (name: string): name is DriverName => (DRIVER_NAMES as read
 const KNOWN = `Known drivers: ${DRIVER_NAMES.join(", ")}.`;
 
 /** Checked per file, before merging, so the message can say which file to fix. */
-function checkDriverNames(json: Json, file: string): void {
+function checkFile(json: Json, file: string): void {
+  const peering = peersProblem(json.peers, true);
+  if (peering !== null) throw new Error(`${file}: ${peering}`);
   if (isObject(json.drivers)) {
     for (const name of Object.keys(json.drivers)) {
       if (!isDriverName(name)) throw new Error(`${file}: "drivers" has unknown driver "${name}". ${KNOWN}`);
@@ -261,12 +285,39 @@ function checkDriverNames(json: Json, file: string): void {
   }
 }
 
+/**
+ * Why "peers" in a settings file cannot be used, as a sentence naming the setting, or null. Checked per file, so the
+ * message names the file that set it, and again on the merged result.
+ */
+export function peersProblem(peers: unknown, inFile = false): string | null {
+  if (peers === undefined) return null;
+  if (!isObject(peers)) return `"peers" must be an object, such as { "listen": { "address": "127.0.0.1", "port": 4790 } }.`;
+  const unknown = Object.keys(peers).find((key) => key !== "listen" && key !== "messagesPerRun" && key !== "roundTripsPerThread");
+  if (unknown !== undefined) return `"peers" has unknown setting "${unknown}". Known settings: listen, messagesPerRun, roundTripsPerThread.`;
+  const cap = peers.messagesPerRun;
+  if (cap !== undefined && (typeof cap !== "number" || !Number.isInteger(cap) || cap < 0 || cap > 50)) return `"peers.messagesPerRun" must be a whole number from 0 to 50: the most messages an agent may draft to other workbenches in one run. 5 when left out.`;
+  const trips = peers.roundTripsPerThread;
+  if (trips !== undefined && (typeof trips !== "number" || !Number.isInteger(trips) || trips < 1 || trips > 10)) return `"peers.roundTripsPerThread" must be a whole number from 1 to 10: the most round trips in one thread with another workbench. 3 when left out.`;
+  const listen = peers.listen;
+  if (listen === undefined) return null;
+  if (!isObject(listen) || Object.keys(listen).some((key) => key !== "address" && key !== "port")) return `"peers.listen" must be { "address": "127.0.0.1", "port": 4790 }: where the listener for paired workbenches listens. Leave "peers" out to keep it off.`;
+  const address = peerAddressProblem(listen.address);
+  if (address !== null) return `"peers.listen.address" cannot be used, so Botbench did not start. ${address} Or leave "peers" out to keep the listener off.`;
+  const port = listen.port;
+  // In a settings file the port is fixed: a paired workbench reaches this one there, so one picked anew at each start
+  // would break every pairing. Only a config handed over in code (a test) may ask for any free port with 0.
+  if (typeof port !== "number" || !Number.isInteger(port) || port < (inFile ? 1 : 0) || port > 65535) return `"peers.listen.port" must be a whole number from 1 to 65535, such as 4790: the port a paired workbench reaches this one on.`;
+  return null;
+}
+
 /** Check the merged result has the shape of a Config; `where` names the files it came from. */
 function validate(c: Json, where: string): Config {
   const fail = (message: string): never => {
     throw new Error(`${where}: ${message}`);
   };
-  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy, workbench, protectedPaths } = c;
+  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy, workbench, protectedPaths, peers } = c;
+  const peering = peersProblem(peers);
+  if (peering !== null) fail(peering);
   const guarded = protectedPaths === undefined ? null : protectedPathsProblem(protectedPaths);
   if (guarded !== null) fail(`"protectedPaths" ${guarded}`);
   if (workbench !== undefined && workbenchProblem(workbench) !== null) fail(`"workbench" must be a workbench name. ${workbenchProblem(workbench)}`);
@@ -322,6 +373,11 @@ function validate(c: Json, where: string): Config {
           if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue, set to open pull requests, first pushes a claim that tells other workbenches you started on it.`);
           continue;
         }
+        if (setting === "execution") {
+          const problem = executionProblem(list, value.allowedHosts);
+          if (problem !== null) fail(`repository "${repo}": ${problem}`);
+          continue;
+        }
         if (setting === "watch") {
           const problem = watchProblem(list);
           if (problem !== null) fail(`repository "${repo}": ${problem}`);
@@ -370,7 +426,7 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "execution", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
 
 /** What is wrong with a repository's "watch", as a sentence that names the setting, or null. */
 function watchProblem(watch: unknown): string | null {
@@ -443,6 +499,11 @@ export function repositoryHosts(config: Config, repo: string): string[] {
   return [...(repositorySettings(config, repo).allowedHosts ?? [])];
 }
 
+/** Where a repository's commands run: its settings' "execution", or on this Mac when they name none. */
+export function repositoryExecution(config: Config, repo: string): Execution {
+  return repositorySettings(config, repo).execution ?? HOST_EXECUTION;
+}
+
 /** Where an accepted task of a repository is pushed for a pull request: the remote, and the base branch when the settings name one. */
 export function repositoryDelivery(config: Config, repo: string): { remote: string; baseBranch: string | null } {
   const settings = repositorySettings(config, repo);
@@ -486,11 +547,11 @@ export interface ConfigFiles {
 
 export function loadConfig(files: ConfigFiles = { defaults: DEFAULT_CONFIG_FILE, local: LOCAL_CONFIG_FILE }): Config {
   let merged = readJson(files.defaults);
-  checkDriverNames(merged, files.defaults);
+  checkFile(merged, files.defaults);
   let where = files.defaults;
   if (files.local && fs.existsSync(files.local)) {
     const local = readJson(files.local);
-    checkDriverNames(local, files.local);
+    checkFile(local, files.local);
     merged = merge(merged, local);
     where = `${files.defaults} with ${files.local}`;
   }

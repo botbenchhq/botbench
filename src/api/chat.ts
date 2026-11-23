@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { logSandboxedCalls } from "../approvals/broker.ts";
+import { askThroughBroker, CHAT_ROLE, logSandboxedCalls, type Broker } from "../approvals/broker.ts";
 import { chatWebAccess } from "../approvals/web-access.ts";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { makeReviewFolder } from "../drivers/cli-sandbox.ts";
@@ -25,7 +25,8 @@ import { SCRATCH_DIR, TurnError, type Turns } from "./turns.ts";
  * the control: each works in the chat's own folder, the one Claude Code uses, where it reads, writes and runs commands;
  * reads a repository the owner attached and never changes it; its commands reach no network; and its own web search,
  * which its provider runs, follows the owner's "Web access in chat" (Allow only: they cannot ask, so Ask is Off for
- * them). Antigravity answers in a new empty folder with no tools, as a reviewer does (drivers/antigravity.ts says why).
+ * them). Antigravity gets the same folder and places inside Botbench's sandbox, and asks Botbench before it acts
+ * (capability `permissionRequests`): each request goes through the broker as a chat's (drivers/antigravity.ts).
  *
  * What a chat is made of is stored: every attempt a chat started (`chat_attempts`), and each message sent to agents
  * given the conversation by Botbench, or each request to compare answers (`chat_rounds`). Only a chat's own attempts
@@ -82,6 +83,8 @@ export interface Chat {
   /** Stop a running chat turn of an agent with no conversation of its own. False when no such turn runs in this attempt. */
   interrupt(attemptId: number): Promise<boolean>;
   turnRunning(attemptId: number): boolean;
+  /** Whether any chat reply is being written now. */
+  anyRunning(): boolean;
   info(attemptId: number): ChatAttemptInfo | null;
   close(): Promise<void>;
 }
@@ -179,6 +182,11 @@ export interface ChatOptions {
   claude: Driver;
   /** The agents with no conversation of their own here, by name. */
   agents: Partial<Record<string, Driver>>;
+  /**
+   * Where the requests of an agent that asks before it acts (Antigravity) go, as a chat's. Without it, everything such
+   * an agent would ask is refused.
+   */
+  broker?: Pick<Broker, "admit" | "request">;
   onEvent: () => void;
   /** The time a chat turn of such an agent gets: a review's. */
   limitMs?: number;
@@ -193,6 +201,7 @@ export function chatScopeWords(driver: Pick<Driver, "name" | "capabilities">): s
   if (driver.name === CLAUDE_CODE) return null;
   const name = agentName(driver.name);
   if (driver.capabilities.chatTools !== true) return `${name} answers from the conversation alone: it cannot read your files or change anything here. Botbench gives it the chat so far.`;
+  if (driver.capabilities.permissionRequests) return `${name} works only in the chat's own folder, inside Botbench's sandbox: there it reads, changes and runs commands without asking, and anything outside it asks you first. Its commands reach nothing on the network but its own provider, and it searches the web only when Web access is Allow. Botbench gives it the chat so far.`;
   return `${name} cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds: in a chat it can read, change and run things only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access is Allow. Botbench gives it the chat so far.`;
 }
 
@@ -261,19 +270,27 @@ export function createChat(o: ChatOptions): Chat {
     const tools = driver.capabilities.chatTools === true;
     const folder = tools ? { path: chatFolder, remove: () => {} } : makeReviewFolder(o.home);
     let session: DriverSession;
+    let admission: ReturnType<Broker["admit"]> | null = null;
     try {
       const how = tools
         ? { chatTools: { readable: repository === null ? [] : [repository.path, repository.gitDir] }, webSearch: chatWebAccess(db) === "allow" }
         : // Exactly what the review station asks for, in a folder with nothing in it: read-only, no host, no way to ask.
           { readOnly: true };
-      session = await driver.startAttempt({ db, cwd: folder.path, ...how, confinement: { dataDir: o.home, allowedHosts: [] }, ...(model === null ? {} : { model }) });
+      // An agent that asks is admitted as a chat's, its commands confined (its whole process is in Botbench's sandbox).
+      // Codex asks only when it builds, to leave its sandbox (`escalationsOnly`): in a chat it is kept by its sandbox alone.
+      admission = tools && driver.capabilities.permissionRequests && driver.capabilities.escalationsOnly !== true && o.broker !== undefined ? o.broker.admit({ chat: true, role: CHAT_ROLE, worktree: folder.path, confined: driver.capabilities.confinedCommands === true }) : null;
+      session = await driver.startAttempt({ db, cwd: folder.path, ...how, ...(admission === null ? {} : { gate: { socketPath: admission.socketPath, secret: admission.secret } }), confinement: { dataDir: o.home, allowedHosts: [] }, ...(model === null ? {} : { model }) });
     } catch (err) {
+      admission?.release();
       folder.remove();
       return failed(driver.name, model, roundId, `${name} could not answer: ${err instanceof DriverUnavailableError ? (err.probe.problem ?? err.message) : words(err)}`);
     }
+    admission?.bind(session.attemptId);
     join(session.attemptId, roundId);
     session.onEvent(o.onEvent);
-    if (tools) logSandboxedCalls(db, session, { agent: name, taskId: null, cwd: folder.path, where: repository === null ? "the chat's folder" : "the chat's folder, the attached repository read-only" });
+    const where = repository === null ? "the chat's folder" : "the chat's folder, the attached repository read-only";
+    if (tools && driver.capabilities.permissionRequests) askThroughBroker(db, o.broker ?? { request: async () => ({ decision: "decline", note: null, approvalId: null, refused: "Botbench's permission check is not set up for this chat." }) }, session, { who: { taskId: null, chat: true }, role: CHAT_ROLE, agent: name, cwd: folder.path, where });
+    else if (tools) logSandboxedCalls(db, session, { agent: name, taskId: null, cwd: folder.path, where });
     const timer = setTimeout(() => {
       const event: DriverEvent = { type: "error", message: `${name} did not finish within ${minutes(limitMs)} and was stopped.`, raw: null };
       db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, ?, ?)").run(session.attemptId, now(), event.type, JSON.stringify(event));
@@ -287,6 +304,7 @@ export function createChat(o: ChatOptions): Chat {
       .then(() => session.close().catch(() => {}))
       .finally(() => {
         running.delete(session.attemptId);
+        admission?.release();
         folder.remove();
       });
     running.set(session.attemptId, { session, done });
@@ -408,5 +426,5 @@ export function createChat(o: ChatOptions): Chat {
     }));
   };
 
-  return { send, interrupt, turnRunning: (id) => running.has(id), info: (id) => chatAttemptInfo(db, id), close };
+  return { send, interrupt, turnRunning: (id) => running.has(id), anyRunning: () => running.size > 0, info: (id) => chatAttemptInfo(db, id), close };
 }

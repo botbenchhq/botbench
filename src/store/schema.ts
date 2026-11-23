@@ -1791,4 +1791,548 @@ CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.check
 BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
 `,
   },
+  {
+    // A question an agent puts to the owner (src/approvals/question.ts) is an approval of its own kind: `question` holds
+    // the one question as its card shows it (JSON: its text, header and two to four choices), and `answer` the owner's
+    // own text, at most 2000 characters, once. A question belongs to a task or a run's planner, never to a chat; it ends
+    // answered (status `allowed`, with its answer) or superseded, never declined, and an answer stored for a parked one
+    // is stored with its text. The action log gains `owner_answered` (the owner's answer, in `detail`) and
+    // `question_unasked` (a fully autonomous run's question, which nobody was asked: the question in `command`, what the
+    // agent was told in `detail`, written in one row). A check cannot be altered in place, so the action log is made
+    // again with every row kept, ids included, and its indexes and triggers put back.
+    name: "questions",
+    sql: `
+ALTER TABLE approvals ADD COLUMN question TEXT CHECK (question IS NULL OR json_valid(question));
+ALTER TABLE approvals ADD COLUMN answer TEXT CHECK (answer IS NULL OR length(answer) BETWEEN 1 AND 2000);
+CREATE TRIGGER approvals_question_asked BEFORE INSERT ON approvals
+WHEN NEW.answer IS NOT NULL OR (NEW.question IS NOT NULL AND NEW.chat = 1)
+BEGIN SELECT RAISE(ABORT, 'a question is first written unanswered, and never for a chat'); END;
+CREATE TRIGGER approvals_question_fixed BEFORE UPDATE OF question ON approvals
+BEGIN SELECT RAISE(ABORT, 'what a question asks cannot be changed'); END;
+CREATE TRIGGER approvals_answer_once BEFORE UPDATE OF answer ON approvals
+WHEN OLD.answer IS NOT NULL OR OLD.question IS NULL OR NEW.answer IS NULL
+BEGIN SELECT RAISE(ABORT, 'a question is answered once, and only a question has an answer'); END;
+CREATE TRIGGER approvals_question_outcome BEFORE UPDATE OF status ON approvals
+WHEN OLD.question IS NOT NULL AND (NEW.status = 'declined' OR (NEW.status = 'allowed' AND NEW.answer IS NULL))
+BEGIN SELECT RAISE(ABORT, 'a question ends answered or superseded'); END;
+CREATE TRIGGER approvals_question_stored BEFORE UPDATE OF stored_decision ON approvals
+WHEN OLD.question IS NOT NULL AND (NEW.stored_decision IS NOT 'allow' OR NEW.answer IS NULL)
+BEGIN SELECT RAISE(ABORT, 'the answer to a parked question is stored with its text'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_questions;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_questions ORDER BY id;
+DROP TABLE action_log_before_questions;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // Codex can build (src/drivers/codex-app-server.ts). A run and a task name the agent that builds them
+    // (`build_agent`, `builder_agent`): NULL is Claude Code, as every task before this was. Each is chosen when the run
+    // or task starts and never changed after. An approval may be a Codex escalation (`escalation`): Codex asked to run
+    // something outside its own sandbox. Such an approval is asked every time; no grant answers it and it earns none.
+    name: "codex builder",
+    sql: `
+ALTER TABLE runs ADD COLUMN build_agent TEXT CHECK (build_agent IS NULL OR build_agent IN ('codex'));
+CREATE TRIGGER runs_build_agent_fixed BEFORE UPDATE OF build_agent ON runs WHEN NEW.build_agent IS NOT OLD.build_agent
+BEGIN SELECT RAISE(ABORT, 'a run''s builder is chosen when it starts and never changed'); END;
+ALTER TABLE tasks ADD COLUMN builder_agent TEXT CHECK (builder_agent IS NULL OR builder_agent IN ('codex'));
+CREATE TRIGGER tasks_builder_agent_fixed BEFORE UPDATE OF builder_agent ON tasks WHEN NEW.builder_agent IS NOT OLD.builder_agent
+BEGIN SELECT RAISE(ABORT, 'a task''s builder is chosen when it starts and never changed'); END;
+ALTER TABLE approvals ADD COLUMN escalation INTEGER NOT NULL DEFAULT 0 CHECK (escalation IN (0, 1));
+CREATE TRIGGER approvals_escalation_fixed BEFORE UPDATE OF escalation ON approvals WHEN NEW.escalation IS NOT OLD.escalation
+BEGIN SELECT RAISE(ABORT, 'whether an approval is an escalation is fixed when it is asked'); END;
+`,
+  },
+  {
+    // Peers P5, first unit (ADR 0004 decisions 3, 4, 7, 10 and 11; threat model B16). The tables a pairing and its
+    // messages need, and who asked on every approval and action-log row. No listener exists yet: nothing here is sent.
+    // - `peer_invites`: one invite this workbench made. Its 32-byte secret is kept only while the invite is `open`, and
+    //   is set to NULL (erased) when the invite is used, expires or is withdrawn; a CHECK holds the two together. It
+    //   lives 15 minutes and is used once: it leaves `open` once and never returns.
+    // - `peer_pairings`: one pairing, by the id the inviter made, with the peer's key, name, fingerprint and address as
+    //   they were at pairing, and the repository it covers by its delivery remote. The inviter keeps the invite it used,
+    //   the joiner's pairing key and the digest of the pair request it accepted, so a retry gets the same pairing.
+    //   `owner_confirmed_at` (this side's owner confirmed the peer's fingerprint) and `peer_confirmed_at` (this side
+    //   holds the other owner's confirmation) are each set once; a pairing is in force only with both and no end row.
+    // - `peer_pairing_ends`: the end of a pairing, one append-only row. After it nothing more is stored for that pairing
+    //   (a trigger refuses it) and nothing on the pairing changes, so it is never started again.
+    // - `peer_messages`: every envelope sent or received, append-only, with its digest and signature. A message id
+    //   appears once per pairing; a sequence number once per pairing and direction; one response per message.
+    // - `peer_kind_settings`: per pairing and kind, whether this side sends and receives it, and the other side's last
+    //   receive settings from its signed notice. Append-only; the latest row decides. All on at pairing.
+    // - `peer_cards`: the friction record the owner asked for on #154: when each card about a peer message was drafted,
+    //   shown and decided, and for an outgoing one the digest of the draft and of what was sent.
+    // - `approvals` and `action_log` gain `asked_by`: `owner`, `agent` or `peer`, and for `peer` the pairing and the
+    //   peer's name and fingerprint as they were. Every row from before reads `owner`. On an approval it is fixed once
+    //   written. The action log gains `peer_message_conflict`: a peer reused a message id for other content. A check
+    //   cannot be altered in place, so the action log is made again with every row kept, ids included.
+    name: "peers messages store",
+    sql: `
+CREATE TABLE peer_invites (
+  id TEXT PRIMARY KEY CHECK (length(id) = 36),
+  secret BLOB CHECK (secret IS NULL OR length(secret) = 32),
+  repository TEXT NOT NULL CHECK (length(repository) BETWEEN 1 AND 500),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('open', 'used', 'expired', 'withdrawn')),
+  closed_at TEXT,
+  CHECK ((state = 'open') = (secret IS NOT NULL)),
+  CHECK ((state = 'open') = (closed_at IS NULL))
+);
+CREATE TRIGGER peer_invites_open_first BEFORE INSERT ON peer_invites WHEN NEW.state <> 'open'
+BEGIN SELECT RAISE(ABORT, 'an invite is first written open'); END;
+CREATE TRIGGER peer_invites_fixed BEFORE UPDATE OF id, repository, created_at, expires_at ON peer_invites
+BEGIN SELECT RAISE(ABORT, 'an invite is kept as it was made'); END;
+CREATE TRIGGER peer_invites_closed_once BEFORE UPDATE OF state, secret, closed_at ON peer_invites WHEN OLD.state <> 'open' OR NEW.state = 'open'
+BEGIN SELECT RAISE(ABORT, 'an invite is used, expires or is withdrawn once, and never opens again'); END;
+CREATE TRIGGER peer_invites_no_delete BEFORE DELETE ON peer_invites
+BEGIN SELECT RAISE(ABORT, 'invites are never deleted'); END;
+
+CREATE TABLE peer_pairings (
+  id TEXT PRIMARY KEY CHECK (length(id) = 36),
+  role TEXT NOT NULL CHECK (role IN ('inviter', 'joiner')),
+  invite_id TEXT UNIQUE REFERENCES peer_invites (id),
+  pairing_key TEXT NOT NULL CHECK (length(pairing_key) = 64),
+  request_digest TEXT CHECK (request_digest IS NULL OR length(request_digest) = 64),
+  own_key TEXT NOT NULL CHECK (length(own_key) = 43),
+  peer_key TEXT NOT NULL CHECK (length(peer_key) = 43 AND peer_key <> own_key),
+  peer_name TEXT NOT NULL,
+  peer_fingerprint TEXT NOT NULL CHECK (length(peer_fingerprint) = 24),
+  peer_address TEXT NOT NULL,
+  repository TEXT NOT NULL CHECK (length(repository) BETWEEN 1 AND 500),
+  created_at TEXT NOT NULL,
+  owner_confirmed_at TEXT,
+  peer_confirmed_at TEXT,
+  CHECK ((role = 'inviter') = (invite_id IS NOT NULL AND request_digest IS NOT NULL))
+);
+CREATE TRIGGER peer_pairings_fixed BEFORE UPDATE OF id, role, invite_id, pairing_key, request_digest, own_key, peer_key, peer_name, peer_fingerprint, peer_address, repository, created_at ON peer_pairings
+BEGIN SELECT RAISE(ABORT, 'a pairing is kept as it was made'); END;
+CREATE TRIGGER peer_pairings_confirmed_once BEFORE UPDATE OF owner_confirmed_at, peer_confirmed_at ON peer_pairings
+WHEN (OLD.owner_confirmed_at IS NOT NULL AND NEW.owner_confirmed_at IS NOT OLD.owner_confirmed_at)
+  OR (OLD.peer_confirmed_at IS NOT NULL AND NEW.peer_confirmed_at IS NOT OLD.peer_confirmed_at)
+  OR EXISTS (SELECT 1 FROM peer_pairing_ends WHERE pairing_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'each owner confirms a pairing once, and an ended pairing never changes'); END;
+CREATE TRIGGER peer_pairings_no_delete BEFORE DELETE ON peer_pairings
+BEGIN SELECT RAISE(ABORT, 'pairings are never deleted; ending one adds its end'); END;
+
+CREATE TABLE peer_pairing_ends (
+  pairing_id TEXT PRIMARY KEY REFERENCES peer_pairings (id),
+  ended_by TEXT NOT NULL CHECK (ended_by IN ('owner', 'peer')),
+  how TEXT NOT NULL CHECK (how IN ('owner_ended', 'fingerprint_refused', 'end_notice', 'pairing_ended_refusal')),
+  ended_at TEXT NOT NULL,
+  CHECK ((ended_by = 'owner') = (how IN ('owner_ended', 'fingerprint_refused')))
+);
+CREATE TRIGGER peer_pairing_ends_no_update BEFORE UPDATE ON peer_pairing_ends
+BEGIN SELECT RAISE(ABORT, 'the end of a pairing is append-only'); END;
+CREATE TRIGGER peer_pairing_ends_no_delete BEFORE DELETE ON peer_pairing_ends
+BEGIN SELECT RAISE(ABORT, 'the end of a pairing is append-only'); END;
+
+CREATE TABLE peer_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pairing_id TEXT NOT NULL REFERENCES peer_pairings (id),
+  direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+  kind TEXT NOT NULL CHECK (kind IN ('question', 'answer', 'interface_proposal', 'counter', 'accept', 'blocker', 'review_request', 'verdict', 'acknowledgement', 'refusal', 'settings_notice', 'end_notice', 'pair_confirmation')),
+  message_id TEXT NOT NULL CHECK (length(message_id) = 36),
+  context_id TEXT CHECK (context_id IS NULL OR length(context_id) = 36),
+  parent_id TEXT CHECK (parent_id IS NULL OR length(parent_id) = 36),
+  repository TEXT NOT NULL,
+  sender_key TEXT NOT NULL,
+  recipient_key TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  sent_at TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 8000),
+  digest TEXT NOT NULL CHECK (length(digest) = 64),
+  signature TEXT NOT NULL CHECK (length(signature) = 86),
+  stored_at TEXT NOT NULL,
+  UNIQUE (pairing_id, message_id),
+  CHECK ((sequence = 0) = (kind IN ('acknowledgement', 'refusal')))
+);
+CREATE UNIQUE INDEX peer_messages_sequence ON peer_messages (pairing_id, direction, sequence) WHERE sequence > 0;
+CREATE UNIQUE INDEX peer_messages_one_response ON peer_messages (pairing_id, direction, parent_id) WHERE kind IN ('acknowledgement', 'refusal');
+CREATE INDEX peer_messages_thread ON peer_messages (pairing_id, context_id, id);
+CREATE TRIGGER peer_messages_no_update BEFORE UPDATE ON peer_messages
+BEGIN SELECT RAISE(ABORT, 'peer messages are append-only'); END;
+CREATE TRIGGER peer_messages_no_delete BEFORE DELETE ON peer_messages
+BEGIN SELECT RAISE(ABORT, 'peer messages are append-only'); END;
+CREATE TRIGGER peer_messages_not_after_end BEFORE INSERT ON peer_messages
+WHEN EXISTS (SELECT 1 FROM peer_pairing_ends WHERE pairing_id = NEW.pairing_id)
+BEGIN SELECT RAISE(ABORT, 'this pairing has ended: nothing more is stored for it'); END;
+
+CREATE TABLE peer_kind_settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pairing_id TEXT NOT NULL REFERENCES peer_pairings (id),
+  side TEXT NOT NULL CHECK (side IN ('own', 'peer')),
+  direction TEXT NOT NULL CHECK (direction IN ('send', 'receive')),
+  kind TEXT NOT NULL CHECK (kind IN ('question', 'answer', 'interface_proposal', 'counter', 'accept', 'blocker', 'review_request', 'verdict')),
+  allowed INTEGER NOT NULL CHECK (allowed IN (0, 1)),
+  set_by TEXT NOT NULL CHECK (set_by IN ('pairing', 'owner', 'peer_notice')),
+  set_at TEXT NOT NULL,
+  CHECK (side = 'own' OR (direction = 'receive' AND set_by IN ('pairing', 'peer_notice'))),
+  CHECK (side = 'peer' OR set_by IN ('pairing', 'owner')),
+  CHECK (set_by <> 'pairing' OR allowed = 1)
+);
+CREATE INDEX peer_kind_settings_latest ON peer_kind_settings (pairing_id, side, direction, kind, id);
+CREATE TRIGGER peer_kind_settings_no_update BEFORE UPDATE ON peer_kind_settings
+BEGIN SELECT RAISE(ABORT, 'changes to what a peer may send and receive are append-only'); END;
+CREATE TRIGGER peer_kind_settings_no_delete BEFORE DELETE ON peer_kind_settings
+BEGIN SELECT RAISE(ABORT, 'changes to what a peer may send and receive are append-only'); END;
+CREATE TRIGGER peer_kind_settings_not_after_end BEFORE INSERT ON peer_kind_settings
+WHEN EXISTS (SELECT 1 FROM peer_pairing_ends WHERE pairing_id = NEW.pairing_id)
+BEGIN SELECT RAISE(ABORT, 'this pairing has ended: its settings no longer change'); END;
+
+CREATE TABLE peer_cards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pairing_id TEXT NOT NULL REFERENCES peer_pairings (id),
+  direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+  message_id TEXT NOT NULL CHECK (length(message_id) = 36),
+  context_id TEXT NOT NULL CHECK (length(context_id) = 36),
+  kind TEXT NOT NULL,
+  drafted_at TEXT,
+  draft_digest TEXT CHECK (draft_digest IS NULL OR length(draft_digest) = 64),
+  shown_at TEXT NOT NULL,
+  decided_at TEXT,
+  decision TEXT CHECK (decision IN ('sent', 'not_sent', 'answered', 'given_to_agent', 'dismissed', 'closed_by_end')),
+  sent_digest TEXT CHECK (sent_digest IS NULL OR length(sent_digest) = 64),
+  UNIQUE (pairing_id, direction, message_id),
+  CHECK ((direction = 'out') = (drafted_at IS NOT NULL AND draft_digest IS NOT NULL)),
+  CHECK ((decided_at IS NULL) = (decision IS NULL)),
+  CHECK (decision IS NULL OR decision = 'closed_by_end' OR (direction = 'in') = (decision IN ('answered', 'given_to_agent', 'dismissed'))),
+  CHECK ((decision IS 'sent') = (sent_digest IS NOT NULL))
+);
+CREATE INDEX peer_cards_thread ON peer_cards (pairing_id, context_id, id);
+CREATE TRIGGER peer_cards_shown_undecided BEFORE INSERT ON peer_cards WHEN NEW.decided_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a card is first written undecided'); END;
+CREATE TRIGGER peer_cards_fixed BEFORE UPDATE OF id, pairing_id, direction, message_id, context_id, kind, drafted_at, draft_digest, shown_at ON peer_cards
+BEGIN SELECT RAISE(ABORT, 'what a card showed and when cannot be changed'); END;
+CREATE TRIGGER peer_cards_decided_once BEFORE UPDATE OF decided_at, decision, sent_digest ON peer_cards WHEN OLD.decided_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a card is decided once'); END;
+CREATE TRIGGER peer_cards_no_delete BEFORE DELETE ON peer_cards
+BEGIN SELECT RAISE(ABORT, 'cards are never deleted'); END;
+CREATE TRIGGER peer_cards_not_after_end BEFORE INSERT ON peer_cards
+WHEN EXISTS (SELECT 1 FROM peer_pairing_ends WHERE pairing_id = NEW.pairing_id)
+BEGIN SELECT RAISE(ABORT, 'this pairing has ended: no card is raised for it'); END;
+
+ALTER TABLE approvals ADD COLUMN asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer'));
+ALTER TABLE approvals ADD COLUMN asked_by_pairing_id TEXT REFERENCES peer_pairings (id);
+ALTER TABLE approvals ADD COLUMN asked_by_peer_name TEXT;
+ALTER TABLE approvals ADD COLUMN asked_by_peer_fingerprint TEXT;
+CREATE TRIGGER approvals_asked_by_whole BEFORE INSERT ON approvals
+WHEN (NEW.asked_by = 'peer') <> (NEW.asked_by_pairing_id IS NOT NULL AND NEW.asked_by_peer_name IS NOT NULL AND NEW.asked_by_peer_fingerprint IS NOT NULL)
+  OR (NEW.asked_by <> 'peer' AND (NEW.asked_by_pairing_id IS NOT NULL OR NEW.asked_by_peer_name IS NOT NULL OR NEW.asked_by_peer_fingerprint IS NOT NULL))
+BEGIN SELECT RAISE(ABORT, 'who asked is the owner, the agent, or a peer with its pairing, name and fingerprint'); END;
+CREATE TRIGGER approvals_asked_by_fixed BEFORE UPDATE OF asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint ON approvals
+BEGIN SELECT RAISE(ABORT, 'who asked for an approval cannot be changed'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_peers;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_peers ORDER BY id;
+DROP TABLE action_log_before_peers;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // A run's mode can be made stricter while it works, never looser (#156): fully autonomous to semi-autonomous or
+    // manual, semi-autonomous to manual, and only while the run has not finished (done, cancelled or failed; the run
+    // of a single task, which has no state, stays manual). The same mode and any looser one are refused here as well as
+    // by the route. Each change is in the run's history as the owner's (`actor`), naming the mode before and after;
+    // such a row must name the mode the run has once it is written, so it is written after the change, in its write.
+    name: "stricter modes",
+    sql: `
+DROP TRIGGER runs_mode_fixed;
+CREATE TRIGGER runs_mode_stricter_only BEFORE UPDATE OF mode ON runs
+WHEN OLD.status IS NULL OR OLD.status IN ('done', 'cancelled', 'failed') OR NOT ((OLD.mode = 'full' AND NEW.mode IN ('semi', 'manual')) OR (OLD.mode = 'semi' AND NEW.mode = 'manual'))
+BEGIN SELECT RAISE(ABORT, 'a run''s mode can only be made stricter, and only while the run has not finished'); END;
+ALTER TABLE run_events ADD COLUMN actor TEXT CHECK (actor IS NULL OR actor = 'owner');
+ALTER TABLE run_events ADD COLUMN mode_from TEXT CHECK (mode_from IS NULL OR mode_from IN ('manual', 'semi', 'full'));
+ALTER TABLE run_events ADD COLUMN mode_to TEXT CHECK (mode_to IS NULL OR mode_to IN ('manual', 'semi', 'full'));
+CREATE TRIGGER run_events_mode_change BEFORE INSERT ON run_events
+WHEN (NEW.mode_from IS NULL) <> (NEW.mode_to IS NULL) OR (NEW.mode_to IS NOT NULL AND (NEW.actor IS NOT 'owner' OR NEW.mode_to IS NOT (SELECT mode FROM runs WHERE id = NEW.run_id)))
+BEGIN SELECT RAISE(ABORT, 'a change of mode is recorded as the owner''s, naming the mode the run now has'); END;
+`,
+  },
+  {
+    // Peers P5, second unit (ADR 0004 decisions 1, 3, 4 and 9; threat model B16): the peer listener, pairing over it and
+    // ending a pairing. Each step is a row of the action log, which gains four rules, none with a task or run:
+    // - `peer_invite`: an invite made, withdrawn or expired (the owner's, or Botbench's sweep of an expired one).
+    // - `peer_pairing`: a pair request accepted or refused, a join, each owner's confirmation, a refused fingerprint and
+    //   an end, with how it ended.
+    // - `peer_protocol`: fixed-shape traffic Botbench sent without a Send (decision 9): the pair answer, a pair
+    //   confirmation, a settings notice, an acknowledgement, a refusal, an end notice.
+    // - `peer_refused`: traffic the peer listener refused, at most one row a minute per pairing or caller, with the count.
+    // No row holds an invite's secret or the invite text. A check cannot be altered in place, so the action log is made
+    // again with every row kept, ids and who asked included.
+    name: "peers listener and pairing log",
+    sql: `
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_pairing;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule NOT IN ('peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused') OR (task_id IS NULL AND run_id IS NULL AND attempt_id IS NULL AND approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_invite' OR asked_by = 'owner'),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log_before_pairing ORDER BY id;
+DROP TABLE action_log_before_pairing;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // Peers P5, third unit (ADR 0004 decisions 6 to 12; threat model B16): questions and answers between paired
+    // workbenches, both gates, the cap per run and who asked.
+    // - `runs` gain the peer message a run was given (Give it to Claude Code): the pairing, the message id, and the
+    //   peer's name and fingerprint as they were then. Set when the run starts, never changed, and only on a run marked
+    //   as having read outside text (which is never fully autonomous).
+    // - `peer_drafts`: every draft an agent wrote in a `botbench-peer-message` block, counted per run or chat whatever
+    //   became of it: a card, or refused (over the cap, fully autonomous, its shape, no pairing in force, switched off,
+    //   the thread full).
+    //   `told_at` is set once, when the agent's next prompt told it of a draft over the cap.
+    // - `peer_send_outcomes`: an outgoing question or answer Botbench stopped sending: its kind was switched off by the
+    //   time of an attempt, or 24 hours passed unacknowledged. Append-only; one per message.
+    // - The action log gains five rules: `peer_message` (a question or answer sent, received, shown on a card, decided),
+    //   `peer_kind_refused`, `peer_send_attempt`, `peer_send_over_limit` and `peer_settings` (the owner changed what a
+    //   peer may send or receive).
+    // - Who asked, fixed by trigger: an approval or action-log row of a run given a peer's message names that peer.
+    name: "peer messages",
+    sql: `
+ALTER TABLE runs ADD COLUMN peer_pairing_id TEXT REFERENCES peer_pairings (id);
+ALTER TABLE runs ADD COLUMN peer_message_id TEXT CHECK (peer_message_id IS NULL OR length(peer_message_id) = 36);
+ALTER TABLE runs ADD COLUMN peer_name TEXT;
+ALTER TABLE runs ADD COLUMN peer_fingerprint TEXT;
+CREATE TRIGGER runs_peer_fixed BEFORE UPDATE OF peer_pairing_id, peer_message_id, peer_name, peer_fingerprint ON runs
+BEGIN SELECT RAISE(ABORT, 'the peer message a run was given is set when it starts and never changed'); END;
+CREATE TRIGGER runs_peer_marked BEFORE INSERT ON runs
+WHEN (NEW.peer_pairing_id IS NULL) <> (NEW.peer_message_id IS NULL) OR (NEW.peer_pairing_id IS NULL) <> (NEW.peer_name IS NULL) OR (NEW.peer_pairing_id IS NULL) <> (NEW.peer_fingerprint IS NULL)
+  OR (NEW.peer_pairing_id IS NOT NULL AND (NEW.outside_text = 0 OR NEW.mode = 'full' OR NEW.issue_fetch_id IS NOT NULL))
+BEGIN SELECT RAISE(ABORT, 'a run given a peer''s message names the pairing, the message and the peer, and is marked as having read outside text'); END;
+
+CREATE TABLE peer_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER REFERENCES runs (id),
+  chat_id INTEGER,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  pairing_id TEXT REFERENCES peer_pairings (id),
+  agent TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  body TEXT NOT NULL CHECK (length(body) <= 8000),
+  message_id TEXT UNIQUE CHECK (message_id IS NULL OR length(message_id) = 36),
+  context_id TEXT CHECK (context_id IS NULL OR length(context_id) = 36),
+  parent_id TEXT CHECK (parent_id IS NULL OR length(parent_id) = 36),
+  drafted_at TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('card', 'over_limit', 'refused_autonomous', 'refused_shape', 'refused_no_pairing', 'refused_switched_off', 'refused_thread_full')),
+  problem TEXT,
+  told_at TEXT,
+  CHECK ((run_id IS NULL) <> (chat_id IS NULL)),
+  CHECK ((outcome = 'card') = (message_id IS NOT NULL AND context_id IS NOT NULL AND pairing_id IS NOT NULL)),
+  CHECK (told_at IS NULL OR outcome = 'over_limit')
+);
+CREATE INDEX peer_drafts_run ON peer_drafts (run_id, id);
+CREATE INDEX peer_drafts_chat ON peer_drafts (chat_id, id);
+CREATE TRIGGER peer_drafts_fixed BEFORE UPDATE ON peer_drafts
+WHEN NEW.id IS NOT OLD.id OR NEW.run_id IS NOT OLD.run_id OR NEW.chat_id IS NOT OLD.chat_id OR NEW.task_id IS NOT OLD.task_id OR NEW.attempt_id IS NOT OLD.attempt_id OR NEW.agent IS NOT OLD.agent
+  OR NEW.pairing_id IS NOT OLD.pairing_id OR NEW.kind IS NOT OLD.kind OR NEW.body IS NOT OLD.body OR NEW.message_id IS NOT OLD.message_id OR NEW.context_id IS NOT OLD.context_id
+  OR NEW.parent_id IS NOT OLD.parent_id OR NEW.drafted_at IS NOT OLD.drafted_at OR NEW.outcome IS NOT OLD.outcome OR NEW.problem IS NOT OLD.problem
+  OR OLD.told_at IS NOT NULL OR NEW.told_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'a draft is kept as it was written; only when its agent was told of it is set, once'); END;
+CREATE TRIGGER peer_drafts_no_delete BEFORE DELETE ON peer_drafts
+BEGIN SELECT RAISE(ABORT, 'drafts are never deleted'); END;
+
+CREATE TABLE peer_send_outcomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pairing_id TEXT NOT NULL REFERENCES peer_pairings (id),
+  message_id TEXT NOT NULL CHECK (length(message_id) = 36),
+  outcome TEXT NOT NULL CHECK (outcome IN ('switched_off', 'not_delivered')),
+  at TEXT NOT NULL,
+  UNIQUE (pairing_id, message_id)
+);
+CREATE TRIGGER peer_send_outcomes_no_update BEFORE UPDATE ON peer_send_outcomes
+BEGIN SELECT RAISE(ABORT, 'what became of a message is kept as it was written'); END;
+CREATE TRIGGER peer_send_outcomes_no_delete BEFORE DELETE ON peer_send_outcomes
+BEGIN SELECT RAISE(ABORT, 'what became of a message is kept as it was written'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_messages;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused', 'peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule NOT IN ('peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused') OR (task_id IS NULL AND run_id IS NULL AND attempt_id IS NULL AND approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule NOT IN ('peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings') OR (approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_settings' OR (asked_by = 'owner' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'peer_invite' OR asked_by = 'owner'),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log_before_messages ORDER BY id;
+DROP TABLE action_log_before_messages;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_peer_asked BEFORE INSERT ON action_log
+WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
+  AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))
+BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
+CREATE TRIGGER approvals_peer_asked BEFORE INSERT ON approvals
+WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
+  AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))
+BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
+`,
+  },
+  {
+    // Updating Botbench to a published release (src/update.ts): the owner chooses in Settings whether it updates on a
+    // tap (`tap`, also when never chosen) or by itself (`auto`). A check cannot be altered in place, so the table is
+    // made again with every row kept.
+    name: "update mode",
+    sql: `
+ALTER TABLE owner_settings RENAME TO owner_settings_before_update;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'update_mode')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
+  CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off')),
+  CHECK (name <> 'ask_every_command' OR value IN ('on', 'off')),
+  CHECK (name <> 'update_mode' OR value IN ('tap', 'auto'))
+);
+INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_update;
+DROP TABLE owner_settings_before_update;
+`,
+  },
 ];

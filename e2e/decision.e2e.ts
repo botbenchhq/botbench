@@ -69,9 +69,21 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   // The task's copy, wherever under its run Botbench made it.
   const copy = fs.readdirSync(path.join(botbench.home, "worktrees")).map((run) => path.join(botbench.home, "worktrees", run, `task-${taskId}`)).find((dir) => fs.existsSync(dir))!;
   expect(task.leftovers).toEqual(["check-report.txt"]);
-  // One primary action: Accept. Reject is beside it.
+  // The design system's review decision: a section titled by its heading, the checks' and the review's line, the note,
+  // then Accept first, the one primary action, and Reject, plain, at the far end. Both are marked as never hidden.
+  const decide = page.getByRole("region", { name: "Your decision" });
+  await expect(decide).toHaveClass(/ds-review-decision/);
+  await expect(decide.locator(".ds-review-decision__source")).toHaveText(["Checks", "Review"]);
+  await expect(decide.getByTestId("decision-checks")).toHaveText(/^Checks passed /);
+  await expect(decide.getByTestId("decision-review")).toHaveText("Not reviewed: this run has no reviewer.");
+  await expect(decide.getByLabel("Note (optional)")).toBeVisible();
+  const actions = decide.locator(".ds-review-decision__actions");
+  await expect(actions.getByRole("button")).toHaveText(["Accept", "Reject"]);
+  await expect(actions.locator("[data-ds-critical]")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Accept" })).toHaveClass(/ds-button--primary/);
-  await expect(page.getByRole("button", { name: "Reject" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reject" })).not.toHaveClass(/ds-button--primary/);
+  const field = (await decide.getByLabel("Note (optional)").boundingBox())!;
+  expect(field.y, "the note comes before the actions").toBeLessThan((await actions.boundingBox())!.y);
   await checkDesign(page, "task, ready for review, with files the checks left");
   await shot(page, "u14-ready.png");
 
@@ -90,10 +102,31 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   expect(fs.existsSync(path.join(copy, "check-report.txt"))).toBe(true);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
 
-  await page.getByRole("button", { name: "Accept" }).click();
+  // While the decision is sent (held here until that is seen), Accept says Accepting, is busy and keeps the focus, and only Reject is unavailable.
+  let release = (): void => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\/api\/tasks\/\d+\/accept$/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  const accept = actions.getByRole("button", { name: "Accept" });
+  await accept.click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Accept and remove them" }).click();
+  const accepting = actions.getByRole("button", { name: "Accepting" });
+  await expect(accepting).toHaveAttribute("aria-busy", "true");
+  await expect(accepting).toBeEnabled();
+  await expect(accepting).toBeFocused();
+  await expect(actions.getByRole("button", { name: "Reject" })).toBeDisabled();
+  release();
+  // Decided: the result takes the place of the actions and the note, and the focus moves to the section's heading.
   await expect(page.getByTestId("task-status")).toHaveText(/^Accepted\. /);
+  await page.unroute(/\/api\/tasks\/\d+\/accept$/);
   await expect(page.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
+  await expect(decide.locator(".ds-review-decision__actions")).toHaveCount(0);
+  await expect(decide.getByLabel("Note (optional)")).toHaveCount(0);
+  await expect(decide.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted");
+  await expect(decide.getByRole("heading", { name: "Your decision" })).toBeFocused();
+  await expect(decide.locator(".ds-review-decision__source")).toHaveText(["Checks", "Review"]);
   await expect(page.getByTestId("branch")).toHaveText(task.branch);
   await expect(page.getByTestId("merge-command")).toHaveValue(`git merge ${task.branch}`);
   await expect(page.getByTestId("decision-repo")).toHaveText(repos.checked);
@@ -134,6 +167,8 @@ test("LIVE: Accept a task whose check left files behind: the dialog lists them, 
   await asking.getByRole("button", { name: "Reject" }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Rejected\. /);
   await expect(page.getByTestId("task-status")).toContainText("branch was deleted");
+  await expect(page.getByTestId("decision").locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Rejected");
+  await expect(page.getByRole("heading", { name: "Your decision" })).toBeFocused();
   await expect(page.getByTestId("branch")).toHaveCount(0);
   await expect(page.getByTestId("merge-command")).toHaveCount(0);
   await checkDesign(page, "task, rejected, branch deleted");

@@ -26,8 +26,8 @@ const test = base.extend<{ repo: string }>({
     });
     await use(botbench);
     const { leftover } = await botbench.stop();
-    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
+    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
   },
 });
 

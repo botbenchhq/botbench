@@ -1,6 +1,7 @@
 import path from "node:path";
 import { initRepo } from "../test/support/repo.ts";
 import { SHOTS, checkDesign, expect, signIn, startTaskIn, test } from "./helpers.ts";
+import { escapeRegExp } from "../test/support/regexp.ts";
 
 // U27 in the real client, at a phone's size: a real Botbench process, a real temporary repository, and the owner's
 // Claude Code on its cheapest model running a command that tries to reach the network. It runs without a card: it is kept
@@ -24,7 +25,7 @@ test("LIVE: a command that runs without asking and tries to reach a host the rep
   // One row, the design system's tool call: Failed, a plain verb and the real command, and why in a plain note; open without a tap.
   const row = page.locator('[data-event="tool_call"]').filter({ hasText: COMMAND }).first().locator(".ds-tool-call");
   await expect(row).toHaveAttribute("data-state", "failed");
-  await expect(row.locator(".ds-tool-call__title")).toHaveText(new RegExp(`^Failed\\s*Ran\\s*${COMMAND.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}$`));
+  await expect(row.locator(".ds-tool-call__title")).toHaveText(new RegExp(`^Failed\\s*Ran\\s*${escapeRegExp(COMMAND)}$`));
   await expect(row.getByTestId("confined")).toHaveText("Kept from the network. Its output says a connection to example.com:443 was not allowed. The agent's commands reach only the hosts allowed for this repository in Botbench's settings file, and none when no host is.");
   await expect(row.locator("details").first()).toHaveAttribute("open", "");
   // The evidence is behind it: the output, with the sandbox's own report, and the raw arguments one level deeper.

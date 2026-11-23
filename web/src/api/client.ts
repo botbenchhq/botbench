@@ -19,7 +19,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "answered" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   /** `usageLimit`: the turn ended because the agent's usage limit was reached; `resetsAt` is when it said it resets, or null. */
@@ -205,6 +205,8 @@ export interface ConnectState {
   terminalCommand: string;
   /** The agent's own sign-out, as Disconnect runs it. */
   signOutCommand: string;
+  /** The sign-in is one Botbench keeps in its own folder, apart from the agent's in a terminal (Antigravity): Disconnect removes it there. */
+  keptByBotbench: boolean;
   /** The page shows a code after sign-in, to be pasted back here. */
   takesCode: boolean;
   state: "idle" | "starting" | "waiting" | "checking" | "succeeded" | "failed" | "cancelled";
@@ -531,8 +533,9 @@ export interface KnownRepository {
 /** The repositories used before, most recent first, then the configured ones. */
 export const listRepos = (): Promise<KnownRepository[]> => request<{ repositories: KnownRepository[] }>("GET", "/api/repos", undefined, CHECK_REPO_LIMIT_MS).then((r) => r.repositories);
 /** `preapproved` is exactly what this task's run may use without asking: the server grants nothing the request does not list. */
-export const startTask = (repo: string, prompt: string, model: string | null | undefined, preapproved: string[]): Promise<{ taskId: number }> =>
-  request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved }, 30_000);
+/** Start one task; `agent` names the builder when it is not Claude Code ("codex"). */
+export const startTask = (repo: string, prompt: string, model: string | null | undefined, preapproved: string[], agent?: string): Promise<{ taskId: number }> =>
+  request("POST", "/api/tasks", { repo, prompt, ...withModel(model), preapproved, ...(agent === undefined ? {} : { agent }) }, 30_000);
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 /** Accept a task that is ready for review. `removeLeftovers` is the list of files its checks left, as the owner saw and confirmed them. */
@@ -628,6 +631,10 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   issueHosts: string[];
   /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
   claim: { state: "claiming" | "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
+  /** The stricter modes the owner may move the run to now, loosest first; empty for a manual or finished run. */
+  modeChoices: RunMode[];
+  /** Each change of mode the owner made, oldest first, with the sentence the run screen shows for it. */
+  modeChanges: { at: string; from: RunMode; to: RunMode; words: string }[];
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -662,8 +669,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[]; agent?: string }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -715,6 +722,12 @@ export interface WorkbenchSetting {
   setInFile: boolean;
 }
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
+/** Where one repository of the settings file runs its commands (src/execution.ts). */
+export interface RepositoryExecution {
+  path: string;
+  execution: { kind: "host" } | { kind: "container"; image: string };
+}
+export const getRepositoryExecutions = async (): Promise<RepositoryExecution[]> => (await request<{ repositories: RepositoryExecution[] }>("GET", "/api/settings", undefined, 30_000)).repositories;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
 
 /** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
@@ -897,6 +910,8 @@ export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Pr
 export const approvePlan = (id: number, planVersion: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/approve`, { planVersion }, 30_000);
 export const requestPlanChanges = (id: number, planVersion: number, feedback: string): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/request-changes`, { planVersion, feedback }, 30_000);
 export const cancelRun = (id: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/cancel`, {}, 30_000);
+/** Make the run's mode stricter; the server refuses a looser or the same mode, and a finished run. */
+export const changeRunMode = (id: number, mode: RunMode): Promise<RunDetail> => request("POST", `/api/runs/${id}/mode`, { mode }, 30_000);
 
 export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 
@@ -937,6 +952,19 @@ export interface Approval {
   asksBecause: string | null;
   /** Where a file tool's request is aimed: relative to the task's copy when inside it, a full path when not; null when it names none or it is not known. */
   target: string | null;
+  /** Set when this is Claude Code's question to the owner, not a request to run something: the question and its choices, all in the agent's own words. */
+  question: Question | null;
+  /** The owner's answer to a question, as given; null until there is one. */
+  answer: string | null;
+}
+
+/** Claude Code's question to the owner, as its card shows it. Every word is the agent's: shown as plain text, never as markdown or HTML. */
+export interface Question {
+  text: string;
+  /** The agent's short label for it; "" when it gave none. */
+  header: string;
+  /** Two to four. `description` is "" when the agent gave none. */
+  choices: { label: string; description: string }[];
 }
 
 /** The scope of a standing permission a card offers. */
@@ -990,9 +1018,33 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
+  /** The owner answered Claude Code's question; the entry holds the answer. */
+  | "owner_answered"
+  /** In a fully autonomous run, Claude Code's question that nobody was asked: it chose for itself. */
+  | "question_unasked"
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
-  | "memory";
+  | "memory"
+  /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
+  | "peer_message_conflict"
+  /** An invite to pair with another workbench was made, withdrawn, or expired. */
+  | "peer_invite"
+  /** A step of pairing with another workbench. */
+  | "peer_pairing"
+  /** A fixed reply or notice sent to a paired workbench without asking. */
+  | "peer_protocol"
+  /** What the listener for paired workbenches refused, at most one entry a minute, with how many. */
+  | "peer_refused"
+  /** A question or an answer to or from a paired workbench. */
+  | "peer_message"
+  /** A question or an answer not sent or not taken, because its kind is switched off for that workbench. */
+  | "peer_kind_refused"
+  /** An agent drafted a message to a paired workbench; counted before anything else is decided. */
+  | "peer_send_attempt"
+  /** An agent's draft refused without a card: its run had sent its most messages to other workbenches. */
+  | "peer_send_over_limit"
+  /** The owner changed what a paired workbench may send or receive. */
+  | "peer_settings";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {
@@ -1012,11 +1064,28 @@ export const listPendingApprovals = async (): Promise<Approval[]> =>
 export const answerApproval = (id: number, decision: "allow" | "decline", note?: string): Promise<{ approval: Approval }> =>
   request("POST", `/api/approvals/${id}`, note === undefined || note.trim() === "" ? { decision } : { decision, note }, 30_000);
 
+/** Answer Claude Code's question with one of its choices or the owner's own words. The server stores it as given and hands it only to the agent. */
+export const answerQuestion = (id: number, answer: string): Promise<{ approval: Approval }> => request("POST", `/api/approvals/${id}/answer`, { answer }, 30_000);
+
 /** Allow this request and give its command standing permission, with the scope its card offered. The server refuses a card that may not offer one. */
 export const grantStanding = (id: number): Promise<{ approval: Approval; grant: StandingGrant }> => request("POST", `/api/approvals/${id}`, { decision: "allow", standing: true }, 30_000);
 /** The standing permissions in force, and after how many approvals a card offers one. */
 export const listGrants = (): Promise<{ grants: StandingGrant[]; offerStandingAfter: number }> => request("GET", "/api/grants", undefined, 30_000);
 export const revokeGrant = (id: number): Promise<{ revoked: StandingGrant }> => request("POST", `/api/grants/${id}/revoke`, {}, 30_000);
+/** What a command would get in one mode, as the permission check answers it (src/approvals/preview.ts). `words` is the server's own line. */
+export interface ModePreview {
+  mode: RunMode;
+  verdict: "allow" | "ask" | "refuse";
+  rule: string;
+  /** The always-ask rule that names the command, when one does. */
+  floor?: string;
+  /** The listed command or Always allow that lets it run. */
+  grant?: { kind: "preapproved" | "standing"; command: string };
+  words: string;
+}
+/** What `command` would get in Manual, Semi-autonomous and Fully autonomous in a task of the repository at `path`. It changes nothing. */
+export const previewCommand = (path: string, command: string): Promise<{ repository: string; command: string; modes: ModePreview[] }> =>
+  request("GET", `/api/permissions/preview?path=${encodeURIComponent(path)}&command=${encodeURIComponent(command)}`, undefined, 30_000);
 /** One page of the action log, newest first: the entries older than `before`, or the newest. `older` says whether more remain. */
 export const getActionLog = (limit: number, before?: number): Promise<{ entries: LogEntry[]; older: boolean }> =>
   request("GET", `/api/action-log?limit=${limit}${before === undefined ? "" : `&before=${before}`}`, undefined, 30_000);
@@ -1213,3 +1282,27 @@ export const signOutDevice = (id: number): Promise<unknown> => request("POST", `
 export const signOutOtherDevices = (): Promise<unknown> => request("POST", "/api/devices/sign-out-others", {}, 10_000);
 /** A new one-time code for adding a device, which replaces the last one; 8 symbols, and when it stops working. */
 export const newPairingCode = (): Promise<{ code: string; expiresAt: string }> => request("POST", "/api/devices/pairing", {}, 10_000);
+
+/** When Botbench updates to a new release: on the owner's tap, or by itself. */
+export type UpdateMode = "tap" | "auto";
+/** How updating to a release is going (src/update.ts). */
+export interface UpdateState {
+  kind: "idle" | "waiting" | "updating" | "failed" | "restart_needed" | "restarting" | "updated";
+  version: string | null;
+  message: string | null;
+  at: string;
+}
+/** The running version, the latest release the last check found, and how an update is going. */
+export interface UpdateStatus {
+  version: string;
+  checking: boolean;
+  checkedAt: string | null;
+  checkProblem: string | null;
+  latest: { version: string; tag: string; summary: string; url: string | null } | null;
+  available: boolean;
+  mode: UpdateMode;
+  state: UpdateState;
+}
+export const getUpdate = (): Promise<UpdateStatus> => request("GET", "/api/update", undefined, 30_000);
+export const startUpdate = (): Promise<UpdateStatus> => request("POST", "/api/update", {}, 30_000);
+export const setUpdateMode = (mode: UpdateMode): Promise<UpdateStatus> => request("PUT", "/api/update", { mode }, 30_000);

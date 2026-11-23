@@ -115,6 +115,14 @@ export function createAuth(options: AuthOptions): Auth {
     for (const res of inFlight.get(id) ?? []) if (res !== except) res.destroy();
   };
 
+  // `Secure` is set exactly when the request came through a configured HTTPS name (`publicHosts`), and not otherwise.
+  // CodeQL alert 2 reads that as a session cookie that can be sent without TLS; here it is a false positive by design.
+  // Without HTTPS the request reached one of Botbench's own plain-HTTP listeners, which `gate` accepts only for the
+  // `Host` of a listen address: the loopback address by default, or one the owner added to `listen` (a private-network
+  // address). There is no TLS on that connection for `Secure` to demand: a browser refuses to store a Secure cookie from
+  // an http:// address other than localhost, so setting it there would only make signing in impossible on that
+  // address, and would protect nothing, since the token that signs in travels over the same connection. Where TLS
+  // exists, the cookie is Secure. (docs/security/threat-model.md, "Signed-in devices".)
   const sessionCookie = (secret: string, secure: boolean, maxAge = SESSION_MAX_AGE_S): string =>
     `${SESSION_COOKIE}=${secret}; Max-Age=${maxAge}; HttpOnly; SameSite=Strict; Path=/${secure ? "; Secure" : ""}`;
 

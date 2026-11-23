@@ -105,6 +105,7 @@ test("every approval route refuses a request without a session, and an answer se
     ["GET", "/api/approvals"],
     ["GET", "/api/approvals?status=pending"],
     ["POST", `/api/approvals/${id}`, { decision: "allow" }],
+    ["POST", `/api/approvals/${id}/answer`, { answer: "Hi" }],
     ["GET", "/api/action-log"],
     ["GET", `/api/action-log?taskId=${api.taskId}`],
   ];
@@ -128,6 +129,23 @@ test("every approval route refuses a request without a session, and an answer se
   assert.equal((await waiting).decision, "decline");
 });
 
+test("Claude Code's question is listed with its question and choices; the owner's answer over the API goes back keyed by the question; a second answer is 409 and a malformed one is 400", async (t) => {
+  const api = await start(t);
+  const input = { questions: [{ question: "Which greeting should I use?", header: "Greeting", options: [{ label: "Hello", description: "The long one" }, { label: "Hi", description: "" }], multiSelect: false }] };
+  const waiting = api.server.broker.request({ taskId: api.taskId, attemptId: api.attemptId, role: "implementer", tool: "AskUserQuestion", command: JSON.stringify(input), input, cwd: ".", reason: null, toolCallId: "toolu_q1" });
+  const listed = (await get(api, "/api/approvals?status=pending")).body.approvals as Record<string, unknown>[];
+  assert.equal(listed.length, 1);
+  assert.deepEqual([listed[0]!.question, listed[0]!.answer, listed[0]!.command], [{ text: "Which greeting should I use?", header: "Greeting", choices: [{ label: "Hello", description: "The long one" }, { label: "Hi", description: "" }] }, null, "Which greeting should I use?"]);
+  const id = listed[0]!.id as number;
+  for (const bad of [{}, { answer: 3 }, { answer: "   " }, { answer: "x".repeat(2001) }]) assert.equal((await post(api, `/api/approvals/${id}/answer`, bad)).status, 400, JSON.stringify(bad).slice(0, 40));
+  assert.equal((await post(api, `/api/approvals/${id}`, { decision: "allow" })).status, 409, "not answered with Allow");
+  const answered = await post(api, `/api/approvals/${id}/answer`, { answer: "Hi" });
+  assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  assert.deepEqual((await waiting).answers, { "Which greeting should I use?": "Hi" });
+  assert.equal((await post(api, `/api/approvals/${id}/answer`, { answer: "Hello" })).status, 409);
+  assert.equal((await post(api, `/api/approvals/${id + 41}/answer`, { answer: "Hello" })).status, 404);
+});
+
 test("a pending approval is listed with what the card shows, answering it resolves the waiting request, and both changes are announced on the stream", async (t) => {
   const api = await start(t);
   const announced = await approvalAnnouncements(t, api);
@@ -142,7 +160,7 @@ test("a pending approval is listed with what the card shows, answering it resolv
   const approval = listed[0]!;
   assert.deepEqual(
     { ...approval, id: 0, createdAt: "" },
-    { id: 0, taskId: api.taskId, chat: false, runId: null, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false, asksBecause: "Botbench could not tell what this would run, or which of its agents asked.", target: null },
+    { id: 0, taskId: api.taskId, chat: false, runId: null, taskTitle: "run the marker script", attemptId: api.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: ".", reason: "The agent's own words", toolCallId: "toolu_b1", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false, asksBecause: "Botbench could not tell what this would run, or which of its agents asked.", target: null, question: null, answer: null, askedBy: { by: "owner", pairingId: null, peerName: null, peerFingerprint: null, words: null } },
   );
   assert.deepEqual(announced[0], { approvalId: approval.id, taskId: api.taskId, runId: null, status: "pending" });
   // The task says it is waiting on the owner, in its own description and in the list.

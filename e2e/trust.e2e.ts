@@ -25,8 +25,8 @@ const test = base.extend<{ repo: string }>({
     const botbench: Botbench = await startBotbench({ home: path.join(path.dirname(repo), "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, autonomy: { offerStandingAfter: 1 } } });
     await use(botbench);
     const { leftover } = await botbench.stop();
-    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
+    expect(leftover, "no CLI process is left after Botbench stops").toEqual([]);
   },
 });
 
@@ -38,11 +38,11 @@ async function startTask(page: Page, repo: string, prompt: string, id: number): 
 const shape = (list: Locator): Promise<string[]> => list.evaluate((el) => [el.tagName, ...new Set([...el.children].map((child) => child.tagName))]);
 const api = async <B>(page: Page, botbench: Botbench, route: string): Promise<B> => (await (await page.request.get(`${botbench.base}${route}`)).json()) as B;
 
-/** Wait for the card of approval `id`, which replaces the one before it, and for its buttons to come alive. */
+/** Wait for the card of approval `id`, which replaces the one before it, and for it to settle, after which a press counts. */
 async function cardOf(page: Page, id: number): Promise<Locator> {
   const card = page.getByTestId("approval-card");
   await expect(card).toHaveAttribute("data-approval-id", String(id), { timeout: 120_000 });
-  await expect(card.getByRole("button", { name: "Allow once", exact: true })).toBeEnabled();
+  await expect(card).toHaveAttribute("data-settled", "");
   return card;
 }
 
@@ -51,16 +51,107 @@ test("Permissions starts empty in words, with nothing to tap and nothing in the 
   // Permissions is a screen of its own, reached from Settings, with a link back. With nothing granted and nothing logged it says so in words.
   await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
   await openFromSettings(page, "Permissions");
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Activity"]);
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Check a command", "Activity"]);
   await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
   await expect(nav(page).locator('[aria-current="page"]')).toHaveCount(0);
   await expect(page.getByTestId("grants-none")).toHaveText("Nothing is always allowed. After you have allowed the same command once, its request offers Always allow.");
   await expect(page.getByTestId("log-none")).toHaveText("Nothing has been asked, allowed or run yet.");
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
   await expect(page.getByTestId("action-log")).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveCount(0);
+  // The one control is the command check's, which changes nothing; with no repository known its picker says so.
+  await expect(page.getByRole("button")).toHaveText(["Check"]);
+  await expect(page.getByTestId("check-repository")).toBeDisabled();
+  await expect(page.getByTestId("check-repository")).toHaveText("No repository yet");
   await expect(page.getByTestId("approval-tray")).toBeEmpty();
   await checkDesign(page, "trust, empty");
+});
+
+test("Check a command answers for each mode in words, the rule behind each named, and changes nothing, at a phone's width and a desktop's, light and dark", async ({ page }) => {
+  // A repository named in the settings file, which offers `npm test` as an allowed command for each task.
+  const dir = tempDir("botbench-e2e-check-");
+  const repo = path.join(dir, "sample-repo");
+  initRepo(repo, { "README.md": "# Sample\n" });
+  const botbench = await startBotbench({ home: path.join(dir, "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [repo]: { preapproved: ["npm test"] } } } });
+  try {
+    const foreign = watchRequests(page, botbench);
+    await signIn(page, botbench);
+    await openFromSettings(page, "Permissions");
+    const picker = page.getByTestId("check-repository");
+    await expect(picker).toBeEnabled();
+    await expect(picker).toHaveValue(fs.realpathSync(repo));
+    const box = page.getByTestId("check-command");
+    const result = page.getByTestId("check-result");
+    const run = async (command: string): Promise<void> => {
+      await box.fill(command);
+      await page.getByRole("button", { name: "Check", exact: true }).click();
+      await expect(result).toBeVisible();
+    };
+
+    await run("git push");
+    await expect(result.getByRole("listitem")).toHaveText([
+      "ManualAsks you. On the always-ask list: it sends commits to another computer. Rule: git-push",
+      "Semi-autonomousAsks you. On the always-ask list: it sends commits to another computer. Rule: git-push",
+      "Fully autonomousRefused: a fully autonomous run asks you nothing, so what would ask is not run. On the always-ask list: it sends commits to another computer. Rule: git-push",
+    ]);
+    expect(await primaries(page), "the check is no primary action").toEqual([]);
+    await checkDesign(page, "trust, a command that asks, dark");
+
+    // A new command clears the old answer until it is checked.
+    await box.fill("npm test");
+    await expect(result).toHaveCount(0);
+    await page.getByRole("button", { name: "Check", exact: true }).click();
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: this repository's settings offer npm test as an allowed command for each task\.$/));
+
+    // A command of two lines is checked as it would run, line break and all: its second line is on the always-ask list.
+    await run("true\ngit push");
+    await expect(box).toHaveValue("true\ngit push");
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Rule: git-push$/));
+
+    // An empty command is refused in words, with no answer.
+    await box.fill("");
+    await page.getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText("Give a command to check.");
+    await expect(result).toHaveCount(0);
+    // The reason is about the command it was given: typing another clears it, and the box is no longer marked.
+    await box.fill("ls");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(box).not.toHaveAttribute("aria-invalid", "true");
+
+    // Light, at a phone's width and a desktop's.
+    await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await run("git push");
+    await checkDesign(page, "trust, a command that asks, light");
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(result).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px`).toBe(true);
+      await checkDesign(page, `trust, a command that asks, light, ${width}px`);
+    }
+    await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "dark"));
+    // Loaded again at a phone's width, then widened, as the light pass does.
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await run("ls src");
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: it runs kept in the task's copy, and the safety rules do not name it\.$/));
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(result).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px, dark`).toBe(true);
+      await checkDesign(page, `trust, a command that runs, dark, ${width}px`);
+    }
+
+    // Nothing was asked, logged or granted.
+    expect(await (await page.request.get(`${botbench.base}/api/approvals`)).json()).toEqual({ approvals: [] });
+    expect(await (await page.request.get(`${botbench.base}/api/action-log`)).json()).toEqual({ entries: [] });
+    expect(await (await page.request.get(`${botbench.base}/api/grants`)).json()).toMatchObject({ grants: [] });
+    expect(foreign, "requests to anything but Botbench").toEqual([]);
+  } finally {
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("LIVE: a card for a command allowed before offers standing permission with its scope, as a secondary step that must be confirmed; granted, the command runs with no card; Trust lists the grant and the log, and Take back, once confirmed, removes it; a card for `git push` never offers", async ({ page, botbench, repo }) => {
@@ -79,10 +170,10 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   const first = await cardOf(page, 1);
   await expect(first.getByTestId("approval-command")).toHaveText(COMMAND);
   await expect(first.getByTestId("standing-offer")).toHaveCount(0);
-  await expect(first.getByRole("button")).toHaveText(["Allow once", "Deny"]);
-  await first.getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(first.getByRole("button")).toHaveText(["Allow", "Decline"]);
+  await first.getByRole("button", { name: "Allow", exact: true }).click();
 
-  // The second card: the same command was allowed once, which is the configured number. It offers, below Allow.
+  // The second card: the same command was allowed once, which is the configured number. It offers, set apart above the answers, which end the card.
   const card = await cardOf(page, 2);
   await expect(card.getByTestId("approval-command")).toHaveText(COMMAND);
   const offer = card.getByTestId("standing-offer");
@@ -90,18 +181,17 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(offer).toContainText("You have allowed this command once.");
   // What the button would cover is said before it is tapped.
   await expect(offer).toContainText("Always allow would cover this exact command, in the Build step, from this folder, in this repository. You confirm it first.");
-  await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny", "Always allow…"]);
-  // The button has just come alive, and its colour takes the system's transition time to settle: the check waits for it.
-  await expect.poll(() => primaries(page), { message: "Allow stays the one primary action" }).toEqual(["Allow once"]);
+  await expect(card.getByRole("button")).toHaveText(["Always allow…", "Allow", "Decline"]);
+  await expect.poll(() => primaries(page), { message: "Allow stays the one primary action" }).toEqual(["Allow"]);
   const look = (el: Element): { background: string; text: string; border: string } => {
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };
   };
   const open = offer.getByRole("button", { name: "Always allow…" });
   expect(await open.evaluate(look), "the offer is drawn as a secondary control").toEqual(SECONDARY_LOOK);
-  const allowBox = (await card.getByRole("button", { name: "Allow once", exact: true }).boundingBox())!;
+  const allowBox = (await card.getByRole("button", { name: "Allow", exact: true }).boundingBox())!;
   const openBox = (await open.boundingBox())!;
-  expect(openBox.y - (allowBox.y + allowBox.height), "the offer is set apart, below Allow").toBeGreaterThanOrEqual(24);
+  expect(allowBox.y - (openBox.y + openBox.height), "the offer is set apart, above Allow").toBeGreaterThanOrEqual(24);
   await expect(card.getByTestId("standing-confirm")).toHaveCount(0);
   await checkDesign(page, "task, a card that offers standing permission");
   await copyShot(page, "approval-always-allow");
@@ -122,7 +212,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(confirm.getByRole("button")).toHaveText(["Always allow", "Cancel"]);
   // Focus starts on the button that changes nothing, so Enter cannot grant by accident.
   await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
-  expect(await primaries(page), "the confirmation is not a second primary action").toEqual(["Allow once"]);
+  expect(await primaries(page), "the confirmation is not a second primary action").toEqual(["Allow"]);
   expect(await api(page, botbench, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
   await checkDesign(page, "task, the standing permission confirmation");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u10-offer.png"), fullPage: true });
@@ -137,7 +227,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   // Cancel closes it and still grants nothing; the card waits as before.
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(confirm).toHaveCount(0);
-  await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny", "Always allow…"]);
+  await expect(card.getByRole("button")).toHaveText(["Always allow…", "Allow", "Decline"]);
   expect(await api(page, botbench, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
   // The card is on this screen: the tray is not drawn, and only tells a screen reader, once, that the approval is here.
   await expect(tray).toHaveText("An approval is waiting on this screen.");
@@ -168,15 +258,15 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   const push = await cardOf(page, 3);
   await expect(push.getByTestId("approval-command")).toHaveText("git push");
   await expect(push.getByTestId("standing-offer")).toHaveCount(0);
-  await push.getByRole("button", { name: "Allow once", exact: true }).click();
+  await push.getByRole("button", { name: "Allow", exact: true }).click();
   const again = await cardOf(page, 4);
   await expect(again.getByTestId("approval-command")).toHaveText("git push");
   await expect(again.getByTestId("standing-offer")).toHaveCount(0);
-  await expect(again.getByRole("button")).toHaveText(["Allow once", "Deny"]);
+  await expect(again.getByRole("button")).toHaveText(["Allow", "Decline"]);
   await expect(page.getByRole("button", { name: /stop asking|standing|always|every time|remember/i })).toHaveCount(0);
   expect((await api<{ approvals: Record<string, unknown>[] }>(page, botbench, "/api/approvals?status=pending")).approvals.map((a) => [a.command, "standingOffer" in a])).toEqual([["git push", false]]);
   await checkDesign(page, "task, a card for a command on the safety floor");
-  await again.getByRole("button", { name: "Deny", exact: true }).click();
+  await again.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   // Nothing was pushed or changed, so the task ends as failed, saying so.
   await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. Claude Code finished without changing any file\./, { timeout: 120_000 });
@@ -214,7 +304,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   ]);
   // Ten entries are one page: nothing older, so no control for it.
   await expect(page.getByRole("button", { name: "Show older activity" })).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveText(["Take back"]);
+  await expect(page.getByRole("button")).toHaveText(["Take back", "Check"]);
   expect(await primaries(page), "Trust has no primary action").toEqual([]);
   await checkDesign(page, "trust, with a standing permission and the log");
   await copyShot(page, "permissions");

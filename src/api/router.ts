@@ -34,6 +34,11 @@ import type { Chat } from "./chat.ts";
 import type { AgentChecks } from "./agents.ts";
 import type { Watch } from "../engine/watch.ts";
 import { watchRoutes } from "./watch.ts";
+import { peerMessageRoutes } from "./peer-messages.ts";
+import { peerPairingRoutes } from "./peer-pairing.ts";
+import type { PeerLink } from "../peers/service.ts";
+import { updateRoutes } from "./update.ts";
+import type { Updates } from "../update.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
@@ -44,6 +49,8 @@ export interface RouteContext {
   driver: Driver;
   /** The agents that can review a run's tasks, by name. */
   reviewers: Partial<Record<string, Driver>>;
+  /** The agents other than `driver` that can build a task or a run's tasks when they are usable (Codex), by name. */
+  builders: Partial<Record<string, Driver>>;
   turns: Turns;
   /** The agents' last checks, kept for a short time. */
   agentChecks: AgentChecks;
@@ -72,6 +79,10 @@ export interface RouteContext {
   claims: Claims;
   /** The issue watch: each watched repository's state, and the issues proposed as runs on Work. */
   watch: Watch;
+  /** Pairing with another workbench: invites, the pair request, confirmations and ends (src/peers/service.ts). */
+  peerLink: PeerLink;
+  /** Updating Botbench to a published release (src/update.ts). */
+  updates: Updates;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -136,11 +147,13 @@ export function modelChoice(body: Record<string, unknown>): string | null | unde
 }
 
 /**
- * Refuse a task or run asked of an agent other than Claude Code: only Claude Code builds in a repository here. A request
- * that names none is Claude Code's.
+ * The agent a task or run is built by: null for Claude Code (also when the request names none), or "codex". Any other
+ * agent is refused here: Grok and Antigravity answer in a chat. Whether Codex can build now is the engine's to say.
  */
-export function builderOnly(body: Record<string, unknown>): void {
-  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work on a repository as a task. Codex, Grok and Antigravity answer in a chat.");
+export function builderChoice(body: Record<string, unknown>): string | null {
+  if (body.agent === undefined || body.agent === null || body.agent === "claude-code") return null;
+  if (body.agent === "codex") return "codex";
+  throw new BodyError(400, "Only Claude Code and Codex can work on a repository as a task. Grok and Antigravity answer in a chat.");
 }
 
 /**
@@ -166,11 +179,14 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await settingsRoutes(req, res, ctx, url)) return;
   if (await memoryRoutes(req, res, ctx, url)) return;
   if (await peersRoutes(req, res, ctx, url)) return;
+  if (await peerPairingRoutes(req, res, ctx, url)) return;
+  if (await peerMessageRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (await boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;
   if (await connectRoutes(req, res, ctx, url)) return;
   if (await voiceRoutes(req, res, ctx, url)) return;
   if (watchRoutes(req, res, ctx, url)) return;
+  if (await updateRoutes(req, res, ctx, url)) return;
   json(res, 404, { error: "not found" });
 }

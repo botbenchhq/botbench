@@ -77,9 +77,10 @@ test("with Claude Code signed out, the empty board says why and links to Setting
     await expect(agent).toContainText("Claude Code is signed out. Run `claude auth login` in a terminal.");
     await checkDesign(page, "settings, Claude Code signed out");
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
     fs.rmSync(empty, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
 
@@ -103,7 +104,8 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   const codexRow = page.getByTestId("agent-codex");
   await expect(codexRow.getByTestId("agent-state")).toHaveText(codex.problem === null ? "Available" : /Signed out|Not installed|Unsupported version|Unavailable/);
   await expect(codexRow).toContainText(codex.problem ?? `Version ${codex.version}.`);
-  if (codex.problem === null) await expect(codexRow).toContainText("Reviews a run's tasks when you choose it for a run; it cannot plan or build here.");
+  // A Codex with `codex app-server` builds as well as reviews (src/drivers/codex.ts), and Settings says so.
+  if (codex.problem === null) await expect(codexRow).toContainText("Builds a task or a run's tasks when you choose it under Builder, and reviews a run's tasks when you choose it for a run; it does not plan.");
   // Grok and Antigravity, each with the state its own probe reports.
   for (const key of ["grok", "antigravity"]) await expect(page.getByTestId(`agent-${key}`).getByTestId("agent-state")).toHaveText(/^(Available|Signed out|Not installed|Unsupported version|Unavailable)$/);
   await expect(page.getByText("Gemini CLI")).toHaveCount(0);
@@ -304,8 +306,9 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     await checkDesign(page, "board, a stand-alone task that failed");
     await shot(page, "work.png");
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
 
@@ -359,7 +362,8 @@ test("LIVE: in light mode, a chat with a tool call, an approval card, a task rea
   await checkDesign(page, "board, a task waiting on an approval, light");
   await shot(page, "u16-light-board.png");
   await page.goto(`${botbench.base}/#/tasks/${taskId}`);
-  await page.getByTestId("approval-card").getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(page.getByTestId("approval-card")).toHaveAttribute("data-settled", "");
+  await page.getByTestId("approval-card").getByRole("button", { name: "Allow", exact: true }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 120_000 });
   await checkDesign(page, "task ready for review, light");
   await shot(page, "u16-light-ready.png");

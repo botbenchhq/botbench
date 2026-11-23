@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { ISSUE_NOT_FULL, READ_ABOUT, returnsToList, splitPath, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { BUILDER_WORDS, ISSUE_NOT_FULL, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -18,6 +18,7 @@ const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   repository: { label: "Repository", title: "Repository", icon: "folder" },
   read: { label: "Read a repository", title: "Let this chat read a repository", icon: "search" },
   kind: { label: "What to do", title: "What to do", icon: "git-branch" },
+  builder: { label: "Builder", title: "Who builds", icon: "terminal" },
   issue: { label: "From an issue", title: "From an issue", icon: "external-link" },
   spec: { label: "Spec file", title: "Spec file", icon: "file" },
   mode: { label: "Mode", title: "Mode", icon: "shield" },
@@ -44,6 +45,9 @@ export interface SheetState {
   read: { pick: ReadPick; choose(pick: ReadPick): void; otherPath: string; setOtherPath(path: string): void; check: RepositoryChoice; readers: string[] };
   kind: Kind;
   setKind(kind: Kind): void;
+  /** Who builds: null for Claude Code, or Codex when its check found it can. */
+  builder: Builder | null;
+  setBuilder(builder: Builder | null): void;
   specPath: string;
   setSpecPath(path: string): void;
   mode: RunMode | null;
@@ -165,7 +169,7 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
     return state.kind === "task" ? (
       <ModePicker name="run-mode" legend="Mode" hideLegend hint="A single task always runs in Manual. Plan a run to choose another mode." value="manual" onChange={() => {}} only="manual" />
     ) : (
-      <ModePicker name="run-mode" legend="Mode" hideLegend hint={state.issue.attached !== null ? ISSUE_NOT_FULL : "Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right and named what it checked; the rest waits for you. The mode cannot be changed once the run starts."} value={state.mode} onChange={state.setMode} {...(state.issue.attached !== null ? { refused: { mode: "full" as const, state: "Not for a run from an issue" } } : {})} />
+      <ModePicker name="run-mode" legend="Mode" hideLegend hint={state.issue.attached !== null ? ISSUE_NOT_FULL : "Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right and named what it checked; the rest waits for you. Once the run starts, its mode can be made stricter on the run's screen, never looser."} value={state.mode} onChange={state.setMode} {...(state.issue.attached !== null ? { refused: { mode: "full" as const, state: "Not for a run from an issue" } } : {})} />
     );
   if (row === "tasks")
     return (
@@ -176,6 +180,17 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
         </p>
         <Option group="tasks" id="tasks-one" value="one" checked={state.oneTask} onChange={() => state.setOneTask(true)} name="Keep it to one task" description="Claude Code plans one task that does all of the work. If it plans more, it is asked once more for one; if it still plans more, Botbench joins them into one task." />
         <Option group="tasks" id="tasks-several" value="several" checked={!state.oneTask} onChange={() => state.setOneTask(false)} name="Let it plan several" description="Claude Code splits the work into up to 20 tasks, built one after another." />
+      </fieldset>
+    );
+  if (row === "builder")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="builder-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">Who builds</legend>
+        <p id="builder-hint" className="ds-option-picker__hint">
+          {BUILDER_WORDS.hint}
+        </p>
+        <Option group="builder" id="builder-claude" value="claude-code" checked={state.builder === null} onChange={() => state.setBuilder(null)} name="Claude Code" description={BUILDER_WORDS.claude} />
+        <Option group="builder" id="builder-codex" value="codex" checked={state.builder === "codex"} onChange={() => state.setBuilder("codex")} name="Codex" description={BUILDER_WORDS.codex} />
       </fieldset>
     );
   if (row === "issue") return <IssueOptions state={state.issue} />;

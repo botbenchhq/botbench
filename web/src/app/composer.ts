@@ -1,4 +1,5 @@
 import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode } from "../api/client.ts";
+import { MODE_NAMES } from "./run-words.ts";
 
 /*
  * The composer on the home screen: one box that sends a chat prompt, starts a task or plans a run, depending on what
@@ -93,8 +94,21 @@ export type Send =
   | { do: "focus" }
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
-  | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[] }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[] } & ({ prompt: string } | { specPath: string } | {}));
+  | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+
+/** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
+export type Builder = "codex";
+
+/** What the Builder view says of each choice (docs/product/voice.md). */
+export const BUILDER_WORDS = {
+  claude: "Works in its own sandbox and asks you before each command the safety rules name. It also plans a run.",
+  codex: "Works in its own sandbox, in the task's copy, with no network. It asks you each time it wants to run something outside that sandbox; a fully autonomous run refuses those. Claude Code still plans a run.",
+  hint: "It cannot be changed once the work starts. The reviewer must be a different model.",
+} as const;
+
+/** The Builder row's value. */
+export const builderName = (builder: Builder | null): string => (builder === "codex" ? "Codex" : "Claude Code");
 
 /**
  * Why Send is disabled, in words that say what to do; `required` names the setting the required chip opens; `connect`
@@ -137,7 +151,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -150,11 +164,13 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
     return { do: "chat", prompt, model, ...read };
   }
   const repo = f.repo.path.trim();
-  if (f.kind === "task") return prompt === null ? { do: "focus" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
+  // Codex builds on its own default model: the models chosen here are Claude Code's, which still plans a run.
+  const codex = extras.builder === "codex";
+  if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
-  const build = f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
+  const build = codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {};
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
@@ -162,20 +178,22 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
  * do, mode and commands; a run adds its own settings. Come to start a task or a run (a repository needed), there is
  * nothing to read.
  */
-export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean }): Row[] {
+export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean }): Row[] {
   if (f.repo.kind === "none") return ["repository", "read", "models"];
   if (!inRepository(f.repo)) return ["repository", "models"];
   const run = f.kind === "run";
   return [
     "repository",
     "kind",
+    // Only when another agent than Claude Code can build now (Codex, once its check found it can).
+    ...(f.builderOffered === true ? (["builder"] as const) : []),
     // Only a repository whose remote is on GitHub has issues Botbench can read.
     ...(run && f.issueOffered === true ? (["issue"] as const) : []),
     ...(run ? (["spec"] as const) : []),
@@ -199,16 +217,18 @@ export interface ChosenMode {
 export interface Remembered {
   repo: Exclude<RepoPick, { kind: "needed" }>;
   kind: Kind;
-  /** The mode chosen here, for the repository it was chosen for; never Fully autonomous, which is a default only when set in Settings. */
+  /** The mode last chosen here, for the repository it was chosen for and that one alone (`modeFor`); Fully autonomous too, which `startMode` falls back from where it cannot start. */
   mode: ChosenMode | null;
   /** The reviewer's select value: "" for Off. */
   review: string;
   delivery: Delivery;
+  /** Whether a run builds on its planning model; false when a build model of its own was chosen (the model itself is kept by its picker). */
+  sameBuild: boolean;
 }
 
-export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" };
+export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch", sameBuild: true };
 
-export const writeRemembered = (r: Remembered): string => JSON.stringify({ ...r, mode: r.mode?.mode === "full" ? null : r.mode });
+export const writeRemembered = (r: Remembered): string => JSON.stringify(r);
 
 /** What was remembered, each part checked on its own: a part that is not what it should be is the default. */
 export function readRemembered(raw: string | null): Remembered {
@@ -227,14 +247,34 @@ export function readRemembered(raw: string | null): Remembered {
     mode: rememberedMode(r.mode),
     review: typeof r.review === "string" ? r.review : DEFAULTS.review,
     delivery: r.delivery === "branch" || r.delivery === "pull_request" ? r.delivery : DEFAULTS.delivery,
+    sameBuild: typeof r.sameBuild === "boolean" ? r.sameBuild : DEFAULTS.sameBuild,
   };
 }
 
-/** A remembered mode: Manual or Semi-autonomous for a named repository. Anything else, a bare mode an earlier version kept among it, is no choice. */
+/** A remembered mode: Manual, Semi-autonomous or Fully autonomous for a named repository. Anything else, a bare mode an earlier version kept among it, is no choice. */
 function rememberedMode(value: unknown): ChosenMode | null {
   if (typeof value !== "object" || value === null) return null;
   const { repo, mode } = value as Record<string, unknown>;
-  return typeof repo === "string" && repo !== "" && (mode === "manual" || mode === "semi") ? { repo, mode } : null;
+  return typeof repo === "string" && repo !== "" && (mode === "manual" || mode === "semi" || mode === "full") ? { repo, mode } : null;
+}
+
+/**
+ * The mode a run starts in, and why when it is not the one remembered. A Fully autonomous remembered for this repository
+ * (`remembered`: not chosen on this visit) that cannot start here, on a repository with no check command or from a
+ * GitHub issue, falls back to Semi-autonomous, which is stricter, and says why; the owner can still choose another. A
+ * mode chosen on this visit is left as it is, and Send then says why it is disabled (`blocked`). Never looser.
+ */
+export function startMode(mode: RunMode | null, o: { remembered: boolean; hasChecks: boolean | null; issue: boolean }): { mode: RunMode | null; why: string | null } {
+  if (mode !== "full" || !o.remembered) return { mode, why: null };
+  if (o.issue) return { mode: "semi", why: "A run started from a GitHub issue cannot be fully autonomous, so this run starts Semi-autonomous, not Fully autonomous as you last chose for this repository." };
+  if (o.hasChecks === false) return { mode: "semi", why: "Fully autonomous, your last choice for this repository, needs a check command, and this repository has none, so this run starts Semi-autonomous." };
+  return { mode, why: null };
+}
+
+/** The line under the box that names the mode a run starts in before Send, and why when it fell back; null while the mode is read. */
+export function modeLine(start: { mode: RunMode | null; why: string | null }): string | null {
+  if (start.mode === null) return null;
+  return start.why === null ? `Mode: ${MODE_NAMES[start.mode]}.` : `Mode: ${MODE_NAMES[start.mode]}. ${start.why}`;
 }
 
 /**

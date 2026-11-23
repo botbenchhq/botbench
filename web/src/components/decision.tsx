@@ -1,8 +1,12 @@
-import { useId, useState } from "react";
-import { acceptTask, ApiError, rejectTask, type TaskDecision } from "../api/client.ts";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { acceptTask, ApiError, rejectTask, type TaskDecision, type TaskDetail } from "../api/client.ts";
 import { Alert } from "./header.tsx";
 import { ConfirmAction } from "./confirm.tsx";
+import { ChecksFinding, latestRound } from "./evidence.tsx";
 import { Icon } from "./icon.tsx";
+import { LOOKS } from "./looks.ts";
+import { StatusBadge } from "./status.tsx";
+import { offersMerge } from "./task-status.ts";
 
 /** Put `value` on the clipboard; resolves with whether it was, in words. */
 export function copyWords(value: string, refused = "Not copied: this browser refused. Select the text to copy it."): Promise<string> {
@@ -99,11 +103,13 @@ const LEFT_BEHIND = "These files were left by the checks and are not on the bran
 /**
  * Accept and Reject, for a task that is ready for review. Accept keeps the branch and removes the task's copy; when the
  * checks left files in the copy it asks first, naming them. Reject always asks, and asks whether to keep the branch.
- * `primary` draws Accept as the view's one primary action: on the task's own screen, not on a row of a list.
- * `name` finishes each button's accessible name on a list, where there is one pair for each task. On the task's own
- * screen (`primary`) a short note may go with either, stored on the decision and shown in Activity.
+ * `primary` is for the task's own screen, inside its review decision: Accept is the view's one primary action, both
+ * buttons are marked critical, and a short note may go with either, stored on the decision and shown in Activity.
+ * Otherwise this is a row of a list, whose buttons are plain and where `name` finishes each button's accessible name.
+ * While a decision is sent the pressed button is busy and keeps focus, and the other is disabled. `onSending` is told
+ * true as it is pressed and false if it fails, and the pressed button stays busy until the screen shows the result in its place.
  */
-export function DecisionControls({ taskId, leftovers, primary, name, onDecided, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; primary: boolean; name?: string; onDecided: () => void; onSignedOut: () => void }) {
+export function DecisionControls({ taskId, leftovers, primary, name, onDecided, onSending, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; primary: boolean; name?: string; onDecided: () => void; onSending?: (sending: boolean) => void; onSignedOut: () => void }) {
   const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [branch, setBranch] = useState<"keep" | "discard">("keep");
@@ -116,16 +122,16 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
     if (busy !== null) return;
     setBusy(what);
     setProblem(null);
+    // Told before it is sent: a refresh from elsewhere may show the decision before this request answers.
+    onSending?.(true);
     // The owner confirmed exactly the files this screen showed; the server refuses, and lists them again, if they changed since.
     const given = note.trim() === "" ? null : note.trim();
     const sent = what === "accept" ? acceptTask(taskId, left, given) : rejectTask(taskId, branch, left, given);
     sent.then(
-      () => {
-        setBusy(null);
-        onDecided();
-      },
+      () => onDecided(),
       (err: unknown) => {
         setBusy(null);
+        onSending?.(false);
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         setProblem(`${what === "accept" ? "The task was not accepted." : "The task was not rejected."} ${err instanceof ApiError ? err.message : "Botbench could not be reached."}`);
         // The task may have moved on, or more files may have appeared: show what is so now.
@@ -135,14 +141,10 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
   };
 
   const acceptLabel = busy === "accept" ? "Accepting" : "Accept";
+  const rejectLabel = busy === "reject" ? "Rejecting" : "Reject";
   const opener = name === undefined ? undefined : { small: false, name: `${acceptLabel} ${name}` };
   return (
     <div className="ds-stack ds-gap-sm">
-      {problem !== null && (
-        <Alert tone="error" role="alert">
-          {problem}
-        </Alert>
-      )}
       {primary && (
         <div className="ds-field">
           <label htmlFor={noteId} className="ds-field__label">
@@ -154,19 +156,24 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
           </p>
         </div>
       )}
-      <div className="ds-cluster">
+      {problem !== null && (
+        <Alert tone="error" role="alert">
+          {problem}
+        </Alert>
+      )}
+      <div className={primary ? "ds-review-decision__actions" : "ds-cluster"}>
         {left.length === 0 ? (
-          <button type="button" aria-busy={busy === "accept"} disabled={busy !== null} aria-label={opener?.name} onClick={() => send("accept")} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
+          <button type="button" aria-busy={busy === "accept" || undefined} disabled={busy === "reject"} data-ds-critical={primary ? "" : undefined} aria-label={opener?.name} onClick={() => send("accept")} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
             {acceptLabel}
           </button>
         ) : (
-          <ConfirmAction label={acceptLabel} {...(opener ? { opener } : {})} primary={primary} title="Accept this task?" confirmLabel="Accept and remove them" cancelLabel="Keep the copy" disabled={busy !== null} losing testId="accept-leftovers" onConfirm={() => send("accept")}>
+          <ConfirmAction label={acceptLabel} {...(opener ? { opener } : {})} primary={primary} critical={primary} title="Accept this task?" confirmLabel="Accept and remove them" cancelLabel="Keep the copy" disabled={busy === "reject"} busy={busy === "accept"} losing testId="accept-leftovers" onConfirm={() => send("accept")}>
             <p>{LEFT_BEHIND}</p>
             <Leftovers files={left} />
             <p>Accepting keeps the branch and removes the task's copy of the project, and these files with it. Copy out any you want to keep first.</p>
           </ConfirmAction>
         )}
-        <ConfirmAction label={busy === "reject" ? "Rejecting" : "Reject"} {...(name === undefined ? {} : { opener: { small: false, name: `${busy === "reject" ? "Rejecting" : "Reject"} ${name}` } })} title="Reject this task?" confirmLabel="Reject" cancelLabel="Cancel" disabled={busy !== null} losing testId="reject" onConfirm={() => send("reject")}>
+        <ConfirmAction label={rejectLabel} {...(name === undefined ? {} : { opener: { small: false, name: `${rejectLabel} ${name}` } })} critical={primary} title="Reject this task?" confirmLabel="Reject" cancelLabel="Cancel" disabled={busy === "accept"} busy={busy === "reject"} losing testId="reject" onConfirm={() => send("reject")}>
           <fieldset className="ds-radio__group">
             <legend className="ds-radio__legend">What becomes of the branch?</legend>
             <div className="ds-radio">
@@ -198,6 +205,64 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
         </ConfirmAction>
       </div>
     </div>
+  );
+}
+
+/**
+ * The end of a task on its own screen, as the design system's review decision: a section headed by its own heading, the
+ * checks' and the review's findings one line each, then Accept and Reject with the note, or, once decided, the result
+ * in their place. `children` says what Accept and Reject do, before the note. When the owner's decision is sent from
+ * here, focus moves to the section's heading, so it does not drop to the page when the buttons go.
+ */
+export function ReviewDecision({ task, onDecided, onSignedOut, children }: { task: TaskDetail; onDecided: () => void; onSignedOut: () => void; children?: ReactNode }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  const sent = useRef(false);
+  const id = useId();
+  const decision = task.decision;
+  useEffect(() => {
+    if (decision === null || !sent.current) return;
+    sent.current = false;
+    heading.current?.focus();
+  }, [decision !== null]);
+
+  const byMode = decision?.decidedBy === "mode";
+  return (
+    <section aria-labelledby={id} data-testid="decision" className="ds-review-decision">
+      <h2 ref={heading} id={id} tabIndex={-1} className="ds-review-decision__title">
+        {byMode ? "Decision" : "Your decision"}
+      </h2>
+      <dl className="ds-review-decision__evidence">
+        <div className="ds-review-decision__line">
+          <dt className="ds-review-decision__source">Checks</dt>
+          <dd data-testid="decision-checks" className="ds-review-decision__finding">
+            <ChecksFinding checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />
+          </dd>
+        </div>
+        <div className="ds-review-decision__line">
+          <dt className="ds-review-decision__source">Review</dt>
+          <dd data-testid="decision-review" className="ds-review-decision__finding">
+            {task.reviewer === null ? "Not reviewed: this run has no reviewer." : (task.reviewLine ?? "Not reviewed.")}
+            {task.reviewer !== null && task.reviewLine !== null && <span className="ds-review-decision__caveat">A model's opinion, not a check.</span>}
+          </dd>
+        </div>
+      </dl>
+      {decision === null ? (
+        <>
+          {children}
+          <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={onDecided} onSending={(sending) => (sent.current = sending)} onSignedOut={onSignedOut} />
+        </>
+      ) : (
+        <div className="ds-review-decision__result">
+          <StatusBadge look={decision.decision === "accept" ? LOOKS.accepted : LOOKS.rejected}>{decision.decision === "accept" ? (byMode ? "Accepted without you" : "Accepted") : "Rejected"}</StatusBadge>
+          {/* The result lines its items up at the start, each as wide as its content; these take the section's width, so a
+              long branch, path or merge command wraps or scrolls inside its own field and never widens the page. */}
+          <div className="ds-stack ds-gap-sm">
+            {decision.reasons !== null && <p data-testid="decided-by">{decision.reasons}</p>}
+            <DecisionOutcome decision={decision} repo={task.repo} merge={offersMerge(task)} pushed={task.pullRequest.pushed ? task.pullRequest.remote : null} />
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

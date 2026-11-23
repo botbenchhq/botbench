@@ -60,8 +60,47 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
     await expect(agent.getByRole("button", { name: "Connect Claude Code" })).toBeVisible();
     await expect.poll(() => processesUsing(empty), { message: "no sign-in process is left", timeout: 5000 }).toEqual([]);
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
     fs.rmSync(empty, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
+  }
+});
+
+// Antigravity's sign-in is one Botbench keeps in its own profile (src/drivers/antigravity.ts): the real `agy acp
+// --login`, for the new data folder's profile, under a sandbox that refuses the Keychain. Not completed here either.
+test("Antigravity, not connected in a new data folder, shows Connect; the sheet shows Google's real sign-in link, says it is for Botbench alone, and takes the page's code or address; Cancel leaves nothing running", async ({ page }) => {
+  const botbench = await startBotbench();
+  const profile = path.join(fs.realpathSync(botbench.home), "antigravity");
+  const running = (): string[] => {
+    const out = execFileSync("ps", ["-ww", "-x", "-o", "pid=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    return out.split("\n").filter((line) => line.includes(`--gemini-dir ${profile}`));
+  };
+  try {
+    await page.goto(botbench.base);
+    await page.getByLabel("Login token").fill(botbench.token);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    const agent = page.getByTestId("agent-antigravity");
+    await expect(agent.getByTestId("agent-state")).toHaveText("Signed out", { timeout: 30_000 });
+    await agent.getByRole("button", { name: "Connect Antigravity" }).click();
+    const sheet = page.getByTestId("connect-sheet");
+    await expect(sheet.getByTestId("connect-waiting")).toBeVisible({ timeout: 30_000 });
+    const href = new URL((await sheet.getByRole("link", { name: "Open sign-in page" }).getAttribute("href"))!);
+    expect(href.origin).toBe("https://accounts.google.com");
+    expect(href.searchParams.get("redirect_uri")).toBe("https://antigravity.google/oauth-callback");
+    await expect(sheet).toContainText("This is a sign-in for Botbench alone: Antigravity in a terminal or its app keeps its own.");
+    await expect(sheet).toContainText("Copy it, or the page's whole address, and paste it here.");
+    await expect(sheet.getByLabel("Code from the sign-in page")).toBeEditable();
+    expect(running().length, "the real sign-in runs, for Botbench's profile").toBeGreaterThan(0);
+    await checkDesign(page, "connect sheet, Antigravity, waiting for the sign-in");
+    await shot(page, "connect-antigravity-sheet.png");
+    await sheet.getByRole("button", { name: "Cancel connecting" }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(agent.getByTestId("agent-state")).toHaveText("Signed out");
+    await expect.poll(running, { message: "no sign-in process is left", timeout: 5000 }).toEqual([]);
+  } finally {
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
   }
 });

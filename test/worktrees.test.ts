@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { commitWork, createWorktree, describeWork, fileDiff, removeWorktree, sourceHead } from "../src/worktrees.ts";
-import { gitProcesses, releaseStalled, stalledRepo } from "./support/repo.ts";
+import { gitProcesses, releaseStalled, stalledRepo, removedAtEnd } from "./support/repo.ts";
 import { NO_PROCESS_LIST } from "./support/confined.ts";
 
 // The tests' own git calls must not be steered by variables a test sets on purpose, or by the caller's shell.
@@ -42,7 +42,7 @@ type T = { after(fn: () => void): void };
 
 /** A temporary directory holding a real repository path and a Botbench home. Every test must leave the repository with no extra worktree. */
 function scratch(t: T, init = true): Scratch {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-test-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-test-")));
   const repo = path.join(dir, "source");
   const home = path.join(dir, "home");
   fs.mkdirSync(repo);
@@ -496,7 +496,7 @@ test("a worktree whose git folder was repointed from inside is refused, so nothi
 });
 
 test("a git process that does not answer is stopped at its time limit, and the error says the folder could not be read in time", { skip: NO_PROCESS_LIST, timeout: 20_000 }, async (t) => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-stall-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "botbench-wt-stall-")));
   const repo = path.join(dir, "source");
   t.after(() => {
     releaseStalled(repo);

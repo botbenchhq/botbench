@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, builderName, chipModel, type Builder, commandsWords, issueWords, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
@@ -174,15 +174,17 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const [kind, setKind] = useState<Kind>(arrived.kind);
   /** The mode the owner chose here, for the repository it was chosen for; otherwise the default from Settings. */
   const [chosenMode, setChosenMode] = useState<ChosenMode | null>(remembered.mode);
+  /** Whether the owner chose the mode on this visit; until then it is the one remembered, which may fall back (`startMode`). */
+  const [modeChosenHere, setModeChosenHere] = useState(false);
   const [defaultMode, setDefaultMode] = useState<RunMode | null>(null);
   const repoPath = repo.kind === "known" || repo.kind === "other" ? repo.path.trim() : "";
-  const mode = modeFor(chosenMode, repoPath, defaultMode);
   const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
+  /** Who the owner chose to build; Claude Code unless Codex was chosen here. Not remembered: each start chooses again. */
+  const [builderPick, setBuilderPick] = useState<Builder | null>(null);
   /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
   const [chosenOneTask, setChosenOneTask] = useState<boolean | null>(null);
-  const oneTask = oneTaskFor(chosenOneTask, mode);
   const [specPath, setSpecPath] = useState("");
-  const [sameBuild, setSameBuild] = useState(true);
+  const [sameBuild, setSameBuild] = useState(remembered.sameBuild);
   const models = useModelChoice(onSignedOut);
   const buildModels = useModelChoice(onSignedOut, "botbench.buildModel");
   // Only a run has a reviewer: the agents are asked once a run is being set up.
@@ -199,13 +201,18 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const [preset, setPreset] = useState<{ repo: string; number: number } | null>(null);
   // Only a run can start from an issue, and only in a usable repository whose remote is on GitHub.
   const issue = useIssueChoice(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", runWanted, onSignedOut, preset);
+  // The mode the run starts in: the one remembered for this repository, falling back to a stricter one, and saying why,
+  // when it cannot start here; else the default from Settings. Shown under the box before Send.
+  const started = startMode(modeFor(chosenMode, repoPath, defaultMode), { remembered: !modeChosenHere && chosenMode !== null && chosenMode.repo === repoPath, hasChecks: repository.listed?.hasChecks ?? null, issue: kind === "run" && issue.attached !== null });
+  const mode = started.mode;
+  const oneTask = oneTaskFor(chosenOneTask, mode);
   // What other workbenches have in flight on the repository's remote: warnings only, never a reason Send waits.
   const peers = usePeersOf(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", onSignedOut);
 
   useEffect(() => {
     if (repo.kind === "needed") return;
-    saveComposer(writeRemembered({ repo, kind, mode: chosenMode, review: review.value, delivery }));
-  }, [repo, kind, chosenMode, review.value, delivery]);
+    saveComposer(writeRemembered({ repo, kind, mode: chosenMode, review: review.value, delivery, sameBuild }));
+  }, [repo, kind, chosenMode, review.value, delivery, sameBuild]);
   // Coming from New task or New run, the address goes back to the composer's own, so a reload keeps what was chosen since.
   useEffect(() => {
     if (start !== null) window.history.replaceState(null, "", "#/turn");
@@ -439,8 +446,12 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const targets = chatTargets(agents.choice, models.request(), offered);
   const asksClaude = !targets.ok || targets.targets.some((t) => t.agent === CLAUDE);
   const claudeState: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
-  // A chat that asks only other agents does not wait on Claude Code.
-  const builder: Facts["builder"] = !inRepository(repo) && !asksClaude ? { state: "ready" } : claudeState;
+  // Codex is offered as the builder only once the server's check found it can build; a choice it no longer has is Claude Code.
+  const codexBuilds = (offered ?? []).some((a) => a.agent === "codex" && a.builds === true);
+  const chosenBuilder: Builder | null = codexBuilds && builderPick === "codex" ? "codex" : null;
+  // A chat that asks only other agents, and a task on its own that Codex builds, do not wait on Claude Code; a run does,
+  // as Claude Code plans it.
+  const builder: Facts["builder"] = (!inRepository(repo) && !asksClaude) || (inRepository(repo) && kind === "task" && chosenBuilder === "codex") ? { state: "ready" } : claudeState;
   const facts: Facts = {
     text: prompt,
     repo,
@@ -532,11 +543,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const send = (): void => {
     if (starting || showStop) return;
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver });
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver, builder: chosenBuilder });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
     if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets, undefined, action.repository) : undefined;
-    if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved).then(({ taskId }) => `#/tasks/${taskId}`));
+    if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved, action.agent).then(({ taskId }) => `#/tasks/${taskId}`));
     const { do: _, ...run } = action;
     startWork("run", () => startRun(run).then(({ runId }) => `#/runs/${runId}`));
   };
@@ -621,6 +632,7 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     repository: repoName(repo, known),
     read: readName(readPick, known),
     kind: kind === "task" ? "One task" : "Plan a run",
+    builder: builderName(chosenBuilder),
     spec: specPath.trim() === "" ? "None" : (specPath.trim().split("/").at(-1) ?? specPath.trim()),
     mode: kind === "task" ? "Manual" : (MODES.find((m) => m.mode === mode)?.name ?? "Reading"),
     tasks: oneTask ? "One task" : "Several",
@@ -630,7 +642,7 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
     models: chatting ? agentRowValue(agents.choice.pick) : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
   };
-  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
+  const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered", builderOffered: codexBuilds });
   // Come to start a task or a run, the box is named for it while the repository is still to be chosen.
   const label = repo.kind === "none" ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
@@ -714,8 +726,8 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
               ) : !chatting && (
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
-                    ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
-                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
+                    ? `A task in ${name}: ${builderName(chosenBuilder)} works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
+                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change.${chosenBuilder === "codex" ? " Codex builds them." : ""} ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
                 </p>
               )
             )}
@@ -792,6 +804,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
                 {stopReason.connect && <ConnectAgent />}
               </p>
             )
+          )}
+          {!showStop && run && modeLine(started) !== null && (
+            <p data-testid="composer-mode" className="ds-composer__reason">
+              {modeLine(started)}
+            </p>
           )}
           {!showStop && stopReason === null && chatting && sendWords(askedCount).line !== null && (
             <p data-testid="asked-line" className="ds-composer__reason">
@@ -888,10 +905,15 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
             },
             kind,
             setKind,
+            builder: chosenBuilder,
+            setBuilder: setBuilderPick,
             specPath,
             setSpecPath,
             mode,
-            setMode: (chosen: RunMode) => setChosenMode({ repo: repoPath, mode: chosen }),
+            setMode: (chosen: RunMode) => {
+              setChosenMode({ repo: repoPath, mode: chosen });
+              setModeChosenHere(true);
+            },
             review,
             delivery,
             setDelivery,

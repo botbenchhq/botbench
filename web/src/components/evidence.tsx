@@ -163,12 +163,32 @@ export function checksWords(checks: ChecksMark): string {
  */
 export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: readonly Evidence[] }) {
   if (checks === "none") return <p data-testid="checks-result">No checks are set up for this repository.</p>;
-  const notPassed = rows.filter((row) => row.outcome !== "passed").length;
   return (
     <p data-testid="checks-result">
       <StatusBadge look={checks === "passed" ? LOOKS.checkPassed : LOOKS.checkFailed}>{checks === "passed" ? "Checks passed:" : "Checks failed:"}</StatusBadge>
-      {checks === "passed" ? ` ${rows.length} of ${plural(rows.length, "check", "checks")} passed.` : ` ${notPassed} of ${plural(rows.length, "check", "checks")} did not pass.`}
+      {` ${checksCount(checks, rows)}`}
     </p>
+  );
+}
+
+/** How many of the latest round's checks passed, or did not: "3 of 3 checks passed." */
+function checksCount(checks: "passed" | "failed", rows: readonly Evidence[]): string {
+  const notPassed = rows.filter((row) => row.outcome !== "passed").length;
+  return checks === "passed" ? `${rows.length} of ${plural(rows.length, "check", "checks")} passed.` : `${notPassed} of ${plural(rows.length, "check", "checks")} did not pass.`;
+}
+
+/**
+ * The checks' finding on one line, for the decision: the badge of Checks passed or Checks failed, then the count. With no
+ * checks set up, or none run, it says so with no badge, so nothing reads as a pass.
+ */
+export function ChecksFinding({ checks, rows }: { checks: ChecksMark | null; rows: readonly Evidence[] }) {
+  if (checks === null) return <>No checks ran on this work.</>;
+  if (checks === "none") return <>None are set up for this repository.</>;
+  return (
+    <>
+      <StatusBadge look={checks === "passed" ? LOOKS.checkPassed : LOOKS.checkFailed}>{checks === "passed" ? "Checks passed" : "Checks failed"}</StatusBadge>
+      {` ${checksCount(checks, rows)}`}
+    </>
   );
 }
 

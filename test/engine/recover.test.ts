@@ -16,7 +16,7 @@ import { DB_FILE, openStore } from "../../src/store/db.ts";
 import type { Left, Order } from "../support/leave-running.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
 import { loadPlanRecording, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
-import { git, initRepo, tempDir } from "../support/repo.ts";
+import { git, initRepo, tempDir, removedAtEnd } from "../support/repo.ts";
 import { NO_PROCESS_LIST, NO_SANDBOX, NO_SANDBOX_OR_PROCESS_LIST } from "../support/confined.ts";
 
 // Restart recovery (unit 15). Every Botbench that "stops" here is a real process running the real engine on a real store,
@@ -252,7 +252,7 @@ test("a recorded process group whose number now belongs to an unrelated process 
   const db = openStore(p.home);
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
   db.prepare("UPDATE attempts SET pgid = ?, created_at = ? WHERE id = ?").run(stranger.pid!, hourAgo, s.attemptId!);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-command-"));
+  const tmp = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-command-")));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   db.prepare("INSERT INTO command_processes (task_id, kind, round, position, command, limit_ms, tmp_dir, pgid, spawned_at, created_at) VALUES (?, 'setup', 1, 1, 'npm ci', 60000, ?, ?, ?, ?)").run(s.taskIds[0]!, tmp, stranger.pid!, hourAgo, hourAgo);
   db.close();

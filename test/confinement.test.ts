@@ -12,9 +12,10 @@ import { NO_SANDBOX } from "./support/confined.ts";
 // What Botbench keeps every command an agent runs, and every setup and check command it runs itself, away from (U27).
 // Everything here is real: real folders and links, the real sandbox-exec of this Mac, a real local proxy and real sockets.
 
-test("the places no confined command may read name every vendor sign-in, the Keychain, SSH and cloud credentials, and Botbench's own data folder", () => {
+test("the places no confined command may read name every vendor sign-in, the Keychain, SSH and cloud credentials, and Botbench's own data folder", (t) => {
   const home = os.homedir();
   const dataDir = tempDir("botbench-confine-data-");
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
   const paths = unreadablePaths({ dataDir });
   for (const place of [".claude", ".claude.json", ".codex", ".grok", ".gemini", ".antigravity", "Library/Application Support/Antigravity", "Library/Keychains", ".ssh", ".gnupg", ".aws", ".config/gcloud", ".azure", ".kube", ".docker", ".netrc", ".npmrc", ".config/gh", ".git-credentials", ".config/git/credentials"]) {
     assert.ok(HOME_SECRETS.includes(place), `${place} is on the list`);
@@ -42,10 +43,12 @@ test("a denied place reached through a link is denied both where the link is and
 });
 
 test("on this Mac Botbench can confine commands; elsewhere, or without sandbox-exec, it says why it cannot, in plain words", () => {
-  assert.equal(confinementProblem(), null, "macOS with /usr/bin/sandbox-exec");
+  // This computer as it is: a Mac with /usr/bin/sandbox-exec can confine; the Linux CI runner cannot, and says so.
+  if (process.platform === "darwin") assert.equal(confinementProblem(), null, "macOS with /usr/bin/sandbox-exec");
+  else assert.match(confinementProblem() ?? "", new RegExp(`only on macOS, and this computer runs ${process.platform}\\.`));
   const linux = confinementProblem({ platform: "linux" });
   assert.match(linux ?? "", /only on macOS/);
-  const missing = confinementProblem({ sandboxExec: "/usr/bin/no-such-sandbox-exec" });
+  const missing = confinementProblem({ platform: "darwin", sandboxExec: "/usr/bin/no-such-sandbox-exec" });
   assert.match(missing ?? "", /\/usr\/bin\/no-such-sandbox-exec/);
   assert.match(missing ?? "", /not found/);
 });
@@ -130,8 +133,9 @@ const BROWSER_PROFILES = [
   "Library/Application Support/Firefox",
 ];
 
-test("the browsers' profile folders are on the one list, so no confined command reads a saved Botbench session cookie or anything else a browser keeps", () => {
+test("the browsers' profile folders are on the one list, so no confined command reads a saved Botbench session cookie or anything else a browser keeps", (t) => {
   const home = tempDir("botbench-confine-home-");
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const paths = unreadablePaths({ dataDir: path.join(home, "data"), home });
   for (const place of BROWSER_PROFILES) {
     assert.ok(HOME_SECRETS.includes(place), `${place} is on the list`);
