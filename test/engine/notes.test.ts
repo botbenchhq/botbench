@@ -215,7 +215,6 @@ test("a waiting note is not sent when the turn does not complete: a cancelled ru
 
 test("Botbench stopping while a note waits marks it not delivered; the next start takes the task up again and does not send it, and the note is still there with its reason", async (t) => {
   const dir = tempDir("botbench-notes-stop-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);
@@ -247,7 +246,6 @@ function leave(home: string, repo: string, order: Omit<Order, "home" | "repo">):
 
 test("a restart does not lose a waiting note and does not send one twice: killed with a note waiting, the next start delivers it once after the turn it takes up; killed during the note's own turn, it is not sent again", { timeout: 60_000 }, async (t) => {
   const dir = tempDir("botbench-notes-restart-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   // Killed while the note waits for the first turn to end.
   const waitingHome = path.join(dir, "waiting", "home");

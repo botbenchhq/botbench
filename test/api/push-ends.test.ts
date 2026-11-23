@@ -48,10 +48,9 @@ async function bench(t: T): Promise<Bench> {
   const base = initRepo(repo);
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: { [repo]: { setup: [`echo ${SECRET} in /Users/me/private-repo; exit 1`] } } };
   const endpoint = await startPushEndpoint();
-  t.after(async () => {
-    await endpoint.close();
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
+  // The folder is not removed here: this hook runs before the hook of each server booted on it (first in, first out),
+  // so the server would still be writing to it. tempDir removes it when the file ends, after every server has closed.
+  t.after(() => endpoint.close());
   return { dir, home, repo, base, config, endpoint, devices: { phone: newDevice(), tablet: newDevice() } };
 }
 

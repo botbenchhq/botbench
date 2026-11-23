@@ -11,7 +11,8 @@ import { taskReviews } from "./review.ts";
 import { agentName } from "./roles.ts";
 import type { Delivery } from "./run.ts";
 import { taskEvidence } from "./stations.ts";
-import { MODE_WORDS, isRunMode } from "./modes.ts";
+import { MODE_WORDS, isRunMode, modeRefusals } from "./modes.ts";
+import { firstLine } from "../shorten.ts";
 import { getTask, TaskError, words, type Task } from "./task.ts";
 import { runIssue } from "./intake.ts";
 import type { Claims } from "./claims.ts";
@@ -202,7 +203,15 @@ function reviewSection(db: DatabaseSync, taskId: number): string[] {
   if (notAddressed.length > 0) parts.push("### Not addressed, and why", `${agentName(record.builder)}'s words, from the last round of fixes:`, fenced(notAddressed.map((n) => `- ${n}`).join("\n")));
   const decision = taskDecision(db, taskId);
   if (decision?.decision === "accept") {
-    if (decision.decidedBy === "mode") parts.push("Accepted without the owner (fully autonomous):", fenced(decision.reasons ?? "No reasons were recorded."));
+    if (decision.decidedBy === "mode") {
+      parts.push("Accepted without the owner (fully autonomous):", fenced(decision.reasons ?? "No reasons were recorded."));
+      // The reasons count what was refused; the body names each, by its first line, as the task screen lists them.
+      const refused = modeRefusals(db, taskId);
+      if (refused.length > 0) {
+        parts.push("### Refused without asking", fenced(refused.slice(0, MAX_BODY_FINDINGS).map((r) => `- ${firstLine(r.command, 200)}`).join("\n")));
+        if (refused.length > MAX_BODY_FINDINGS) parts.push(`${count(refused.length - MAX_BODY_FINDINGS, "more was", "more were")} left out.`);
+      }
+    }
     else if (decision.note === null) parts.push("Accepted by the owner.");
     else parts.push("Accepted by the owner, with this note:", fenced(decision.note));
   }

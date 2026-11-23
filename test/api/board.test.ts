@@ -40,13 +40,20 @@ interface Api {
 
 async function start(t: T): Promise<Api> {
   const dir = tempDir("botbench-board-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const [plain, failing, slow] = ["plain", "failing", "slow"].map((name) => path.join(dir, name));
   for (const repo of [plain!, failing!, slow!]) initRepo(repo);
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: { [failing!]: { setup: ["echo preparing the copy; exit 1"] }, [slow!]: { setup: ["sleep 60"] } } };
   const server = await startServer({ config, home, signInDelayMs: 1 });
-  t.after(() => server.close());
+  // The server, with the engine an approval sets to work and its broker, is closed before its folder is removed, and a
+  // removal that fails cannot leave it open. A setup that throws before here leaves the folder to tempDir's own removal.
+  t.after(async () => {
+    try {
+      await server.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
   const base = `http://127.0.0.1:${server.port}`;
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const res = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
@@ -85,7 +92,14 @@ function plannedRun(api: Api, repo: string, titles: string[] = ["Add a greeting 
   const waiting = storePlan(api.server.db, run.id, titles.map((title) => ({ title, criteria: [`${title} is done`] })));
   return { id: run.id, planVersion: waiting.planVersion };
 }
-const initHead = (repo: string): string => git(repo, "rev-parse", "HEAD").trim();
+/** Each repository's first commit, read with git once: nothing here commits to the repositories themselves. */
+const heads = new Map<string, string>();
+const initHead = (repo: string): string => {
+  if (!heads.has(repo)) heads.set(repo, git(repo, "rev-parse", "HEAD").trim());
+  return heads.get(repo)!;
+};
+/** Let the server's timers run: its idle connections are closed on time, not after a long stretch of work in between. */
+const breathe = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /** Put `task` at Ready for review with one committed file, in a worktree under its run. */
 async function ready(api: Api, task: Task, repo: string): Promise<void> {
@@ -181,13 +195,20 @@ test("however many runs and tasks there are, every one that needs the owner is o
   const old = createTask(db, { repo: api.plain, prompt: "an old task" });
   await ready(api, old, api.plain);
   const oldPlan = plannedRun(api, api.plain);
-  for (let i = 0; i < 260; i++) cancelRun(db, plannedRun(api, api.plain, ["one", "two"]).id);
+  // The server runs in this process, so this work holds up its timers. The test yields between runs: a client
+  // connection kept idle across a long stretch would otherwise be closed by the server's idle timer only after the next
+  // request was already written to it, and that request reset (seen on a loaded machine).
+  for (let i = 0; i < 260; i++) {
+    cancelRun(db, plannedRun(api, api.plain, ["one", "two"]).id);
+    await breathe();
+  }
   // More than two hundred tasks of planned runs, which an older stand-alone task must not be crowded out by.
   let many = { id: 0, planVersion: 0 };
   for (let i = 0; i < 12; i++) {
     many = plannedRun(api, api.plain, Array.from({ length: 20 }, (_, n) => `task ${n}`));
     approvePlan(db, many.id, many.planVersion);
     cancelRun(db, many.id);
+    await breathe();
   }
   const groups = await board(api);
   assert.deepEqual(shape(groups)["needs-you"]!.sort(), [`run ${oldPlan.id}`, `task ${old.id}`].sort());

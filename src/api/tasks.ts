@@ -13,11 +13,16 @@ import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, re
 import { reviewAssignment, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkFixView } from "../engine/check-fix.ts";
-import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
+import { checkRepository, getTask, listTasks, restartLine, resumeNote, TaskError, waitingBehind, words, type Task } from "../engine/task.ts";
+import { noteRoundLine, openNoteRound } from "../engine/note-rounds.ts";
+import { firstLine } from "../shorten.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
+import { runsMadeFrom } from "../engine/run-source.ts";
 import { MAX_NOTE, replacedOne, undeliveredNote, waitingNote } from "../engine/notes.ts";
 import { commitsFileDiff, describeCommits, describeWork, type FileChange } from "../worktrees.ts";
+import { CLAUDE_CODE } from "../drivers/claude-code.ts";
+import { currentBuilder, handoffLine, taskAttempts, taskHandoffs } from "../engine/handoff.ts";
 import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -36,6 +41,9 @@ export const MAX_DIFF = 400_000;
  * `preapproved`: the commands its run may use without asking, as the owner sent them when starting it, read from the run's grants.
  * `decision`: the owner's decision, once there is one.
  * `resumeNote`: for a stopped task the owner can resume, what Resume will do, in words; null for any other task.
+ * `restartLine`: for a task Botbench took up again by itself after a restart, the plain line that says so, with the time.
+ * `waitingFor`: for a task the owner resumed or sent a note for a round, whose work waits for another task's to end
+ * first, that task's number and title; null once its own work has started.
  */
 export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   const { id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId, checks, createdAt, updatedAt } = task;
@@ -55,14 +63,24 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     // Inherited from its run: it read a GitHub issue, written outside the project (engine/intake.ts).
     outsideText: runOutside(db, task.runId).text,
     issue: ((issue) => (issue === null ? null : issueLink(issue)))(runIssue(db, task.runId)),
+    // The paired workbench's message this task was given (Peers P5), with its thread, for the task's Outside text; null for any other task.
+    givenMessage: givenMessageOf(db, task.runId),
     decision: decisionOf(db, task.id),
     pullRequest: deliveryOf(db, task),
     resumeNote: resumeNote(db, task),
+    restartLine: restartLine(db, task),
+    waitingFor: waitingForOf(db, task),
+    // On a round started by the owner's note (engine/note-rounds.ts), and, once it brought the task back with nothing
+    // changed, the plain line that says so.
+    onNoteRound: task.status === "building" && openNoteRound(db, task.id) !== null,
+    noteRoundLine: noteRoundLine(db, task),
     // The owner's note that waits for its builder (engine/notes.ts), with whether it replaced one that waited before it;
     // and the latest note when it was not delivered, with why. Neither is in the transcript: only a delivered note is.
     ...notesOf(db, task.id),
     // The mode of its run (manual for a task started on its own), which says who decides on it.
     mode: runModeOf(db, task.runId),
+    // The agent building it now: the one its last hand-off moved it to, else the one it started with (engine/handoff.ts).
+    builder: currentBuilder(db, task, CLAUDE_CODE).agent,
     // What the refine loop came to, for the decision point: "none", "satisfied", "unaccounted", "unresolved" or "failed", and how many
     // reviews and rounds of fixes there were. Read from the records; once the task is ready for review it is final.
     ...loopCounts(db, task.id),
@@ -70,16 +88,33 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
   };
 }
 
+/** The task another one waits behind, as its screen and row name it: its number and the first line of its prompt. */
+export function waitingForOf(db: DatabaseSync, task: Task): { taskId: number; title: string } | null {
+  const other = waitingBehind(db, task.id);
+  const found = other === null ? null : getTask(db, other);
+  return found === null ? null : { taskId: found.id, title: firstLine(found.prompt) };
+}
+
+function givenMessageOf(db: DatabaseSync, runId: number | null): { pairingId: string; messageId: string; contextId: string | null; peerName: string } | null {
+  if (runId === null) return null;
+  const row = db.prepare("SELECT r.peer_pairing_id, r.peer_message_id, r.peer_name, m.context_id FROM runs r LEFT JOIN peer_messages m ON m.pairing_id = r.peer_pairing_id AND m.message_id = r.peer_message_id AND m.direction = 'in' WHERE r.id = ? AND r.peer_pairing_id IS NOT NULL").get(runId);
+  if (row === undefined) return null;
+  return { pairingId: String(row.peer_pairing_id), messageId: String(row.peer_message_id), contextId: row.context_id == null ? null : String(row.context_id), peerName: String(row.peer_name) };
+}
+
 function notesOf(db: DatabaseSync, taskId: number): { waitingNote: Record<string, unknown> | null; undeliveredNote: Record<string, unknown> | null } {
   const waiting = waitingNote(db, taskId);
   const undelivered = undeliveredNote(db, taskId);
   return {
-    waitingNote: waiting === null ? null : { id: waiting.id, text: waiting.text, sentAt: waiting.sentAt, replacedOne: replacedOne(db, waiting) },
+    waitingNote: waiting === null ? null : { id: waiting.id, text: waiting.text, sentAt: waiting.sentAt, replacedOne: replacedOne(db, waiting), forRound: waiting.forRound },
     undeliveredNote: undelivered === null ? null : { id: undelivered.id, text: undelivered.text, sentAt: undelivered.sentAt, reason: undelivered.reason },
   };
 }
 
-/** POST /api/tasks/:id/notes: the owner's note for a building task's builder, `{ "text": "..." }`. Answers with the note as stored. */
+/**
+ * POST /api/tasks/:id/notes: the owner's note for a building task's builder, or for a task that is ready for review,
+ * whose builder's session it then takes up again (engine/note-rounds.ts), `{ "text": "..." }`. Answers with the note as stored.
+ */
 async function sendNote(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, id: number): Promise<void> {
   let body: unknown;
   try {
@@ -90,6 +125,8 @@ async function sendNote(req: http.IncomingMessage, res: http.ServerResponse, ctx
   }
   // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
   if (!isObject(body) || typeof body.text !== "string") throw new TaskError(400, 'expected { "text": "the note" }');
+  // A decision at work on the task may be removing its copy: no round is started in it meanwhile.
+  if (beingDecided(id)) throw new TaskError(409, "This task is being decided, so a note cannot reach Claude Code now.");
   json(res, 200, ctx.tasks.sendNote(id, body.text));
 }
 
@@ -208,12 +245,28 @@ async function pullRequestTarget(ctx: RouteContext, task: Task): Promise<Record<
  * session before a restart). Read from the task's own history, where each session it worked in is recorded by number.
  */
 function earlierAttempts(db: DatabaseSync, task: Task): number {
-  const ids = new Set<number>();
-  for (const row of db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND detail LIKE '%attempt %'").all(task.id)) {
-    for (const match of String(row.detail).matchAll(/\battempt (\d+)\b/g)) ids.add(Number(match[1]));
-  }
-  if (task.attemptId !== null) ids.delete(task.attemptId);
-  return ids.size;
+  // The session each hand-off left is shown with the one the task names now, so it is not counted among the earlier ones.
+  const shown = new Set(taskHandoffs(db, task.id).map((h) => h.fromAttemptId));
+  return taskAttempts(db, task.id).filter((id) => id !== task.attemptId && !shown.has(id)).length;
+}
+
+/**
+ * Each time the task was handed to another agent (engine/handoff.ts), oldest first: the agents, why, when, the session
+ * it left (whose transcript the task's screen shows before the new agent's), and the one line the owner reads.
+ */
+function handoffsOf(db: DatabaseSync, taskId: number): Record<string, unknown>[] {
+  return taskHandoffs(db, taskId).map((h) => ({ from: h.from, to: h.to, reason: h.reason, at: h.at, fromAttemptId: h.fromAttemptId, line: handoffLine(h) }));
+}
+
+/** POST /api/tasks/:id/move: the owner's move of a building task to another agent, `{ "agent": "codex", "model"?: string | null }`. */
+async function moveTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, id: number): Promise<void> {
+  const body = await readJsonBody(req);
+  // voice: not on screen. It names the API's own fields for a caller whose request was malformed; the client never sends one.
+  if (!isObject(body) || typeof body.agent !== "string") throw new TaskError(400, 'expected { "agent": "claude-code" | "codex", "model"?: string | null }');
+  const model = modelChoice(body);
+  // A discard at work on the task may be removing its copy: nothing is started in it meanwhile.
+  if (beingDecided(id)) throw new TaskError(409, "This task is being discarded, so it cannot be moved.");
+  json(res, 200, await detail(ctx, await ctx.tasks.handOff(id, body.agent, model)));
 }
 
 /**
@@ -229,7 +282,18 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   const { db } = ctx;
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
+  const offer = ctx.tasks.moveOffer(task.id);
+  // An agent whose last check found a problem (signed out, not installed) is not offered: from the kept check, so a
+  // task's screen never waits for every agent's program (api/agents.ts). The move itself checks the agent again.
+  if (offer.now && offer.agents.length > 0) {
+    const checked = await ctx.agentChecks.read().catch(() => null);
+    offer.agents = offer.agents.filter((agent) => checked === null || checked.agents.find((a) => a.agent === agent)?.problem == null);
+  }
+  // `runsMade`: the runs the owner made from this task ("Make this a run", engine/run-source.ts), oldest first.
+  return { ...summary(db, task), runsMade: runsMadeFrom(db, task.id), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), handoffs: handoffsOf(db, task.id),
+    // The agents the owner can move this task to now: only while its builder is at work, never its run's reviewer, and
+    // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
+    moveTo: offer.now ? offer.agents : [], ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
     // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
     refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
@@ -289,6 +353,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const resume = /^\/api\/tasks\/([1-9]\d{0,14})\/resume$/.exec(pathname);
   const pullRequest = /^\/api\/tasks\/([1-9]\d{0,14})\/pull-request$/.exec(pathname);
   const note = /^\/api\/tasks\/([1-9]\d{0,14})\/notes$/.exec(pathname);
+  const move = /^\/api\/tasks\/([1-9]\d{0,14})\/move$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -350,6 +415,8 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       json(res, 200, await detail(ctx, getTask(ctx.db, id)!));
     } else if (method === "POST" && note) {
       await sendNote(req, res, ctx, Number(note[1]));
+    } else if (method === "POST" && move) {
+      await moveTask(req, res, ctx, Number(move[1]));
     } else {
       return false;
     }

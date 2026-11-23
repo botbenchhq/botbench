@@ -5,9 +5,9 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { actionLog } from "../../src/approvals/broker.ts";
 import type { Config } from "../../src/config.ts";
-import { claimBranchName, claimMessage, lockBranch, OLD_CLAIM_MS, parseClaimBranch, parseLockBranch, spottedIssues as serverSpotted, takeOverGiven } from "../../src/engine/claim-branch.ts";
-import { claimSteps, createClaims, type Claims } from "../../src/engine/claims.ts";
-import { decideTask } from "../../src/engine/decision.ts";
+import { claimBranchName, claimMessage, lockBranch, OLD_CLAIM_MS, parseClaimBranch, parseLockBranch, parseWorkedBranch, spottedIssues as serverSpotted, takeOverGiven, WORKED_EVERY_MS, workedBranchName } from "../../src/engine/claim-branch.ts";
+import { claimOf, claimSteps, createClaims, type Claims } from "../../src/engine/claims.ts";
+import { acceptByMode, decideTask } from "../../src/engine/decision.ts";
 import { createDeliveries, deliverySteps } from "../../src/engine/delivery.ts";
 import { lookUpIssue } from "../../src/engine/intake.ts";
 import { createPeers } from "../../src/engine/peers.ts";
@@ -17,7 +17,8 @@ import { now, openStore, transaction } from "../../src/store/db.ts";
 import { chooseWorkbench, parseTaskBranch } from "../../src/workbench.ts";
 import { commitWork, createWorktree, deleteRemoteBranchAt, deleteRemoteBranchesAt, makeClaimCommit, pushNewBranch, pushNewBranches } from "../../src/worktrees.ts";
 import { claimNotice, issueWarnings, oldClaims, peerRows, spottedIssues as composerSpotted } from "../../web/src/app/peers.ts";
-import { replayGitHub, type Replay } from "../support/replay-github.ts";
+import { loadGhCapture, replayGitHub, type Replay } from "../support/replay-github.ts";
+import { parsePrList, type GitHub } from "../../src/github.ts";
 import { ISSUE_ADDRESS, ISSUE_NUMBER, replayIssues } from "../support/replay-issue.ts";
 import { PEERS_ADDRESS, replayPeers } from "../support/replay-peers.ts";
 import { git, initRepo, tempDir, write } from "../support/repo.ts";
@@ -44,7 +45,6 @@ interface Bench {
 /** A shared remote: a bare repository with one commit on main. */
 function sharedRemote(t: T): { dir: string; bare: string } {
   const dir = tempDir("botbench-claims-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const seed = path.join(dir, "seed");
   initRepo(seed);
   const bare = path.join(dir, "remote.git");
@@ -490,7 +490,7 @@ test("two workbenches on one issue and one real remote: the one that does not ho
   await decideTask(alice.db, { taskId: aliceWork.task.id, decision: "accept" });
   await Promise.all([bobDeliveries.idle(), aliceDeliveries.idle()]);
   await Promise.all([bobClaims.idle(), aliceClaims.idle()]);
-  assert.equal(aliceGh.opened.length + bobGh.opened.length, 1, "at most one pull request for the issue");
+  assert.equal(aliceGh.opened.length + bobGh.opened.length, 1, `at most one pull request for the issue: ${JSON.stringify(deliverySteps(alice.db, aliceWork.task.id).map((s) => s.detail))}`);
   assert.equal(aliceGh.opened.length, 1, "the lock's holder opened it");
   assert.deepEqual(deliverySteps(bob.db, bobWork.task.id).map((s) => [s.step, s.failedStep]), [["failed", "check"]]);
   assert.match(deliverySteps(bob.db, bobWork.task.id)[0]!.detail!, /^alice started on issue #82 at 21:05:30 UTC on 2026-11-22, before this workbench did \(21:05:31 UTC on 2026-11-22\), so Botbench did not push the branch botbench\/bob\/run-\d+\/task-\d+ or open a pull request/);
@@ -502,7 +502,7 @@ test("two workbenches on one issue and one real remote: the one that does not ho
   // Try again on bob's side refuses the same way, without reading or sending anything.
   bobDeliveries.deliver(bobWork.task.id, { by: "owner" });
   await bobDeliveries.idle();
-  assert.match(deliverySteps(bob.db, bobWork.task.id).at(-1)!.detail!, /^This run gave way to an earlier claim on issue #82/);
+  assert.match(deliverySteps(bob.db, bobWork.task.id).at(-1)!.detail!, /^This run gave way to another workbench on issue #82/);
   assert.equal(bobGh.opened.length, 0);
 });
 
@@ -636,7 +636,7 @@ test("another workbench's composer sees the claim, for an attached issue and for
   const view = await createPeers({ db: alice.db, config: alice.config, github: replay.github }).view(alice.repo);
   assert.equal(view.state, "ready", view.state === "unavailable" ? view.problem : "");
   if (view.state !== "ready") return;
-  assert.deepEqual(view.claims, [{ workbench: "bob", branch: bobBranch, issue: 82, startedAt: "2026-11-22T21:05:30.000Z" }], "read from the real remote with git ls-remote");
+  assert.deepEqual(view.claims, [{ workbench: "bob", branch: bobBranch, issue: 82, startedAt: "2026-11-22T21:05:30.000Z", workedAt: "2026-11-22T21:05:30.000Z", takenOverBy: null, pullRequest: null }], "read from the real remote with git ls-remote");
   assert.deepEqual(view.branches, [], "a claim, and the issue's lock, are not listed again as pushed branches");
 
   assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: FIVE_MINUTES_LATER }), ["bob started on this issue 5 minutes ago."]);
@@ -648,9 +648,10 @@ test("another workbench's composer sees the claim, for an attached issue and for
   assert.deepEqual(oldClaims(view, { attached: null, message: "Fix #82 and #83", now: later }), [], "only for the one issue a run would claim");
 
   const rows = peerRows(view, FIVE_MINUTES_LATER);
-  assert.deepEqual(rows.map((r) => [r.kind, r.workbench, r.branch, r.rest]), [["claim", "bob", bobBranch, " · Started on issue #82 5 minutes ago · github.com/jon-lange/botbench"]]);
+  // The repository is its own field: outside text, drawn apart from Botbench's words.
+  assert.deepEqual(rows.map((r) => [r.kind, r.workbench, r.branch, r.rest, r.repository, r.after]), [["claim", "bob", bobBranch, " · Started on issue #82 5 minutes ago · ", "github.com/jon-lange/botbench", ""]]);
   const folder = path.basename(alice.repo);
-  for (const row of rows) assert.ok(!row.rest.includes(folder), `the viewer's folder name ${folder} is not shown in place of the repository`);
+  for (const row of rows) assert.ok(!`${row.rest}${row.repository}${row.after}`.includes(folder), `the viewer's folder name ${folder} is not shown in place of the repository`);
 });
 
 test("the composer says before Send when a run will push a claim: only with the setting on, pull requests chosen, and one issue", () => {
@@ -679,8 +680,8 @@ test("a claim's and a lock's names are read strictly", () => {
 });
 
 /** A run of `b` from issue `issue` that opens pull requests, its one task built on its own named branch and ready for review. */
-async function readyRun(b: Bench, claims: Claims, workbench: string, prompt: string): Promise<{ run: Run; task: Task }> {
-  const run = issueRun(b, prompt);
+async function readyRun(b: Bench, claims: Claims, workbench: string, prompt: string, o: { takeOver?: Parameters<typeof createRun>[1]["takeOver"]; mode?: "manual" | "semi" | "full" } = {}): Promise<{ run: Run; task: Task }> {
+  const run = o.mode === undefined ? issueRun(b, prompt, o.takeOver === undefined ? {} : { takeOver: o.takeOver }) : createRun(b.db, { repo: b.repo, prompt, baseCommit: b.base, delivery: "pull_request", mode: o.mode, ...(o.takeOver === undefined ? {} : { takeOver: o.takeOver }) });
   // Claimed as it starts, while it is planning.
   await changed(claims, b.db, run.id);
   const stored = storePlan(b.db, run.id, [{ title: "Fix the issue", criteria: ["It is fixed"] }]);
@@ -690,5 +691,265 @@ async function readyRun(b: Bench, claims: Claims, workbench: string, prompt: str
   write(worktree.path, `${workbench}.txt`, `${workbench}'s fix\n`);
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
-  return { run, task: moveTask(b.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: "none" }) };
+  // A fully autonomous run accepts only a task whose checks passed (the store refuses it otherwise).
+  return { run, task: moveTask(b.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: o.mode === "full" ? "passed" : "none" }) };
 }
+
+// Issue #188, found by the overlapping-issues experiment (docs/competitive/results/2026-11-23-overlapping-issues.md):
+// a workbench stopped after its task was accepted, whose claim another workbench took over, opened a second pull
+// request for the issue when it started again. Its times are the experiment's.
+const C_CLAIMED = new Date("2026-11-23T11:16:03.365Z");
+const B_TOOK_OVER = new Date("2026-11-23T12:16:54.000Z");
+const C_RESTARTED = new Date("2026-11-23T12:17:28.000Z");
+/** The pull request number gh's captured answer gives (test/recordings/gh-delivery.json). */
+const CAPTURED_PR = parsePrList(loadGhCapture().outputs.prListOne.result.stdout, loadGhCapture().branch)!.number;
+
+/**
+ * The GitHub one workbench reaches: its own replay, except that a look for a pull request of another workbench's branch
+ * is answered as that workbench's own replay answers it, so a pull request it opened is found (the replay's rule: the
+ * answers come back for the branch the test names, in the order it arranges).
+ */
+const sharedGitHub = (own: Replay, others: Record<string, Replay>): GitHub => ({
+  ...own.github,
+  findPullRequest: (repo, branch) => {
+    const other = Object.entries(others).find(([workbench]) => branch.startsWith(`botbench/${workbench}/`));
+    return (other?.[1] ?? own).github.findPullRequest(repo, branch);
+  },
+});
+
+/** Workbench C's claim on issue 4, its task accepted and not delivered (its Botbench stopped); then B takes it over and opens its pull request. */
+async function takenOverScenario(t: T): Promise<{ remote: { dir: string; bare: string }; c: Bench; b: Bench; cWork: { run: Run; task: Task }; bGh: Replay; bPr: number }> {
+  const remote = sharedRemote(t);
+  const c = bench(t, remote, "exp-c");
+  const b = bench(t, remote, "exp-b");
+  // C claims issue 4 and builds; its owner accepts; its Botbench stops before the delivery starts (no deliveries running).
+  const cWork = await readyRun(c, claimsOf(c, replayGitHub().github, C_CLAIMED), "exp-c", "Issue #4: isEmail rejects plus addresses");
+  assert.deepEqual(steps(c.db, cWork.run.id), ["claiming", "claimed"]);
+  await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+  assert.deepEqual(deliverySteps(c.db, cWork.task.id), [], "stopped before anything was sent");
+
+  // An hour later B is offered the take-over, confirms it, builds and opens its pull request.
+  const cClaim = claimSteps(c.db, cWork.run.id).at(-1)!.branch!;
+  const taken = takeOverGiven([cClaim], { issue: 4, own: new Set(["exp-b"]), now: B_TOOK_OVER.getTime() });
+  const bGh = replayGitHub();
+  const bClaims = claimsOf(b, sharedGitHub(bGh, {}), B_TOOK_OVER);
+  const bDeliveries = createDeliveries({ db: b.db, config: b.config, github: bGh.github, onTaskChange: () => {}, claims: bClaims });
+  t.after(() => bDeliveries.close());
+  const bWork = await readyRun(b, bClaims, "exp-b", "Issue #4: isEmail rejects plus addresses", { takeOver: taken });
+  assert.match(claimSteps(b.db, bWork.run.id).at(-1)!.detail, /You took over exp-c's claim from 11:16:03 UTC on 2026-11-23/);
+  await decideTask(b.db, { taskId: bWork.task.id, decision: "accept" });
+  await bDeliveries.idle();
+  const opened = deliverySteps(b.db, bWork.task.id).find((s) => s.step === "opened");
+  assert.ok(opened, `B opened its pull request: ${JSON.stringify(deliverySteps(b.db, bWork.task.id))}`);
+  assert.equal(bGh.opened.length, 1);
+  // Once its pull request is open, B's run says so rather than that it started on the issue; its claim stays as the lock.
+  assert.equal(claimOf(b.db, bWork.run.id)!.words, `Pull request #${opened.number} is open for issue #4. The claim's branches stay on the remote as the issue's lock while it is open, so other workbenches see the pull request rather than a start.`);
+  assert.ok(remoteBranches(remote.bare).has(claimSteps(b.db, bWork.run.id).at(-1)!.branch!));
+  return { remote, c, b, cWork, bGh, bPr: opened.number! };
+}
+
+test("issue #188, the experiment's scenario: C, stopped after accept, whose claim B took over and delivered, opens nothing when it starts again and says why", async (t) => {
+  const { remote, c, cWork, bGh, bPr } = await takenOverScenario(t);
+  assert.equal(bPr, CAPTURED_PR);
+  const before = remoteBranches(remote.bare);
+
+  // C starts again, as the server starts: claims read again first, then the deliveries a stopped Botbench left.
+  const cGh = replayGitHub();
+  const restarted = claimsOf(c, sharedGitHub(cGh, { "exp-b": bGh }), C_RESTARTED);
+  restarted.recover();
+  const cDeliveries = createDeliveries({ db: c.db, config: c.config, github: cGh.github, onTaskChange: (task) => restarted.runChanged({ id: task.runId! }), claims: restarted });
+  t.after(() => cDeliveries.close());
+  await cDeliveries.idle();
+  await restarted.idle();
+
+  assert.equal(cGh.opened.length, 0, "C opened no pull request");
+  assert.equal(remoteBranches(remote.bare).has(cWork.task.branch!), false, "C's branch was not pushed");
+  assert.ok(git(c.repo, "rev-parse", "--verify", cWork.task.branch!).trim(), "C's branch stays on C's Mac for its owner");
+  // The run says it lost its claim, and why, in plain words.
+  assert.deepEqual(steps(c.db, cWork.run.id), ["claiming", "claimed", "withdrawn"]);
+  const reason = `exp-b took issue #4 over at 12:16:54 UTC on 2026-11-23 and has pull request #${bPr}, so this run stopped when Botbench started again, and nothing more of it is pushed or opened. Your branch is kept here for you to decide. This workbench's claim stays on the remote origin as it is, so the issue stays held for exp-b.`;
+  assert.equal(claimSteps(c.db, cWork.run.id).at(-1)!.detail, reason);
+  assert.equal(claimOf(c.db, cWork.run.id)!.words, reason);
+  // The task's delivery stops with the same reason.
+  const delivered = deliverySteps(c.db, cWork.task.id);
+  assert.deepEqual(delivered.map((s) => [s.step, s.failedStep]), [["failed", "check"]]);
+  assert.equal(delivered[0]!.detail, `This run gave way to another workbench on issue #4, so Botbench did not push the branch ${cWork.task.branch} or open a pull request. ${reason}`);
+  // C's claim stays as it was, so the issue stays held for B; nothing of B's was touched.
+  assert.deepEqual(remoteBranches(remote.bare), before, "nothing on the remote changed");
+  assert.ok(actionLog(c.db).some((e) => e.rule === "issue_claim" && e.detail!.startsWith("exp-b took issue #4 over")), "the lost claim is in the action log");
+
+  // Try again by the owner: refused the same way, nothing sent.
+  cDeliveries.deliver(cWork.task.id, { by: "owner" });
+  await cDeliveries.idle();
+  assert.match(deliverySteps(c.db, cWork.task.id).at(-1)!.detail!, /^This run gave way to another workbench on issue #4/);
+  assert.equal(cGh.opened.length, 0);
+  assert.deepEqual(remoteBranches(remote.bare), before);
+});
+
+test("issue #188: every path that delivers reads the claim again first, so a taken-over claim opens nothing: the owner's accept, a fully autonomous accept, a delivery asked or pushed before a restart, Try again", async (t) => {
+  for (const path of ["owner accept", "fully autonomous accept", "asked before a restart", "pushed before a restart", "pull request read again"] as const) {
+    const remote = sharedRemote(t);
+    const c = bench(t, remote, "exp-c");
+    const b = bench(t, remote, "exp-b");
+    const cGh = replayGitHub();
+    const bGh = replayGitHub();
+    const cClaims = claimsOf(c, sharedGitHub(cGh, { "exp-b": bGh }), C_CLAIMED);
+    const cWork = await readyRun(c, cClaims, "exp-c", "Issue #4", path === "fully autonomous accept" ? { mode: "full" } : {});
+    // B takes C's claim over and opens its pull request, as B's Botbench does.
+    const cClaim = claimSteps(c.db, cWork.run.id).at(-1)!.branch!;
+    const bClaims = claimsOf(b, bGh.github, B_TOOK_OVER);
+    const bDeliveries = createDeliveries({ db: b.db, config: b.config, github: bGh.github, onTaskChange: () => {}, claims: bClaims });
+    const takeOver = async (): Promise<void> => {
+      const bWork = await readyRun(b, bClaims, "exp-b", "Issue #4", { takeOver: takeOverGiven([cClaim], { issue: 4, own: new Set(["exp-b"]), now: B_TOOK_OVER.getTime() }) });
+      await decideTask(b.db, { taskId: bWork.task.id, decision: "accept" });
+      await bDeliveries.idle();
+      await bDeliveries.close();
+      assert.equal(bGh.opened.length, 1, `${path}: B opened its pull request`);
+    };
+
+    if (path === "owner accept" || path === "fully autonomous accept") {
+      await takeOver();
+      const cDeliveries = createDeliveries({ db: c.db, config: c.config, github: cGh.github, onTaskChange: (task) => cClaims.runChanged({ id: task.runId! }), claims: cClaims });
+      if (path === "owner accept") await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+      else await acceptByMode(c.db, cWork.task.id, "Checks passed and the review found nothing.");
+      await cDeliveries.idle();
+      // Try again after it: refused the same way.
+      cDeliveries.deliver(cWork.task.id, { by: "owner" });
+      await cDeliveries.close();
+    } else if (path === "pull request read again") {
+      // C pushes its branch while it still holds the issue; B takes over before C's pull request is opened.
+      const held = createDeliveries({ db: c.db, config: c.config, github: cGh.github, onTaskChange: () => {}, claims: { beforeSend: async (runId, when, branch) => {
+        if (when === "pull_request") await takeOver();
+        return cClaims.beforeSend(runId, when, branch);
+      } } });
+      await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+      await held.idle();
+      await held.close();
+      assert.ok(remoteBranches(remote.bare).has(cWork.task.branch!), `C had pushed its branch while it held the issue: ${JSON.stringify(deliverySteps(c.db, cWork.task.id))}`);
+    } else {
+      // Accepted, then C's Botbench stopped with the delivery asked (or pushed); B took over meanwhile; C starts again.
+      await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+      c.db.prepare("INSERT INTO deliveries (task_id, step, requested_by, remote, branch, created_at) VALUES (?, 'requested', 'run', 'origin', ?, ?)").run(cWork.task.id, cWork.task.branch, now());
+      if (path === "pushed before a restart") {
+        git(c.repo, "push", "--quiet", "origin", `${cWork.task.branch}:refs/heads/${cWork.task.branch}`);
+        c.db.prepare("INSERT INTO deliveries (task_id, step, remote, branch, created_at) VALUES (?, 'pushed', 'origin', ?, ?)").run(cWork.task.id, cWork.task.branch, now());
+      }
+      await takeOver();
+      const restarted = claimsOf(c, sharedGitHub(cGh, { "exp-b": bGh }), C_RESTARTED);
+      restarted.recover();
+      const cDeliveries = createDeliveries({ db: c.db, config: c.config, github: cGh.github, onTaskChange: (task) => restarted.runChanged({ id: task.runId! }), claims: restarted });
+      await cDeliveries.idle();
+      cDeliveries.deliver(cWork.task.id, { by: "owner" });
+      await cDeliveries.close();
+      await restarted.idle();
+    }
+    assert.equal(cGh.opened.length, 0, `${path}: C opened no pull request`);
+    if (path !== "pushed before a restart" && path !== "pull request read again") assert.equal(remoteBranches(remote.bare).has(cWork.task.branch!), false, `${path}: C's branch was not pushed`);
+    const last = deliverySteps(c.db, cWork.task.id).at(-1)!;
+    assert.equal(last.step, "failed", path);
+    assert.match(last.detail!, new RegExp(`exp-b took issue #4 over at 12:16:54 UTC on 2026-11-23 and has pull request #${CAPTURED_PR}, so .*Your branch is kept here for you to decide\\.`), path);
+    assert.equal(steps(c.db, cWork.run.id).at(-1), "withdrawn", path);
+    assert.equal(claimSteps(c.db, cWork.run.id).filter((s) => s.step === "withdrawn").length, 1, `${path}: the claim is given up once`);
+  }
+});
+
+test("a claim deleted or changed on the remote stops the delivery; a remote that cannot be read sends nothing and gives nothing up", async (t) => {
+  for (const what of ["deleted", "changed", "unreadable"] as const) {
+    const remote = sharedRemote(t);
+    const alice = bench(t, remote, "alice");
+    const gh = replayGitHub();
+    const claims = claimsOf(alice, gh.github);
+    const work = await readyRun(alice, claims, "alice", "Issue #82");
+    const claim = claimSteps(alice.db, work.run.id).at(-1)!;
+    if (what === "deleted") git(remote.bare, "update-ref", "-d", `refs/heads/${claim.branch}`);
+    if (what === "changed") {
+      const other = await makeClaimCommit(alice.repo, "somebody else's commit");
+      git(alice.repo, "push", "--quiet", "--force", "origin", `${other}:refs/heads/${claim.branch}`);
+    }
+    if (what === "unreadable") {
+      // The remote is gone from where git reaches it.
+      git(alice.repo, "config", "--unset", `url.${remote.bare}.insteadOf`);
+      git(alice.repo, "config", `url.${path.join(remote.dir, "gone.git")}.insteadOf`, PEERS_ADDRESS);
+    }
+    // Wired as the server wires it: a failed delivery may release the run's claim.
+    const deliveries = createDeliveries({ db: alice.db, config: alice.config, github: gh.github, onTaskChange: (task) => claims.runChanged({ id: task.runId! }), claims });
+    await decideTask(alice.db, { taskId: work.task.id, decision: "accept" });
+    await deliveries.idle();
+    await claims.idle();
+    assert.equal(gh.opened.length, 0, what);
+    const detail = deliverySteps(alice.db, work.task.id).at(-1)!.detail!;
+    if (what === "deleted") assert.match(detail, /This workbench's claim on issue #82 is no longer on the remote origin \(the branch botbench\/alice\/run-\d+\/issue-82-at-\S+ was deleted there\), so Botbench did not push the branch/);
+    if (what === "changed") assert.match(detail, /The branch botbench\/alice\/run-\d+\/issue-82-at-\S+ of this workbench's claim on issue #82 was changed on the remote origin since Botbench pushed it/);
+    if (what === "unreadable") {
+      assert.match(detail, /^Botbench could not read the claim on issue #82 again \([\s\S]+\), so Botbench did not push the branch \S+ or open a pull request\. Try again once the remote and GitHub can be reached\.$/);
+      assert.equal(steps(alice.db, work.run.id).includes("withdrawn"), false, "nothing given up while it cannot be known");
+      // The failed delivery ended the claim (released, or kept while the remote could not be read). The remote comes
+      // back, and meanwhile bob claimed the issue: Try again still looks, and sends nothing.
+      git(alice.repo, "config", "--unset", `url.${path.join(remote.dir, "gone.git")}.insteadOf`);
+      git(alice.repo, "config", `url.${remote.bare}.insteadOf`, PEERS_ADDRESS);
+      assert.match(steps(alice.db, work.run.id).at(-1)!, /^(released|kept)$/);
+      for (const b of [claim.branch!, lockBranch(82)]) if (remoteBranches(remote.bare).has(b)) git(remote.bare, "update-ref", "-d", `refs/heads/${b}`);
+      const bob = bench(t, remote, "bob");
+      await pushClaimOf(bob, "bob", 2, 82, new Date(STARTED.getTime() + 60_000));
+      deliveries.deliver(work.task.id, { by: "owner" });
+      await deliveries.idle();
+      assert.match(deliverySteps(alice.db, work.task.id).at(-1)!.detail!, /^This run's claim on issue #82 ended when its delivery failed, and bob started on it at 21:06:30 UTC on 2026-11-22 and holds it now, so Botbench did not push the branch \S+ or open a pull request\. Your branch is kept here for you to decide\.$/);
+      assert.equal(remoteBranches(remote.bare).has(work.task.branch!), false);
+    } else assert.equal(steps(alice.db, work.run.id).at(-1), "withdrawn", what);
+    await deliveries.close();
+    await claims.idle();
+  }
+});
+
+test("while its run builds, a claim says when its workbench last worked on it, never by force; others read it, a take-over, and the run's open pull request from branch names", async (t) => {
+  const remote = sharedRemote(t);
+  const bob = bench(t, remote, "bob");
+  let clock = STARTED;
+  const bobClaims = createClaims({ db: bob.db, config: bob.config, github: replayGitHub().github, clock: () => clock });
+  const run = issueRun(bob, "Issue #82");
+  await changed(bobClaims, bob.db, run.id);
+  const claim = claimSteps(bob.db, run.id).at(-1)!;
+  const signs = () => [...remoteBranches(remote.bare)].filter(([b]) => parseWorkedBranch(b) !== null);
+
+  // Within WORKED_EVERY_MS nothing more is pushed.
+  clock = new Date(STARTED.getTime() + WORKED_EVERY_MS - 1000);
+  bobClaims.worked();
+  await bobClaims.idle();
+  assert.deepEqual(signs(), []);
+  // After it, one sign at the claim's own commit; the next one replaces it.
+  clock = new Date(STARTED.getTime() + WORKED_EVERY_MS + 1000);
+  bobClaims.worked();
+  await bobClaims.idle();
+  const first = workedBranchName("bob", run.id, 82, clock);
+  assert.deepEqual(signs(), [[first, claim.commit]]);
+  clock = new Date(STARTED.getTime() + 3 * WORKED_EVERY_MS);
+  bobClaims.worked();
+  await bobClaims.idle();
+  const second = workedBranchName("bob", run.id, 82, clock);
+  assert.deepEqual(signs(), [[second, claim.commit]], "the one before is deleted in the same push");
+  assert.equal(remoteBranches(remote.bare).get(claim.branch!), claim.commit, "the claim and its lock are as they were");
+  assert.equal(remoteBranches(remote.bare).get(lockBranch(82)), claim.commit);
+  assert.ok(claimRows(bob.db).some((r) => r.detail!.startsWith(`Botbench pushed the branch ${second} to the remote origin, so other workbenches see that this workbench last worked on issue #82 at`) && r.command.includes(`--force-with-lease=refs/heads/${first}:${claim.commit}`) && !/ --force( |$)/.test(r.command)));
+  // A Botbench started again counts the newest sign already on the remote.
+  const again = createClaims({ db: bob.db, config: bob.config, github: replayGitHub().github, clock: () => new Date(clock.getTime() + 60_000) });
+  again.worked();
+  await again.idle();
+  assert.deepEqual(signs(), [[second, claim.commit]]);
+
+  // Alice reads it: when bob last worked on it, and the sign is not listed as a pushed branch.
+  const alice = bench(t, remote, "alice");
+  const view = await createPeers({ db: alice.db, config: alice.config, github: replayPeers(replayIssues().github).github }).view(alice.repo);
+  assert.equal(view.state, "ready");
+  if (view.state !== "ready") return;
+  assert.deepEqual(view.claims.map((c) => [c.workbench, c.workedAt, c.takenOverBy, c.pullRequest]), [["bob", clock.toISOString(), null, null]]);
+  assert.deepEqual(view.branches, []);
+  const at = clock.getTime() + 5 * 60_000;
+  assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: at }), ["bob started on this issue 35 minutes ago; it last worked on it 5 minutes ago."]);
+  assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: clock.getTime() + 40 * 60_000 }), ["bob started on this issue 70 minutes ago and has shown no work on it for 40 minutes: it may have stopped, or be waiting for its owner."]);
+  assert.deepEqual(peerRows(view, at).map((r) => r.rest), [" · Started on issue #82 35 minutes ago; it last worked on it 5 minutes ago · "]);
+
+  // The run ends without a pull request: the sign goes with the claim.
+  cancelRun(bob.db, run.id);
+  await changed(bobClaims, bob.db, run.id);
+  assert.deepEqual([...remoteBranches(remote.bare).keys()].filter((b) => b !== "main"), []);
+});

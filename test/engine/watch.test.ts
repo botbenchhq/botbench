@@ -20,7 +20,6 @@ import { capturedIssue, loadWatchCapture, replayWatchGh, WATCH_ADDRESS, WATCH_RE
 
 function bench(t: { after(fn: () => void | Promise<void>): void }, o: { label?: string; intervalMinutes?: number } = {}): { home: string; repo: string; config: Config; label: string } {
   const dir = tempDir("botbench-watch-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, "repo");
   initRepo(repo);
   git(repo, "remote", "add", "origin", WATCH_ADDRESS);

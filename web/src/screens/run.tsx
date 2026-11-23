@@ -5,16 +5,16 @@ import { ApprovalCard } from "../components/approval-card.tsx";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { PullRequestLink, pullRequestWords } from "../components/pull-request.tsx";
-import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
+import { CHECKS_LINE, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { modeSentence } from "../app/run-words.ts";
-import { LIMIT_WORDS, limitName } from "../app/composer.ts";
+import { APPROVAL_LIMIT_WORDS, limitName } from "../app/composer.ts";
 import { cancelStatement } from "../app/row-menu.ts";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { runSentence, runTaskNote } from "../components/run-status.ts";
-import { offersMerge, statusLook, statusWord, waitingWords } from "../components/task-status.ts";
+import { offersMerge, statusLook, statusWord, waitingForWords, waitingWords } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
@@ -110,6 +110,7 @@ function taskFacts(task: RunTask): string {
   if (task.status === "verifying") return "Botbench is running this repository's checks";
   if (task.status === "reviewing") return "The reviewer is reading the changes";
   if (task.status === "waiting_for_limit") return waitingWords(task.retryAt);
+  if (task.waitingFor !== null) return waitingForWords(task)!;
   if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
   if (task.decision?.branch === "deleted") return "Branch deleted";
   return task.branch ?? "No branch";
@@ -344,6 +345,17 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   {run.repo}
                 </dd>
               </div>
+              {run.source !== null && (
+                // The finished task or the chat this run was made from, with the owner's note as its message.
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Made from</dt>
+                  <dd data-testid="run-source" className="ds-key-value__value">
+                    <a href={run.source.kind === "task" ? `#/tasks/${run.source.id}` : `#/chats/${run.source.id}`} className="ds-link">
+                      {run.source.label}
+                    </a>
+                  </dd>
+                </div>
+              )}
               {run.claim !== null && (
                 <div className="ds-key-value__item">
                   <dt className="ds-key-value__label">Other workbenches</dt>
@@ -381,7 +393,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
               <div className="ds-key-value__item">
                 <dt className="ds-key-value__label">Approval time limit</dt>
                 <dd data-testid="run-approval-limit" className="ds-key-value__value">
-                  {run.approvalLimitMinutes === null ? `Off. ${LIMIT_WORDS.off}` : `${limitName(run.approvalLimitMinutes)}. ${LIMIT_WORDS.on(run.approvalLimitMinutes)}`}
+                  {run.approvalLimitMinutes === null ? `Off. ${APPROVAL_LIMIT_WORDS.off}` : `${limitName(run.approvalLimitMinutes)}. ${APPROVAL_LIMIT_WORDS.on(run.approvalLimitMinutes)}`}
                 </dd>
               </div>
               <div className="ds-key-value__item">
@@ -495,7 +507,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                               {task.title}
                             </span>
                             <span className="ds-run-status__station">
-                              <StatusBadge look={statusLook({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}>{statusWord({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false })}</StatusBadge>
+                              <StatusBadge look={statusLook({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false, waitingFor: task.waitingFor })}>{statusWord({ status: task.status, waitingOnApproval: task.waitingOnApproval, resuming: false, waitingFor: task.waitingFor })}</StatusBadge>
                             </span>
                             <span className="ds-run-status__facts">
                               {`Task ${task.id} · `}
@@ -504,6 +516,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                           </span>
                         </a>
                         {runTaskNote(task) !== null && <p data-ds-content="">{runTaskNote(task)}</p>}
+                        {task.restartLine !== null && <p data-testid="run-task-restart">{task.restartLine}</p>}
                         <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
                         {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
                         <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
@@ -520,7 +533,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     </li>
                   ))}
                 </ul>
-                {run.tasks.some((task) => task.evidence.some((row) => row.kind === "check")) && <p>{CHECKS_RISK}</p>}
+                {run.tasks.some((task) => task.evidence.some((row) => row.kind === "check")) && <p data-testid="run-checks-line">{CHECKS_LINE}</p>}
               </section>
             )}
 

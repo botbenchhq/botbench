@@ -17,8 +17,8 @@ type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
 async function start(t: T, dir = tempDir("botbench-tasks-api-"), settings: Partial<Config> = {}): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
-  // `dir` holds the Botbench home and the test's repositories; removing it removes their worktrees with them.
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // `dir` holds the Botbench home and the test's repositories, and is removed with their worktrees when the file ends
+  // (tempDir), after the server has closed.
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...settings };
   const server = await startServer({ config, home, signInDelayMs: 1 });
@@ -199,7 +199,9 @@ test("a committed task is described with its changed files, each marked as the p
   assert.equal(described.status, 200);
   assert.deepEqual({ ...described.body, createdAt: null, updatedAt: null }, {
     id: task.id, repo, prompt: "change three files", requestedModel: null, status: "awaiting_decision", reason: null,
-    branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, retryAt: null, waitingOnApproval: false, parked: false, resuming: false, ofPlan: null, preapproved: [], outsideText: false, issue: null, resumeNote: null, waitingNote: null, undeliveredNote: null, mode: "manual", reviewOutcome: "none", reviewRounds: 0, refineRounds: 0, createdAt: null, updatedAt: null, issueHosts: [],
+    branch: worktree.branch, baseCommit, headCommit: committed.commit, attemptId: null, retryAt: null, waitingOnApproval: false, parked: false, resuming: false, ofPlan: null, preapproved: [], outsideText: false, issue: null, givenMessage: null, resumeNote: null, restartLine: null, waitingFor: null, onNoteRound: false, noteRoundLine: null, waitingNote: null, undeliveredNote: null, mode: "manual", reviewOutcome: "none", reviewRounds: 0, refineRounds: 0, createdAt: null, updatedAt: null, issueHosts: [],
+    // No run was made from it ("Make this a run").
+    runsMade: [],
     // "change three files" names none of them, and src/ is protected in this server's settings.
     files: [
       { path: "hello.txt", status: "added", added: 1, removed: 0, binary: false, expected: false, protected: false },
@@ -219,6 +221,10 @@ test("a committed task is described with its changed files, each marked as the p
     reviews: [],
     refinements: [],
     earlierAttempts: 0,
+    // Built by Claude Code from its start: never moved to another agent, and not at work, so nothing to move it to.
+    builder: "claude-code",
+    handoffs: [],
+    moveTo: [],
     maxRefineRounds: 0,
     reviewLine: null,
     decision: null,

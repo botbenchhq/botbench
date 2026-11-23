@@ -2336,6 +2336,190 @@ DROP TABLE owner_settings_before_update;
 `,
   },
   {
+    // Peers P5, fourth unit: the screens. `peer_cards.seen_at` is when a signed-in device first drew the card, as the
+    // client says when it renders it (`POST /api/peers/pairings/:id/cards/:message/seen`). Set once, never before the
+    // card was written and never after it was decided; the friction record measures a card's wait from it, and from
+    // `shown_at` (the server made the card) only for a card decided before any device drew it.
+    name: "peer cards seen",
+    sql: `
+ALTER TABLE peer_cards ADD COLUMN seen_at TEXT;
+CREATE TRIGGER peer_cards_seen_once BEFORE UPDATE OF seen_at ON peer_cards
+WHEN OLD.seen_at IS NOT NULL OR NEW.seen_at IS NULL OR OLD.decided_at IS NOT NULL OR NEW.seen_at < OLD.shown_at
+BEGIN SELECT RAISE(ABORT, 'a card is first drawn once, while it waits, and not before it was made'); END;
+`,
+  },
+  {
+    // "Make this a run" (src/engine/run-source.ts): a run the owner made from a finished task or from a chat names it,
+    // `source_task_id` or `source_chat_id` (a chat by its id, its first attempt), at most one of the two. NULL in both is a
+    // run started any other way, as every run before this was. Set when the run is stored and never changed after. Such
+    // a run carries only the owner's words and Botbench's own records, so it never reads outside text: the store
+    // refuses a source together with an issue or the outside-text mark.
+    name: "run source",
+    sql: `
+ALTER TABLE runs ADD COLUMN source_task_id INTEGER REFERENCES tasks (id);
+ALTER TABLE runs ADD COLUMN source_chat_id INTEGER REFERENCES chat_attempts (attempt_id);
+CREATE INDEX runs_source_task ON runs (source_task_id) WHERE source_task_id IS NOT NULL;
+CREATE TRIGGER runs_source_one BEFORE INSERT ON runs WHEN NEW.source_task_id IS NOT NULL AND NEW.source_chat_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a run has at most one source: a task or a chat'); END;
+CREATE TRIGGER runs_source_own_words BEFORE INSERT ON runs WHEN (NEW.source_task_id IS NOT NULL OR NEW.source_chat_id IS NOT NULL) AND (NEW.outside_text <> 0 OR NEW.issue_fetch_id IS NOT NULL OR NEW.kind <> 'planned')
+BEGIN SELECT RAISE(ABORT, 'a run made from a task or a chat is a planned run that carries only the owner''s words, never outside text'); END;
+CREATE TRIGGER runs_source_fixed BEFORE UPDATE OF source_task_id, source_chat_id ON runs WHEN NEW.source_task_id IS NOT OLD.source_task_id OR NEW.source_chat_id IS NOT OLD.source_chat_id
+BEGIN SELECT RAISE(ABORT, 'a run''s source is set when it starts and never changed'); END;
+`,
+  },
+  {
+    // A task can be handed to another agent while it is built (src/engine/handoff.ts): by the owner's choice, or on its
+    // builder's usage limit when its run says Switch. Each hand-off is a row of `task_handoffs`, append-only: the agent
+    // it left and the one it moved to (never the same), the model that one starts on (NULL for its own default), why,
+    // and the session it left. A task's builder now is its last hand-off's `to_agent`, else `tasks.builder_agent`, which
+    // stays what the task started with. A run keeps what its builder's usage limit does (`on_limit`): wait for the reset
+    // (#71, the default and every run before this) or switch; chosen when it starts, never changed. The owner's
+    // settings gain `fallbacks`, the ordered list of agents for the builder (JSON), so `owner_settings` is made again
+    // with its rows kept. The action log gains
+    // `handoff`, one line per hand-off, written with its row; a check cannot be altered in place, so the action log is
+    // made again with every row kept, ids included, and its indexes and triggers put back.
+    name: "handoffs",
+    sql: `
+CREATE TABLE task_handoffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  from_agent TEXT NOT NULL CHECK (from_agent IN ('claude-code', 'codex')),
+  to_agent TEXT NOT NULL CHECK (to_agent IN ('claude-code', 'codex')),
+  to_model TEXT,
+  reason TEXT NOT NULL CHECK (reason IN ('owner', 'usage_limit')),
+  from_attempt_id INTEGER REFERENCES attempts (id),
+  created_at TEXT NOT NULL,
+  CHECK (from_agent <> to_agent)
+);
+CREATE INDEX task_handoffs_task ON task_handoffs (task_id, id);
+CREATE TRIGGER task_handoffs_no_update BEFORE UPDATE ON task_handoffs
+BEGIN SELECT RAISE(ABORT, 'hand-offs are append-only'); END;
+CREATE TRIGGER task_handoffs_no_delete BEFORE DELETE ON task_handoffs
+BEGIN SELECT RAISE(ABORT, 'hand-offs are append-only'); END;
+ALTER TABLE runs ADD COLUMN on_limit TEXT NOT NULL DEFAULT 'wait' CHECK (on_limit IN ('wait', 'switch'));
+CREATE TRIGGER runs_on_limit_fixed BEFORE UPDATE OF on_limit ON runs WHEN NEW.on_limit IS NOT OLD.on_limit
+BEGIN SELECT RAISE(ABORT, 'what a run does on a usage limit is chosen when it starts and never changed'); END;
+
+ALTER TABLE owner_settings RENAME TO owner_settings_before_handoffs;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'update_mode', 'fallbacks')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
+  CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off')),
+  CHECK (name <> 'ask_every_command' OR value IN ('on', 'off')),
+  CHECK (name <> 'update_mode' OR value IN ('tap', 'auto')),
+  CHECK (name <> 'fallbacks' OR (json_valid(value) AND json_type(value, '$.builder') = 'array'))
+);
+INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_handoffs;
+DROP TABLE owner_settings_before_handoffs;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_handoffs;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused', 'peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings', 'handoff')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'handoff' OR (task_id IS NOT NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule NOT IN ('peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused') OR (task_id IS NULL AND run_id IS NULL AND attempt_id IS NULL AND approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule NOT IN ('peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings') OR (approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_settings' OR (asked_by = 'owner' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'peer_invite' OR asked_by = 'owner'),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log_before_handoffs ORDER BY id;
+DROP TABLE action_log_before_handoffs;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+-- The rebuilt table loses the triggers of the one before it: put back the peer rule ("peer messages").
+CREATE TRIGGER action_log_peer_asked BEFORE INSERT ON action_log
+WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
+  AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))
+BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
+`,
+  },
+  {
+    // An owner's note to a task that is ready for review (issue #156, src/engine/note-rounds.ts): the note is stored in
+    // `task_notes` marked `for_round`, with the commit its round starts from (`round_from`), the task goes back to building, and the builder's session is taken up again in
+    // the same copy with the note as its next prompt. `note_rounds`: one row per such round that ended, append-only:
+    // its note, how many reviews the task had when it began, the builder's attempt, how its turn ended, whether it changed
+    // the work, its reply, the commit it started from and the one Botbench made after it, and the times. What a task's
+    // checks found may now also change for a version of the work such a round made, and only for that one.
+    name: "note rounds",
+    sql: `
+ALTER TABLE task_notes ADD COLUMN for_round INTEGER NOT NULL DEFAULT 0 CHECK (for_round IN (0, 1));
+ALTER TABLE task_notes ADD COLUMN round_from TEXT;
+CREATE TRIGGER task_notes_round_from BEFORE INSERT ON task_notes WHEN (NEW.for_round = 1) <> (NEW.round_from IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'a note sent for a round names the commit the round starts from, and only such a note does'); END;
+DROP TRIGGER task_notes_words_fixed;
+CREATE TRIGGER task_notes_words_fixed BEFORE UPDATE OF id, task_id, text, sent_at, for_round, round_from ON task_notes
+BEGIN SELECT RAISE(ABORT, 'what a note says, its task and when it was sent cannot be changed'); END;
+CREATE TABLE note_rounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  note_id INTEGER NOT NULL UNIQUE REFERENCES task_notes (id),
+  after_reviews INTEGER NOT NULL CHECK (after_reviews >= 0),
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'failed', 'stopped')),
+  changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+  reply TEXT NOT NULL,
+  problem TEXT,
+  from_commit TEXT NOT NULL,
+  head_commit TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  CHECK ((outcome = 'finished') = (problem IS NULL)),
+  CHECK (changed = 0 OR head_commit IS NOT NULL)
+);
+CREATE INDEX note_rounds_task ON note_rounds (task_id, id);
+CREATE TRIGGER note_rounds_of_a_round_note BEFORE INSERT ON note_rounds
+WHEN NOT EXISTS (SELECT 1 FROM task_notes WHERE id = NEW.note_id AND task_id = NEW.task_id AND for_round = 1)
+BEGIN SELECT RAISE(ABORT, 'a note round belongs to a note of the same task sent for a round'); END;
+CREATE TRIGGER note_rounds_no_update BEFORE UPDATE ON note_rounds
+BEGIN SELECT RAISE(ABORT, 'note rounds are append-only'); END;
+CREATE TRIGGER note_rounds_no_delete BEFORE DELETE ON note_rounds
+BEGIN SELECT RAISE(ABORT, 'note rounds are append-only'); END;
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM note_rounds WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+`,
+  },
+  {
     // An approval time limit, one reminder, and no second card for what the owner already declined (#156 items 2 to 4;
     // src/approvals/broker.ts, src/push.ts). A run may be started with an approval time limit in whole minutes
     // (`approval_limit_minutes`, 1 to 1440), NULL for none, as every run before this; chosen when it starts and never
@@ -2385,7 +2569,7 @@ CREATE TABLE action_log (
   task_id INTEGER REFERENCES tasks (id),
   attempt_id INTEGER REFERENCES attempts (id),
   approval_id INTEGER REFERENCES approvals (id),
-  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused', 'peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings', 'expired_unanswered', 'repeat_declined')),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused', 'peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings', 'handoff', 'expired_unanswered', 'repeat_declined')),
   tool TEXT NOT NULL,
   command TEXT NOT NULL,
   cwd TEXT NOT NULL,
@@ -2399,6 +2583,7 @@ CREATE TABLE action_log (
   asked_by_peer_fingerprint TEXT,
   CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
   CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'handoff' OR (task_id IS NOT NULL AND detail IS NOT NULL)),
   CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
   CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
   CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
@@ -2423,6 +2608,7 @@ CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+-- The rebuilt table loses the triggers of the one before it: put back the peer rule ("peer messages").
 CREATE TRIGGER action_log_peer_asked BEFORE INSERT ON action_log
 WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
   AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))

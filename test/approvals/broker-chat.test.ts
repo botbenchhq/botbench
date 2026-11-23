@@ -30,7 +30,6 @@ interface Rig {
 
 async function rig(t: T): Promise<Rig> {
   const dir = tempDir("botbench-broker-chat-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
   const scratch = path.join(home, "scratch");

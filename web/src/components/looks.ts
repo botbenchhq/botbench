@@ -25,6 +25,9 @@ export const LOOKS = {
   // Not in the set: a task waiting for its agent's usage limit to reset, which Botbench resumes by itself at a time. Not
   // Needs input (nothing is asked of the reader) and not Stopped (it goes on alone); a clock in the warning tone.
   usageLimit: { tone: "warning", icon: "clock" },
+  // Not in the set: a task whose builder changed no file and drafted a message to a paired workbench instead. It ended
+  // as asked, so not Failed; the draft's own card is what waits for the reader. Drawn neutral, as an end.
+  drafted: { tone: "neutral", icon: "message" },
 } as const satisfies Record<string, { tone: Tone; icon: string }>;
 // Each icon is checked against the sprite's names where it is drawn, in status.tsx.
 

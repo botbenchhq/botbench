@@ -88,7 +88,6 @@ async function until(what: string, ok: () => boolean, ms = 20_000): Promise<void
 
 test("the store lets a run's mode change only to a stricter one, full to semi or manual and semi to manual, and only while the run has not finished", (t) => {
   const dir = tempDir("botbench-stricter-mode-store-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const repo = path.join(dir, "repo");
@@ -122,7 +121,6 @@ test("the store lets a run's mode change only to a stricter one, full to semi or
 
 test("the owner makes a run stricter: its mode changes, and its history gains the owner's change naming both modes in words; nothing else is touched", (t) => {
   const dir = tempDir("botbench-stricter-mode-engine-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const repo = path.join(dir, "repo");
@@ -148,7 +146,6 @@ test("the owner makes a run stricter: its mode changes, and its history gains th
 
 test("a looser or the same mode, a mode that is none of the three, a finished run and a run that does not exist are each refused in words, and nothing is written", (t) => {
   const dir = tempDir("botbench-stricter-mode-refused-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const repo = path.join(dir, "repo");
@@ -202,7 +199,6 @@ test("made manual while it plans, a semi-autonomous run's plan waits for the own
 
 test("a run started from a GitHub issue keeps its rules when made stricter: it stays marked as having read outside text, its plan waits for the owner, and it never becomes fully autonomous", (t) => {
   const dir = tempDir("botbench-stricter-mode-issue-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const repo = path.join(dir, "repo");

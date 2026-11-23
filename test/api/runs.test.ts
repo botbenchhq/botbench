@@ -49,13 +49,20 @@ const FAILING_SETUP = "echo preparing the copy; exit 1";
 
 async function start(t: T, setup: string[] = [FAILING_SETUP]): Promise<Api> {
   const dir = tempDir("botbench-runs-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   const commit = initRepo(repo);
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: { [repo]: { setup } } };
   const server = await startServer({ config, home, signInDelayMs: 1 });
-  t.after(() => server.close());
+  // The server, with the engine an approval sets to work and its broker, is closed before its folder is removed, and a
+  // removal that fails cannot leave it open. A setup that throws before here leaves the folder to tempDir's own removal.
+  t.after(async () => {
+    try {
+      await server.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
   const base = `http://127.0.0.1:${server.port}`;
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const res = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
@@ -201,7 +208,7 @@ test("a run is read with its plan and listed newest first; an unknown run is 404
     { ...one.body, createdAt: null, updatedAt: null },
     {
       id: first.id, repo: fs.realpathSync(api.repo), prompt: "Add two files and describe them", specPath: null, specText: null, title: "Add two files and describe them",
-      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, approvalLimitMinutes: null, issue: null, outsideText: false, outsideHosts: false, oneTask: false, issueHosts: [], claim: null,
+      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, approvalLimitMinutes: null, issue: null, outsideText: false, outsideHosts: false, oneTask: false, onLimit: "wait", issueHosts: [], claim: null, source: null,
       // A manual run can be made no stricter, and its mode was never changed.
       modeChoices: [], modeChanges: [],
       plan: THREE, tasks: [], preapproved: ["npm test"], waitingOnApproval: false, createdAt: null, updatedAt: null,

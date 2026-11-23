@@ -25,4 +25,11 @@ export default defineConfig({
     deviceScaleFactor: 2,
     hasTouch: true,
   },
+  projects: [
+    // The whole *.e2e.ts suite, with the settings above: a phone's size, 390x844.
+    { name: "phone" },
+    // The design checks at a desktop's size, 1280x800: only design-checks.desktop.ts, which the phone project's
+    // *.e2e.ts does not match, so no test runs in both projects.
+    { name: "desktop", testMatch: "design-checks.desktop.ts", use: { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, hasTouch: false } },
+  ],
 });

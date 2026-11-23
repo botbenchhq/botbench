@@ -86,7 +86,9 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   // Codex's review is on the task, under the checks, before any decision: its verdict line, its detail one tap away.
   const section = page.getByTestId("review");
   await expect(section.getByRole("heading", { name: "Codex's review", level: 2 })).toBeVisible();
-  await expect(page.getByTestId("review-by")).toContainText("By Codex, gpt-6-luna. A model's opinion of the changes, not a check.");
+  // Said once, in the decision below, which is on the screen from ready for review on.
+  await expect(page.getByTestId("review-by")).toHaveText("By Codex, gpt-6-luna.");
+  await expect(page.getByTestId("decision-review")).toContainText("A model's opinion, not a check.");
   await expect(page.getByTestId("review-problem")).toHaveCount(0);
   await expect(page.getByTestId("review-verdict").first()).toHaveText(/^(Verdict: looks right|Verdict: concerns|No verdict in the asked form)$/);
   await expect(page.getByTestId("review-text").first()).toBeHidden();

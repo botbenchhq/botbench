@@ -17,7 +17,6 @@ const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code
 
 async function setUp(t: { after: (fn: () => unknown) => void }, dictation: StartOptions["dictation"] = {}) {
   const dir = tempDir("botbench-dictation-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const tempRoot = path.join(dir, "tmp");
   fs.mkdirSync(tempRoot);

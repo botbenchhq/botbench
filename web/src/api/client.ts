@@ -287,8 +287,11 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-/** `waiting_for_limit`: its builder's usage limit was reached; Botbench tries again by itself at `retryAt`. */
-export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit";
+/**
+ * `waiting_for_limit`: its builder's usage limit was reached; Botbench tries again by itself at `retryAt`. `drafted`:
+ * its builder changed no file and drafted a message to a paired workbench, which waits on its card for the owner's Send.
+ */
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit" | "drafted";
 
 /** The owner's decision on a task, as it was recorded. */
 /** One time a list of setup or check commands was run on a task, and how many commands it holds. */
@@ -401,6 +404,8 @@ export interface TaskSummary {
   outsideText: boolean;
   /** The issue its run was started from, or null. */
   issue: IssueLink | null;
+  /** The paired workbench's message the owner gave this task, with its thread; null for any other task. */
+  givenMessage: { pairingId: string; messageId: string; contextId: string | null; peerName: string } | null;
   /** The run whose approved plan queued this task, or null for a task started on its own. */
   ofPlan: number | null;
   /** The commands this task may run without asking, as the owner listed them when starting it. */
@@ -410,12 +415,25 @@ export interface TaskSummary {
   pullRequest: PullRequestView;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
-  /** The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of another. */
-  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean } | null;
+  /** For a task Botbench took up again by itself after a restart: the one plain line that says so, with the time. */
+  restartLine: string | null;
+  /** For a task resumed or sent a note by the owner whose work waits for another task's to end first: that task. */
+  waitingFor: WaitingFor | null;
+  /** The task is building on a round started by the owner's note to it when it was ready for review. */
+  onNoteRound: boolean;
+  /** For a task that such a round brought back with nothing changed: the plain line that says so. */
+  noteRoundLine: string | null;
+  /**
+   * The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of
+   * another; `forRound` when it was sent while the task was ready for review, and starts a round of its own.
+   */
+  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean; forRound: boolean } | null;
   /** The latest note, when it was not delivered, with why. */
   undeliveredNote: { id: number; text: string; sentAt: string; reason: string } | null;
   /** The mode of its run; manual for a task started on its own. */
   mode: RunMode;
+  /** The agent building it now ("claude-code", "codex"): the one a hand-off moved it to, else the one it started with. */
+  builder: string;
   /** What the refine loop came to, and how many reviews and rounds of fixes there were. */
   reviewOutcome: ReviewOutcome;
   reviewRounds: number;
@@ -449,7 +467,23 @@ export interface CheckFix {
   endedAt: string;
 }
 
+/** A task moved from one agent to another: by the owner, or on a usage limit in a run that switches. */
+export interface Handoff {
+  from: string;
+  to: string;
+  reason: "owner" | "usage_limit";
+  at: string;
+  /** The session of the agent it left, whose transcript is shown before the new agent's. */
+  fromAttemptId: number | null;
+  line: string;
+}
+
+/** What a builder's usage limit does in a run: wait for the reset, or switch to the next agent on the list in Settings. */
+export type OnLimit = "wait" | "switch";
+
 export interface TaskDetail extends TaskSummary {
+  /** The runs the owner made from this task ("Make this a run"), oldest first; empty for none. */
+  runsMade: number[];
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
   /** The files changed from the base commit to Botbench's commit; null until there is a commit, or when they cannot be read. */
@@ -471,8 +505,12 @@ export interface TaskDetail extends TaskSummary {
   review: Review | null;
   /** Every review, one per round, in order. */
   reviews: Review[];
-  /** How many of the builder's sessions on this task came before the one its transcript shows; they are kept. */
+  /** How many of the builder's sessions on this task came before the ones its transcript shows; they are kept. */
   earlierAttempts: number;
+  /** Each time the task was moved to another agent, oldest first, with the one line that says so. */
+  handoffs: Handoff[];
+  /** The agents the task can be moved to now; empty unless its builder is at work on it. */
+  moveTo: string[];
   /** Every round of fixes, in order; round n follows review n. */
   refinements: Refinement[];
   /** The run's cap on rounds of fixes. */
@@ -555,6 +593,8 @@ export interface TaskNote {
   state: "waiting" | "delivered" | "replaced" | "not_delivered";
 }
 /** The owner's note for a building task's builder; the answer says which waiting note it replaced, if one waited. */
+/** Move a task that is being built to another agent: its turn is stopped, its work committed, and the agent takes it over. */
+export const moveTask = (id: number, agent: string): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/move`, { agent }, 30_000);
 export const sendTaskNote = (id: number, text: string): Promise<{ note: TaskNote; replaced: TaskNote | null }> => request("POST", `/api/tasks/${id}/notes`, { text }, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
@@ -637,9 +677,36 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   modeChoices: RunMode[];
   /** Each change of mode the owner made, oldest first, with the sentence the run screen shows for it. */
   modeChanges: { at: string; from: RunMode; to: RunMode; words: string }[];
+  /** The finished task or the chat the owner made this run from, with its line ("From task 12"); null for any other run. */
+  source: { kind: "task" | "chat"; id: number; label: string } | null;
 }
 
+/** Where a run is made from with "Make this a run": a finished task or a chat, by id. */
+export type RunSourceRef = { kind: "task" | "chat"; id: number };
+
+/** A source as the composer opens on it: checked by the server, read only, nothing stored. */
+export interface RunSourceView {
+  kind: "task" | "chat";
+  /** The task's id, or the chat's own. */
+  id: number;
+  /** The task's repository; null for a chat, which has none of its own. */
+  repo: string | null;
+  branch: string | null;
+  /** One plain line: "From task 12", "From a chat". */
+  label: string;
+  /** For a chat: the owner's own messages in it, oldest first, any of which may be picked as the note. Never an agent's. */
+  messages?: { text: string; at: string }[];
+}
+/** Read a source for the composer; refused, with the server's reason, for a task not yet finished or a source Botbench does not have. */
+export const getRunSource = (source: RunSourceRef): Promise<RunSourceView> => request("GET", `/api/run-sources/${source.kind}/${source.id}`, undefined, 30_000);
+
 /** One task of a run as the run's screen shows it. */
+/** The task another one waits behind: its number and the first line of its prompt. */
+export interface WaitingFor {
+  taskId: number;
+  title: string;
+}
+
 export interface RunTask {
   id: number;
   status: TaskStatus;
@@ -659,6 +726,10 @@ export interface RunTask {
   leftovers: string[] | null;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
+  /** Taken up again by Botbench itself after a restart: the plain line that says so, with the time. */
+  restartLine: string | null;
+  /** Resumed or sent a note by the owner, and waiting for another task's work to end first: that task. */
+  waitingFor: WaitingFor | null;
 }
 
 /** A run reached a state or its plan changed. The run itself is read from its route. */
@@ -671,8 +742,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[]; agent?: string; approvalLimitMinutes?: number }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }), ...(o.approvalLimitMinutes === undefined ? {} : { approvalLimitMinutes: o.approvalLimitMinutes }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; takeOver?: string[]; agent?: string; source?: RunSourceRef; approvalLimitMinutes?: number }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.source === undefined ? {} : { source: { [o.source.kind]: o.source.id } }), ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.onLimit === undefined ? {} : { onLimit: o.onLimit }), ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }), ...(o.approvalLimitMinutes === undefined ? {} : { approvalLimitMinutes: o.approvalLimitMinutes }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -717,6 +788,19 @@ export const getChatWebAccess = async (): Promise<WebAccess> => (await request<{
 export const setChatWebAccess = async (value: WebAccess): Promise<WebAccess> => (await request<{ chatWebAccess: WebAccess }>("PUT", "/api/settings", { chatWebAccess: value }, 30_000)).chatWebAccess;
 export const getAskEveryCommand = async (): Promise<boolean> => (await request<{ askEveryCommand: boolean }>("GET", "/api/settings", undefined, 30_000)).askEveryCommand;
 export const setAskEveryCommand = async (on: boolean): Promise<boolean> => (await request<{ askEveryCommand: boolean }>("PUT", "/api/settings", { askEveryCommand: on }, 30_000)).askEveryCommand;
+/** The agents a builder switches to, in order, when a run says Switch on a usage limit; and the agents the list may name. */
+export interface FallbackSetting {
+  list: string[];
+  agents: string[];
+}
+export const getFallbacks = async (): Promise<FallbackSetting> => {
+  const answer = await request<{ fallbacks: { builder: string[] }; fallbackAgents: string[] }>("GET", "/api/settings", undefined, 30_000);
+  return { list: answer.fallbacks.builder, agents: answer.fallbackAgents };
+};
+export const setFallbacks = async (list: string[]): Promise<FallbackSetting> => {
+  const answer = await request<{ fallbacks: { builder: string[] }; fallbackAgents: string[] }>("PUT", "/api/settings", { fallbacks: { builder: list } }, 30_000);
+  return { list: answer.fallbacks.builder, agents: answer.fallbackAgents };
+};
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 /** This installation's workbench name, and whether the settings file sets it (then it is changed there, not here). */
 export interface WorkbenchSetting {
@@ -771,12 +855,19 @@ export interface PeerBranch {
   workbench: string;
   branch: string;
 }
-/** Another workbench's claim on an issue: it started a run on it at `startedAt` (a UTC minute) and has no pull request yet. */
+/**
+ * Another workbench's claim on an issue: it started a run on it at `startedAt` (a UTC minute) and last said it worked on
+ * it at `workedAt`; `takenOverBy` names the workbench that took it over, and `pullRequest` the claiming run's open pull
+ * request, if any (src/engine/peers.ts).
+ */
 export interface PeerClaim {
   workbench: string;
   branch: string;
   issue: number;
   startedAt: string;
+  workedAt: string;
+  takenOverBy: string | null;
+  pullRequest: number | null;
 }
 /** What other workbenches have in flight on one repository's remote, or why that cannot be read now. `repository` is the shared one, host/owner/name. */
 export type PeersView =
@@ -889,7 +980,7 @@ export interface ChatItem {
 /** One row of the board: a planned run, a task started on its own (a run of one), or a chat. */
 export type BoardItem =
   | ({ kind: "run"; cancellable: boolean } & RunSummary & RowMenuFacts)
-  | ({ kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; discardable: boolean; createdAt: string; updatedAt: string } & RowMenuFacts)
+  | ({ kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; restartLine: string | null; waitingFor: WaitingFor | null; discardable: boolean; createdAt: string; updatedAt: string } & RowMenuFacts)
   | ({ kind: "chat" } & ChatItem);
 export type BoardGroupName = "needs-you" | "running" | "finished" | "chats";
 /** One group of the board: its real count, and its items (Finished and Chats send only their newest). */
@@ -958,6 +1049,8 @@ export interface Approval {
   question: Question | null;
   /** The owner's answer to a question, as given; null until there is one. */
   answer: string | null;
+  /** Who asked (ADR 0004 decision 10); `words` is the card's line for work given a paired workbench's message, else null. */
+  askedBy: { by: "owner" | "agent" | "peer"; pairingId: string | null; peerName: string | null; peerFingerprint: string | null; words: string | null };
 }
 
 /** Claude Code's question to the owner, as its card shows it. Every word is the agent's: shown as plain text, never as markdown or HTML. */
@@ -1027,6 +1120,8 @@ export type LogRule =
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory"
+  /** A task was moved to another agent; the entry's detail is the line its screen shows. */
+  | "handoff"
   /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
   | "peer_message_conflict"
   /** An invite to pair with another workbench was made, withdrawn, or expired. */
@@ -1128,6 +1223,8 @@ export interface StreamHandlers {
   onAgent?(announcement: { driver: string; state: string }): void;
   /** Called when the issue watch's proposals or a watched repository's state changed. */
   onWatch?(): void;
+  /** Called when a paired workbench's cards, messages or pairing may have changed. */
+  onPeers?(): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -1193,6 +1290,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("watch", () => {
       alive();
       handlers.onWatch?.();
+    });
+    source.addEventListener("peers", () => {
+      alive();
+      handlers.onPeers?.();
     });
     source.onmessage = (message) => {
       alive();
@@ -1312,3 +1413,131 @@ export interface UpdateStatus {
 export const getUpdate = (): Promise<UpdateStatus> => request("GET", "/api/update", undefined, 30_000);
 export const startUpdate = (): Promise<UpdateStatus> => request("POST", "/api/update", {}, 30_000);
 export const setUpdateMode = (mode: UpdateMode): Promise<UpdateStatus> => request("PUT", "/api/update", { mode }, 30_000);
+/*
+ * Pairing with another workbench and the messages between the two (Peers P5, ADR 0004). Everything the other workbench
+ * sent, and its name, is outside text: shown as plain text only.
+ */
+
+export type PairingState = "waiting_for_owner" | "waiting_for_peer" | "in_force" | "ended";
+export interface Pairing {
+  id: string;
+  state: PairingState;
+  /** The pairing's state in a sentence, as the server words it. */
+  words: string;
+  role: "inviter" | "joiner";
+  peer: { name: string; fingerprint: string; address: string };
+  ownFingerprint: string;
+  repository: string;
+  createdAt: string;
+  endedAt: string | null;
+}
+export interface PeerOverview {
+  /** The listener for paired workbenches, "127.0.0.1:4790"; null when the settings file leaves it off. */
+  listening: string | null;
+  /** This workbench's fingerprint, once its key exists. */
+  fingerprint: string | null;
+  pairings: Pairing[];
+  invites: { id: string; repository: string; expiresAt: string }[];
+}
+export interface PastedInvite {
+  id: string;
+  name: string;
+  fingerprint: string;
+  repository: string;
+  address: string;
+  expiresAt: string;
+  ownFingerprint: string;
+}
+export type MessageKind = "question" | "answer";
+export interface PeerCard {
+  pairingId: string;
+  messageId: string;
+  contextId: string;
+  kind: MessageKind;
+  direction: "in" | "out";
+  peer: { name: string; fingerprint: string };
+  title: string;
+  line: string;
+  text: string;
+  outsideText: boolean;
+  note: string | null;
+  askedBy: string | null;
+  choices: ("answer" | "give" | "dismiss" | "send" | "dont_send")[];
+  shownAt: string;
+  taskId: number | null;
+  runId: number | null;
+}
+export type SendState = "sending" | "delivered" | "refused" | "not_delivered" | "not_sent_switched_off" | "not_sent_ended";
+export interface PeerMessage {
+  messageId: string;
+  contextId: string;
+  parentId: string | null;
+  kind: MessageKind;
+  direction: "in" | "out";
+  text: string;
+  sentAt: string;
+  words: string;
+  state: SendState | "received";
+}
+export interface SentPeerMessage {
+  pairingId: string;
+  messageId: string;
+  contextId: string;
+  kind: MessageKind;
+  state: SendState;
+  words: string;
+}
+export interface KindSettings {
+  send: Record<MessageKind, boolean>;
+  receive: Record<MessageKind, boolean>;
+  peerReceives: Record<MessageKind, boolean>;
+}
+export interface CardFriction {
+  messageId: string;
+  direction: "in" | "out";
+  kind: string;
+  decision: string | null;
+  waitedMs: number | null;
+  sentAsDrafted: boolean | null;
+  seenAt: string | null;
+}
+export interface ThreadFriction {
+  contextId: string;
+  cardsAnswered: number;
+  waitsMs: number[];
+  sentAsDrafted: number | null;
+  reachedAnswer: boolean;
+  cards: CardFriction[];
+}
+export interface PairingFriction {
+  pairingId: string;
+  peer: string;
+  cardsAnswered: number;
+  waitsMs: number[];
+  sentAsDrafted: number | null;
+  threads: number;
+  threadsAnswered: number;
+  threadRecords: ThreadFriction[];
+}
+
+const pairingPath = (id: string): string => `/api/peers/pairings/${encodeURIComponent(id)}`;
+export const getPeerOverview = (): Promise<PeerOverview> => request("GET", "/api/peers/pairings", undefined, 15_000);
+export const makeInvite = (repo: string): Promise<{ id: string; invite: string; repository: string; expiresAt: string }> => request("POST", "/api/peers/invites", { repo }, 30_000);
+export const withdrawInvite = (id: string): Promise<unknown> => request("POST", `/api/peers/invites/${encodeURIComponent(id)}/withdraw`, {}, 15_000);
+export const pasteInvite = async (invite: string, repo: string): Promise<PastedInvite> => (await request<{ join: PastedInvite }>("POST", "/api/peers/joins", { invite, repo }, 30_000)).join;
+export const confirmInvite = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `/api/peers/joins/${encodeURIComponent(id)}/confirm`, {}, 60_000)).pairing;
+export const confirmPairing = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `${pairingPath(id)}/confirm`, {}, 15_000)).pairing;
+export const refusePairing = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `${pairingPath(id)}/refuse`, {}, 15_000)).pairing;
+export const endPairing = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `${pairingPath(id)}/end`, {}, 15_000)).pairing;
+export const getPeerCards = async (): Promise<PeerCard[]> => (await request<{ cards: PeerCard[] }>("GET", "/api/peers/cards", undefined, 15_000)).cards;
+export const getPeerMessages = async (pairingId: string): Promise<PeerMessage[]> => (await request<{ messages: PeerMessage[] }>("GET", `${pairingPath(pairingId)}/messages`, undefined, 15_000)).messages;
+export const sendPeerMessage = async (pairingId: string, o: { kind: MessageKind; text: string; parentId?: string }): Promise<SentPeerMessage> => (await request<{ message: SentPeerMessage }>("POST", `${pairingPath(pairingId)}/messages`, o, 30_000)).message;
+export const answerPeerCard = async (pairingId: string, messageId: string, text: string): Promise<SentPeerMessage> => (await request<{ message: SentPeerMessage }>("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/answer`, { text }, 30_000)).message;
+export const givePeerCard = (pairingId: string, messageId: string, repo: string, allowHosts: boolean): Promise<{ taskId: number }> => request("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/give`, { repo, allowHosts }, 60_000);
+export const dismissPeerCard = (pairingId: string, messageId: string): Promise<unknown> => request("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/dismiss`, {}, 15_000);
+export const seePeerCard = (pairingId: string, direction: "in" | "out", messageId: string): Promise<unknown> => request("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/seen`, { direction }, 15_000);
+export const sendPeerDraft = async (pairingId: string, messageId: string, text?: string): Promise<SentPeerMessage> => (await request<{ message: SentPeerMessage }>("POST", `${pairingPath(pairingId)}/drafts/${encodeURIComponent(messageId)}/send`, text === undefined ? {} : { text }, 30_000)).message;
+export const dontSendPeerDraft = (pairingId: string, messageId: string): Promise<unknown> => request("POST", `${pairingPath(pairingId)}/drafts/${encodeURIComponent(messageId)}/dont-send`, {}, 15_000);
+export const getPeerKinds = async (pairingId: string): Promise<KindSettings> => (await request<{ kinds: KindSettings }>("GET", `${pairingPath(pairingId)}/kinds`, undefined, 15_000)).kinds;
+export const setPeerKind = async (pairingId: string, direction: "send" | "receive", kind: MessageKind, allowed: boolean): Promise<KindSettings> => (await request<{ kinds: KindSettings }>("POST", `${pairingPath(pairingId)}/kinds`, { direction, kind, allowed }, 15_000)).kinds;
+export const getPeerFriction = async (): Promise<PairingFriction[]> => (await request<{ pairings: PairingFriction[] }>("GET", "/api/peers/friction", undefined, 15_000)).pairings;

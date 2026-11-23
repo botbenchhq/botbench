@@ -205,7 +205,6 @@ test("check evidence is append-only like setup evidence: a row cannot be changed
 
 test("after a restart, a task left at Checking has its checks run again once, as configured now, without committing what a check left, and its run goes on", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-verify-restart-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
   t.after(() => db.close());
@@ -239,7 +238,6 @@ test("after a restart, a task left at Checking has its checks run again once, as
 
 test("a database at the literal version 10 schema gains the check evidence and the task's checks mark, and keeps every row it had", (t) => {
   const dir = tempDir("botbench-verify-migrate-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home);
   const old = new DatabaseSync(path.join(home, "botbench.sqlite"));

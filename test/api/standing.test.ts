@@ -31,7 +31,6 @@ interface Api {
 
 async function start(t: T, offerStandingAfter?: number, preapproved?: string[]): Promise<Api> {
   const dir = tempDir("botbench-standing-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...(offerStandingAfter === undefined ? {} : { autonomy: { offerStandingAfter } }) };
   const server = await startServer({ config, home, signInDelayMs: 1 });

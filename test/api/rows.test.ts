@@ -11,7 +11,7 @@ import type { Config } from "../../src/config.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
 import { decideTask } from "../../src/engine/decision.ts";
 import { createDeliveries } from "../../src/engine/delivery.ts";
-import { createRun, storePlan } from "../../src/engine/run.ts";
+import { approvePlan, cancelRun, createRun, storePlan } from "../../src/engine/run.ts";
 import { createTask, moveTask } from "../../src/engine/task.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { openStore } from "../../src/store/db.ts";
@@ -48,6 +48,8 @@ interface Seeded {
   other: number;
   /** A run at its plan. */
   run: number;
+  /** A task of a planned run, which is listed only with its run. Its plan was approved and the run cancelled before the server started, so nothing builds it. */
+  ofRun: number;
   /** A stand-alone task that failed with its copy and branch left. */
   failed: { id: number; branch: string };
   /** A stand-alone task accepted and delivered: its pull request is open. */
@@ -93,7 +95,16 @@ async function built(db: DatabaseSync, home: string, repo: string, prompt: strin
 
 async function start(t: T): Promise<Api> {
   const dir = tempDir("botbench-rows-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // One hook, so the order is fixed: the server, with its engine and broker, is closed before the folder it writes to
+  // is removed, and a removal that fails can never leave the server open (a later hook is skipped once one throws).
+  let server: BotbenchServer | undefined;
+  t.after(async () => {
+    try {
+      await server?.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);
@@ -106,6 +117,11 @@ async function start(t: T): Promise<Api> {
   const chats = await seedChats(db, home);
   const run = createRun(db, { repo, prompt: "Plan a greeting", baseCommit: git(repo, "rev-parse", "HEAD").trim() });
   storePlan(db, run.id, [{ title: "Add a greeting file", criteria: ["It exists"] }]);
+  // Approved and cancelled here, not over HTTP: approving through the server would start a real build of its task.
+  const ofRunRun = createRun(db, { repo, prompt: "Plan a farewell", baseCommit: git(repo, "rev-parse", "HEAD").trim() });
+  const ofRunPlan = storePlan(db, ofRunRun.id, [{ title: "Add a farewell file", criteria: ["It exists"] }]);
+  const [ofRun] = approvePlan(db, ofRunRun.id, ofRunPlan.planVersion).tasks;
+  cancelRun(db, ofRunRun.id);
   const failed = await built(db, home, repo, "create failed.txt");
   moveTask(db, failed.task.id, "failed", { reason: "it broke", headCommit: failed.commit });
   const delivered = await built(db, home, repo, "create hello.txt");
@@ -118,8 +134,7 @@ async function start(t: T): Promise<Api> {
   db.close();
 
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: {} };
-  const server = await startServer({ config, home, signInDelayMs: 1 });
-  t.after(() => server.close());
+  server = await startServer({ config, home, signInDelayMs: 1 });
   const base = `http://127.0.0.1:${server.port}`;
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const res = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
@@ -127,7 +142,7 @@ async function start(t: T): Promise<Api> {
   await res.arrayBuffer();
   return {
     server, base, repo, headers: { cookie: res.headers.getSetCookie()[0]!.split(";")[0]! },
-    seeded: { ...chats, run: run.id, failed: { id: failed.task.id, branch: failed.branch }, delivered: { id: delivered.task.id, branch: delivered.branch, url: String(pr.url), number: Number(pr.number) } },
+    seeded: { ...chats, run: run.id, ofRun: ofRun!.id, failed: { id: failed.task.id, branch: failed.branch }, delivered: { id: delivered.task.id, branch: delivered.branch, url: String(pr.url), number: Number(pr.number) } },
   };
 }
 
@@ -218,10 +233,7 @@ test("hiding and showing a run, a task and a chat: idempotent, the hidden row is
 
 test("hiding or showing an unknown or non-listed row is 404, and a malformed body is 400; neither changes anything", async (t) => {
   const api = await start(t);
-  // Approving the plan gives the planned run a task, which is listed only with its run.
-  const approved = await call(api, "POST", `/api/runs/${api.seeded.run}/plan/approve`, { planVersion: 1 });
-  assert.equal(approved.status, 200, JSON.stringify(approved.body));
-  const ofRun = Number(api.server.db.prepare("SELECT id FROM tasks WHERE run_id = ?").get(api.seeded.run)!.id);
+  const ofRun = api.seeded.ofRun;
   const single = Number(api.server.db.prepare("SELECT run_id FROM tasks WHERE id = ?").get(api.seeded.failed.id)!.run_id);
   for (const path of ["/api/board/hide", "/api/board/show"]) {
     for (const [kind, id] of [["run", 999_999], ["task", 999_999], ["chat", 999_999], ["task", ofRun], ["run", single], ["chat", api.seeded.chat[1]!]] as const) {

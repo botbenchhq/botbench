@@ -200,6 +200,8 @@ export type LogRule =
   | "owner_answered"
   /** A fully autonomous run's agent asked a question nobody was asked: the question in `command`, what the agent was told in `detail`. */
   | "question_unasked"
+  /** A task was handed to another agent (engine/handoff.ts): `command` names the agents, `detail` the line the owner reads. */
+  | "handoff"
   /** Nobody answered an approval within its run's approval time limit, so Botbench declined it: its own answer, never the owner's. Names the approval. */
   | "expired_unanswered"
   /** A task's request was declined without a card because the owner had declined the same one in that task. Names that earlier approval. */

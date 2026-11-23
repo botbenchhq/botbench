@@ -15,7 +15,6 @@ const JSON_TYPE = { "content-type": "application/json" };
 const BARE: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
 
 async function start(t: T, config: Config = BARE, dir = tempDir("botbench-models-api-")): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const server = await startServer({ config, home, signInDelayMs: 1 });
   t.after(() => server.close());

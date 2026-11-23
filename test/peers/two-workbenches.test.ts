@@ -22,7 +22,6 @@ import { JSON_TYPE, live, logOf, pairingOf, pairingsOf, until, workbench } from 
 
 test("two workbenches pair over their listeners, and every way it can go wrong or end is held", { timeout: 300_000 }, async (t) => {
   const dir = tempDir("botbench-two-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const remote = path.join(dir, "shared.git");
   git(dir, "init", "--quiet", "--bare", "-b", "main", remote);
   const aliceRepo = path.join(dir, "alice-copy");

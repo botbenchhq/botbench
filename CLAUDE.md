@@ -35,6 +35,7 @@ Done = tests pass. Owner checks batched per milestone.
 - Three modes per run, about the owner's decisions, not tools: manual (you approve the plan and decide on each result), semi-autonomous (building starts without plan approval, except for a run from a GitHub issue; you decide on each result), fully autonomous (no plan approval; a result is accepted without you when its conditions hold). A mode never loosens the safety floor.
 - Local by default. Nothing leaves the owner's machine except what each vendor CLI sends its provider, and a push or pull request the owner chose: Botbench pushes only a task's own branch, never the default branch, never by force, and never merges. Git and GitHub credentials stay with `git` and `gh`; Botbench and the agents never read them.
 - Test-first. Real temp git repo, real SQLite, real HTTP, real CLIs (live).
+- The fast suite (`npm test`, `test:confined`, `test:counted`) cannot start a real model turn: each real driver, sign-in and sign-out throws there (`src/drivers/fast-tests.ts`). Use a recorded session; live turns go under `test/live/` (`npm run test:live` sets `BOTBENCH_LIVE_TESTS=1`).
 
 ## Engineering standards
 Apply in proportion to a one-owner, local tool. Each line says what it means here, not the whole framework.

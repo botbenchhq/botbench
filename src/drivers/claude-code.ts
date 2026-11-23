@@ -10,6 +10,7 @@ import { containerShellInput, type TaskContainer } from "../execution.ts";
 import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "./events.ts";
+import { refuseInFastTests } from "./fast-tests.ts";
 import { checkVersion, killProcessGroup, launch, processGroupAlive, runCli, type CliChild } from "./launch.ts";
 import { claudeCodeSignIn, type SignInDefinition } from "./sign-in.ts";
 
@@ -949,6 +950,7 @@ export class ClaudeCodeDriver implements Driver {
   }
 
   async startAttempt(options: StartAttemptOptions): Promise<DriverSession> {
+    refuseInFastTests("Claude Code");
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);

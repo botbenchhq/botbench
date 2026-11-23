@@ -33,7 +33,6 @@ interface Api {
 
 async function start(t: T): Promise<Api> {
   const dir = tempDir("botbench-delivery-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);

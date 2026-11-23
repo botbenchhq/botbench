@@ -1,4 +1,6 @@
-import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode } from "../api/client.ts";
+import type { Delivery, IssueChoice, KnownRepository, ModelList, OnLimit, ReviewerChoice, RunMode, RunSourceRef } from "../api/client.ts";
+import { chipWords } from "./chat.ts";
+import { noteProblem, sourceRepoProblem, type ComposerSource } from "./run-source.ts";
 import { MODE_NAMES } from "./run-words.ts";
 
 /*
@@ -47,7 +49,12 @@ export interface Facts {
   asked?: readonly Reader[];
   /** Whether the agents are being checked now, so an agent's `reads` not yet known may still be learned. */
   agentsChecking?: boolean;
+  /** The finished task or chat this run is made from ("Make this a run"); it applies only to a run in a repository. Left out for none. */
+  source?: ComposerSource | null;
 }
+
+/** The source a run is made from, when the composer holds one and is planning a run in a repository; else null. */
+const sourceOf = (f: Pick<Facts, "source" | "repo" | "kind">): ComposerSource | null => (f.source != null && inRepository(f.repo) && f.kind === "run" ? f.source : null);
 
 /**
  * A repository a chat lets its agents read, never change: none, one Botbench knows of, or a folder the owner typed. It is
@@ -95,7 +102,14 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; approvalLimitMinutes?: number } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit: OnLimit; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; source?: RunSourceRef; approvalLimitMinutes?: number } & ({ prompt: string } | { specPath: string } | {}));
+
+/** The usage-limit view's question and its two choices (docs/product/voice.md); Wait is the default. */
+export const LIMIT_WORDS = {
+  title: "When the builder reaches its usage limit",
+  wait: { name: "Wait for it to reset", value: "Wait", description: "The task waits, its work kept, and Botbench tries the same agent once more by itself when the limit resets." },
+  switch: { name: "Switch to the next agent", value: "Switch", description: "The task moves at once to the next agent on the list in Settings, in the same copy and on the same branch, with a note of what was done so far. With no agent left to take it, it waits." },
+} as const;
 
 /** The approval time limits a run can be started with, in minutes; null for none, which is the default. */
 export const APPROVAL_LIMITS: readonly (number | null)[] = [null, 15, 60, 240, 1440];
@@ -109,7 +123,7 @@ export function limitName(minutes: number | null): string {
 }
 
 /** What the Approval time limit view and the run's screen say of it (docs/product/voice.md). */
-export const LIMIT_WORDS = {
+export const APPROVAL_LIMIT_WORDS = {
   hint: "If nobody answers a request of this run in this time, Botbench denies it and tells the agent nobody answered. Nothing is ever allowed this way. It cannot be changed once the run starts.",
   off: "Requests wait for your answer, however long that takes.",
   on: (minutes: number): string => `A request nobody answers within ${limitName(minutes).toLowerCase()} is denied.`,
@@ -153,6 +167,14 @@ export function blocked(f: Facts): Blocked | null {
     if (run && f.text.trim() !== "" && f.specPath.trim() !== "") return say("Give a message or a spec file, not both.");
     if (run && f.issue && f.specPath.trim() !== "") return say("A run from an issue takes your message, not a spec file. Clear the spec file, or remove the issue.");
     if (run && f.issue && f.mode === "full") return say(ISSUE_NOT_FULL);
+    // A run made from a task or a chat: the note is checked as the server checks it, and a task's run stays in its repository.
+    const source = sourceOf(f);
+    if (source !== null) {
+      const wrong = sourceRepoProblem(source, f.repo.path.trim());
+      if (wrong !== null) return say(wrong, "repository");
+      const note = noteProblem(f.text);
+      if (note !== null) return say(note);
+    }
   }
   const read = readStop(f);
   if (read !== null) return say(read);
@@ -169,7 +191,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null; approvalLimitMinutes?: number | null }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; takeOver?: string[]; builder?: Builder | null; approvalLimitMinutes?: number | null }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -185,6 +207,11 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   // Codex builds on its own default model: the models chosen here are Claude Code's, which still plans a run.
   const codex = extras.builder === "codex";
   if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
+  // Sent only when the owner chose one: left out, the run has none.
+  const limit = extras.approvalLimitMinutes === undefined || extras.approvalLimitMinutes === null ? {} : { approvalLimitMinutes: extras.approvalLimitMinutes };
+  // A run made from a task or a chat sends the note alone: no spec file and no issue (blocked() has checked the note).
+  const source = sourceOf(f);
+  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", source: source.ref, ...limit };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
@@ -192,23 +219,23 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
-  // Sent only when the owner chose one: left out, the run has none.
-  const limit = extras.approvalLimitMinutes === undefined || extras.approvalLimitMinutes === null ? {} : { approvalLimitMinutes: extras.approvalLimitMinutes };
-  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, ...takeOver, ...limit };
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...takeOver, ...limit };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "limit" | "tasks" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "limit" | "approvalLimit" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
  * do, mode and commands; a run adds its own settings. Come to start a task or a run (a repository needed), there is
  * nothing to read.
  */
-export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean }): Row[] {
+export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean; commandsKnown: boolean; issueOffered?: boolean; builderOffered?: boolean; sourced?: boolean }): Row[] {
   if (f.repo.kind === "none") return ["repository", "read", "models"];
   if (!inRepository(f.repo)) return ["repository", "models"];
   const run = f.kind === "run";
+  // A run made from a task or a chat takes the owner's note alone: it offers no issue and no spec file.
+  if (run && f.sourced === true) return rowsFor({ ...f, sourced: false, issueOffered: false }).filter((row) => row !== "spec");
   return [
     "repository",
     "kind",
@@ -218,12 +245,14 @@ export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean;
     ...(run && f.issueOffered === true ? (["issue"] as const) : []),
     ...(run ? (["spec"] as const) : []),
     "mode",
-    // Off unless chosen; for a run only, whose requests may wait while nobody is looking.
-    ...(run ? (["limit"] as const) : []),
     // Offered in every mode; its default follows the mode (`oneTaskFor`).
     ...(run ? (["tasks"] as const) : []),
     ...(run && f.reviewOffered ? (["review"] as const) : []),
     ...(run ? (["delivery"] as const) : []),
+    // What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent.
+    ...(run ? (["limit"] as const) : []),
+    // Off unless chosen; for a run only, whose requests may wait while nobody is looking.
+    ...(run ? (["approvalLimit"] as const) : []),
     ...(f.commandsKnown ? (["commands"] as const) : []),
     "models",
   ];
@@ -310,6 +339,21 @@ export function modeFor(chosen: ChosenMode | null, repoPath: string, settingsDef
 /** The model chip under the box: the model Send uses first, and for a run that builds on a model of its own, that one after it. */
 export function chipModel(o: { run: boolean; sameBuild: boolean; plan: string; build: string }): string {
   return o.run && !o.sameBuild ? `${o.plan}, then ${o.build}` : o.plan;
+}
+
+/**
+ * The chip next to the box when the composer starts work in a repository: the model and, as its qualifier, the agent
+ * that uses it. With Claude Code building, its model (and for a run, its build model after it). With Codex chosen as
+ * the builder, Codex and the model it builds on (its own default, `codexModel`, as Codex names it, or "Codex's default"
+ * when it has not said): a task is Codex's alone, and a run is planned by Claude Code first.
+ */
+export function builderChip(o: { run: boolean; builder: Builder | null; sameBuild: boolean; plan: string; build: string; codexModel: string | null }): { value: string; qualifier: string | null } {
+  const claude = chipWords(chipModel(o), "Claude Code");
+  if (o.builder !== "codex") return claude;
+  const codex = chipWords(o.codexModel ?? "Codex's default", "Codex");
+  if (!o.run) return codex;
+  const plan = chipWords(o.plan, "Claude Code");
+  return { value: `${plan.value}${plan.qualifier === null ? "" : ` ${plan.qualifier}`}, then ${codex.value}`, qualifier: codex.qualifier ?? "Codex" };
 }
 
 /**

@@ -29,7 +29,6 @@ process.on("exit", () => {
 
 async function start(t: T, signIn: SignInDefinition): Promise<{ server: BotbenchServer; home: string; base: string; headers: Record<string, string> }> {
   const dir = tempDir("botbench-connect-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const server = await startServer({ config: BARE, home, signInDelayMs: 1, signIns: [signIn] });
   t.after(() => server.close());

@@ -2,9 +2,11 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type FileChange, type StoredEvent, type TaskDetail } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
+import { DraftPeerCard } from "../components/peer-card.tsx";
+import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { DiffLine } from "../components/diff.tsx";
 import { Icon } from "../components/icon.tsx";
-import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
+import { agentName, CHECKS_LIMITS, CHECKS_LINE, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_LIMITS, REVIEW_LINE, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
 import { BranchCopy, ReviewDecision } from "../components/decision.tsx";
@@ -14,12 +16,22 @@ import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { TaskNote } from "../components/task-note.tsx";
+import { MoveTask } from "../components/move-task.tsx";
+import { sessionAgent, sessionsLine, shownAttempts } from "../app/handoff-words.ts";
 import { answeredOther, fileMarks, fileMarksLine, notMergedLine, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
 import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
+import { duration as fromTo } from "../components/tool-summary.ts";
+import { oldestCommand, runningCommands, runningWords, type RunningCommand } from "../../../src/engine/command-limit.ts";
+import { MakeRunSection } from "../components/make-run.tsx";
+import { offersRun } from "../app/run-source.ts";
+import { firstLine } from "../../../src/shorten.ts";
+
+/** A time in the transcript's own words ("42s", "2m 14s"). */
+const msWords = (ms: number): string => fromTo(new Date(0).toISOString(), new Date(ms).toISOString()) ?? "0s";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
@@ -95,6 +107,41 @@ function Counts({ file }: { file: FileChange }) {
   );
 }
 
+/**
+ * One refused request in the task's list: its first line, shortened, and when that is not all of it, a disclosure with
+ * the whole of it and how many lines it has. A here-document of thousands of characters stays one line until opened.
+ */
+function RefusedCommand({ command }: { command: string }) {
+  const first = firstLine(command, 100);
+  const lines = command.trim().split("\n").length;
+  if (first === command.trim()) return <code data-testid="refused-command" data-ds-content="">{first}</code>;
+  return (
+    <details data-testid="refused-command" className="ds-disclosure">
+      <summary className="ds-disclosure__summary">
+        <code data-ds-content="">{first}</code>
+        <span className="ds-disclosure__meta">{lines === 1 ? `${command.trim().length.toLocaleString("en")} characters` : `${lines.toLocaleString("en")} lines`}</span>
+      </summary>
+      <div className="ds-disclosure__content">
+        <figure className="ds-code-block">
+          <pre data-testid="refused-full" data-ds-content="" className="ds-code-block__body">
+            <code>{command}</code>
+          </pre>
+        </figure>
+      </div>
+    </details>
+  );
+}
+
+/** How long a command has run, ticking each second, against its own time limit (engine/command-limit.ts). */
+function RunningFor({ agent, command }: { agent: string; command: RunningCommand }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span data-testid="running-for">{` ${runningWords(agent, command, now, msWords).time}`}</span>;
+}
+
 /** `discard`: the owner chose Discard from the task's More menu on Work, so its confirmation opens once the task is read. */
 export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; discard?: boolean; onSignedOut: () => void }) {
   // The address goes back to the task's own, so a reload or Back does not ask again.
@@ -127,8 +174,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
       if (read !== reads.current) return;
       setTask(next);
       setProblem(null);
-      // Stored events only ever add up, so a transcript is folded in whichever read fetched it.
-      if (next.attemptId !== null) getTranscript(next.attemptId).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), failed("The transcript"));
+      // Stored events only ever add up, so a transcript is folded in whichever read fetched it. After a move to another
+      // agent, the session each move left is read too, so the transcript shows both agents.
+      for (const attempt of shownAttempts(next)) getTranscript(attempt).then((transcript) => setEvents((have) => mergeEvents(have, transcript.events)), failed("The transcript"));
     }, (err: unknown) => {
       if (err instanceof ApiError && err.status === 404) {
         missing.current = true;
@@ -157,16 +205,23 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
 
   // This task's requests that wait for an answer, oldest first. One card at a time: the oldest.
   const { pending } = useContext(ApprovalsContext);
+  const peerCards = useContext(PeerCardsContext).cards;
   const waiting = useMemo(() => (pending ?? []).filter((approval) => approval.taskId === id), [pending, id]);
   const asking = waiting[0];
   // The task starts and stops waiting as its requests come and go, so it is read again when they do.
   useEffect(() => load(), [load, asking?.id]);
 
   const attemptId = task?.attemptId ?? null;
-  const shown = useMemo(() => events.filter((e) => e.attemptId === attemptId), [events, attemptId]);
+  const shownIds = useMemo(() => (task === null ? [] : shownAttempts(task)).join(","), [task]);
+  const shown = useMemo(() => {
+    const ids = new Set(shownIds.split(",").filter((id) => id !== "").map(Number));
+    return events.filter((e) => ids.has(e.attemptId));
+  }, [events, shownIds]);
+  // The session the task names now: what is said of the model and of the agent at work is read from it alone.
+  const current = useMemo(() => shown.filter((e) => e.attemptId === attemptId), [shown, attemptId]);
 
   // The model that answered is the one the driver's own session event names; what was asked for is on the task.
-  const session = useMemo(() => sessionModel(shown), [shown]);
+  const session = useMemo(() => sessionModel(current), [current]);
 
   /** Follows a file's disclosure as the browser opens and closes it; the diff is read the first time it opens. */
   const toggled = (file: string, isOpen: boolean): void => {
@@ -186,13 +241,21 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
   // While a request waits, its card says so: the transcript is still live, with no line of its own ("").
   // Its last message's turn has not ended: with the owner's note sent as the next message, that is the note's.
-  const lastSent = shown.findLastIndex((e) => e.type === "user_prompt");
-  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
+  const lastSent = current.findLastIndex((e) => e.type === "user_prompt");
+  const turnOn = task?.status === "building" && !task.resuming && attemptId !== null && !current.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended");
+  // The command the agent is running now, which may print nothing for minutes: the line says which, and for how long.
+  const command = turnOn ? oldestCommand(runningCommands(current)) : null;
+  const working = turnOn ? (asking !== undefined ? "" : command !== null ? runningWords(agentName(task!.builder), command, Date.now(), msWords).line : `${agentName(task!.builder)} is working.`) : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
   const peers = usePeersOf(task?.status === "awaiting_decision" ? task.repo : "", onSignedOut);
   const overlaps = task?.status === "awaiting_decision" && task.files !== null ? overlapLines(peers, task.files.map((f) => f.path)) : [];
+  // The review decision is drawn from ready for review on: it carries the checks' and the review's findings, each said once.
+  const decisionShown = task !== null && (task.decision !== null || task.status === "awaiting_decision");
+
+  // An agent's draft to the paired workbench from this task waits on its card here, where its approvals are.
+  const drafts = (peerCards ?? []).filter((card) => card.direction === "out" && card.taskId === id);
 
   return (
     <Frame current={null} banner={connected ? undefined : <StreamBanner />} showing={waiting.map((approval) => approval.id)}>
@@ -206,6 +269,11 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
               <p data-testid="task-status" role="status" className="ds-page-header__description">
                 {statusSentence(task)}
               </p>
+              {task.restartLine !== null && (
+                <p data-testid="task-restart" className="ds-page-header__description">
+                  {task.restartLine}
+                </p>
+              )}
             </>
           )}
         </PageHeader>
@@ -214,9 +282,14 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
           <>
             <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />
             <TaskLines task={task} id={id} />
+            {task.restartLine !== null && <p data-testid="task-restart">{task.restartLine}</p>}
           </>
         )}
-        {task !== null && task.outsideText && <OutsideText issue={task.issue} what="task" />}
+        {task !== null &&
+          drafts.map((card) => (
+            <DraftPeerCard key={card.messageId} card={card} primary={asking === undefined && task.status === "drafted" && drafts.length === 1} onSignedOut={onSignedOut} />
+          ))}
+        {task !== null && task.outsideText && <OutsideText issue={task.issue} given={task.givenMessage} what="task" />}
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}
@@ -230,7 +303,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
           )
         ) : (
           <>
-            {answeredOther(models, session?.model ?? null, task.requestedModel) && (
+            {/* The model asked for is the first agent's: after a move to another agent it says nothing of the one at work now. */}
+            {task.handoffs.length === 0 && answeredOther(models, session?.model ?? null, task.requestedModel) && (
               <dl className="ds-key-value">
                 <div className="ds-key-value__item">
                   <dt className="ds-key-value__label">Model</dt>
@@ -269,15 +343,21 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
 
             {shown.length > 0 || working !== null ? (
               <section aria-label="Transcript">
-                {task.earlierAttempts > 0 && (
-                  <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
-                )}
+                {sessionsLine(task.builder, task.earlierAttempts, task.handoffs.length > 0) !== null && <p data-testid="earlier-sessions">{sessionsLine(task.builder, task.earlierAttempts, task.handoffs.length > 0)}</p>}
+                {/* One line for each move to another agent, in order. */}
+                {task.handoffs.map((h) => (
+                  <p key={h.at} data-testid="handoff-line" role="note">
+                    {h.line}
+                  </p>
+                ))}
                 {/* The model is named above when it is not the one asked for; the transcript adds no row of its own for it. */}
                 <Transcript
                   events={shown}
                   working={working}
+                  workingMore={command !== null && asking === undefined && <RunningFor agent={agentName(task.builder)} command={command} />}
                   modelName={nameOf}
                   modelDiffers={() => null}
+                  who={(attempt) => sessionAgent(task, attempt)}
                   after={
                     task.status === "waiting_for_limit" && (
                       <li data-testid="usage-limit-wait" className="ds-message">
@@ -302,7 +382,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
               )
             )}
 
-            <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />
+            {/* On a task that is ready for review the note box comes just before the decision, as the other way on from it. */}
+            {task.status !== "awaiting_decision" && <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />}
+            <MoveTask task={task} onMoved={load} onSignedOut={onSignedOut} />
 
             {task.filesProblem !== null && (
               <Alert tone="error" role="alert">
@@ -318,7 +400,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                     {task.checkFixLine}
                   </p>
                 )}
-                {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
+                {task.checks !== "none" && <p data-testid="checks-line">{CHECKS_LINE}</p>}
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
             )}
@@ -327,7 +409,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             {task.reviewer !== null && (task.review !== null || task.status === "reviewing") && (
               <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">
                 <h2 id="review-heading">{`${agentName(task.reviewer.agent)}'s review`}</h2>
-                <p data-testid="review-by">{`By ${reviewerWords(task.review ?? task.reviewer)}. ${REVIEW_RISK}`}</p>
+                {/* The decision below says it once; only without it is it said here. */}
+                <p data-testid="review-by">{`By ${reviewerWords(task.review ?? task.reviewer)}.${decisionShown ? "" : ` ${REVIEW_LINE}`}`}</p>
                 {task.reviewLine !== null && (
                   <p data-testid="review-outcome" role="status">
                     {task.reviewLine}
@@ -353,7 +436,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </ol>
                 )}
                 {task.status === "reviewing" && <p role="status">{`${agentName(task.reviewer.agent)} is reading the changes.`}</p>}
-                {task.status === "building" && task.reviews.length > task.refinements.length && (
+                {task.status === "building" && !task.onNoteRound && task.reviews.length > task.refinements.length && (
                   <p role="status" data-testid="fixes-working">{`${agentName("claude-code")} is working on fixes: round ${task.reviews.length} of up to ${task.maxRefineRounds}.`}</p>
                 )}
               </section>
@@ -399,11 +482,11 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             {task.refused.length > 0 && (
               <section aria-labelledby="refused-heading" data-testid="refused" className="ds-stack ds-gap-sm">
                 <h2 id="refused-heading">Refused without asking</h2>
-                <p>{`Botbench refused ${task.refused.length === 1 ? "this request" : `these ${task.refused.length} requests`} during this task without asking you. Each is shown in full.`}</p>
+                <p>{`Botbench refused ${task.refused.length === 1 ? "this request" : `these ${task.refused.length} requests`} during this task without asking you. Each shows its first line; open one to see all of it.`}</p>
                 <ul className="ds-stack ds-gap-xs">
                   {task.refused.map((command, i) => (
                     <li key={i}>
-                      <code>{command}</code>
+                      <RefusedCommand command={command} />
                     </li>
                   ))}
                 </ul>
@@ -427,8 +510,10 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                 </section>
               )}
 
+            {task.status === "awaiting_decision" && <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />}
+
             {/* One section from ready for review on: Accept and Reject, then, once decided, the result in their place. */}
-            {(task.decision !== null || task.status === "awaiting_decision") && (
+            {decisionShown && (
               <ReviewDecision task={task} onDecided={load} onSignedOut={onSignedOut}>
                 {overlaps.map((line) => (
                   <p key={line} data-testid="peer-overlap">
@@ -451,6 +536,25 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
 
             <DiscardSection task={task} startOpen={discard} onDiscarded={load} onSignedOut={onSignedOut} />
 
+            {task.runsMade.length > 0 && (
+              <section aria-labelledby="runs-made-heading" data-testid="runs-made" className="ds-stack ds-gap-sm">
+                <h2 id="runs-made-heading">Runs made from this task</h2>
+                <ul className="ds-list ds-list--dense">
+                  {task.runsMade.map((runId) => (
+                    <li key={runId} className="ds-list__row">
+                      <a href={`#/runs/${runId}`} className="ds-list__link">
+                        <span className="ds-list__body">
+                          <span className="ds-list__primary">{`Run ${runId}`}</span>
+                        </span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {offersRun(task.status) && <MakeRunSection taskId={task.id} repo={task.repo} />}
+
             <details data-testid="task-details" className="ds-disclosure">
               <summary className="ds-disclosure__summary">Details</summary>
               <div className="ds-disclosure__content ds-stack ds-gap-sm">
@@ -463,6 +567,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </div>
                 </dl>
                 {branchInDetails && <BranchCopy branch={task.branch!} />}
+                {/* The full limits of the checks and the review, once, rather than under every result. */}
+                {task.checks !== null && task.checks !== "none" && <p data-testid="checks-limits">{CHECKS_LIMITS}</p>}
+                {task.reviewer !== null && task.review !== null && <p data-testid="review-limits">{`${agentName(task.reviewer.agent)}'s review: ${REVIEW_LIMITS}`}</p>}
               </div>
             </details>
           </>

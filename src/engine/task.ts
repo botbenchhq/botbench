@@ -14,7 +14,7 @@ import type { DriverEvent, TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
-import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
+import { commitsDiff, commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { askEveryCommand, autoAccept, modeRefusals, reviewOutcome, runModeOf, unaskedQuestions, type RunMode } from "./modes.ts";
 import { checkFixesUsed, checkFixPrompt, checkFixRoundOf, DEFAULT_CHECK_FIX_ROUNDS, endedCheckFix, insertCheckFix, workVersion, type OpenCheckFix } from "./check-fix.ts";
@@ -22,6 +22,7 @@ import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRound
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt, roleProblem } from "./roles.ts";
 import { deliverNoteIn, leftBuilding, NOT_DELIVERED, NOTE_REFUSED, NOTE_TOO_LATE, noteProblem, queueNoteIn, settleWaiting, settleWaitingIn, waitingNote, type TaskNote } from "./notes.ts";
+import { insertNoteRound, openNoteRound, taskNoteRounds } from "./note-rounds.ts";
 import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
@@ -29,6 +30,7 @@ import { commandProblem, insertEvidence, nextRound, notRun, runCommand, startCom
 import { HOST_EXECUTION, type Execution, type TaskContainer } from "../execution.ts";
 import { builderContainerProblem, createContainers, type Containers } from "./containers.ts";
 import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, limitNoSessionReason, MAX_TIMER_MS, retryTime, USAGE_LIMIT_WAIT_MS } from "./usage-limit.ts";
+import { BUILDER_AGENTS, CARRY_ON, currentBuilder, earlierRecord, handoffProblem, handoffPrompt, insertHandoffIn, nextAgent, onLimitOf, planOfTask, readFallbacks, taskAttempts, taskHandoffs, type Handoff, type HandoffReason } from "./handoff.ts";
 
 /**
  * The stations a task can be at. `building` covers making its worktree, running the repository's setup
@@ -39,7 +41,11 @@ import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, limi
  * `waiting_for_limit` is a builder's turn that ended on its agent's usage limit: its work is committed, and at the time
  * stored with it Botbench resumes its session once and it goes back to `building` (engine/usage-limit.ts).
  */
-export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit";
+/**
+ * `drafted`: the builder changed no file and wrote a message to a paired workbench, which waits on its card for the
+ * owner's Send (Peers P5). Its work is the draft, so it neither failed nor waits for a decision; it ends there.
+ */
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit" | "drafted";
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -49,18 +55,20 @@ export type ChecksMark = "passed" | "failed" | "none";
  */
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
-  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled", "waiting_for_limit"],
+  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled", "waiting_for_limit", "drafted"],
   // To building: a check failed, and the builder is sent it for a round of fixes (engine/check-fix.ts).
   verifying: ["verifying", "building", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
-  // To itself: a fully autonomous run that could not accept the task records why it waits for the owner.
-  awaiting_decision: ["awaiting_decision", "accepted", "rejected"],
+  // To itself: a fully autonomous run that could not accept the task records why it waits for the owner. To building:
+  // the owner's note starts a round in the builder's session (engine/note-rounds.ts).
+  awaiting_decision: ["awaiting_decision", "accepted", "rejected", "building"],
   accepted: [],
   rejected: [],
   interrupted: ["building", "verifying"],
   // Only by the owner's Resume of a task whose builder changed no file (`changedNothing`).
   failed: ["building"],
   cancelled: [],
+  drafted: [],
   // Back to work at its stored time, by Botbench itself; or ended by a cancel of its run.
   waiting_for_limit: ["building", "cancelled"],
 };
@@ -224,7 +232,8 @@ export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; 
 }
 
 export interface TaskChange {
-  reason?: string;
+  /** Why, in words for the owner; null clears the reason a task had. */
+  reason?: string | null;
   /** Something for the task's history only, when the task stays at its station. */
   note?: string;
   worktree?: Worktree;
@@ -288,7 +297,7 @@ export function moveTaskIn(db: DatabaseSync, id: number, to: TaskStatus, change:
     if (change.reason !== undefined) {
       sets.push("reason = ?");
       values.push(change.reason);
-      details.unshift(change.reason);
+      if (change.reason !== null) details.unshift(change.reason);
     }
     if (change.note !== undefined) details.unshift(change.note);
     // A note waits only for a building task's builder: a task that leaves building with one still waiting, by any way
@@ -355,6 +364,12 @@ export function stageOf(db: DatabaseSync, task: Task): "setup" | "turn" | "check
 /** The reason a task fails with when its builder's turn ended and its branch holds no change from its base. */
 export const CHANGED_NOTHING = "Claude Code finished without changing any file.";
 
+/** The reason a task ends `drafted` with: its builder changed no file and drafted a message to a paired workbench. */
+export const DRAFTED_NOTHING_CHANGED = "Claude Code changed no file and drafted a message for another workbench instead. It leaves this Mac only if you press Send on its card.";
+
+/** Whether the builder's reply in this task made a card for a draft to a paired workbench that still waits for the owner (src/peers/drafts.ts). */
+const draftedACard = (db: DatabaseSync, taskId: number): boolean => db.prepare("SELECT 1 FROM peer_drafts d JOIN peer_cards c ON c.pairing_id = d.pairing_id AND c.direction = 'out' AND c.message_id = d.message_id WHERE d.task_id = ? AND c.decided_at IS NULL").get(taskId) !== undefined;
+
 /** Whether a task failed because its builder changed no file: the one failed task the owner can resume. */
 export const changedNothing = (task: Pick<Task, "status" | "reason">): boolean => task.status === "failed" && task.reason !== null && task.reason.startsWith(CHANGED_NOTHING);
 
@@ -376,6 +391,68 @@ export function resumeNote(db: DatabaseSync, task: Task): string | null {
   return "Resume starts Claude Code again in the task's copy of the project, with the files as they were left, and asks it to carry on where it stopped.";
 }
 
+/**
+ * Record how a round started by the owner's note ended (engine/note-rounds.ts), in one write with the task's next move,
+ * and say what comes next. `headCommit` is the commit Botbench made after the round, or null when it could not be made
+ * (the task has failed, saying why). Work that changed moves to its checks (`check`), or, with none set up, to its
+ * review or the owner (`review`); work that did not change goes back to the owner with nothing recorded for the same
+ * version again (`back`). Null for a task that moved on from building meanwhile (its run was cancelled).
+ */
+export function closeNoteRound(db: DatabaseSync, o: { taskId: number; note: TaskNote; attemptId: number | null; finished: boolean; reply: string; problem: string | null; headCommit: string | null; hasChecks: boolean }): { next: "check" | "review" | "back" | "ended"; task: Task } | null {
+  return transaction(db, () => {
+    const task = getTask(db, o.taskId);
+    if (task === null) return null;
+    const from = o.note.roundFrom ?? task.headCommit!;
+    const changed = o.headCommit !== null && o.headCommit !== from;
+    const outcome = o.headCommit !== null && o.finished ? "finished" : "failed";
+    const problem = outcome === "finished" ? null : (o.problem ?? "The work could not be committed.");
+    const record = (): void => insertNoteRound(db, { taskId: task.id, noteId: o.note.id, afterReviews: taskReviews(db, task.id).length, attemptId: o.attemptId, outcome, changed, reply: o.reply, problem, fromCommit: from, headCommit: o.headCommit, startedAt: o.note.sentAt });
+    // The commit could not be made and the task has failed, saying why: the round is still recorded as ended.
+    if (o.headCommit === null) {
+      record();
+      return { next: "ended", task };
+    }
+    if (task.status !== "building") return null;
+    record();
+    // A note its session never took (the builder could not be started for it) says why, rather than why a building
+    // task's note was left unsent.
+    if (waitingNote(db, task.id)?.id === o.note.id) settleWaitingIn(db, task.id, problem ?? "Claude Code could not be started for your note.");
+    // The round and the move to the checks are one write: a stop between them would leave the new work committed at
+    // building with no round open, which the next start would not check.
+    if (changed && o.hasChecks) return { next: "check", task: moveTaskIn(db, task.id, "verifying", { headCommit: o.headCommit }) };
+    if (changed) return { next: "review", task: moveTaskIn(db, task.id, "building", { headCommit: o.headCommit }) };
+    // Nothing changed: the version the checks and the review were for is the same, and nothing of it is recorded again.
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    return { next: "back", task: moveTaskIn(db, task.id, "awaiting_decision", { headCommit: o.headCommit, note: "the round for the owner's note changed nothing; the checks and the review were not run again" }) };
+  });
+}
+
+/** The start of the note a restart's pick-up of a task stores in its history (`recover`), by which it is found again. */
+const RESTART_TAKEN = "Botbench restarted while this task was at work";
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** A moment in this Mac's own time, in words: "14:02" on the day of `now`, "on Monday 23 November at 14:02" on another. */
+export function clockWords(at: Date, now: Date = new Date()): string {
+  const two = (n: number): string => String(n).padStart(2, "0");
+  const clock = `${two(at.getHours())}:${two(at.getMinutes())}`;
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  return sameDay ? `at ${clock}` : `on ${DAY_NAMES[at.getDay()]} ${at.getDate()} ${MONTH_NAMES[at.getMonth()]} at ${clock}`;
+}
+
+/**
+ * For a task Botbench took up again by itself after a restart, the one plain line that says so, with the time; null
+ * for any other task. It is cleared by the owner's Resume (which starts the count of restarts again) and by a note the
+ * owner sent since, and once the task reaches an end: ready for review, decided, stopped, failed or cancelled.
+ */
+export function restartLine(db: DatabaseSync, task: Pick<Task, "id" | "status" | "restarts">, now: Date = new Date()): string | null {
+  if (task.restarts < 1 || !(task.status === "building" || task.status === "verifying" || task.status === "reviewing" || task.status === "waiting_for_limit")) return null;
+  const taken = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND detail LIKE ? ORDER BY id DESC LIMIT 1").get(task.id, `${RESTART_TAKEN}%`)?.ts;
+  if (typeof taken !== "string") return null;
+  if (db.prepare("SELECT 1 FROM task_notes WHERE task_id = ? AND sent_at > ? LIMIT 1").get(task.id, taken) !== undefined) return null;
+  return `Botbench restarted ${clockWords(new Date(taken), now)} and took this task up again by itself.`;
+}
+
 /** A task's state as the rest of a sentence that starts "This task", for a refusal. */
 const STANDS: Record<TaskStatus, string> = {
   queued: "is queued",
@@ -389,6 +466,7 @@ const STANDS: Record<TaskStatus, string> = {
   failed: "failed",
   cancelled: "was cancelled",
   waiting_for_limit: "is waiting for a usage limit to reset, and Botbench tries again by itself at the time it shows",
+  drafted: "ended with a message drafted for another workbench, and changed no file",
 };
 
 const MAX_PATH = 4096;
@@ -435,13 +513,29 @@ export interface Tasks {
   resume(id: number): Task;
   /**
    * The owner's note to a task that is building (engine/notes.ts): stored as the one waiting for its builder, replacing
-   * one that waits already, and sent as the builder's next message once its current turn ends normally. Throws a
-   * TaskError for a task that does not exist (404), one that is not building or whose builder has just finished (409),
-   * and a note that is empty or too long (400); nothing is stored then.
+   * one that waits already, and sent as the builder's next message once its current turn ends normally. To a task that
+   * is ready for review (engine/note-rounds.ts): stored the same way, the task moves to building at once, and in its
+   * turn the builder's session is taken up again with the note as its next prompt. Throws a TaskError for a task that
+   * does not exist (404), one at any other station, whose builder has just finished, or whose session cannot be taken up
+   * (409), and a note that is empty or too long (400); nothing is stored then.
    */
   sendNote(id: number, text: string): { note: TaskNote; replaced: TaskNote | null };
+  /**
+   * For a task the owner resumed or sent a note for a round that waits for another task's work to end first: that
+   * task's id. Null for any other task, and once its own work has started.
+   */
+  waitingFor(id: number): number | null;
   /** A blocker of a fully autonomous run's task was cleared: its mode looks at it again. Resolves once it has. */
   reconsider(taskId: number): Promise<void>;
+  /**
+   * The owner's move of a task that is being built to another agent (engine/handoff.ts): the builder's turn is stopped,
+   * its work committed, and `agent` takes the task over in a new session in the same copy, on `model` (left out: that
+   * agent's model for this task). Resolves once the turn was asked to stop; the move is made when it has. Throws a
+   * TaskError for a task that does not exist (404), and one that cannot be moved now or to that agent (409), saying why.
+   */
+  handOff(id: number, agent: string, model?: string | null): Promise<Task>;
+  /** The agents a task could be moved to now, and whether its builder is at work so that it can be moved at all. */
+  moveOffer(id: number): { agents: string[]; now: boolean };
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /**
@@ -510,6 +604,16 @@ export interface PeerMessageHooks {
 }
 
 /**
+ * Each engine's answer to which task a task waits behind (`Tasks.waitingFor`), by the store it works on, so that a
+ * summary of a task read from the store alone (src/api/tasks.ts) can say so. Kept in memory: what waits in this
+ * process's line is not stored, and a restart takes such a task up again by itself.
+ */
+const lines = new WeakMap<DatabaseSync, (id: number) => number | null>();
+
+/** The task whose work a task waits behind before its own, resumed or sent a note by the owner, can start; null when it waits for none. */
+export const waitingBehind = (db: DatabaseSync, id: number): number | null => lines.get(db)?.(id) ?? null;
+
+/**
  * Builds tasks, one at a time. A task is one implementer turn in its own
  * worktree: Botbench makes the worktree from the repository's current commit,
  * starts an attempt there that may edit files in it and must ask the owner,
@@ -562,11 +666,38 @@ export function createTasks(options: TasksOptions): Tasks {
     const words = await options.peerMessages.promptFor(task, fresh);
     return words === "" ? "" : `\n\n${words}`;
   };
+  /** The driver of an agent by its name: the main agent's own, else the one of `builders`; one this Botbench cannot start fails, saying so. */
+  const driverFor = (agent: string): Driver => (agent === driver.name ? driver : (options.builders?.[agent] ?? unavailableBuilder(agent)));
   /**
-   * The agent that builds a task: the one it was started with (`builderAgent`), or the main agent for a task that names
-   * none. A builder this Botbench cannot start fails the task's start, saying so.
+   * The agent that builds a task now, and the model it builds on: the one its last hand-off moved it to
+   * (engine/handoff.ts), else the one it was started with (`builderAgent`, the main agent when it names none) on the
+   * model asked for then.
    */
-  const builderOf = (task: Pick<Task, "builderAgent">): Driver => (task.builderAgent === null ? driver : (options.builders?.[task.builderAgent] ?? unavailableBuilder(task.builderAgent)));
+  const builderNow = (task: Pick<Task, "id" | "builderAgent" | "requestedModel">): { agent: string; model: string | null } => currentBuilder(db, task, driver.name);
+  const builderOf = (task: Pick<Task, "id" | "builderAgent" | "requestedModel">): Driver => driverFor(builderNow(task).agent);
+  /** The model argument a builder of the task is started with: none for its agent's own default. */
+  const modelOf = (task: Pick<Task, "id" | "builderAgent" | "requestedModel">): { model?: string } => {
+    const model = builderNow(task).model;
+    return model === null ? {} : { model };
+  };
+  /**
+   * The session a task's builder can take up again: the one its latest session reported, and only when that session
+   * was the same agent's. A cursor never crosses agents: after a hand-off, the new agent starts a session of its own.
+   */
+  const cursorOf = (task: Task): string | null => {
+    if (task.attemptId === null || !builderOf(task).capabilities.resume) return null;
+    const row = db.prepare("SELECT driver, resume_cursor FROM attempts WHERE id = ?").get(task.attemptId);
+    return row?.driver === builderOf(task).name && typeof row.resume_cursor === "string" && row.resume_cursor !== "" ? row.resume_cursor : null;
+  };
+  /** The agent that reviews the task's run, or null when nobody does. */
+  const reviewerOf = (task: Pick<Task, "runId">): string | null => {
+    const agent = task.runId === null ? undefined : db.prepare("SELECT reviewer_agent FROM runs WHERE id = ?").get(task.runId)?.reviewer_agent;
+    return typeof agent === "string" ? agent : null;
+  };
+  /** The agents this Botbench can build with, by name. */
+  const builderAgents = (): string[] => BUILDER_AGENTS.filter((agent) => agent === driver.name || options.builders?.[agent] !== undefined);
+  /** The model an agent takes a task over on when none is named: the task's own when it started on that agent, else the configured one for the main agent, else that agent's own default. */
+  const takeOverModel = (task: Task, agent: string): string | null => (agent === (task.builderAgent ?? driver.name) ? task.requestedModel : agent === driver.name ? (options.model ?? null) : null);
   /**
    * The builder's way to the permission gate, the same for its build, a round of fixes, a resume and an answer after a
    * restart: one place, so no kind of builder attempt is admitted as less confined than it is (run 3 of the self-review:
@@ -606,6 +737,13 @@ export function createTasks(options: TasksOptions): Tasks {
    * but a note can no longer reach their builder, so one is refused (`sendNote`) rather than left to wait for nothing.
    */
   const finishing = new Set<number>();
+  /**
+   * The tasks the owner resumed, or sent a note for a round, whose work waits in the line behind another task's: each
+   * is taken out as its own work starts. Read by `waitingFor`, which names the task at work meanwhile.
+   */
+  const queued = new Set<number>();
+  const waitingFor = (id: number): number | null => (queued.has(id) && active !== null && active.taskId !== id ? active.taskId : null);
+  lines.set(db, waitingFor);
   /** When this engine began. What the store holds from before it is the last run's. */
   const began = now();
 
@@ -711,6 +849,8 @@ export function createTasks(options: TasksOptions): Tasks {
     // Nothing to check or review: the task fails, saying so, and the owner can resume it or discard it. A round of fixes
     // that changes nothing is another matter (`refined`): the build before it did change the work.
     if (!made.changed) {
+      // A reply that drafted a message to a paired workbench and changed nothing did what it was asked: it ends there.
+      if (draftedACard(db, task.id)) return void move(task.id, "drafted", { headCommit: made.headCommit, reason: DRAFTED_NOTHING_CHANGED });
       const last = reply.trim() === "" ? "It wrote no message." : `Its last message: ${reply.trim().length > 600 ? `${reply.trim().slice(0, 600)}…` : reply.trim()}`;
       return void move(task.id, "failed", { headCommit: made.headCommit, reason: `${CHANGED_NOTHING} ${last}` });
     }
@@ -762,14 +902,13 @@ export function createTasks(options: TasksOptions): Tasks {
     const open = checkFixRoundOf(db, at.id);
     // The failing round is read back from the store, as a restart reads it; without one there is nothing to send.
     if (open === null) return review(at, "building", { checks: "failed" }, stopped);
-    const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
-    const cursor = builderOf(at).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const cursor = cursorOf(at);
     const admission = admitBuilder(at);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...modelOf(at) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes for a failing check was being started");
@@ -846,12 +985,15 @@ export function createTasks(options: TasksOptions): Tasks {
     const reviews = taskReviews(db, task.id);
     const fixes = taskRefinements(db, task.id);
     const lastFix = fixes.at(-1);
+    // A round for the owner's note that changed the work since the latest review: that version is reviewed afresh.
+    const noted = taskNoteRounds(db, task.id).some((r) => r.changed && r.afterReviews >= reviews.length);
     // The loop ends at a round of fixes that did not finish or changed nothing: there is nothing new to review.
-    if (lastFix !== undefined && lastFix.round === reviews.length && (lastFix.outcome !== "finished" || !lastFix.changed)) return handOver(task, from, change);
+    if (!noted && lastFix !== undefined && lastFix.round === reviews.length && (lastFix.outcome !== "finished" || !lastFix.changed)) return handOver(task, from, change);
     const at = moveFrom(task.id, from, "reviewing", change);
     if (at === null) return;
     const round = reviews.length + 1;
-    const before = reviews.at(-1);
+    // After the owner's note the reviewer is not told of a round of fixes for its last review: there was none since.
+    const before = noted ? undefined : reviews.at(-1);
     const done = await runReview({
       db, driver: options.reviewers?.[assigned.agent] ?? unknownReviewer(assigned.agent), model: assigned.model, taskId: task.id, round, task: assigned.task, worktree: at.worktreePath!, baseCommit: at.baseCommit!, headCommit: at.headCommit!,
       ...(before === undefined ? {} : { previous: { round, review: before.text, reasons: parseRefineReply(lastFix?.reply ?? "")?.notAddressed ?? null } }),
@@ -884,7 +1026,8 @@ export function createTasks(options: TasksOptions): Tasks {
     const scope = taskScope(db, task, files, options.protectedPaths?.(task.repo) ?? []);
     if (runModeOf(db, task.runId) !== "full") {
       const guarded = scope.filter((f) => f.protected).map((f) => f.path);
-      return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? change : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` });
+      // A reason from an earlier time it was ready for review (before the owner's note) does not stand for this version.
+      return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? { reason: null, ...change } : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` });
     }
     let verdict = files.length === 0 ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null, scope);
     // On a repository whose owner requires checking together, every open pull request of another workbench that
@@ -941,14 +1084,13 @@ export function createTasks(options: TasksOptions): Tasks {
    * `fresh`. `note`, for the task's history, is stored with the new attempt once it has started.
    */
   const startRound = async (at: Task, reviewer: string, fresh: boolean, stopped?: AbortSignal, note?: string): Promise<void> => {
-    const attempt = fresh || at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
-    const cursor = builderOf(at).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const cursor = fresh ? null : cursorOf(at);
     const admission = admitBuilder(at);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...modelOf(at) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
@@ -1066,7 +1208,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
-      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...modelOf(task) });
     } catch (err) {
       admission.release();
       // No agent started: the next start takes the task up from its setup.
@@ -1114,7 +1256,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * the turn waits for the owner, the task is parked: its approvals stay pending and it stays at `building` for the
    * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | "limit" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string | TaskNote, resumed: "answer" | "restart" | "owner" | "limit" | "note" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     // A turn starts: a note may reach this builder again, as after its build's checks and review, on a round of fixes.
     finishing.delete(task.id);
     try {
@@ -1132,7 +1274,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * does the task go on to be committed and checked. A turn that ends any other way leaves a waiting note unsent, marked
    * not delivered with the reason.
    */
-  const driveTurns = async (task: Task, session: DriverSession, admission: Admission, prompt: string, resumed: "answer" | "restart" | "owner" | "limit" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
+  const driveTurns = async (task: Task, session: DriverSession, admission: Admission, prompt: string | TaskNote, resumed: "answer" | "restart" | "owner" | "limit" | "note" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -1140,12 +1282,14 @@ export function createTasks(options: TasksOptions): Tasks {
     /** Set when the turn ended on the agent's usage limit (`limitedEnd`): the reset time it gave, or null. */
     let usageLimit = null as { resetsAt: string | null } | null;
     let reply = "";
+    // A task whose owner's note started a round no record has ended is on that round (engine/note-rounds.ts).
+    const noteRound = openNoteRound(db, id);
     /** Every text the builder wrote in this drive's turns: a draft to a paired workbench may be in any of them. */
     const texts: string[] = [];
     // A task with a review whose round has no fixes yet is on a round of fixes (engine/refine.ts).
-    const refineRound = refineRoundOf(db, id);
+    const refineRound = noteRound === null ? refineRoundOf(db, id) : null;
     // One not on a round of fixes for a review, with a failed check no round has ended for, is on a round of fixes for that check.
-    const checkFix = refineRound === null ? checkFixRoundOf(db, id) : null;
+    const checkFix = noteRound === null && refineRound === null ? checkFixRoundOf(db, id) : null;
     let sessionStarted = false;
     let parking = false;
     parkCurrent = () => void (parking = waitingOnApproval(db, id));
@@ -1202,7 +1346,7 @@ export function createTasks(options: TasksOptions): Tasks {
       options.onEvent();
     });
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner", limit: "resumed after waiting for a usage limit to reset" } as const;
+    const why = { answer: "resumed after a restart", restart: "taken up again after a restart", owner: "resumed by the owner", limit: "resumed after waiting for a usage limit to reset", note: "taken up again for the owner's note" } as const;
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     // `note`: the caller's own, stored in the same write as the attempt (a round's retry in a new session, `refined`).
     move(id, "building", { attemptId: session.attemptId, ...(note !== undefined ? { note } : resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
@@ -1238,7 +1382,18 @@ export function createTasks(options: TasksOptions): Tasks {
       // Botbench began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
       if (!goesOn()) end = "not sent";
       else {
-        let last = await startTurn(prompt);
+        let last: TurnEndReason;
+        if (typeof prompt === "string") last = await startTurn(prompt);
+        else {
+          // The owner's note is this round's own prompt, marked delivered with the session's record of it (`sendNote`):
+          // the one that waits now, which is a later one when the owner replaced it while the builder was starting.
+          const note = noteRound?.state === "waiting" ? noteRound : prompt;
+          const turn = sendNote(note);
+          options.onTaskChange(getTask(db, id)!);
+          last = await turn;
+          // The session did not take it: the note still waits, and the end below settles it.
+          if (waitingNote(db, id)?.id === note.id && last === "completed") last = "error";
+        }
         ownReply = reply;
         // The owner's note, as the next message of this session (`sendNote`); one sent meanwhile waits for this turn.
         while (last === "completed" && goesOn()) {
@@ -1293,6 +1448,10 @@ export function createTasks(options: TasksOptions): Tasks {
     if (options.peerMessages !== undefined && texts.length > 0) {
       await options.peerMessages.takeDrafts(getTask(db, id) ?? task, session.attemptId, texts).catch((err: unknown) => console.error(`The drafts in task ${id}'s reply to a paired workbench were not taken: ${words(err)}. Nothing was sent.`));
     }
+    // The owner's move to another agent, asked for during this turn: made now that the turn is over (`handOffNow`).
+    const asked = moving.get(id);
+    moving.delete(id);
+    const name = agentName(builderOf(task).name);
 
     // However the turn ended, what it wrote is committed and the task says where it stands.
     if (leftover !== null) await finish(task, "failed", leftover);
@@ -1303,18 +1462,27 @@ export function createTasks(options: TasksOptions): Tasks {
         insertRefinement(db, { taskId: id, round: refineRound, attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled during this round of fixes.", fromCommit: from, headCommit: null, startedAt: now() });
       }
       if (checkFix !== null) insertCheckFix(db, { taskId: id, checkRound: checkFix.checkRound, afterFixes: workVersion(db, id), attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled during this round of fixes for a failing check.", fromCommit: getTask(db, id)?.headCommit ?? task.headCommit!, headCommit: null, startedAt: now() });
+      if (noteRound !== null) insertNoteRound(db, { taskId: id, noteId: noteRound.id, afterReviews: taskReviews(db, id).length, attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled while Claude Code worked on your note.", fromCommit: noteRound.roundFrom ?? task.headCommit!, headCommit: null, startedAt: noteRound.sentAt });
       await finish(task, "cancelled", CANCELLED);
     }
+    // The owner moved the task to another agent while this turn ran: however it ended, the other agent takes it over.
+    // Botbench stopping meanwhile leaves it to the next start, with the agent it had (the move was not made).
+    else if (asked !== undefined && !closed) await handOffNow(task, asked.to, asked.model, "owner", session.attemptId, stopped);
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
-    else if (silent) await finish(task, "interrupted", silenceReason(agentName(builderOf(task).name), silenceLimit));
-    // The usage limit, in any kind of builder turn: the task waits for it and is resumed once. Reached again after that
-    // wait (by the resumed turn, or any later turn, also across a restart) it stops the task for the owner; only the
-    // owner's Resume allows another wait. Botbench stopping ends a turn as interrupted, never as a limit; a limit reached
-    // just as Botbench stops is still stored, and the next start arms its time.
+    else if (silent) await finish(task, "interrupted", silenceReason(name, silenceLimit, watches.at(-1)!.stoppedDuring()));
+    // The usage limit, in any kind of builder turn. A run that says Switch hands the task to the next usable agent on
+    // the fallback list at once (engine/handoff.ts). Otherwise, and when no agent can take it, the task waits for the
+    // limit and is resumed once. Reached again after that wait (by the resumed turn, or any later turn, also across a
+    // restart) it stops the task for the owner; only the owner's Resume allows another wait. Botbench stopping ends a
+    // turn as interrupted, never as a limit; a limit reached just as Botbench stops is still stored, and the next start arms its time.
     else if (end === "error" && usageLimit !== null) {
-      if (resumed === "limit" || waitedForLimit(id)) await finish(task, "interrupted", limitAgainReason(agentName(builderOf(task).name)));
-      else await waitForLimit(task, usageLimit.resetsAt);
+      const next = onLimitOf(db, task.runId) === "switch" ? await switchTarget(task) : null;
+      if (next !== null && "agent" in next && !closed) await handOffNow(task, next.agent, takeOverModel(task, next.agent), "usage_limit", session.attemptId, stopped);
+      else if (resumed === "limit" || waitedForLimit(id)) await finish(task, "interrupted", next === null || "agent" in next ? limitAgainReason(name) : `${limitAgainReason(name)} ${noSwitchWords(next.none)}`);
+      else await waitForLimit(task, usageLimit.resetsAt, next === null || "agent" in next ? undefined : next.none);
     }
+    // A round for the owner's note that completed or failed is committed, and checked and reviewed again when it changed the work.
+    else if (noteRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await noteRounded(task, noteRound, session.attemptId, end, ownReply ?? reply, detail, stopped);
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
     else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, ownReply ?? reply, detail, stopped, fromSession);
     // So does a round of fixes for a failing check (engine/check-fix.ts).
@@ -1325,9 +1493,114 @@ export function createTasks(options: TasksOptions): Tasks {
     else if (end === "not sent") await finish(task, "interrupted", "Botbench stopped before the prompt was sent.");
     else if (end === "interrupted") await finish(task, "interrupted", "It was stopped before it finished. The work done up to then is committed.");
     // Nothing came of the session at all: the CLI did not take it up again.
-    else if (resumed === "answer" && !sessionStarted) await finish(task, "interrupted", `Claude Code could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
-    else if (fromSession && !sessionStarted) await finish(task, "interrupted", `Claude Code could not carry on where this task stopped${detail === null ? "." : `: ${detail}`} The work done up to then is committed.`);
-    else await finish(task, "failed", `Claude Code ended with an error${detail === null ? "." : `: ${detail}`}`);
+    else if (resumed === "answer" && !sessionStarted) await finish(task, "interrupted", `${name} could not resume the session this task was working in${detail === null ? "." : `: ${detail}`} Your answer was not applied and nothing was run. The work done up to then is committed.`);
+    else if (fromSession && !sessionStarted) await finish(task, "interrupted", `${name} could not carry on where this task stopped${detail === null ? "." : `: ${detail}`} The work done up to then is committed.`);
+    else await finish(task, "failed", `${name} ended with an error${detail === null ? "." : `: ${detail}`}`);
+  };
+
+  /** The moves the owner asked for while a builder's turn ran, by task: each is made once that turn has ended. */
+  const moving = new Map<number, { to: string; model: string | null }>();
+
+  /**
+   * Why a builder cannot build a task of its run now, for a hand-off: exactly what starting the task on that agent would
+   * be refused for, including an agent that cannot have its commands run in the task's container
+   * (src/engine/containers.ts): the move is then refused before anything is stopped, and nothing runs on this Mac instead.
+   */
+  const cannotBuildFor = (task: Task) => (agent: string): string | null =>
+    builderProblem(agent === driver.name ? null : agent, runModeOf(db, task.runId)) ?? builderContainerProblem(options.execution?.(task.repo) ?? HOST_EXECUTION, driverFor(agent));
+
+  /**
+   * The agent a task switches to on its builder's usage limit, or why none can take it (engine/handoff.ts, `nextAgent`).
+   * Each agent on the list is asked its own check first (`probe`: installed, signed in), so one that is signed out is
+   * skipped, saying why, rather than chosen and failing to start.
+   */
+  const switchTarget = async (task: Task): Promise<{ agent: string } | { none: string }> => {
+    const onLimit = taskHandoffs(db, task.id).filter((h) => h.reason === "usage_limit");
+    const current = builderNow(task).agent;
+    const list = readFallbacks(db, builderAgents()).builder;
+    const checked = new Map<string, string | null>();
+    for (const agent of list) {
+      if (agent === current) continue;
+      checked.set(agent, await driverFor(agent).probe().then((p) => (p.problem === null ? null : `${agentName(agent)} cannot build now: ${p.problem}`), (err: unknown) => `${agentName(agent)} could not be checked: ${words(err)}`));
+    }
+    const cannotBuild = (agent: string): string | null => cannotBuildFor(task)(agent) ?? checked.get(agent) ?? null;
+    return nextAgent({ list, current, limited: new Set(onLimit.map((h) => h.from)), reviewer: reviewerOf(task), switches: onLimit.length, cannotBuild });
+  };
+  /** Why a run that says Switch did not switch, for the reason a task stops with. */
+  const noSwitchWords = (why: string): string => `Botbench could not switch it to another agent: ${why}`;
+
+  /** The task's last hand-off when the agent it moved to has not started on it yet (Botbench stopped in between); null otherwise. */
+  const untakenHandoff = (task: Task): Handoff | null => {
+    const last = taskHandoffs(db, task.id).at(-1);
+    return last !== undefined && task.attemptId === last.fromAttemptId ? last : null;
+  };
+
+  /**
+   * The first prompt of the agent a task was handed to (engine/handoff.ts, `handoffPrompt`), from the task's record as
+   * it stands: what the agent before it did in each of its sessions on the task, the copy's committed diff, and what the
+   * task's own first prompt carries besides. A task on a round of fixes is given that round's prompt as what to do now,
+   * in the form a new session is sent it (with the task and its files).
+   */
+  const handoffPromptFor = async (task: Task, h: Handoff): Promise<string> => {
+    const attempts = taskAttempts(db, task.id).filter((attemptId) => attemptId <= (h.fromAttemptId ?? 0) && db.prepare("SELECT driver FROM attempts WHERE id = ?").get(attemptId)?.driver === h.from);
+    const events = attempts.length === 0 ? [] : db.prepare(`SELECT payload FROM events WHERE attempt_id IN (${attempts.map(() => "?").join(", ")}) ORDER BY id`).all(...attempts).map((row) => JSON.parse(String(row.payload)) as DriverEvent);
+    const head = getTask(db, task.id)?.headCommit ?? task.headCommit;
+    const diff = head === null ? "" : await commitsDiff({ path: task.worktreePath!, baseCommit: task.baseCommit!, headCommit: head }).catch((err: unknown) => `(Botbench could not read the diff: ${words(err)})`);
+    const files = head === null ? [] : await changedPaths(task, head);
+    const { criteria, plan } = planOfTask(db, task.id, task.runId);
+    const issue = runIssue(db, task.runId);
+    const learnings = learningsSection(task.worktreePath ?? task.repo);
+    const memory = memorySection(home);
+    const extra = [learnings, memory, issue === null ? undefined : outsideTextPrompt(issue)].filter((part): part is string => part !== undefined);
+    const reviewer = refineRoundOf(db, task.id) !== null ? (reviewAssignment(db, task.id)?.agent ?? null) : null;
+    const open = reviewer === null ? checkFixRoundOf(db, task.id) : null;
+    const now_ = reviewer !== null ? await refinePromptFor(task, reviewer, true) : open !== null ? await checkFixPromptFor(task, open, true) : CARRY_ON;
+    return handoffPrompt({ from: h.from, to: h.to, reason: h.reason, task: task.prompt, criteria, plan, record: earlierRecord(events), diff, files, extra, now: now_ });
+  };
+
+  /**
+   * Hand a task whose builder's turn has just ended to `to`, for `reason`, in the same copy and on the same branch. First
+   * the agent it leaves is confirmed gone, so two agents never work in one copy; then what it wrote is committed, and the
+   * hand-off is stored with its one line in the action log and the task's history, in one write. Then `to` is started in
+   * a new session, never taking up the one before (engine/handoff.ts), under the same admission, confinement and
+   * permission check as any builder of the task, and sent the hand-off's note. Its turn is driven as any builder's turn is.
+   */
+  const handOffNow = async (task: Task, to: string, model: string | null, reason: HandoffReason, fromAttemptId: number, stopped?: AbortSignal): Promise<void> => {
+    const id = task.id;
+    const from = builderNow(task).agent;
+    try {
+      await confirmGroupGone(db, fromAttemptId);
+    } catch (err) {
+      return finish(task, "interrupted", `Its ${agentName(from)} process could not be stopped, so Botbench did not start ${agentName(to)} in its copy of the project: ${words(err)} The work done up to then is committed.`);
+    }
+    const made = await commit(task);
+    if (made === null) return;
+    const handed = transaction(db, () => {
+      if (getTask(db, id)?.status !== "building") return null;
+      if (cancelled(task)) return { task: moveTaskIn(db, id, "cancelled", { headCommit: made.headCommit, reason: CANCELLED }), handoff: null };
+      const handoff = insertHandoffIn(db, { taskId: id, runId: task.runId, from, to, model, reason, fromAttemptId });
+      // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+      return { task: moveTaskIn(db, id, "building", { headCommit: made.headCommit, note: `handed from ${from} (attempt ${fromAttemptId}) to ${to} (${reason}); it starts in a new session` }), handoff };
+    });
+    if (handed === null) return;
+    options.onTaskChange(handed.task);
+    if (handed.handoff === null) return;
+    const at = handed.task;
+    const admission = admitBuilder(at);
+    let session: DriverSession;
+    try {
+      if (closed) throw new Error("Botbench is stopping.");
+      const gitDir = await sharedGitDir(at.repo);
+      // A new session: no resume cursor, from any agent; in the task's container when its repository runs in one, as every builder start is.
+      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...modelOf(at) });
+    } catch (err) {
+      admission.release();
+      // The hand-off is stored: the next start starts the new agent with its note (`untakenHandoff`).
+      if (closed) return leave(id, "building", "this task was being handed to another agent");
+      return finish(at, "interrupted", `${agentName(to)} could not be started to take over this task: ${words(err)} The work done up to then is committed. Resume starts it again.`);
+    }
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    await drive(at, session, admission, await handoffPromptFor(at, handed.handoff), null, stopped, false, `taken over by ${to} after a hand-off, from attempt ${fromAttemptId}, in a new session`);
   };
 
   /** Whether a task already waited for a usage limit since it was started or the owner last resumed it, read from its history. */
@@ -1356,14 +1629,15 @@ export function createTasks(options: TasksOptions): Tasks {
    * The builder's turn ended on its usage limit: what it wrote is committed, as for any stop, and the task waits until
    * the time stored with it. Read again in the write: a cancel of its run meanwhile ends it as cancelled instead.
    */
-  const waitForLimit = async (task: Task, resetsAt: string | null): Promise<void> => {
+  const waitForLimit = async (task: Task, resetsAt: string | null, noSwitch?: string): Promise<void> => {
     const made = await commit(task);
     if (made === null) return;
     const retryAt = retryTime(resetsAt, Date.now(), usageLimitWait);
     const moved = transaction(db, () => {
       if (getTask(db, task.id)?.status !== "building") return null;
       if (cancelled(task)) return moveTaskIn(db, task.id, "cancelled", { headCommit: made.headCommit, reason: CANCELLED });
-      return moveTaskIn(db, task.id, "waiting_for_limit", { headCommit: made.headCommit, retryAt });
+      // A run that says Switch and found no agent to switch to waits as one that says Wait; its history says why.
+      return moveTaskIn(db, task.id, "waiting_for_limit", { headCommit: made.headCommit, retryAt, ...(noSwitch === undefined ? {} : { note: noSwitchWords(noSwitch) }) });
     });
     if (moved === null) return;
     options.onTaskChange(moved);
@@ -1446,12 +1720,15 @@ export function createTasks(options: TasksOptions): Tasks {
 
     // The model stays the one the task was started with, whatever is configured by now.
     const previous = task.attemptId!;
-    const resumeCursor = String(db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(previous)!.resume_cursor);
+    const row = db.prepare("SELECT driver, resume_cursor FROM attempts WHERE id = ?").get(previous)!;
+    // A session is only ever taken up by the agent that had it: never across a hand-off.
+    if (row.driver !== builderOf(task).name) return giveUp(task, `This task waited for your answer across a restart, and the session that asked was ${agentName(String(row.driver))}'s, not ${agentName(builderOf(task).name)}'s, which builds it now. Your answer was not applied and nothing was run.`);
+    const resumeCursor = String(row.resume_cursor);
     const admission = admitBuilder(task, previous);
     let session: DriverSession;
     try {
       const gitDir = await sharedGitDir(task.repo);
-      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), resumeCursor, ...modelOf(task) });
     } catch (err) {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
@@ -1472,14 +1749,14 @@ export function createTasks(options: TasksOptions): Tasks {
    * known to be stopped, taking up the session it had reported (told what happened), or with the task's own prompt
    * when it had reported none. `limit`: the task waited for its builder's usage limit, and this is the one resume after it.
    */
-  const carryOn = async (id: number, by: "restart" | "owner" | "limit", before: Before = null): Promise<void> => {
+  const carryOn = async (id: number, by: "restart" | "owner" | "limit" | "note", before: Before = null): Promise<void> => {
     const task = getTask(db, id);
     if (!task || (task.status !== "building" && task.status !== "verifying") || closed) return;
     await atWork(task, (stop) => carryOnNow(task, by, stop, before));
   };
 
   /** `before`: the owner resumed a task whose builder's turn had ended without changing a file, or had gone silent, and it is told so. */
-  const carryOnNow = async (task: Task, by: "restart" | "owner" | "limit", stop: AbortController, before: Before = null): Promise<void> => {
+  const carryOnNow = async (task: Task, by: "restart" | "owner" | "limit" | "note", stop: AbortController, before: Before = null): Promise<void> => {
     const stage = stageOf(db, task);
     const commands = options.repoCommands?.(task.repo) ?? { setup: [], checks: [] };
     if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
@@ -1488,6 +1765,9 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     if (stage === "checks") return check(task, commands.checks, stop.signal);
     if (stage === "setup") return setUpAndDrive(task, stop);
+    // On a round started by the owner's note: its own turn, whether it is starting or was cut short.
+    const round = task.status === "building" ? openNoteRound(db, task.id) : null;
+    if (round !== null) return noteTurn(task, round, by, stop, before);
     // Stopped after a round of fixes for a failing check ended the loop and before the task was handed on: it is handed on now.
     const ended = refineRoundOf(db, task.id) === null ? endedCheckFix(db, task.id) : null;
     if (ended !== null && task.status === "building") return review(task, "building", { ...(ended.headCommit === null ? {} : { headCommit: ended.headCommit }), checks: "failed" }, stop.signal);
@@ -1495,8 +1775,9 @@ export function createTasks(options: TasksOptions): Tasks {
     // Never a second agent beside the first in one copy: what is left of the one before is stopped first, or nothing starts.
     const problem = await stopSurvivors(task, []);
     if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
-    const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
-    const cursor = builderOf(task).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const cursor = cursorOf(task);
+    // A hand-off whose new agent had not started yet (Botbench stopped in between): that agent starts with the hand-off's note.
+    const handoff = untakenHandoff(task);
     // Botbench starts a builder by itself only to take up the same session: with none to take up, the owner decides.
     if (by === "limit" && cursor === null) return finish(task, "interrupted", limitNoSessionReason(agentName(builderOf(task).name)));
     const admission = admitBuilder(task);
@@ -1504,13 +1785,14 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
-      // The model stays the one the task was started with, whatever is configured by now.
-      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      // The model stays the one the task was started with (or handed over on), whatever is configured by now.
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...modelOf(task) });
     } catch (err) {
       admission.release();
       if (closed) return leave(task.id, "building", "this task was being taken up again");
-      return finish(task, "interrupted", `Claude Code could not be started again for this task: ${words(err)} The work done up to then is committed.`);
+      return finish(task, "interrupted", `${agentName(builderOf(task).name)} could not be started again for this task: ${words(err)} The work done up to then is committed.`);
     }
+    if (handoff !== null) return drive(task, session, admission, await handoffPromptFor(task, handoff), by, stop.signal, false);
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
     const onRefine = refineRoundOf(db, task.id) !== null;
     const reviewer = onRefine ? reviewAssignment(db, task.id)?.agent ?? null : null;
@@ -1527,6 +1809,58 @@ export function createTasks(options: TasksOptions): Tasks {
     // The same session is told what Botbench refused since (a draft over the cap per run); the other prompts say it themselves.
     const prompt = reviewer === null && checkFix === null && cursor !== null ? `${sent}${await peerSection(task, false)}` : sent;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
+  };
+
+  /**
+   * The builder's turn of a round started by the owner's note (engine/note-rounds.ts): once whatever is left of the agent
+   * before it is known to be stopped, the builder is started again in the task's copy, under the same admission,
+   * confinement and permission check as its build, taking up the session the task was built in. A note that still waits
+   * is its next prompt, sent as the owner's words and marked delivered with the session's record of it. One delivered
+   * before the round was cut short (a restart, the owner's Resume, a usage limit) is not sent again: the builder is told
+   * to carry on, as a build is. With no session to take up, the round does not start: it ends saying so.
+   */
+  const noteTurn = async (task: Task, note: TaskNote, by: "restart" | "owner" | "limit" | "note", stop: AbortController, before: Before): Promise<void> => {
+    const problem = await stopSurvivors(task, []);
+    if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
+    const attempt = task.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId);
+    const cursor = builderOf(task).capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
+    const builder = agentName(builderOf(task).name);
+    if (cursor === null) return noteRounded(task, note, null, "error", "", `${builder} recorded no session for this task to take up.`, stop.signal);
+    const admission = admitBuilder(task);
+    let session: DriverSession;
+    try {
+      if (closed) throw new Error("Botbench is stopping.");
+      const gitDir = await sharedGitDir(task.repo);
+      // The model stays the one the task was started with, whatever is configured by now.
+      session = await builderOf(task).startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), resumeCursor: cursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+    } catch (err) {
+      admission.release();
+      if (closed) return leave(task.id, "building", "this task's round for the owner's note was being started");
+      return noteRounded(task, note, null, "error", "", `${builder} could not be started again for your note: ${words(err)}`, stop.signal);
+    }
+    const prompt: string | TaskNote = note.state === "waiting" ? note : by === "limit" ? LIMIT_PROMPT : before === "silent" ? silentPrompt(durationWords(silenceLimit)) : CONTINUE_PROMPT;
+    await drive(task, session, admission, prompt, by === "note" ? "note" : by, stop.signal, true);
+  };
+
+  /**
+   * A round started by the owner's note ended, completed or failed: what the builder wrote is committed and the round is
+   * recorded, in the same write as the task's next move. Work that changed is checked again, and reviewed again when its
+   * run names a reviewer, as after a reviewer's round of fixes; the task then goes back to the owner, or is accepted by
+   * its run's mode (`handOver`). A round that changed nothing records no checks for the same version again: the task
+   * goes back to the owner, whose screen says nothing changed (engine/note-rounds.ts, `noteRoundLine`).
+   */
+  const noteRounded = async (task: Task, note: TaskNote, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal): Promise<void> => {
+    const made = await commit(task);
+    const builder = agentName(builderOf(task).name);
+    // A note its session never took: the reason is why the builder could not be given it, as it was put.
+    const unsent = waitingNote(db, task.id)?.id === note.id;
+    const problem = end === "completed" ? null : unsent && detail !== null ? detail : `${builder}'s work on your note ended with an error${detail === null ? "." : `: ${detail}`}`;
+    const checks = options.repoCommands?.(task.repo).checks ?? [];
+    const ended = closeNoteRound(db, { taskId: task.id, note, attemptId, finished: end === "completed", reply, problem, headCommit: made?.headCommit ?? null, hasChecks: checks.length > 0 });
+    if (ended === null || ended.next === "ended") return;
+    options.onTaskChange(ended.task);
+    if (ended.next === "check") return check(ended.task, checks, stopped);
+    if (ended.next === "review") return review(ended.task, "building", { checks: "none" }, stopped);
   };
 
   /** A task a restart left at work for the second time is stopped for the owner, who can resume it. */
@@ -1620,7 +1954,7 @@ export function createTasks(options: TasksOptions): Tasks {
           if (getTask(db, task.id)?.status !== task.status) return null;
           db.prepare("UPDATE tasks SET restarts = restarts + 1 WHERE id = ?").run(task.id);
           // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-          return moveTaskIn(db, task.id, task.status, { note: `Botbench restarted while this task was at work (${stage}); it is taken up again once` });
+          return moveTaskIn(db, task.id, task.status, { note: `${RESTART_TAKEN} (${stage}); it is taken up again once` });
         });
         if (taken === null) continue;
         options.onTaskChange(taken);
@@ -1729,33 +2063,129 @@ export function createTasks(options: TasksOptions): Tasks {
       db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, 'running', ?)").run(of.id, at, `task ${id} resumed by the owner`);
       return { resumed: moved, run: { id: of.id, status: "running" } };
     });
+    // In the line from now until its own work starts, so its screen and its row can say what it waits behind.
+    queued.add(id);
     options.onTaskChange(resumed);
     if (run !== null) options.onRunChange?.(run);
+    takeUpInLine(id, "owner", before, `Resuming task ${id}`);
+    return resumed;
+  };
+
+  /**
+   * Take a task up again in its turn in the line, after whatever is at work now (`carryOn`), then let its run go on.
+   * The task leaves `queued` as its own work starts, however the line got there.
+   */
+  const takeUpInLine = (id: number, by: "owner" | "note", before: Before, what: string): void => {
     chain = chain
-      .then(() => carryOn(id, "owner", before))
+      .then(() => {
+        queued.delete(id);
+        return carryOn(id, by, before);
+      })
       .then(() => {
         const runId = getTask(db, id)?.runId ?? null;
         settle(runId);
         if (runId !== null && !closed) return runLine(runId);
       })
-      .catch(report(`Resuming task ${id}`));
-    return resumed;
+      .catch((err: unknown) => {
+        queued.delete(id);
+        report(what)(err);
+      });
+  };
+
+  /**
+   * Why the builder's session of a task that is ready for review cannot be taken up for a note, in words for the owner;
+   * null when it can. A note round only ever continues the session the task was built in: with none, the note would
+   * reach a builder that knows nothing of the task.
+   */
+  const noteRoundProblem = (task: Task): string | null => {
+    const builder = agentName(builderOf(task).name);
+    if (task.worktreePath === null || !fs.statSync(task.worktreePath, { throwIfNoEntry: false })?.isDirectory()) return "This task's copy of the project is no longer there, so a note has nothing to work on.";
+    if (task.headCommit === null) return "This task has no committed work, so a note has nothing to follow.";
+    if (!builderOf(task).capabilities.resume) return `${builder} cannot take up an earlier session, so a note cannot reach the one this task was built in.`;
+    const attempt = task.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId);
+    if (typeof attempt?.resume_cursor !== "string" || attempt.resume_cursor === "") return `${builder} recorded no session for this task to take up, so a note cannot reach it.`;
+    if (plannedRunOf(db, task)?.status === "cancelled") return "Its run was cancelled, so a note can no longer reach Claude Code.";
+    return null;
   };
 
   const sendNote = (id: number, text: string): { note: TaskNote; replaced: TaskNote | null } => {
     if (closed) throw new TaskError(503, "Botbench is shutting down.");
-    const queued = transaction(db, () => {
-      // Read and written in one transaction, so a note is stored only for a task that is building at that moment.
+    const sent = transaction(db, () => {
+      // Read and written in one transaction, so a note is stored only for a task that is building, or ready for review,
+      // at that moment.
       const task = getTask(db, id);
       if (!task) throw new TaskError(404, "No such task.");
+      if (task.status === "awaiting_decision") {
+        const problem = noteProblem(text);
+        if (problem !== null) throw new TaskError(400, problem);
+        const cannot = noteRoundProblem(task);
+        if (cannot !== null) throw new TaskError(409, cannot);
+        const note = queueNoteIn(db, id, text, { from: task.headCommit! });
+        // On the owner's word, as their Resume is: a restart during the round takes it up again once more.
+        db.prepare("UPDATE tasks SET restarts = 0 WHERE id = ?").run(id);
+        // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+        const moved = moveTaskIn(db, id, "building", { note: `the owner's note ${note.note.id} starts a round in the builder's session` });
+        const of = plannedRunOf(db, moved);
+        // Its run is at work again until the task reaches an end.
+        let run: { id: number; status: string } | null = null;
+        if (of !== null && (of.status === "done" || of.status === "awaiting_decision")) {
+          const at = now();
+          db.prepare("UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?").run(at, of.id);
+          // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+          db.prepare("INSERT INTO run_events (run_id, ts, status, detail) VALUES (?, ?, 'running', ?)").run(of.id, at, `task ${id} sent a note by the owner`);
+          run = { id: of.id, status: "running" };
+        }
+        return { ...note, round: { task: moved, run } };
+      }
       if (task.status !== "building") throw new TaskError(409, NOTE_REFUSED[task.status]);
       if (finishing.has(id)) throw new TaskError(409, NOTE_TOO_LATE);
       const problem = noteProblem(text);
       if (problem !== null) throw new TaskError(400, problem);
-      return queueNoteIn(db, id, text);
+      return { ...queueNoteIn(db, id, text), round: null };
     });
-    options.onTaskChange(getTask(db, id)!);
-    return queued;
+    const { round, ...note } = sent;
+    if (round === null) {
+      options.onTaskChange(getTask(db, id)!);
+      return note;
+    }
+    queued.add(id);
+    options.onTaskChange(round.task);
+    if (round.run !== null) options.onRunChange?.(round.run);
+    takeUpInLine(id, "note", null, `The round of task ${id} for the owner's note`);
+    return note;
+  };
+
+  /** Whether a task's builder is at work on it now, in a turn whose end a hand-off can be made from. */
+  const atWorkNow = (task: Task): boolean => active?.taskId === task.id && current !== null && current.attemptId === task.attemptId && !finishing.has(task.id) && !moving.has(task.id);
+
+  const moveOffer = (id: number): { agents: string[]; now: boolean } => {
+    const task = getTask(db, id);
+    if (task === null || task.status !== "building" || closed) return { agents: [], now: false };
+    const from = builderNow(task).agent;
+    const agents = builderAgents().filter((agent) => handoffProblem({ from, to: agent, reviewer: reviewerOf(task), cannotBuild: cannotBuildFor(task) }) === null);
+    return { agents, now: atWorkNow(task) };
+  };
+
+  const handOff = async (id: number, agent: string, model?: string | null): Promise<Task> => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = getTask(db, id);
+    if (!task) throw new TaskError(404, "No such task.");
+    if (task.status !== "building") throw new TaskError(409, `Only a task that is being built can be moved to another agent. This task ${STANDS[task.status]}.`);
+    const already = moving.get(id);
+    if (already !== undefined) throw new TaskError(409, `This task is already being moved to ${agentName(already.to)}.`);
+    const problem = handoffProblem({ from: builderNow(task).agent, to: agent, reviewer: reviewerOf(task), cannotBuild: cannotBuildFor(task) });
+    if (problem !== null) throw new TaskError(409, problem);
+    if (!atWorkNow(task)) throw new TaskError(409, `${agentName(builderNow(task).agent)} is not at work on this task right now (it is being set up, its work is being committed, or it waits across a restart), so it cannot be moved yet. Try again once it is working.`);
+    // The agent's own check (installed, signed in) before anything is stopped: one that cannot start is refused now,
+    // and the builder at work goes on.
+    const probe = await driverFor(agent).probe().then((p) => p.problem, (err: unknown) => `it could not be checked: ${words(err)}`);
+    if (probe !== null) throw new TaskError(409, `${agentName(agent)} cannot take this task over now: ${probe}`);
+    if (!atWorkNow(getTask(db, id) ?? task) || moving.has(id)) throw new TaskError(409, `${agentName(builderNow(task).agent)} is no longer at work on this task, so it was not moved.`);
+    moving.set(id, { to: agent, model: model === undefined ? takeOverModel(task, agent) : model });
+    // The turn ends as stopped, and its end makes the move (`driveTurns`). One that cannot be asked to stop is closed.
+    const session = current!;
+    await session.interruptTurn().catch(() => session.close());
+    return getTask(db, id)!;
   };
 
   const buildRun = (runId: number): void => {
@@ -1828,5 +2258,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, reconsider, idle, close };
+  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, waitingFor, handOff, moveOffer, reconsider, idle, close };
 }

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { now } from "../store/db.ts";
 import { agentName, dataBlock } from "./roles.ts";
+import { changedNoteRounds } from "./note-rounds.ts";
 import { count } from "./refine.ts";
 
 /*
@@ -32,7 +33,7 @@ export interface CheckFix {
   round: number;
   /** The round of check evidence whose failure it was sent. */
   checkRound: number;
-  /** How many rounds of fixes for a review the task had when it started: the version of the work it belongs to. */
+  /** The version of the work it belongs to (`workVersion`): the rounds of fixes for a review, and changed note rounds, before it. */
   afterFixes: number;
   attemptId: number | null;
   outcome: "finished" | "failed" | "stopped";
@@ -75,8 +76,11 @@ export function insertCheckFix(db: DatabaseSync, r: Omit<CheckFix, "id" | "round
   ).run(r.taskId, r.taskId, r.checkRound, r.afterFixes, r.attemptId, r.outcome, r.changed ? 1 : 0, r.reply, r.problem, r.fromCommit, r.headCommit, r.startedAt, now());
 }
 
-/** The version of a task's work, as the check fix loop counts it: how many rounds of fixes for a review it has had. */
-export const workVersion = (db: DatabaseSync, taskId: number): number => Number(db.prepare("SELECT count(*) AS n FROM refinements WHERE task_id = ?").get(taskId)!.n);
+/**
+ * The version of a task's work, as the check fix loop counts it: how many rounds of fixes for a review it has had, and
+ * how many rounds started by the owner's note changed it (engine/note-rounds.ts). Each such version gets its own rounds.
+ */
+export const workVersion = (db: DatabaseSync, taskId: number): number => Number(db.prepare("SELECT count(*) AS n FROM refinements WHERE task_id = ?").get(taskId)!.n) + changedNoteRounds(db, taskId);
 
 /** The rounds of fixes for a failing check already used on the current version of a task's work, a restart's included. */
 export const checkFixesUsed = (db: DatabaseSync, taskId: number): number =>

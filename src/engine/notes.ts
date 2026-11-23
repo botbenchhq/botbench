@@ -14,6 +14,10 @@ import type { TaskStatus } from "./task.ts";
  * The note is the owner's own words: it is sent as it was typed, trusted, and never marked as outside text. It grants
  * nothing: the turn it starts runs in the same attempt, under the same admission, confinement and permission check as
  * the build (docs/security/threat-model.md, "Owner notes").
+ *
+ * A note to a task that is ready for review (issue #156) is stored the same way, marked `forRound`, and starts a round
+ * of its own (engine/note-rounds.ts): the task goes back to building and the builder's session is taken up again with
+ * the note as its next prompt, under the same check and confinement as the build.
  */
 
 /** The longest note, in characters. The store refuses a longer one too. */
@@ -34,6 +38,10 @@ export interface TaskNote {
   reason: string | null;
   /** When it left waiting; null while it waits. */
   settledAt: string | null;
+  /** Sent to a task that was ready for review: it starts a round of its own (engine/note-rounds.ts). */
+  forRound: boolean;
+  /** For such a note: the commit the task's work was at when it was sent, which its round starts from. */
+  roundFrom: string | null;
 }
 
 const toNote = (row: Record<string, unknown>): TaskNote => ({
@@ -45,6 +53,8 @@ const toNote = (row: Record<string, unknown>): TaskNote => ({
   attemptId: typeof row.attempt_id === "number" ? row.attempt_id : null,
   reason: typeof row.reason === "string" ? row.reason : null,
   settledAt: typeof row.settled_at === "string" ? row.settled_at : null,
+  forRound: row.for_round === 1,
+  roundFrom: typeof row.round_from === "string" ? row.round_from : null,
 });
 
 /** Every note sent to a task, oldest first. */
@@ -69,14 +79,16 @@ export function noteProblem(text: string): string | null {
 
 /**
  * Store a note as the one waiting for its task, inside the caller's transaction (which has checked that the task is
- * building). One already waiting is marked replaced in the same write, at the same moment. Returns both.
+ * building, or ready for review for a note that starts a round). One already waiting is marked replaced in the same
+ * write, at the same moment; a note that replaces one sent for a round takes its place as the round's note. Returns both.
  */
-export function queueNoteIn(db: DatabaseSync, taskId: number, text: string): { note: TaskNote; replaced: TaskNote | null } {
+export function queueNoteIn(db: DatabaseSync, taskId: number, text: string, round: { from: string } | null = null): { note: TaskNote; replaced: TaskNote | null } {
   const at = now();
   const before = waitingNote(db, taskId);
   if (before !== null) db.prepare("UPDATE task_notes SET state = 'replaced', settled_at = ? WHERE id = ?").run(at, before.id);
+  const from = round?.from ?? (before?.forRound === true ? before.roundFrom : null);
   // Kept exactly as typed, indentation and line breaks included: the words are the owner's.
-  const id = Number(db.prepare("INSERT INTO task_notes (task_id, text, sent_at, state) VALUES (?, ?, ?, 'waiting')").run(taskId, text, at).lastInsertRowid);
+  const id = Number(db.prepare("INSERT INTO task_notes (task_id, text, sent_at, state, for_round, round_from) VALUES (?, ?, ?, 'waiting', ?, ?)").run(taskId, text, at, from === null ? 0 : 1, from).lastInsertRowid);
   return { note: noteById(db, id), replaced: before === null ? null : noteById(db, before.id) };
 }
 
@@ -117,18 +129,18 @@ export function replacedOne(db: DatabaseSync, note: TaskNote): boolean {
   return db.prepare("SELECT 1 FROM task_notes WHERE task_id = ? AND id < ? AND state = 'replaced' AND settled_at = ? LIMIT 1").get(note.taskId, note.id, note.sentAt) !== undefined;
 }
 
-/** Why a note to a task at `status` is refused, in words for the owner: every status but `building`. */
-export const NOTE_REFUSED: Record<Exclude<TaskStatus, "building">, string> = {
+/** Why a note to a task at `status` is refused, in words for the owner: every status but `building` and `awaiting_decision`. */
+export const NOTE_REFUSED: Record<Exclude<TaskStatus, "building" | "awaiting_decision">, string> = {
   queued: "This task has not started yet, so there is nothing for a note to follow. You can send one once Claude Code is working on it.",
-  verifying: "Claude Code has finished this task and its checks are running, so a note can no longer reach it.",
-  reviewing: "Claude Code has finished this task and it is being reviewed, so a note can no longer reach it.",
-  awaiting_decision: "Claude Code has finished this task and it is ready for review, so a note can no longer reach it.",
+  verifying: "Botbench is running this task's checks, so a note cannot reach Claude Code now. You can send one once the task is ready for review.",
+  reviewing: "This task is being reviewed, so a note cannot reach Claude Code now. You can send one once the task is ready for review.",
   failed: "This task failed, so a note can no longer reach Claude Code.",
   waiting_for_limit: "This task is waiting for Claude Code's usage limit to reset, so a note cannot reach it now. You can send one once Claude Code is working on it again.",
   interrupted: "This task is stopped, so a note cannot reach Claude Code. Resume it first, if it offers Resume.",
   cancelled: "This task was cancelled, so a note can no longer reach Claude Code.",
   accepted: "This task was accepted, so a note can no longer reach Claude Code.",
   rejected: "This task was rejected, so a note can no longer reach Claude Code.",
+  drafted: "Claude Code has finished this task with a message drafted for another workbench, so a note can no longer reach it.",
 };
 
 /** Why a note is refused in the moment between the end of the builder's last turn and the task's move on from building. */

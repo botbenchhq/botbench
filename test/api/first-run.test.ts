@@ -64,7 +64,6 @@ async function start(t: T, dir: string, home: string, repo: string, commit: stri
 
 async function fresh(t: T): Promise<Api> {
   const dir = tempDir("botbench-first-run-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, "repo");
   const commit = initRepo(repo);
   return start(t, dir, path.join(dir, "home"), repo, commit);

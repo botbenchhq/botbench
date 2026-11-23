@@ -18,7 +18,6 @@ const JSON_TYPE = { "content-type": "application/json" };
 
 async function start(t: T): Promise<{ server: BotbenchServer; repo: string; check(query: Record<string, string>): Promise<{ status: number; body: Record<string, unknown> }> }> {
   const dir = tempDir("botbench-preview-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   // The check reads the repository's settings by its path and asks nothing of git, so a folder is all it needs.
   const repo = path.join(dir, "repo");

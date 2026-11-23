@@ -36,7 +36,6 @@ interface Stopped extends Left {
 /** A Botbench home in which a task waited for the owner when its Botbench was killed. */
 function stoppedWhileWaiting(t: T, options: { cursor?: string; model?: string; commands?: string[]; survivor?: boolean; attemptMadeEarlier?: boolean } = {}): Stopped {
   const dir = tempDir("botbench-recover-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n' });
@@ -530,7 +529,6 @@ ALTER TABLE tasks ADD COLUMN requested_model TEXT;
 
 test("a database from before this unit gains the parked-approval columns and the new log rules, and keeps its approvals and its log", (t) => {
   const dir = tempDir("botbench-recover-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
   const old = new DatabaseSync(path.join(home, DB_FILE));

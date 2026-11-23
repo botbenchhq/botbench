@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
-import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { APPROVAL_LIMITS, BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, limitName, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import type { Delivery, KnownRepository, OnLimit, RunMode } from "../api/client.ts";
+import { APPROVAL_LIMITS, APPROVAL_LIMIT_WORDS, BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, limitName, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -22,10 +22,11 @@ const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   issue: { label: "From an issue", title: "From an issue", icon: "external-link" },
   spec: { label: "Spec file", title: "Spec file", icon: "file" },
   mode: { label: "Mode", title: "Mode", icon: "shield" },
-  limit: { label: "Approval time limit", title: "Approval time limit", icon: "clock" },
   tasks: { label: "Tasks", title: "How many tasks", icon: "circle-dashed" },
   review: { label: "Review", title: "Review", icon: "eye" },
   delivery: { label: "When accepted", title: "When you accept a task", icon: "circle-check" },
+  limit: { label: "Usage limit", title: LIMIT_WORDS.title, icon: "clock" },
+  approvalLimit: { label: "Approval time limit", title: "Approval time limit", icon: "clock" },
   commands: { label: "Allowed commands", title: "Allowed commands", icon: "terminal" },
   models: { label: "Model", title: "Model", icon: "cpu" },
 };
@@ -56,6 +57,9 @@ export interface SheetState {
   review: ReviewChoiceState;
   delivery: Delivery;
   setDelivery(delivery: Delivery): void;
+  /** What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent. */
+  onLimit: OnLimit;
+  setOnLimit(onLimit: OnLimit): void;
   /** Whether the run is kept to one task, as it would start now. */
   oneTask: boolean;
   setOneTask(oneTask: boolean): void;
@@ -186,18 +190,6 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
         <Option group="tasks" id="tasks-several" value="several" checked={!state.oneTask} onChange={() => state.setOneTask(false)} name="Let it plan several" description="Claude Code splits the work into up to 20 tasks, built one after another." />
       </fieldset>
     );
-  if (row === "limit")
-    return (
-      <fieldset className="ds-option-picker" aria-describedby="limit-hint">
-        <legend className="ds-option-picker__legend ds-visually-hidden">Approval time limit</legend>
-        <p id="limit-hint" className="ds-option-picker__hint">
-          {LIMIT_WORDS.hint}
-        </p>
-        {APPROVAL_LIMITS.map((minutes) => (
-          <Option key={minutes ?? "off"} group="limit" id={`limit-${minutes ?? "off"}`} value={String(minutes ?? "off")} checked={state.approvalLimit === minutes} onChange={() => state.setApprovalLimit(minutes)} name={limitName(minutes)} description={minutes === null ? LIMIT_WORDS.off : LIMIT_WORDS.on(minutes)} />
-        ))}
-      </fieldset>
-    );
   if (row === "builder")
     return (
       <fieldset className="ds-option-picker" aria-describedby="builder-hint">
@@ -228,6 +220,29 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
           name="Open a pull request"
           description="Botbench pushes the task's branch with your own git and gh, and opens a pull request. It never merges, never pushes by force, and never pushes to your main branch."
         />
+      </fieldset>
+    );
+  if (row === "limit")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="limit-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">{LIMIT_WORDS.title}</legend>
+        <p id="limit-hint" className="ds-option-picker__hint">
+          It cannot be changed once the run starts.
+        </p>
+        <Option group="limit" id="limit-wait" value="wait" checked={state.onLimit === "wait"} onChange={() => state.setOnLimit("wait")} name={LIMIT_WORDS.wait.name} description={LIMIT_WORDS.wait.description} />
+        <Option group="limit" id="limit-switch" value="switch" checked={state.onLimit === "switch"} onChange={() => state.setOnLimit("switch")} name={LIMIT_WORDS.switch.name} description={LIMIT_WORDS.switch.description} />
+      </fieldset>
+    );
+  if (row === "approvalLimit")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="approval-limit-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">Approval time limit</legend>
+        <p id="approval-limit-hint" className="ds-option-picker__hint">
+          {APPROVAL_LIMIT_WORDS.hint}
+        </p>
+        {APPROVAL_LIMITS.map((minutes) => (
+          <Option key={minutes ?? "off"} group="approval-limit" id={`approval-limit-${minutes ?? "off"}`} value={String(minutes ?? "off")} checked={state.approvalLimit === minutes} onChange={() => state.setApprovalLimit(minutes)} name={limitName(minutes)} description={minutes === null ? APPROVAL_LIMIT_WORDS.off : APPROVAL_LIMIT_WORDS.on(minutes)} />
+        ))}
       </fieldset>
     );
   if (row === "commands") return <PreapprovedEditor choice={state.repository} scope={state.kind} />;

@@ -30,7 +30,6 @@ async function start(t: T, repo: string, repositories: Config["repositories"], f
 
 function repository(t: T): string {
   const repo = tempDir("botbench-preapproved-api-");
-  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   initRepo(repo);
   return repo;
 }

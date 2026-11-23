@@ -29,7 +29,6 @@ interface Api {
 /** A real server, and a task that stands where a task being built stands: at `building`, in a real worktree, with an attempt. */
 async function start(t: T): Promise<Api> {
   const dir = tempDir("botbench-apr-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
   const server = await startServer({ config, home, signInDelayMs: 1 });
@@ -234,7 +233,6 @@ test("closing the server leaves no approval pending and no socket behind", async
 
 test("after a restart, an approval asked before it is still listed, says so, and its task is shown as parked; an answer without a session stores nothing", async (t) => {
   const dir = tempDir("botbench-apr-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);

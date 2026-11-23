@@ -761,6 +761,20 @@ export async function deleteRemoteBranchesAt(o: { repo: string; remote: string; 
 }
 
 /**
+ * Create the branch `create` on `remote` at `commit` and delete each branch of `remove` there, all or none, and the
+ * deletes only while each still points at `commit`: `git push --atomic --force-with-lease=refs/heads/<old>:<commit> …
+ * <remote> <commit>:refs/heads/<new> :refs/heads/<old> …`. Never by force: a lease names one branch to delete and forces
+ * nothing (see `deleteRemoteBranchAt`), and the new branch is pushed under git's usual rule, so a branch of that name
+ * already there refuses all of it. Only branches in Botbench's own form.
+ */
+export async function replaceRemoteBranchesAt(o: { repo: string; remote: string; create: string; remove: readonly string[]; commit: string }): Promise<void> {
+  checkRemote(o.remote);
+  for (const branch of [o.create, ...o.remove]) checkPushable(branch);
+  checkBase(o.commit);
+  await pushRef(o.repo, o.create, ["--atomic", "--no-follow-tags", ...o.remove.map((b) => `--force-with-lease=refs/heads/${b}:${o.commit}`), o.remote, `${o.commit}:refs/heads/${o.create}`, ...o.remove.map((b) => `:refs/heads/${b}`)]);
+}
+
+/**
  * Delete the branch `branch` on `remote`, and only while it still points at `commit`. A delete needs no force; the
  * `--force-with-lease=<ref>:<commit>` here forces nothing: it is git's compare-and-delete, which makes git refuse unless
  * the remote branch is at exactly `commit` when the remote takes the request, so a branch somebody moved, even a moment

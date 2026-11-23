@@ -1,13 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { ApiError, sendTaskNote, type TaskDetail } from "../api/client.ts";
 import { Alert } from "./header.tsx";
-import { NOTE_ABOUT, NOTE_HEADING, NOTE_LABEL, NOTE_NOT_DELIVERED, NOTE_REPLACED, NOTE_SEND, NOTE_SENDING, NOTE_WAITING, NOTE_WAITING_LABEL, notDeliveredLine, noteRefused } from "./task-note-words.ts";
+import { NOTE_ABOUT, NOTE_ABOUT_READY, NOTE_HEADING, NOTE_LABEL, NOTE_NOT_DELIVERED, NOTE_REPLACED, NOTE_SEND, NOTE_SENDING, NOTE_WAITING, NOTE_WAITING_LABEL, NOTE_WAITING_ROUND, notDeliveredLine, noteRefused } from "./task-note-words.ts";
 
 /**
  * The owner's note to a task's builder (src/engine/notes.ts). On a building task: a small message box and Send note,
- * with the note that waits, if one does, and whether it replaced another. On any task: why a send was just refused (it
- * stays when the task, read again, is no longer building and the box has gone), and the latest note when it was not
- * delivered, with why. A delivered note is in the transcript, as the owner's message, and not here.
+ * with the note that waits, if one does, and whether it replaced another. On a task that is ready for review the same
+ * box, saying that the note takes the builder's session up again and the work is checked and reviewed again
+ * (src/engine/note-rounds.ts). On any task: why a send was just refused (it stays when the task, read again, is no
+ * longer building and the box has gone), and the latest note when it was not delivered, with why. A delivered note is
+ * in the transcript, as the owner's message, and not here.
  */
 export function TaskNote({ task, onChanged, onSignedOut }: { task: Pick<TaskDetail, "id" | "status" | "waitingNote" | "undeliveredNote">; onChanged: () => void; onSignedOut: () => void }) {
   const [text, setText] = useState("");
@@ -33,6 +35,7 @@ export function TaskNote({ task, onChanged, onSignedOut }: { task: Pick<TaskDeta
     );
   };
   const waiting = task.waitingNote;
+  const ready = task.status === "awaiting_decision";
   return (
     <>
       {refused !== null && (
@@ -46,13 +49,13 @@ export function TaskNote({ task, onChanged, onSignedOut }: { task: Pick<TaskDeta
           <span data-ds-content="">{task.undeliveredNote.text}</span>
         </Alert>
       )}
-      {task.status === "building" && (
+      {(task.status === "building" || ready) && (
         <section aria-labelledby="note-heading" data-testid="task-note" className="ds-stack ds-gap-sm">
           <h2 id="note-heading">{NOTE_HEADING}</h2>
           {waiting !== null && (
             <div className="ds-stack ds-gap-sm">
               <p role="status" data-testid="note-waiting">
-                {NOTE_WAITING}
+                {waiting.forRound ? NOTE_WAITING_ROUND : NOTE_WAITING}
               </p>
               {waiting.replacedOne && <p data-testid="note-replaced">{NOTE_REPLACED}</p>}
               <dl className="ds-key-value">
@@ -72,7 +75,7 @@ export function TaskNote({ task, onChanged, onSignedOut }: { task: Pick<TaskDeta
               </label>
               <textarea id="task-note-text" value={text} readOnly={busy} onChange={(e) => setText(e.target.value)} aria-describedby="task-note-about" className="ds-field__control ds-textarea" />
               <p id="task-note-about" data-testid="note-about" className="ds-field__description">
-                {NOTE_ABOUT}
+                {ready ? NOTE_ABOUT_READY : NOTE_ABOUT}
               </p>
             </div>
             <div className="ds-cluster">

@@ -231,7 +231,6 @@ test("a peer's message reaches an agent only inside the outside-text block, unde
 /** A repository whose delivery remote names the pairing's repository, and a run in it, for drafts. */
 function repoFor(t: T): string {
   const dir = tempDir("botbench-drafts-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, "copy");
   initRepo(repo);
   git(repo, "remote", "add", "origin", `https://${REPO}.git`);

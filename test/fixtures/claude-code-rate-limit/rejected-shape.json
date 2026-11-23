@@ -1,0 +1,10 @@
+{
+  "about": "NOT A CAPTURE. Lines in the shape of Claude Code's stream-json output for a turn that reaches the login's usage limit, for test/engine/handoff.test.ts until scripts/capture-claude-rate-limit.ts has recorded a real one. A rejected rate_limit_event has not been observed live: no file under test/recordings/ holds one. The rate_limit_event line has exactly the fields parseClaudeLine in src/drivers/claude-code.ts reads (rate_limit_info.status and rate_limit_info.resetsAt, in seconds since 1970), as in the allowed events the CLI printed in real sessions (test/recordings/ask-question.json, chat-fetch.json), with status rejected. The system init and result lines have the fields the parser reads for a session's start and a turn that ended in error. Which error result the CLI prints after a rejected event is not known; the driver marks any turn that ends in error after one as ended on the usage limit (limitedEnd).",
+  "cli": "2.1.322 (shape only)",
+  "lines": [
+    "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"5d2f6b0e-1c8a-4d3e-9a57-limit-shape\",\"model\":\"claude-haiku-5-5\",\"apiKeySource\":\"none\"}",
+    "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"I will add hello.txt.\"}]}}",
+    "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":1795453200}}",
+    "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"The usage limit was reached.\"}"
+  ]
+}
