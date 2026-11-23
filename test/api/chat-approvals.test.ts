@@ -68,7 +68,8 @@ test("Ask: a chat's fetch waits as an approval of that chat, announced once; All
   await until("the turn ends", () => !turns.turnRunning(attemptId));
   assert.equal(ended(db, attemptId)?.reason, "completed");
   assert.match(reply(db, attemptId), /Example Domain/);
-  assert.deepEqual(actionLog(db).map((e) => e.rule), ["asked_owner", "owner_allowed"]);
+  // The CLI loaded the fetch tool first (ToolSearch), which ran and is logged.
+  assert.deepEqual(actionLog(db).map((e) => e.rule), ["bookkeeping", "asked_owner", "owner_allowed"]);
 });
 
 test("Ask: Deny with what to do instead hands Claude Code the note, the fetch is not run, and the turn ends cleanly", async (t) => {
@@ -94,7 +95,7 @@ test("Allow, the default: the fetch runs with no card, and is logged under the s
   assert.deepEqual(broker.pending(), []);
   assert.deepEqual(claude.responses, [{ decision: "allow", note: null, refused: null, files: false, web: true, chat: false, bookkeeping: false }]);
   assert.match(reply(db, started!.attemptId), /Example Domain/);
-  assert.deepEqual(actionLog(db).map((e) => [e.rule, e.tool]), [["chat_web_access", "WebFetch"]]);
+  assert.deepEqual(actionLog(db).map((e) => [e.rule, e.tool]), [["bookkeeping", "ToolSearch"], ["chat_web_access", "WebFetch"]]);
 });
 
 test("Off: the fetch is refused without a card, and Claude Code is told where to turn it on", async (t) => {

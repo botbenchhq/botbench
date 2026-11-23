@@ -155,7 +155,9 @@ export type LogRule =
   /** A web tool of a task or a run ran without asking, because the owner's setting Web access is Allow. */
   | "web_allowed"
   /** A web tool of a task or a run was refused without asking, because the owner's setting Web access is Off. */
-  | "web_refused";
+  | "web_refused"
+  /** One of the CLI's own bookkeeping tools (its to-do list, loading a tool) ran without asking, in any mode. */
+  | "bookkeeping";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -750,7 +752,15 @@ export function createBroker(options: {
     // What Botbench itself decides about the request, now that it is the CLI's own: the floor, then the run's pre-approved list and the standing permissions.
     const verdict = decideRequest(r, ticket, cwd);
     if (verdict.verdict === "deny") return deny(verdict.reason);
-    if (verdict.verdict === "allow" && verdict.rule === "bookkeeping") return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, bookkeeping: true });
+    if (verdict.verdict === "allow" && verdict.rule === "bookkeeping") {
+      try {
+        // What cannot be logged does not run.
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, rule: "bookkeeping", tool: r.tool, command: r.command, cwd, detail: "Ran without asking you: one of Claude Code's own bookkeeping tools, which reaches nothing outside it." });
+      } catch (err) {
+        return deny(`This could not be recorded, so it was not let through: ${words(err)}`);
+      }
+      return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, bookkeeping: true });
+    }
     if (verdict.verdict === "web") {
       const detail = verdict.allowed ? `Ran without asking you: Web access is set to ${WEB_ACCESS_WORDS.allow} in Settings.` : WEB_OFF;
       try {
@@ -1002,7 +1012,15 @@ export function createBroker(options: {
     // pass (an edit after the agent moved into a sub-folder), and its card then says the folder of this call, not of another.
     if (ticket.seen.size >= MAX_SEEN && !ticket.seen.has(toolCallId)) ticket.seen.delete(ticket.seen.keys().next().value!);
     ticket.seen.set(toolCallId, from);
-    if (BOOKKEEPING_TOOLS.has(tool)) return { verdict: "pass", reason: "" };
+    if (BOOKKEEPING_TOOLS.has(tool)) {
+      try {
+        // What cannot be logged does not run.
+        appendLog(db, { ...about, rule: "bookkeeping", tool, command: shorten(JSON.stringify(input), MAX_COMMAND), cwd: from, detail: "Ran without asking you: one of Claude Code's own bookkeeping tools, which reaches nothing outside it." });
+      } catch (err) {
+        return denied(`Botbench could not record this call, so it was not let through: ${words(err)}`, { ...about, tool });
+      }
+      return { verdict: "pass", reason: "" };
+    }
     if (verdict.verdict === "ask" || verdict.rule === "preapproved" || verdict.rule === "standing" || verdict.rule === "mode_confined") {
       return { verdict: "ask", reason: "Botbench asks the owner before this runs." };
     }

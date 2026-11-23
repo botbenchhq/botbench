@@ -785,7 +785,8 @@ export type LogRule =
   | "mode_accepted"
   | "delivery"
   | "web_allowed"
-  | "web_refused";
+  | "web_refused"
+  | "bookkeeping";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

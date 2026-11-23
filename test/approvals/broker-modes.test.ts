@@ -129,6 +129,27 @@ test("fully autonomous: the floor, a tool that is not a command, an edit outside
   assert.equal(listApprovals(r.db).length, 0);
 });
 
+test("fully autonomous: a web fetch at Allow and the CLI's to-do list run without a card and each is in the action log; at Ask and Off the fetch does not run", async (t) => {
+  const r = await rig(t);
+  const a = agent(r, "full");
+  const FETCH = { url: "https://example.com", prompt: "read" };
+  const fetched = await a.ask("WebFetch", FETCH, "call-1");
+  assert.deepEqual([fetched.decision, fetched.web, fetched.approvalId], ["allow", true, null]);
+  const todo = await a.ask("TodoWrite", { todos: [{ content: "x", status: "pending", activeForm: "x" }] }, "call-2", { viaHook: false });
+  assert.deepEqual([todo.decision, todo.bookkeeping, todo.approvalId], ["allow", true, null]);
+  // The hook lets the to-do list pass, and that pass is logged too.
+  const heard = await askBroker(a.admission.socketPath, a.admission.secret, { tool_name: "TodoWrite", tool_input: { todos: [] }, tool_use_id: "call-3", cwd: fs.realpathSync(path.join(r.dir, `worktree-${n}`)) });
+  assert.equal(heard.verdict, "pass");
+  setChatWebAccess(r.db, "ask");
+  const asked = await a.ask("WebFetch", FETCH, "call-4");
+  assert.deepEqual([asked.decision, asked.approvalId], ["decline", null]);
+  setChatWebAccess(r.db, "off");
+  const off = await a.ask("WebFetch", FETCH, "call-5");
+  assert.deepEqual([off.decision, off.approvalId], ["decline", null]);
+  assert.deepEqual(actionLog(r.db, a.taskId).map((e) => [e.rule, e.tool]), [["web_allowed", "WebFetch"], ["bookkeeping", "TodoWrite"], ["bookkeeping", "TodoWrite"], ["mode_refused", "WebFetch"], ["web_refused", "WebFetch"]]);
+  assert.equal(listApprovals(r.db).length, 0);
+});
+
 test("manual: a confined command the floor does not name runs without a card and is logged; with Ask before every command on it asks again, saying why; unconfined and floor-listed ones ask either way", async (t) => {
   const r = await rig(t);
   const a = agent(r, "manual");

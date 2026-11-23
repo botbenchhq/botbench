@@ -30,6 +30,7 @@ const RULE_WORDS: Record<LogRule, string> = {
   delivery: "Pull request",
   web_allowed: "Ran without asking: Web access is Allow",
   web_refused: "Refused without asking: Web access is Off",
+  bookkeeping: "Ran without asking: Claude Code's own to-do list or tool loading",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();

@@ -1320,7 +1320,8 @@ ALTER TABLE issue_fetches ADD COLUMN author_relation TEXT CHECK (author_relation
     // Approvals are for actions and changes, not for using a tool (src/approvals/gate.ts). The owner's settings gain "Ask
     // before every command" (`ask_every_command`, on or off), which brings back a card for every command of a manual
     // run or a task started on its own. The action log gains the rules for a web tool of a task or a run decided by the
-    // owner's setting Web access: run without asking (`web_allowed`) or refused because it is off (`web_refused`).
+    // owner's setting Web access: run without asking (`web_allowed`) or refused because it is off (`web_refused`); and
+    // one of the CLI's own bookkeeping tools that ran (`bookkeeping`), as every agent action that ran is logged.
     // A check cannot be altered in place, so both tables are made again with every row kept, ids included, and the
     // log's indexes and triggers put back.
     name: "approvals for actions",
@@ -1337,7 +1338,7 @@ CREATE TABLE action_log (
   task_id INTEGER REFERENCES tasks (id),
   attempt_id INTEGER REFERENCES attempts (id),
   approval_id INTEGER REFERENCES approvals (id),
-  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused')),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping')),
   tool TEXT NOT NULL,
   command TEXT NOT NULL,
   cwd TEXT NOT NULL,
