@@ -8,6 +8,7 @@ import { PullRequestLink, pullRequestWords } from "../components/pull-request.ts
 import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { modeSentence } from "../app/run-words.ts";
+import { cancelStatement } from "../app/row-menu.ts";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
@@ -301,13 +302,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   );
   const cancel = run !== null && (planning || gate || building) && (
     <ConfirmAction label="Cancel run" title="Cancel this run?" confirmLabel="Cancel run" cancelLabel="Keep run" disabled={busy !== null} losing testId="cancel-run" onConfirm={() => decide("cancel")}>
-      <p>
-        {planning
-          ? "The planner is stopped and no plan is kept. Nothing was built."
-          : gate
-            ? `The plan of ${tasksWord(run.plan.length)} is dropped and nothing is built. A cancelled run cannot be started again; start a new one instead.`
-            : "Tasks that have finished keep their branches. The task being built is stopped, and what it did so far is committed to its branch. Tasks that have not started are not built. A cancelled run cannot be started again."}
-      </p>
+      <p>{cancelStatement(run.status, run.plan.length)}</p>
     </ConfirmAction>
   );
 

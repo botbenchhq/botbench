@@ -93,7 +93,12 @@ function Counts({ file }: { file: FileChange }) {
   );
 }
 
-export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () => void }) {
+/** `discard`: the owner chose Discard from the task's More menu on Work, so its confirmation opens once the task is read. */
+export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; discard?: boolean; onSignedOut: () => void }) {
+  // The address goes back to the task's own, so a reload or Back does not ask again.
+  useEffect(() => {
+    if (discard) window.history.replaceState(null, "", `#/tasks/${id}`);
+  }, [discard, id]);
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
@@ -397,7 +402,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
 
             {task.decision?.decision === "accept" && <PullRequestSection taskId={task.id} view={task.pullRequest} target={task.pullRequestTarget} onChanged={load} onSignedOut={onSignedOut} />}
 
-            <DiscardSection task={task} onDiscarded={load} onSignedOut={onSignedOut} />
+            <DiscardSection task={task} startOpen={discard} onDiscarded={load} onSignedOut={onSignedOut} />
 
             {task.status === "awaiting_decision" && (
               <section aria-labelledby="decide-heading" className="ds-stack ds-gap-sm">

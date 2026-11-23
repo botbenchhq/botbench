@@ -154,7 +154,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await settingsRoutes(req, res, ctx, url)) return;
   if (await peersRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
-  if (boardRoutes(req, res, ctx, url)) return;
+  if (await boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;
   if (await connectRoutes(req, res, ctx, url)) return;
   if (await voiceRoutes(req, res, ctx, url)) return;

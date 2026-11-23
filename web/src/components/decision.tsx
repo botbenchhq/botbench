@@ -4,17 +4,20 @@ import { Alert } from "./header.tsx";
 import { ConfirmAction } from "./confirm.tsx";
 import { Icon } from "./icon.tsx";
 
+/** Put `value` on the clipboard; resolves with whether it was, in words. */
+export function copyWords(value: string, refused = "Not copied: this browser refused. Select the text to copy it."): Promise<string> {
+  // The clipboard is only there on a secure page (HTTPS, or this Mac itself) and may still refuse.
+  const written = navigator.clipboard === undefined ? Promise.reject(new Error("no clipboard")) : navigator.clipboard.writeText(value);
+  return written.then(
+    () => "Copied.",
+    () => refused,
+  );
+}
+
 /** Put `value` on the clipboard, and say in words whether it was. */
 function useCopy(value: string): { copied: string | null; copy: () => void } {
   const [copied, setCopied] = useState<string | null>(null);
-  const copy = (): void => {
-    // The clipboard is only there on a secure page (HTTPS, or this Mac itself) and may still refuse.
-    const written = navigator.clipboard === undefined ? Promise.reject(new Error("no clipboard")) : navigator.clipboard.writeText(value);
-    written.then(
-      () => setCopied("Copied."),
-      () => setCopied("Not copied: this browser refused. Select the text to copy it."),
-    );
-  };
+  const copy = (): void => void copyWords(value).then(setCopied);
   return { copied, copy };
 }
 

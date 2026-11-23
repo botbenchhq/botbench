@@ -581,6 +581,20 @@ No new boundary: a control on what a builder already writes inside its task's co
 
 What it does not cover: "expected" is a heuristic. A file the plan names loosely (by a word that is not a path) reads as not expected, which only costs a fully autonomous run its accept; a file named in the plan for another reason reads as expected. Protected paths are folders or exact files: no patterns.
 
+### The More menu on Work: hide, show and rename
+
+Each row of Work (a planned run, a task started on its own, and now each chat) ends in a More menu (`web/src/app/row-menu.ts`, `src/api/board.ts`). No new trust boundary is crossed: the routes are behind the same session as every other (B1), and the only new writes are to three owner-only tables of the store (B4), `hidden_rows`, `chat_titles` and `chat_members`. **Hide, show and rename change only what the list shows and delete nothing**: no run, task, chat message, attempt, branch or copy is changed or deleted by them, `chat_rounds` and `chat_attempts` stay append-only and untouched, and the migration that adds the three tables changes no other table, index or trigger (`test/store.test.ts`). The menu adds no way to delete anything: Cancel opens the run's own confirmation and calls the existing cancel route; Discard opens the task's screen with its own confirmation, which lists the files that go and is refused by the server if they changed. Copy branch name and Open pull request use what the board read (the branch while git has it, the pull request's GitHub address as gh reported it when it was opened); nothing is pushed or fetched.
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Spoofing: a request hides, shows or renames for someone else | The routes need the owner's session, like every other route | Done |
+| Tampering: a hide or a rename changes or deletes work | Only `hidden_rows` and `chat_titles` are written; showing deletes the `hidden_rows` row only; `chat_members` is append-only (triggers); API tests count every run, task, attempt, event, chat round, chat attempt, branch and copy before and after (`test/api/rows.test.ts`) | Done |
+| Tampering: a client makes a task's attempt part of a chat | A chat records only attempts that `chat_attempts` holds; an attempt already recorded keeps its chat (`test/api/chat.test.ts`) | Done |
+| Repudiation: hiding a row hides what needs the owner | Hidden rows are counted on Work ("Show hidden (3)") and listed under it; an approval that waits is still in the header's tray, which hiding does not touch | Accepted: a hidden run that needs the owner is out of the Needs you count until shown again |
+| Information disclosure | Nothing new is read or sent; a chat's name is shown only on Work and stored only in the data folder | Done |
+| Denial of service: a large body or a long name | Bodies are capped at 64 KiB as everywhere; a name is one line, at most 80 characters, checked in code and by the table; a malformed body is 400, an unknown or unlisted row 404 | Done |
+| Elevation of privilege: a chat's name or a title steers anything | A name is text, shown marked as the owner's words; nothing reads it but the list | Done |
+
 ### Moving an installation from before the rename (Smelt to Botbench)
 
 The product was called Smelt. On start, before anything opens the store, an installation in the old default folder `~/.smelt` is moved to `~/.botbench` (`src/store/move-home.ts`). No new boundary is crossed: the files moved are the owner's own data folder, and git runs only `worktree repair`, against repositories the store already names as task sources, with the same safe options and time limits as every other git call.
