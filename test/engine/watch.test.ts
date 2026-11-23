@@ -96,9 +96,12 @@ test("the seen rows are kept in the SQLite file: after it is closed and opened a
 
 /** The real gh with a configuration folder of its own that holds no sign-in, as on a Mac where nobody ran gh auth login. */
 function signedOutGh(dir: string): RunGh {
+  // As on the owner's Mac: in a CI job (CI set, and GITHUB_ACTIONS=true on GitHub's runners) gh words its sign-in
+  // message for automation instead ("set the GH_TOKEN environment variable"), and Botbench never runs in one.
+  const { GITHUB_ACTIONS: _actions, CI: _ci, ...env } = deliveryEnv();
   return (args, o) =>
     new Promise((resolve) => {
-      execFile("gh", [...args], { cwd: o.cwd, env: { ...deliveryEnv(), GH_CONFIG_DIR: dir }, timeout: 30_000 }, (err, stdout, stderr) => {
+      execFile("gh", [...args], { cwd: o.cwd, env: { ...env, GH_CONFIG_DIR: dir }, timeout: 30_000 }, (err, stdout, stderr) => {
         const code = err === null ? 0 : typeof err.code === "number" ? err.code : null;
         resolve({ started: !(err !== null && err.code === "ENOENT"), code, stdout, stderr });
       });
@@ -148,7 +151,7 @@ test("a poll that fails shows its repository's failure in plain words with what 
     await watch.pollNow(b.repo);
     const status = watch.status()[0]!;
     assert.equal(status.state, "failed");
-    assert.equal(status.problem, expected[i]!.problem);
+    assert.equal(status.problem, expected[i]!.problem, `gh said: ${status.said}`);
     if (expected[i]!.said === null) assert.equal(status.said, null);
     else assert.match(status.said!, expected[i]!.said as RegExp);
     assert.equal(status.nextAt, "2026-11-23T10:15:00.000Z", "tried again at the next interval");
