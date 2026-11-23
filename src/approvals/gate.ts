@@ -102,8 +102,8 @@ export type GateVerdict =
   | { verdict: "ask"; floor?: string; why: AskWhy }
   /** Refused without asking anyone. */
   | { verdict: "deny"; reason: string }
-  /** What would ask the owner, refused because the run is fully autonomous; `floor` names the floor rule when it is the floor that would ask. */
-  | { verdict: "refuse"; reason: string; floor?: string };
+  /** What would ask the owner, refused because the run is fully autonomous; `floor` names the floor rule when it is the floor that would ask, and `why` is why it would have asked. */
+  | { verdict: "refuse"; reason: string; floor?: string; why: AskWhy };
 
 /** Why a fully autonomous run refused what would otherwise ask the owner, in words for the agent and the record. */
 export function fullAutonomyRefusal(tool: string, floorRule?: string): string {
@@ -225,7 +225,7 @@ const reachesOut = (pattern: unknown): boolean => typeof pattern === "string" &&
 /** The fields of a shell call that say nothing about what runs beyond the command itself. */
 const PLAIN_SHELL_FIELDS = new Set(["command", "description"]);
 /** The fields of a shell call that leave it inside the confinement: a time limit and a background run do not take it out. Any other (`dangerouslyDisableSandbox` among them) may. */
-const CONFINED_SHELL_FIELDS = new Set([...PLAIN_SHELL_FIELDS, "timeout", "run_in_background"]);
+export const CONFINED_SHELL_FIELDS: ReadonlySet<string> = new Set([...PLAIN_SHELL_FIELDS, "timeout", "run_in_background"]);
 
 /** Decide about a shell command: the floor first, then the grants (the run's pre-approved list and the standing permissions). */
 function shellVerdict(request: GateRequest, input: Record<string, unknown>, grants: readonly Grant[], settings: FloorSettings): GateVerdict {
@@ -257,7 +257,7 @@ export function gate(request: GateRequest, grants: readonly Grant[] = [], settin
   const verdict = decide(request, grants, settings);
   // A fully autonomous run puts nothing to the owner: what would ask is refused, and says why.
   if (request.mode !== "full" || verdict.verdict !== "ask") return verdict;
-  return { verdict: "refuse", reason: fullAutonomyRefusal(request.tool, verdict.floor), ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) };
+  return { verdict: "refuse", reason: fullAutonomyRefusal(request.tool, verdict.floor), why: verdict.why, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) };
 }
 
 function decide(request: GateRequest, grants: readonly Grant[], settings: FloorSettings): GateVerdict {

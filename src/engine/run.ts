@@ -11,7 +11,7 @@ import { now, transaction } from "../store/db.ts";
 import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
 import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS, watchSilence } from "./silence.ts";
-import { agentName, correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
+import { agentName, correctionPrompt, IMPLEMENTER, mergePlan, oneTaskPrompt, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
 import { isRunMode, MODE_WORDS, type RunMode } from "./modes.ts";
@@ -79,6 +79,11 @@ export interface Run {
   outsideText: boolean;
   /** The owner let the commands of this marked run reach the repository's allowed network hosts all the same. */
   outsideHosts: boolean;
+  /**
+   * The run is kept to one task, chosen when it started and never changed: its planner is asked for one; a plan of
+   * several is sent back once, and one that still holds several is merged by Botbench (`mergePlan`).
+   */
+  oneTask: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -134,6 +139,7 @@ function toRun(row: Record<string, unknown>): Run {
     issueFetchId: int(row.issue_fetch_id),
     outsideText: row.outside_text === 1,
     outsideHosts: row.outside_hosts === 1,
+    oneTask: row.one_task === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -182,7 +188,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -191,8 +197,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     insertEvent(db, id, at, "planning", null);
@@ -252,6 +258,8 @@ function replacePlan(db: DatabaseSync, runId: number, tasks: readonly PlanTask[]
 }
 
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
+/** Why a plan of a run kept to one task cannot hold `n` tasks. */
+const ONE_TASK_ONLY = (n: number): string => `This run is kept to one task, so its plan holds exactly 1 task; this one holds ${tasksWord(n)}. Put the work in one task.`;
 
 /**
  * The planner's plan arrived: store it and wait for the owner. Only a run that is being planned takes a plan; a
@@ -261,8 +269,9 @@ export function storePlan(db: DatabaseSync, runId: number, tasks: readonly PlanT
   return transaction(db, () => {
     const run = known(db, runId);
     if (run.status !== "planning") throw notWaiting(run, "store");
-    const checked = validatePlan({ tasks });
+    const checked = validatePlan({ tasks }, { oneTask: run.oneTask });
     if (!checked.ok) throw new Error(`The plan cannot be stored: ${checked.errors.join(" ")}`);
+    if (run.oneTask && checked.tasks.length !== 1) throw new Error(`The plan cannot be stored: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     replacePlan(db, runId, checked.tasks);
     writeRun(db, runId, "awaiting_plan_approval", { reason: o.note ?? null, plannerModel: o.plannerModel ?? null, planChanged: true, detail: `plan of ${tasksWord(checked.tasks.length)}${o.note ? `; ${o.note}` : ""}` });
     return getRun(db, runId)!;
@@ -279,8 +288,9 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
     versionGiven(planVersion);
     if (run.status !== "awaiting_plan_approval") throw notWaiting(run, "edit");
     sameVersion(run, planVersion);
-    const checked = validatePlan({ tasks });
+    const checked = validatePlan({ tasks }, { oneTask: run.oneTask });
     if (!checked.ok) throw new RunError(400, checked.errors.join(" "));
+    if (run.oneTask && checked.tasks.length !== 1) throw new RunError(400, ONE_TASK_ONLY(checked.tasks.length));
     replacePlan(db, runId, checked.tasks);
     writeRun(db, runId, "awaiting_plan_approval", { planChanged: true, detail: `plan edited by the owner: ${tasksWord(checked.tasks.length)}` });
     return getRun(db, runId)!;
@@ -302,8 +312,9 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
     if (by === "mode" && run.mode !== "full") throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}, so its plan waits for your approval.`);
     const plan = planTasks(db, runId);
     // What is approved is checked once more as it is stored: nothing reaches a builder that a plan may not hold.
-    const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) });
+    const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) }, { oneTask: run.oneTask });
     if (!checked.ok) throw new RunError(409, `The plan cannot be approved as it is: ${checked.errors.join(" ")}`);
+    if (run.oneTask && checked.tasks.length !== 1) throw new RunError(409, `The plan cannot be approved as it is: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     const link = db.prepare("UPDATE plan_tasks SET task_id = ? WHERE run_id = ? AND position = ?");
     const tasks = plan.map((task) => {
       const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: run.buildModel === undefined ? implementerModel : run.buildModel });
@@ -444,6 +455,8 @@ export interface StartRun {
   delivery?: unknown;
   /** The GitHub issue the owner was shown, `{ fetchId, allowHosts }` (engine/intake.ts); left out or null for none. */
   issue?: unknown;
+  /** Keep the run to one task: true or false; left out, on in a fully autonomous run and off in any other. */
+  oneTask?: unknown;
 }
 
 export interface Runs {
@@ -493,8 +506,8 @@ export interface RunsOptions {
   silenceLimitMs?: number;
 }
 
-/** How one go of the planner ended. */
-type Outcome = { tasks: PlanTask[]; model: string | null } | { problem: string } | { cancelled: true };
+/** How one go of the planner ended. `note` says what Botbench did to the plan, when it merged it. */
+type Outcome = { tasks: PlanTask[]; model: string | null; note?: string } | { problem: string } | { cancelled: true };
 
 const STOPPED = "Botbench stopped before this run's plan was made.";
 /** The work of a run started from an issue with no message of the owner's own. Botbench's words, in the work's place. */
@@ -602,23 +615,40 @@ export function createRuns(options: RunsOptions): Runs {
       if (!gone()) move(run.id, "planning", { attemptId: session.attemptId, detail: `planner attempt ${session.attemptId}` });
       const issue = runIssue(db, run.id);
       const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
+      const oneTask = { oneTask: run.oneTask };
       // `close` stops only a session it can see: one still being started when Botbench began stopping is sent no turn.
-      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
+      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
       if (first === null && !gone()) outcome = { problem: STOPPED };
       else if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };
       else {
-        let plan = parsePlan(first.text);
+        let plan = parsePlan(first.text, oneTask);
         if (!plan.ok) {
           // Sent back once, with what was wrong. A second plan that is not accepted ends the planning.
           const second = await turn(correctionPrompt(plan.errors));
           if (gone()) outcome = { cancelled: true };
           else if (second.end !== "completed") outcome = { problem: problemOf(second.end) };
           else {
-            plan = parsePlan(second.text);
+            plan = parsePlan(second.text, oneTask);
             outcome = plan.ok ? { tasks: plan.tasks, model } : { problem: `The planner returned a plan Botbench could not accept, twice. What was wrong with the second: ${plan.errors.join(" ")}` };
           }
         } else outcome = { tasks: plan.tasks, model };
+      }
+      // A run kept to one task: a plan of several is sent back once. One that still holds several, or a reply that is
+      // no plan, is merged by Botbench from the latest plan of several, and the run's record says so.
+      if (run.oneTask && "tasks" in outcome && outcome.tasks.length > 1) {
+        const several = outcome.tasks;
+        const again = await turn(oneTaskPrompt(several.length));
+        if (gone()) outcome = { cancelled: true };
+        else if (again.end !== "completed" && closed) outcome = { problem: problemOf(again.end) };
+        else {
+          const replied = again.end === "completed" ? parsePlan(again.text, oneTask) : null;
+          const latest = replied !== null && replied.ok ? replied.tasks : several;
+          outcome =
+            latest.length === 1
+              ? { tasks: latest, model }
+              : { tasks: [mergePlan(latest)], model, note: `This run is kept to one task. ${agentName(driver.name)} planned ${latest.length} tasks even when asked again for one, so Botbench joined them into one task: their titles in order, and all of their criteria.` };
+        }
       }
     } catch (err) {
       outcome = { problem: words(err) };
@@ -662,7 +692,8 @@ export function createRuns(options: RunsOptions): Runs {
     // Cancelled while the planner worked: the run already says so, and a plan that arrived late is not stored.
     if (!now_ || now_.status !== "planning" || "cancelled" in outcome) return;
     if ("tasks" in outcome) {
-      const stored = announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: leftover }));
+      const note = [outcome.note, leftover].filter((part): part is string => typeof part === "string").join(" ");
+      const stored = announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: note === "" ? null : note }));
       // A fully autonomous run does not wait at the plan gate: building starts on the plan as the planner gave it.
       if (stored.mode === "full") approveNow(id, stored.planVersion, "mode");
       return;
@@ -779,6 +810,7 @@ export function createRuns(options: RunsOptions): Runs {
     // Left out: the same choice as planning when one was made, as the New run screen offers it; else the configured one.
     const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : input.model !== undefined ? input.model : (options.implementerModel ?? null);
     const delivery = deliveryChoice(input.delivery);
+    const oneTask = oneTaskChoice(input.oneTask, mode);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -801,7 +833,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (mode === "full") fullyAutonomousUsable(repo);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -890,6 +922,14 @@ export function issueGiven(given: unknown): { fetchId: number; allowHosts: boole
   const { fetchId, allowHosts, ...rest } = given as Record<string, unknown>;
   if (Object.keys(rest).length > 0 || typeof fetchId !== "number" || !Number.isSafeInteger(fetchId) || fetchId < 1 || typeof allowHosts !== "boolean") throw new RunError(400, shape);
   return { fetchId, allowHosts };
+}
+
+/** Whether a request keeps its run to one task: as it says, or, left out, on only in a fully autonomous run. Anything else is refused with the reason, before anything exists. */
+export function oneTaskChoice(given: unknown, mode: RunMode): boolean {
+  if (given === undefined || given === null) return mode === "full";
+  if (typeof given === "boolean") return given;
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  throw new RunError(400, '"oneTask" must be true (keep the run to one task) or false.');
 }
 
 /** The mode a request names. Anything else is refused with the reason, before anything exists. */

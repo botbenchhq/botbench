@@ -5,6 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { createBroker, type Broker } from "../../src/approvals/broker.ts";
 import { CODEX_CAPABILITIES } from "../../src/drivers/codex.ts";
+import { RESTART_STOPPED } from "../../src/engine/recover.ts";
 import { taskReview } from "../../src/engine/review.ts";
 import { MAX_REVIEW_DIFF, parseVerdict, PLANNER, IMPLEMENTER, REVIEWER, reviewerPrompt, roleProblem, sameModelProblem, type PlanTask } from "../../src/engine/roles.ts";
 import { createRun, createRuns, getRun, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
@@ -99,6 +100,7 @@ test("R5: after the checks, Codex reads the task's title, criteria and diff, and
   assert.match(prompt, /Add a greeting file/);
   assert.match(prompt, /- hello\.txt holds the word hi/);
   assert.match(prompt, /\+\+\+ b\/hello\.txt\n@@ -0,0 \+1 @@\n\+hi/, "the real diff from the base commit to the task's branch");
+  assert.match(prompt, /Every file the task's work changed, 1 file:\n<changed-files>\n- hello\.txt\n<\/changed-files>/, "the files read from the real branch");
 
   const review = taskReview(e.db, id)!;
   assert.equal(review.agent, "codex");
@@ -208,13 +210,31 @@ test("a task left being reviewed when Botbench stopped has its review recorded a
     assert.ok(Date.now() < deadline, `never reviewing: ${getTask(e.db, id)!.status}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  // The reviewer's turn is under way: its attempt is written and its prompt sent. Reviewing is set before the reviewer's
+  // CLI starts, so without this wait the next start could find no reviewer attempt yet, or one newer than itself.
+  const reviewerTurn = (): number | undefined => {
+    const row = e.db.prepare("SELECT a.id FROM attempts a WHERE a.driver = 'codex' AND EXISTS (SELECT 1 FROM events v WHERE v.attempt_id = a.id AND v.type = 'user_prompt') ORDER BY a.id DESC LIMIT 1").get();
+    return row === undefined ? undefined : Number(row.id);
+  };
+  while (reviewerTurn() === undefined) {
+    assert.ok(Date.now() < deadline, "the reviewer's turn never started");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const reviewer = reviewerTurn()!;
+  // Recovery takes up only rows from before its own start, compared by the millisecond.
+  await new Promise((resolve) => setTimeout(resolve, 5));
   // A new start on the same store, as after Botbench was killed mid-review: its recovery finds the task at the review station.
   const after = createTasks({ db: e.db, home: e.home, driver: e.builder, broker: e.broker, reviewers: { codex: e.reviewer }, onEvent: () => {}, onTaskChange: () => {} });
   await after.idle();
   const task = getTask(e.db, id)!;
   assert.equal(task.status, "awaiting_decision");
   const review = taskReview(e.db, id)!;
-  assert.deepEqual([review.outcome, review.problem, review.text], ["stopped", "Botbench stopped before Codex finished its review.", ""]);
+  // What the review view shows for it, by the words the transcript uses for the turn.
+  assert.deepEqual([review.outcome, review.problem, review.text], ["stopped", `${RESTART_STOPPED}. Codex did not finish its review.`, ""]);
+  // The reviewer's own turn, which the restart cut off, ends as stopped once, and its attempt runs no more.
+  assert.equal(e.db.prepare("SELECT status FROM attempts WHERE id = ?").get(reviewer)!.status, "interrupted");
+  const ends = e.db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'turn_ended'").all(reviewer).map((r) => JSON.parse(String(r.payload)));
+  assert.deepEqual(ends, [{ type: "turn_ended", reason: "interrupted", detail: RESTART_STOPPED }]);
   assert.ok(task.headCommit !== null && task.headCommit !== task.baseCommit);
   await after.close();
 });
@@ -244,7 +264,7 @@ test("the review's verdict is read only from its first line in the asked form", 
   assert.equal(parseVerdict("**Verdict: concerns**\nFindings:\n- a.ts:3: off by one"), "concerns");
   assert.equal(parseVerdict("I think it looks right.\nVerdict: concerns"), null);
   assert.equal(parseVerdict(""), null);
-  const prompt = reviewerPrompt({ task: ONE[0]!, diff: "", cut: null });
+  const prompt = reviewerPrompt({ task: ONE[0]!, files: [], diff: "", cut: null });
   assert.match(prompt, /\(The task changed no file\.\)/);
   assert.match(prompt, /Verdict: looks right\nChecked:\n/);
 });

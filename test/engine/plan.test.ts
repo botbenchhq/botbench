@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { listStanding, runGrants, standingGrants } from "../../src/approvals/grants.ts";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
-import { MAX_CRITERIA, MAX_CRITERION, MAX_PLAN_TASKS, MAX_TITLE, parsePlan, plannerPrompt, validatePlan, type PlanTask } from "../../src/engine/roles.ts";
+import { MAX_CRITERIA, MAX_CRITERION, MAX_ONE_TASK_CRITERIA, MAX_ONE_TASK_TITLE, MAX_PLAN_TASKS, MAX_TITLE, mergePlan, oneTaskPrompt, parsePlan, plannerPrompt, validatePlan, type PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, cancelRun, createRun, createRuns, editPlan, getRun, listRuns, MAX_SPEC_BYTES, planTasks, readSpec, RunError, runTasks, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
 import { createTask, createTasks, getTask, type Tasks } from "../../src/engine/task.ts";
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
@@ -130,6 +130,28 @@ test("a planner's reply is read as the JSON object in its last fenced block, and
   const again = plannerPrompt({ work: "Add two files", current: THREE, feedback: "Use exactly two tasks" });
   assert.match(again, /Use exactly two tasks/);
   assert.match(again, /Add a farewell file/);
+});
+
+test("kept to one task: the largest plan merges into one task that a one-task run accepts, joined in order; the larger limits hold only for one task of such a run", () => {
+  const largest: PlanTask[] = Array.from({ length: MAX_PLAN_TASKS }, (_, i) => ({ title: `${String(i).padStart(2, "0")}${"t".repeat(MAX_TITLE - 2)}`, criteria: Array.from({ length: MAX_CRITERIA }, (_, j) => `${i}.${j} ${"c".repeat(MAX_CRITERION - 10)}`) }));
+  const merged = mergePlan(largest);
+  assert.equal(merged.title, largest.map((task) => task.title).join("; "));
+  assert.deepEqual(merged.criteria, largest.flatMap((task) => task.criteria));
+  assert.equal(merged.title.length, MAX_ONE_TASK_TITLE);
+  assert.equal(merged.criteria.length, MAX_ONE_TASK_CRITERIA);
+  assert.deepEqual(validatePlan({ tasks: [merged] }, { oneTask: true }), { ok: true, tasks: [merged] });
+  // Not a one-task run, or two tasks of one: the usual limits.
+  assert.equal(validatePlan({ tasks: [merged] }).ok, false);
+  assert.equal(validatePlan({ tasks: [merged, THREE[0]!] }, { oneTask: true }).ok, false);
+  // A criterion is still at most its own length, and the one task still has at most the merged limits.
+  assert.equal(validatePlan({ tasks: [{ title: "t", criteria: ["c".repeat(MAX_CRITERION + 1)] }] }, { oneTask: true }).ok, false);
+  assert.equal(validatePlan({ tasks: [{ title: "t", criteria: [...merged.criteria, "one more"] }] }, { oneTask: true }).ok, false);
+  // Its planner is asked for one task, and told how much that task may hold.
+  const prompt = plannerPrompt({ work: "Add two files", oneTask: true });
+  assert.match(prompt, /- Exactly 1 task: the owner chose to keep this run to one task/);
+  assert.match(prompt, new RegExp(`1 to ${MAX_ONE_TASK_CRITERIA} acceptance criteria`));
+  assert.doesNotMatch(prompt, /independent/i);
+  assert.match(oneTaskPrompt(3), /^Botbench could not accept that plan: the owner chose to keep this run to one task, and the plan holds 3 tasks\.\n\nReply once more with the whole plan as exactly 1 task/);
 });
 
 test("a new run is stored as planning with its first event; approving its three tasks creates exactly three queued tasks and no worktree", (t) => {

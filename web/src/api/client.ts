@@ -7,6 +7,9 @@ import type { AuthorRelation } from "../../../src/github.ts";
 
 export type TurnEndReason = "completed" | "interrupted" | "error";
 
+/** The detail of a stopped `turn_ended` the server writes for a turn a restart cut off; the same words as its `RESTART_STOPPED`. */
+export const RESTART_STOPPED = "Stopped: Botbench restarted";
+
 /** The normalized events a driver emits; the same union as the server's `DriverEvent`. */
 export type DriverEvent =
   | { type: "user_prompt"; text: string }
@@ -409,6 +412,10 @@ export interface FileChange {
   added: number;
   removed: number;
   binary: boolean;
+  /** The task's plan, its checks or its tests lead one to expect this file (src/engine/scope.ts). */
+  expected: boolean;
+  /** The file lies under a path only the owner may accept a change to. */
+  protected: boolean;
 }
 
 export interface TaskDetail extends TaskSummary {
@@ -600,8 +607,8 @@ export interface RunAnnouncement {
 }
 
 /** Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking. */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {

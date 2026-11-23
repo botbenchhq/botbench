@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
@@ -125,6 +125,9 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const repoPath = repo.kind === "known" || repo.kind === "other" ? repo.path.trim() : "";
   const mode = modeFor(chosenMode, repoPath, defaultMode);
   const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
+  /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
+  const [chosenOneTask, setChosenOneTask] = useState<boolean | null>(null);
+  const oneTask = oneTaskFor(chosenOneTask, mode);
   const [specPath, setSpecPath] = useState("");
   const [sameBuild, setSameBuild] = useState(true);
   const models = useModelChoice(onSignedOut);
@@ -428,7 +431,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const send = (): void => {
     if (starting || showStop) return;
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery });
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
     if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets) : undefined;
@@ -516,6 +519,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     kind: kind === "task" ? "One task" : "Plan a run",
     spec: specPath.trim() === "" ? "None" : (specPath.trim().split("/").at(-1) ?? specPath.trim()),
     mode: kind === "task" ? "Manual" : (MODES.find((m) => m.mode === mode)?.name ?? "Reading"),
+    tasks: oneTask ? "One task" : "Several",
     review: review.offer.state === "checking" ? "Checking" : review.words,
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
     commands: commandsWords(repository.listed?.commands.length ?? 0),
@@ -607,7 +611,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
                     ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
-                    : `A run in ${name}: Claude Code plans tasks first, reading a copy it cannot change. ${mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
+                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change. ${mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
                 </p>
               )
             )}
@@ -744,6 +748,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             review,
             delivery,
             setDelivery,
+            oneTask,
+            setOneTask: setChosenOneTask,
             issue,
             models,
             sameBuild,
