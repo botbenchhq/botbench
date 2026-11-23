@@ -40,8 +40,8 @@ import { now } from "./store/db.ts";
  * Nothing from a Release is run but the repository's own committed files and the packages its lockfiles name.
  */
 
-export const RELEASES_URL = "https://api.github.com/repos/jon-lange/botbench/releases/latest";
-export const GIT_URL = "https://github.com/jon-lange/botbench.git";
+export const RELEASES_URL = "https://api.github.com/repos/botbenchhq/botbench/releases/latest";
+export const GIT_URL = "https://github.com/botbenchhq/botbench.git";
 /** The launchd label of the login service that runs an installation as a service (a LaunchAgent the owner made). */
 export const SERVICE_LABEL = "dev.botbench.server";
 export const CHECK_EVERY_MS = 6 * 3600_000;

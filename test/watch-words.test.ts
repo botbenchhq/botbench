@@ -6,8 +6,8 @@ import { NO_WATCH, PROPOSALS_ABOUT, proposalLine, startAddress, watchAbout, watc
 // What Work and Settings say about the issue watch (issue #73), decided without a browser, held to docs/product/voice.md.
 
 test("a watched repository's row says the label, how often, and in plain words that the label is not trust", () => {
-  const about = watchAbout({ label: "botbench", intervalMinutes: 10, repository: "github.com/jon-lange/botbench" });
-  assert.equal(about, "Botbench looks every 10 minutes for open issues of github.com/jon-lange/botbench with the label botbench, and shows each new one on Work for you to start or dismiss. It never starts a run by itself. The label is what makes an issue a proposal, but it is not a reason to trust one: anyone with triage access to the repository can apply it. Each proposal says who wrote the issue, its text is treated as outside text, and a run from it is never fully autonomous.");
+  const about = watchAbout({ label: "botbench", intervalMinutes: 10, repository: "github.com/botbenchhq/botbench" });
+  assert.equal(about, "Botbench looks every 10 minutes for open issues of github.com/botbenchhq/botbench with the label botbench, and shows each new one on Work for you to start or dismiss. It never starts a run by itself. The label is what makes an issue a proposal, but it is not a reason to trust one: anyone with triage access to the repository can apply it. Each proposal says who wrote the issue, its text is treated as outside text, and a run from it is never fully autonomous.");
   assert.match(watchAbout({ label: "x", intervalMinutes: 1, repository: null }), /^Botbench looks every minute for open issues with the label x,/);
   assert.equal(watchStateWords({ state: "waiting", checkedAt: null }), "Not checked yet");
   assert.equal(watchStateWords({ state: "failed", checkedAt: null }), "Could not check");
@@ -22,7 +22,7 @@ test("a failed look names the repository, why, and when it tries again; what gh 
 });
 
 test("a proposal's second line keeps its author apart, as outside text; Start opens the composer on that proposal", () => {
-  assert.deepEqual(proposalLine({ number: 73, author: "someone", authorRelation: "NONE", repository: "github.com/jon-lange/botbench" }), { lead: "#73 by ", author: "someone", rest: " (GitHub says: no tie to the repository) · github.com/jon-lange/botbench" });
+  assert.deepEqual(proposalLine({ number: 73, author: "someone", authorRelation: "NONE", repository: "github.com/botbenchhq/botbench" }), { lead: "#73 by ", author: "someone", rest: " (GitHub says: no tie to the repository) · github.com/botbenchhq/botbench" });
   assert.deepEqual(proposalLine({ number: 74, author: "jon-lange", authorRelation: "OWNER", repository: "r" }).rest, " (GitHub says: owner of the repository) · r");
   assert.deepEqual(proposalLine({ number: 7, author: null, authorRelation: null, repository: "r" }), { lead: "#7 by an account GitHub no longer has", author: null, rest: " (GitHub did not say how they relate to the repository) · r" });
   assert.equal(startAddress({ id: 12 }), "#/turn?start=run&proposal=12");

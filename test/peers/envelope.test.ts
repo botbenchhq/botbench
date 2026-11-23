@@ -35,7 +35,7 @@ const question = (from: WorkbenchKey, to: WorkbenchKey, over: Partial<Envelope> 
   messageId: newId(),
   contextId: newId(),
   parentId: null,
-  repository: "github.com/jon-lange/botbench",
+  repository: "github.com/botbenchhq/botbench",
   senderKey: from.publicKey,
   recipientKey: to.publicKey,
   sequence: 1,

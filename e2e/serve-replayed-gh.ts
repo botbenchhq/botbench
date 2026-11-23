@@ -4,7 +4,7 @@ import { replayIssues } from "../test/support/replay-issue.ts";
 import { replayPeers } from "../test/support/replay-peers.ts";
 
 // A test-only way to start Botbench whose gh answers are replayed from output captured once from the real gh
-// (test/support/replay-issue.ts and, for the open pull requests of jon-lange/botbench, test/support/replay-peers.ts:
+// (test/support/replay-issue.ts and, for the open pull requests of botbenchhq/botbench, test/support/replay-peers.ts:
 // the owner's approved exception). It lives under e2e/ and is started only by
 // e2e/botbench.ts when a test names it: src/server.ts, which production runs, has no way to reach it. Everything else
 // is the real start: the same settings from the environment, the same store, the same server.

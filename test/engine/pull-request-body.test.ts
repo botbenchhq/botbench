@@ -200,7 +200,7 @@ const accepted = async (r: Rig): Promise<string> => {
 };
 
 test("the issue number of a run message: one issue, none, two, one of another repository, and text that only names it elsewhere", () => {
-  assert.equal(messageIssue("Issue #136 on jon-lange/botbench"), 136);
+  assert.equal(messageIssue("Issue #136 on botbenchhq/botbench"), 136);
   assert.equal(messageIssue("#136"), 136);
   assert.equal(messageIssue("Fix #7, as #7 asks"), 7, "one issue named twice is still one");
   assert.equal(messageIssue("Add a function"), null);
@@ -211,7 +211,7 @@ test("the issue number of a run message: one issue, none, two, one of another re
 });
 
 test("a message that names one issue: the body's first line closes it, once, and the Issue section does not repeat it", async (t) => {
-  const r = await rig(t, { reviewer: false, prompt: "Issue #136 on jon-lange/botbench" });
+  const r = await rig(t, { reviewer: false, prompt: "Issue #136 on botbenchhq/botbench" });
   const text = await accepted(r);
   assert.equal(text.split("\n")[0], "Closes #136");
   assert.deepEqual(closings(text), ["Closes #136"]);

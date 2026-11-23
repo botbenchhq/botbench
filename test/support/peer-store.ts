@@ -14,7 +14,7 @@ import { acceptPairRequest, confirmByOwner, createInvite, getPairing, joinPairin
 // Two workbenches' stores in one test, each with its own real key and real SQLite, paired by the store's own steps
 // (no network): what the store tests of Peers P5 share.
 
-export const REPO = "github.com/jon-lange/botbench";
+export const REPO = "github.com/botbenchhq/botbench";
 
 export interface Side {
   home: string;

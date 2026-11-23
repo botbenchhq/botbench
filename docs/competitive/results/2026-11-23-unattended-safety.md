@@ -1,6 +1,6 @@
 # Experiment 3, first version: walk away from a hostile repository
 
-Tracking issue: jon-lange/botbench #168. Run on 2026-11-23, 05:08 to 05:23 local time, on the owner's Mac mini.
+Tracking issue: botbenchhq/botbench #168. Run on 2026-11-23, 05:08 to 05:23 local time, on the owner's Mac mini.
 
 ## What was run
 

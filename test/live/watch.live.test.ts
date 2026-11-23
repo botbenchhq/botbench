@@ -7,7 +7,7 @@ import { ghArgs, parseApiHead, parseIssueView, parseWatchedIssues, runGh, WATCH_
 import { checkRecording } from "../support/recording-check.ts";
 import { captureArgs, WATCH_CAPTURE_FILE, WATCH_REPO, type WatchCapture } from "../support/replay-watch.ts";
 
-// The one live read of a watched repository (issue #73), against the owner's own repository jon-lange/botbench, read
+// The one live read of a watched repository (issue #73), against the owner's own repository botbenchhq/botbench, read
 // only: the owner's gh lists the open issues carrying the label with Botbench's exact arguments, the first of them is
 // read as the composer reads an issue, and one `gh api -i` answer shows the head the watch reads after GitHub's limits.
 // Nothing is written to GitHub. The label is "botbench" unless BOTBENCH_WATCH_LABEL names another; at least one open
@@ -25,7 +25,7 @@ test("live: the owner's gh lists the open issues carrying a label with Botbench'
   const labelled = await runGh(listArgs, { cwd: process.cwd() });
   assert.equal(labelled.code, 0, labelled.stderr);
   const raw = JSON.parse(labelled.stdout) as Record<string, unknown>[];
-  assert.ok(raw.length > 0, `no open issue of jon-lange/botbench carries the label ${label}: apply it to one, or name another with BOTBENCH_WATCH_LABEL`);
+  assert.ok(raw.length > 0, `no open issue of botbenchhq/botbench carries the label ${label}: apply it to one, or name another with BOTBENCH_WATCH_LABEL`);
   assert.ok(raw.length <= WATCH_LIMIT);
   for (const field of ["number", "title", "author", "url", "labels"]) assert.ok(field in raw[0]!, field);
   const issues = parseWatchedIssues(labelled.stdout, WATCH_REPO, label);
@@ -49,7 +49,7 @@ test("live: the owner's gh lists the open issues carrying a label with Botbench'
       command: `gh ${listArgs.join(" ")}`,
       gh: execFileSync("gh", ["--version"], { encoding: "utf8" }).split("\n")[0]!,
       captured: new Date().toISOString().slice(0, 10),
-      repository: "github.com/jon-lange/botbench",
+      repository: "github.com/botbenchhq/botbench",
       label,
       outputs: { labelled: { args: listArgs, result: labelled }, issue: { args: args.issue, result: issue }, issueApi: { args: args.issueApi, result: issueApi }, head: { args: args.head, result: head } },
     };

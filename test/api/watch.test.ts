@@ -66,7 +66,7 @@ const count = (api: Api, table: string): number => Number(api.server.db.prepare(
 test("the server polls at its start and lists each proposal with its title and author, and nothing is built, run or asked of a model", async (t) => {
   const api = await start(t, place(t));
   const { watches, proposals } = await polled(api);
-  assert.deepEqual(watches.map((w) => ({ path: w.path, repository: w.repository, label: w.label, intervalMinutes: w.intervalMinutes, state: w.state, problem: w.problem })), [{ path: api.repo, repository: "github.com/jon-lange/botbench", label: loadWatchCapture().label, intervalMinutes: 10, state: "checked", problem: null }]);
+  assert.deepEqual(watches.map((w) => ({ path: w.path, repository: w.repository, label: w.label, intervalMinutes: w.intervalMinutes, state: w.state, problem: w.problem })), [{ path: api.repo, repository: "github.com/botbenchhq/botbench", label: loadWatchCapture().label, intervalMinutes: 10, state: "checked", problem: null }]);
   const issue = capturedIssue();
   const shown = proposals.find((p) => p.number === issue.number)!;
   assert.equal(shown.title, issue.title);

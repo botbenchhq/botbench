@@ -17,7 +17,7 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 // address is sent there by its own git settings), and the pull-request step replaying output captured once from the
 // real gh (test/support/replay-github.ts, the owner's approved exception). Then the real Botbench process shows it.
 
-const ADDRESS = "https://github.com/jon-lange/botbench-delivery-fixture.git";
+const ADDRESS = "https://github.com/botbenchhq/botbench-delivery-fixture.git";
 
 const test = base.extend<{ dir: string; seeded: { home: string; taskId: number }; botbench: Botbench }>({
   dir: async ({}, use) => {
