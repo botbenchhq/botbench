@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { gate } from "../../src/approvals/gate.ts";
@@ -41,7 +43,9 @@ const MATRIX: { name: string; tool: string; input: Record<string, unknown>; conf
   { name: "a read through a glob, which may match a link out of the copy", tool: "Bash", input: { command: "cat src/*.ts" }, confined: false, kind: "unconfined", blocks: true },
   { name: "grep with a single-quoted ( and *, errors sent nowhere", tool: "Bash", input: { command: `grep -rn 'admit(.*' src/engine 2>/dev/null` }, confined: false, kind: "read_only", blocks: false },
   { name: "git log piped to head", tool: "Bash", input: { command: "git log --oneline -5 | head -3" }, confined: false, kind: "read_only", blocks: false },
-  { name: "cat of a file from a sub-folder", tool: "Bash", input: { command: "cat ../README.md" }, confined: false, cwd: path.join(WORKTREE, "sub"), kind: "read_only", blocks: false },
+  { name: "cat of a file from a sub-folder", tool: "Bash", input: { command: "cat README.md" }, confined: false, cwd: path.join(WORKTREE, "sub"), kind: "read_only", blocks: false },
+  // A `..` is resolved by the shell after a link is followed, so even one that stays inside the copy on paper is not read.
+  { name: "a read through .. from a sub-folder", tool: "Bash", input: { command: "cat ../README.md" }, confined: false, cwd: path.join(WORKTREE, "sub"), kind: "unconfined", blocks: true },
   // Any other refusal.
   { name: "a question for the owner", tool: "AskUserQuestion", input: { questions: [] }, confined: true, kind: "other", blocks: false },
   { name: "a to-do list", tool: "TodoWrite", input: { todos: [] }, confined: true, kind: "other", blocks: false },
@@ -85,4 +89,26 @@ test("a read-only command is read from the folder the agent stood in, and only i
   assert.equal(readOnlyCommand("echo $(id)", WORKTREE, WORKTREE), false);
   assert.equal(readOnlyCommand("FOO=1 ls", WORKTREE, WORKTREE), false);
   assert.equal(readOnlyCommand("git status --short && git diff --stat", WORKTREE, WORKTREE), true);
+  // A link followed by `..` can lead anywhere the link's own folder lies.
+  assert.equal(readOnlyCommand("cat link/../../secret", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("cat sub/link/../notes.txt", WORKTREE, WORKTREE), false);
+  // After `--` a word that starts with a dash is a file, and its path is checked.
+  assert.equal(readOnlyCommand("cat -- -n", WORKTREE, WORKTREE), true);
+  assert.equal(readOnlyCommand("cat -- /etc/hosts", WORKTREE, WORKTREE), false);
+  assert.equal(readOnlyCommand("cat -- --pre=x", WORKTREE, WORKTREE), true, "after -- an option-like word is a file name in the copy");
+});
+
+test("a word after -- that is a real link out of the copy is followed, and the command is not read-only", () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-refusals-")));
+  try {
+    const copy = path.join(dir, "copy");
+    fs.mkdirSync(copy);
+    fs.writeFileSync(path.join(dir, "secret.txt"), "x");
+    fs.symlinkSync(path.join(dir, "secret.txt"), path.join(copy, "-link"));
+    fs.writeFileSync(path.join(copy, "-plain"), "x");
+    assert.equal(readOnlyCommand("cat -- -link", copy, copy), false);
+    assert.equal(readOnlyCommand("cat -- -plain", copy, copy), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

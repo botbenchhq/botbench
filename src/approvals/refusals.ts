@@ -86,12 +86,14 @@ const TO_NOWHERE = /(^|\s)(?:[12]?>|&>)\s*\/dev\/null(?=\s|$|[;&|])|(^|\s)2>&1(?
  * Whether a shell command only reads files inside the task's copy: every piece of it starts one of a few programs that
  * only read or print (git with a subcommand that only reads), nothing in it runs another program or writes a file, and
  * every word that could be a path lies inside the copy (links followed), read from the folder the agent stood in. A
- * redirection other than to /dev/null, a substitution, a variable, a glob, a `~`, an assignment and a `cd` all make it not one.
+ * redirection other than to /dev/null, a substitution, a variable, a glob, a `..`, a `~`, an assignment and a `cd` all make
+ * it not one; after `--`, a word that starts with a dash is a path like any other.
  * Leans towards "no": a false "no" only hands a task back to the owner.
  */
 export function readOnlyCommand(command: string, worktree: string, cwd: string): boolean {
   const top = path.resolve(worktree);
-  const inCopy = (place: string): boolean => path.resolve(cwd, place) === top || insideWorktree(top, cwd, place) !== null;
+  // A `..` is not read: the shell takes it after following a link, and path.resolve before, so the two can differ.
+  const inCopy = (place: string): boolean => !place.split(/[\\/]/).includes("..") && (path.resolve(cwd, place) === top || insideWorktree(top, cwd, place) !== null);
   if (!inCopy(cwd)) return false;
   const rest = command.replace(TO_NOWHERE, " ");
   if (/[<>]/.test(rest)) return false;
@@ -108,10 +110,13 @@ export function readOnlyCommand(command: string, worktree: string, cwd: string):
       if (!READ_ONLY_GIT.has(args[0] ?? "")) return false;
       operands = args.slice(1);
     } else if (!READ_ONLY_PROGRAMS.has(first)) return false;
+    // After `--` every word is an operand, whatever it starts with.
+    let options = true;
     return operands.every((word) => {
-      if (RUNS_OR_WRITES.test(word)) return false;
+      if (options && word === "--") return !(options = false);
+      if (options && RUNS_OR_WRITES.test(word)) return false;
       // An option's value is a path wherever a program may read it as one; a bare option names nothing.
-      const value = word.startsWith("-") ? (word.includes("=") ? word.slice(word.indexOf("=") + 1) : "") : word;
+      const value = options && word.startsWith("-") ? (word.includes("=") ? word.slice(word.indexOf("=") + 1) : "") : word;
       return value === "" || inCopy(value);
     });
   });
