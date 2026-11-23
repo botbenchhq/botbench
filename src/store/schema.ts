@@ -1317,6 +1317,19 @@ ALTER TABLE issue_fetches ADD COLUMN author_relation TEXT CHECK (author_relation
 `,
   },
   {
+    // What kind of request a fully autonomous run refused (`refusal`, src/approvals/refusals.ts), written with its
+    // `mode_refused` entry and on no other: whether it blocks the accept is read from it. An entry from before this has
+    // none and blocks, as every refusal did. And a run may be kept to one task (`one_task`), chosen when it starts and
+    // never changed after, like its mode.
+    name: "refusal_kinds_and_one_task",
+    sql: `
+ALTER TABLE action_log ADD COLUMN refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other')));
+ALTER TABLE runs ADD COLUMN one_task INTEGER NOT NULL DEFAULT 0 CHECK (one_task IN (0, 1));
+CREATE TRIGGER runs_one_task_fixed BEFORE UPDATE OF one_task ON runs
+BEGIN SELECT RAISE(ABORT, 'whether a run is kept to one task is chosen when it starts and never changed'); END;
+`,
+  },
+  {
     // Approvals are for actions and changes, not for using a tool (src/approvals/gate.ts). The owner's settings gain "Ask
     // before every command" (`ask_every_command`, on or off), which brings back a card for every command of a manual
     // run or a task started on its own. The action log gains the rules for a web tool of a task or a run decided by the
@@ -1345,11 +1358,12 @@ CREATE TABLE action_log (
   detail TEXT,
   grant_id INTEGER REFERENCES grants (id),
   run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
   CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
   CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL)
 );
-INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id)
-  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id FROM action_log_before_actions ORDER BY id;
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_actions ORDER BY id;
 DROP TABLE action_log_before_actions;
 CREATE INDEX action_log_task ON action_log (task_id, id);
 CREATE INDEX action_log_grant ON action_log (grant_id, rule);

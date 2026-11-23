@@ -115,6 +115,8 @@ test("fully autonomous: the floor, a tool that is not a command, an edit outside
   assert.match(escape.refused!, /could not be shown to run kept away from your sign-ins/);
   assert.equal(listApprovals(r.db).length, 0, "nothing was ever put to the owner");
   assert.deepEqual(rulesOf(r, a.taskId), ["mode_refused", "mode_refused", "mode_refused", "mode_refused"]);
+  // Each refusal is recorded with its kind, which decides whether it blocks the accept (src/approvals/refusals.ts).
+  assert.deepEqual(actionLog(r.db, a.taskId).map((entry) => entry.refusal), ["floor", "network", "outside_copy", "unconfined"]);
   // And a confined, harmless command still runs.
   assert.equal((await a.ask("Bash", { command: "git status" }, "call-5")).byMode, "full");
   // At Allow, the default, a fetch of a public page runs and is logged; one of this Mac is refused, as it would ask.
@@ -172,6 +174,20 @@ test("a run that read outside text: its web tools ask whatever Web access says, 
   const fetch = await a.ask("WebFetch", { url: "https://example.com", prompt: "read" }, "call-1");
   assert.ok(fetch.approvalId !== null, "put to the owner, who said no");
   assert.equal((await a.ask("Bash", { command: "ls" }, "call-2")).byMode, "semi");
+});
+
+test("fully autonomous: a harmless read-only command that could not be tied to the call that was checked is refused, recorded as read-only, and its record says it does not stop the accept", async (t) => {
+  const r = await rig(t);
+  const a = agent(r, "full");
+  const answer = await a.ask("Bash", { command: "ls src" }, "call-1", { viaHook: false });
+  assert.deepEqual([answer.decision, answer.approvalId], ["decline", null]);
+  // The agent is told the refusal only; the record adds why it does not hand the task back.
+  assert.equal(answer.refused, "This run is fully autonomous, so a command runs without you only inside the protected copy, and this one could not be shown to run kept away from your sign-ins and the network. It was not run.");
+  const [entry] = actionLog(r.db, a.taskId);
+  assert.deepEqual([entry!.rule, entry!.refusal], ["mode_refused", "read_only"]);
+  assert.equal(entry!.detail, `${answer.refused} It only reads files in the task's copy, so it does not stop the task being accepted.`);
+  // The store takes a kind only on a refusal's entry.
+  assert.throws(() => r.db.prepare("INSERT INTO action_log (ts, task_id, attempt_id, rule, tool, command, cwd, refusal) VALUES ('now', ?, NULL, 'mode_allowed', 'Bash', 'ls', '.', 'read_only')").run(a.taskId), /CHECK constraint failed/);
 });
 
 test("broker failure denies in every mode: a broker that has shut down, and a socket that cannot be reached", async (t) => {
