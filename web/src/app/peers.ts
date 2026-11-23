@@ -78,7 +78,7 @@ export function claimWords(c: Extract<PeersView, { state: "ready" }>["claims"][n
   const ago = agoWords(c.startedAt, now);
   if (c.takenOverBy !== null) return { lead: started, tail: ` ${ago}; ${c.takenOverBy} took it over` };
   const quiet = now - Date.parse(c.workedAt);
-  if (quiet >= QUIET_CLAIM_MS) return { lead: started, tail: ` ${ago} and has shown no work on it since ${agoWords(c.workedAt, now)}: it may have stopped, or be waiting for its owner` };
+  if (quiet >= QUIET_CLAIM_MS) return { lead: started, tail: ` ${ago} and has shown no work on it for ${agoWords(c.workedAt, now).replace(/ ago$/, "")}: it may have stopped, or be waiting for its owner` };
   // A claim that has said nothing since it was made says only when it started.
   if (Date.parse(c.workedAt) - Date.parse(c.startedAt) < 60_000) return { lead: started, tail: ` ${ago}` };
   return { lead: started, tail: ` ${ago}; it last worked on it ${agoWords(c.workedAt, now)}` };

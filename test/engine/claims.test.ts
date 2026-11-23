@@ -945,7 +945,7 @@ test("while its run builds, a claim says when its workbench last worked on it, n
   assert.deepEqual(view.branches, []);
   const at = clock.getTime() + 5 * 60_000;
   assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: at }), ["bob started on this issue 35 minutes ago; it last worked on it 5 minutes ago."]);
-  assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: clock.getTime() + 40 * 60_000 }), ["bob started on this issue 70 minutes ago and has shown no work on it since 40 minutes ago: it may have stopped, or be waiting for its owner."]);
+  assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: clock.getTime() + 40 * 60_000 }), ["bob started on this issue 70 minutes ago and has shown no work on it for 40 minutes: it may have stopped, or be waiting for its owner."]);
   assert.deepEqual(peerRows(view, at).map((r) => r.rest), [" · Started on issue #82 35 minutes ago; it last worked on it 5 minutes ago · "]);
 
   // The run ends without a pull request: the sign goes with the claim.
