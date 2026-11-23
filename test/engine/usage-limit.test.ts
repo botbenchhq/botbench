@@ -122,7 +122,9 @@ test("the time to try again is the agent's reset time when it gives one in the f
 
 test("a builder's turn that ends on a usage limit waits, its work committed, until the reset time the agent gave; then the same session is resumed once, with the task's own model, and the task goes on to Ready for review without using up a restart", WITHIN, async (t) => {
   const e = await line(t, { waitMs: 60 * 60_000 });
-  const resetsAt = inMs(1500);
+  // Far enough ahead that the builder reaches its limit before it, also on a machine busy with the rest of the suite: a
+  // reset time already past when the limit is reached is rightly replaced by the configured wait.
+  const resetsAt = inMs(5000);
   const engine = await e.open([limited("one", resetsAt), finishes("two")]);
   const started = await engine.tasks.start(e.repo, "Add two files", "haiku");
 
@@ -249,9 +251,11 @@ test("a task whose time to try again passed while Botbench was stopped is resume
 
   const opened = Date.now();
   const second = await e.open([finishes("two")]);
-  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review", 5000);
-  assert.equal(second.driver.starts.length, 1);
+  // Resumed at once; its checks, which then take it to Ready for review, may take longer on a busy machine.
+  await until(() => second.driver.starts.length === 1, "the task is resumed", 5000);
   assert.ok(attemptStart(e.db, getTask(e.db, started.id)!.attemptId!) - opened < 3000, "resumed at once");
+  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the resumed task is ready for review");
+  assert.equal(second.driver.starts.length, 1);
 });
 
 test("a run cancelled while a task waits ends that task as cancelled with its work committed; it never resumes, also after a restart, and the run's queued task is cancelled too", WITHIN, async (t) => {
