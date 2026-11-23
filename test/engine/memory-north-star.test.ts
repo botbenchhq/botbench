@@ -96,7 +96,8 @@ test("north star: 'Remember: …' sent in one chat is in a later chat's prompt f
   assert.equal(before.planner, plannerPrompt({ work: WORK }));
   assert.equal(before.builder, before.task);
   const plain = await w.say("grok", "What should I do before committing?");
-  assert.equal(plain.prompt, chatPrompt({ history: [], message: "What should I do before committing?" }).prompt);
+  // Grok keeps its own tools in a chat (#127), so its prompt is the one for an agent with tools.
+  assert.equal(plain.prompt, chatPrompt({ history: [], message: "What should I do before committing?", tools: true }).prompt);
 
   // The owner asks Codex, in one chat, to remember.
   const asked = await w.say("codex", `Remember: ${NOTE}`);
