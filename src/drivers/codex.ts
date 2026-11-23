@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { confinementProblem, unreadablePaths } from "../confinement.ts";
 import { makeReviewFolder } from "./cli-sandbox.ts";
+import { appServerArgs, BUILD_ONLY_DISABLED, launchAppServer, startAppServerSession } from "./codex-app-server.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent } from "./events.ts";
 import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
@@ -54,13 +55,20 @@ const COMMAND = "codex";
 export const CODEX = "codex";
 
 /**
- * Codex here does one turn: it cannot resume, cannot put a permission request to the owner, and never edits a task's
- * copy. In a chat it has its own tools, kept by its own sandbox to the chat's folder. It can be stopped.
- * `codex app-server` does send approval requests, but on 0.171.0 a command the client accepts runs outside Codex's
- * sandbox, so routing them to Botbench's broker would unconfine every allowed command; it is not used
- * (docs/security/codex-app-server-check.md).
+ * Codex as a reviewer and in a chat: one turn of `codex exec`, which cannot resume, cannot put a permission request to
+ * the owner, and never edits a task's copy. In a chat it has its own tools, kept by its own sandbox to the chat's
+ * folder. It can be stopped. These are also its capabilities while Botbench has not found that it can build.
  */
 export const CODEX_CAPABILITIES: DriverCapabilities = { resume: false, interrupt: true, permissionRequests: false, edits: false, chatTools: true };
+
+/**
+ * Codex once its probe found `codex app-server` (src/drivers/codex-app-server.ts): it builds in its own sandbox, and
+ * each of its approval requests, every one a request to leave that sandbox, reaches Botbench as an escalation.
+ */
+export const CODEX_BUILD_CAPABILITIES: DriverCapabilities = { ...CODEX_CAPABILITIES, permissionRequests: true, edits: true, escalationsOnly: true };
+
+/** Why Codex cannot build before its probe has run. */
+const NOT_CHECKED = "Botbench has not checked yet that this Codex can ask you before it runs anything outside its sandbox.";
 
 /** The name of Botbench's permissions profile for a review. */
 export const REVIEW_PROFILE = "botbench-review";
@@ -333,7 +341,11 @@ const MODELS_FRESH_MS = 60_000;
 
 export class CodexDriver implements Driver {
   readonly name = CODEX;
-  readonly capabilities = CODEX_CAPABILITIES;
+  /** As the last probe found them: Codex builds only once a probe found `codex app-server` and nothing else in the way. */
+  private found: DriverCapabilities = { ...CODEX_CAPABILITIES, buildProblem: NOT_CHECKED };
+  get capabilities(): DriverCapabilities {
+    return this.found;
+  }
   /** Codex's own device-code sign-in, for Connect in Settings (U26). A moved CODEX_HOME reaches it through the allowlist. */
   readonly signIn: SignInDefinition = codexSignIn();
   private readonly configured: { models: readonly string[]; defaultModel: string | null };
@@ -343,8 +355,24 @@ export class CodexDriver implements Driver {
     this.configured = { models: options.models ?? [], defaultModel: options.defaultModel ?? null };
   }
 
-  /** `codex --version` and `codex login status`, which prints to its error output. No credential file is read. */
+  /**
+   * `codex --version` and `codex login status`, which prints to its error output, and whether the installed Codex can
+   * put its approval requests to Botbench (`codex app-server --help`), which decides whether it can build. No credential
+   * file is read.
+   */
   async probe(): Promise<DriverProbe> {
+    const probe = await this.readProbe();
+    if (probe.problem !== null) {
+      this.found = { ...CODEX_CAPABILITIES, buildProblem: probe.problem };
+      return probe;
+    }
+    const server = await runCli(COMMAND, ["app-server", "--help"], { cwd: os.tmpdir(), extraEnv: EXTRA_ENV, timeoutMs: PROBE_TIMEOUT_MS });
+    const serves = server.started && server.exitCode === 0 && /generate-json-schema/.test(server.stdout);
+    this.found = serves ? CODEX_BUILD_CAPABILITIES : { ...CODEX_CAPABILITIES, buildProblem: `this Codex ${probe.version ?? ""} has no \`codex app-server\`, through which it asks before it runs anything outside its sandbox. Update Codex.`.replace("  ", " ") };
+    return probe;
+  }
+
+  private async readProbe(): Promise<DriverProbe> {
     const run = (args: string[]) => runCli(COMMAND, args, { cwd: os.tmpdir(), extraEnv: EXTRA_ENV, timeoutMs: PROBE_TIMEOUT_MS });
     const version = await run(["--version"]);
     if (!version.started) return { installed: false, version: null, supported: false, signedIn: false, billing: "unknown", problem: "Codex is not installed, or `codex` is not on the PATH." };
@@ -399,6 +427,10 @@ export class CodexDriver implements Driver {
    * repository read-only. Commands reach no network either way.
    */
   async startAttempt(options: StartAttemptOptions): Promise<DriverSession> {
+    // Codex runs its own commands: none of them could be put in a task's container (src/execution.ts), so a task whose
+    // commands must run in one is never started here, where they would run on this Mac.
+    if (options.container !== undefined) throw new Error("This repository's commands run in a container, and Codex cannot have its commands run there. Build it with Claude Code, or set the repository's \"execution\" to \"host\". Nothing ran on this Mac instead.");
+    if (options.allowEdits === true && options.gate !== undefined && options.readOnly !== true && options.chatTools === undefined) return this.startBuild(options);
     const chat = options.chatTools;
     if (chat !== undefined && (options.readOnly === true || options.allowEdits === true || options.gate !== undefined)) throw new Error("A chat with Codex's own tools is kept by its sandbox alone: it cannot also be read-only, edit under Botbench's rules or ask you.");
     if (chat === undefined && (options.readOnly !== true || options.allowEdits === true || options.gate !== undefined)) throw new Error("Codex can only review or chat in Botbench: it cannot ask you for permission or edit a task's files under Botbench's rules.");
@@ -416,5 +448,25 @@ export class CodexDriver implements Driver {
     const unsafe = await this.sandboxProblem(turn, chat === undefined ? "read-only" : "workspace-write");
     if (unsafe !== null) throw new Error(unsafe);
     return startOneTurn(options.db, CODEX, options.model ?? null, { agent: "Codex", command: COMMAND, args, cwd: options.cwd, extraEnv: EXTRA_ENV, capabilities: CODEX_CAPABILITIES, input: (prompt) => prompt, reader: () => readCodexLine });
+  }
+
+  /**
+   * A build in the task's copy over `codex app-server` (src/drivers/codex-app-server.ts): Codex's own sandbox under
+   * Botbench's profile, `on-request`, and each approval request an escalation for Botbench's broker. Codex is handed no
+   * gate secret: its requests come back on its own output, never through the broker's socket. Its commands reach no
+   * network: Codex's sandbox has no list of hosts Botbench can check, so hosts a repository allows are not opened to it
+   * (a command that needs one asks, as an escalation). It cannot resume.
+   */
+  private async startBuild(options: StartAttemptOptions): Promise<DriverSession> {
+    if (options.resumeCursor !== undefined) throw new Error("Codex cannot resume a session in Botbench.");
+    const probe = await this.probe();
+    if (probe.problem) throw new DriverUnavailableError(probe);
+    if (this.found.buildProblem !== undefined) throw new Error(`Codex cannot build: ${this.found.buildProblem}`);
+    if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
+    const place = { cwd: options.cwd, dataDir: options.confinement.dataDir, ...(options.confinement.gitDir === undefined ? {} : { gitDir: options.confinement.gitDir }) };
+    const transport = launchAppServer(COMMAND, appServerArgs(place, [...DISABLED_FEATURES, ...BUILD_ONLY_DISABLED]), { cwd: options.cwd, extraEnv: EXTRA_ENV });
+    // A task that names no model is built on the one configured for Codex in Botbench's settings, else Codex's own default.
+    const model = options.model ?? this.configured.defaultModel ?? undefined;
+    return startAppServerSession({ db: options.db, transport, cwd: options.cwd, capabilities: CODEX_BUILD_CAPABILITIES, ...(model ? { model } : {}) });
   }
 }

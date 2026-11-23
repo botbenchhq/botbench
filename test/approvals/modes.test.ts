@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
-import { gate, type GateRequest, type GateVerdict } from "../../src/approvals/gate.ts";
+import { askWords, ESCALATION_REFUSED, gate, type GateRequest, type GateVerdict } from "../../src/approvals/gate.ts";
 import type { Grant } from "../../src/approvals/grants.ts";
 import { autoAccept, RUN_MODES, type RunMode } from "../../src/engine/modes.ts";
 
@@ -257,4 +257,56 @@ test("the matrix for a run that read outside text: no grant of either kind appli
   assert.equal(outcome(ask(plain, [grant(["npm", "test"])])), "preapproved");
   assert.equal(outcome(ask({ ...plain, outsideText: true }, [standing(["npm", "test"])])), "ask");
   assert.equal(outcome(ask({ ...plain, outsideText: true }, [grant(["npm", "test"])])), "ask");
+});
+
+// Codex as a builder (src/drivers/codex-app-server.ts): on `on-request` its every approval request is a request to run
+// something outside its own sandbox, and an accepted one runs there. So each is an escalation: in Manual and
+// Semi-autonomous the owner decides it every time, and a fully autonomous run refuses it. No grant of either kind, no
+// mode, no confinement and no rule about the copy answers it; the floor is still read, so that the card names its rule.
+// The rows above, Claude Code's, are not touched by this.
+const CODEX_KINDS = {
+  "plain command": { tool: "Bash", input: { command: "npm test" }, floor: null },
+  "plain command on the floor": { tool: "Bash", input: { command: "git push origin main" }, floor: "git-push" },
+  "a read inside the copy": { tool: "Bash", input: { command: "ls src" }, floor: null },
+  // As Codex sends every command: in its shell, which the floor reads through to what it is handed.
+  "a command in Codex's shell": { tool: "Bash", input: { command: "/bin/zsh -lc 'touch ../outside.txt'" }, floor: null },
+  "a command in Codex's shell on the floor": { tool: "Bash", input: { command: "/bin/zsh -lc 'git push origin main'" }, floor: "git-push" },
+  "a command with network": { tool: "Bash", input: { command: "curl https://example.com", network: { host: "example.com", protocol: "https" } }, floor: null },
+  "a command that reads a guarded place": { tool: "Bash", input: { command: "cat ~/.ssh/id_ed25519" }, floor: "guarded-place" },
+  "a delete outside the copy": { tool: "Bash", input: { command: KINDS["delete outside the copy"].input.command }, floor: "recursive-delete-outside-worktree" },
+  "a file change": { tool: "apply_patch", input: { changes: [{ path: path.join(WORKTREE, "src/a.ts"), kind: "add", diff: "x" }] }, floor: null },
+  "more permissions": { tool: "permissions", input: { permissions: { network: { enabled: true } }, cwd: WORKTREE }, floor: null },
+} as const satisfies Record<string, { tool: string; input: Record<string, unknown>; floor: string | null }>;
+
+test("the matrix for Codex: every escalation asks in Manual and Semi-autonomous and is refused in Fully autonomous, whatever is confined, allowed in advance, always allowed or read from outside", () => {
+  let cases = 0;
+  const grantSets: Grant[][] = [[], [grant(["npm", "test"]), grant(["ls", "src"]), grant(["git", "push", "origin", "main"])], [standing(["npm", "test"]), standing(["ls", "src"])]];
+  for (const mode of RUN_MODES) {
+    for (const [kind, k] of Object.entries(CODEX_KINDS)) {
+      for (const confined of [true, false]) {
+        for (const given of grantSets) {
+          for (const outsideText of [false, true]) {
+            for (const askEveryCommand of [false, true]) {
+              const verdict = ask({ tool: k.tool, input: k.input, worktree: WORKTREE, cwd: WORKTREE, scope, mode, confined, outsideText, askEveryCommand, escalation: true }, given);
+              const row = `Codex, ${mode}, ${kind}, ${confined ? "confined" : "not confined"}, ${given[0]?.kind ?? "no grant"}, ${outsideText ? "outside text" : "no outside text"}, ${askEveryCommand ? "ask before every command" : "setting off"}`;
+              const floor = k.floor === null ? {} : { floor: k.floor };
+              if (mode === "full") assert.deepEqual(verdict, { verdict: "refuse", reason: ESCALATION_REFUSED, why: "escalation", ...floor }, row);
+              else assert.deepEqual(verdict, { verdict: "ask", why: "escalation", ...floor }, row);
+              cases++;
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.equal(cases, 3 * Object.keys(CODEX_KINDS).length * 2 * 3 * 2 * 2);
+});
+
+test("a Codex escalation's card says plainly that Codex asks to run it outside its sandbox, and names the floor's rule when there is one", () => {
+  assert.equal(askWords("escalation", { tool: "Bash" }), "Codex asks to run it outside its sandbox, beyond the protection of the task's copy.");
+  assert.equal(askWords("escalation", { tool: "Bash", floor: "git-push" }), "Codex asks to run it outside its sandbox, beyond the protection of the task's copy. On the always-ask list: it sends commits to another computer.");
+  // The same command without the mark is Claude Code's, and runs confined as before.
+  assert.equal(outcome(ask({ tool: "Bash", input: { command: "npm test" }, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual", confined: true })), "mode");
+  // A NUL is still refused outright.
+  assert.equal(ask({ tool: "Bash", input: { command: "ls\0" }, worktree: WORKTREE, cwd: WORKTREE, scope, mode: "manual", escalation: true }).verdict, "deny");
 });

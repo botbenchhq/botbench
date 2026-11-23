@@ -176,7 +176,7 @@ export function approvalCount(db: DatabaseSync, key: ApprovalKey): number {
   // The repository is compared as the task stored it when it was started, never resolved again.
   const rows = db
     .prepare(
-      "SELECT a.command AS command FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'allowed' AND a.role = ? AND a.tool = ? AND a.cwd = ? AND t.repo_path = ? AND EXISTS (SELECT 1 FROM action_log l WHERE l.approval_id = a.id AND l.rule = 'owner_allowed' AND l.id > ?)",
+      "SELECT a.command AS command FROM approvals a JOIN tasks t ON t.id = a.task_id WHERE a.status = 'allowed' AND a.escalation = 0 AND a.role = ? AND a.tool = ? AND a.cwd = ? AND t.repo_path = ? AND EXISTS (SELECT 1 FROM action_log l WHERE l.approval_id = a.id AND l.rule = 'owner_allowed' AND l.id > ?)",
     )
     .all(key.role, key.tool, key.cwd, key.repo, since);
   return rows.filter((row) => key.words === null || sameWords(splitPlain(String(row.command)), key.words)).length;

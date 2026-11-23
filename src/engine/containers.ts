@@ -1,5 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
-import { findDocker, labelledContainers, mountedFrom, removeContainer, startTaskContainer, type ContainerStart } from "../execution.ts";
+import type { DriverCapabilities } from "../drivers/contract.ts";
+import { findDocker, labelledContainers, mountedFrom, removeContainer, startTaskContainer, type ContainerStart, type Execution } from "../execution.ts";
+import { agentName } from "./roles.ts";
 
 /*
  * The task containers of this Botbench (src/execution.ts, ADR 0009): started for a task of a repository whose commands
@@ -10,6 +12,17 @@ import { findDocker, labelledContainers, mountedFrom, removeContainer, startTask
  * task that failed or was stopped keeps its container, as it keeps its copy, for a resume.
  * Docker calls are made one at a time, so a start and a removal of the same container never cross.
  */
+
+/**
+ * Why a task's builder cannot build a repository whose commands run in a container, in words for the owner, or null.
+ * Asked of the task's own builder, not the workbench's default one: only a driver whose every shell command reaches
+ * Botbench's permission answer can have them rewritten into the container (`containerCommands`). Codex, which runs its
+ * own commands in its own sandbox, cannot, and would otherwise run them on this Mac.
+ */
+export function builderContainerProblem(execution: Execution, builder: { name: string; capabilities: DriverCapabilities }): string | null {
+  if (execution.kind === "host" || builder.capabilities.containerCommands === true) return null;
+  return `This repository's commands run in a container, and ${agentName(builder.name)} cannot have its commands run there. Build it with Claude Code, or set the repository's "execution" to "host". Nothing ran on this Mac instead.`;
+}
 
 /** The task ends after which nothing more runs in a task's copy. */
 const ENDED = new Set(["accepted", "rejected", "cancelled"]);

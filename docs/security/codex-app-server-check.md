@@ -5,7 +5,7 @@
 - **(c) Codex's own sandbox, never asking, plus a `PreToolUse` hook that asks Botbench.** This is the recommended builder shape. It mirrors how Claude Code is driven.
 - **(a) The whole `codex app-server` inside Botbench's `sandbox-exec` profile**, as Grok is run, with Codex's own sandbox off and `approvalPolicy: "untrusted"`. This one works too, but its commands can read Codex's sign-in.
 
-Until a driver is built on one of them, the Codex driver stays as it was: `edits: false`, `permissionRequests: false`, review and chat only on `codex exec` (`src/drivers/codex.ts`, `CODEX_CAPABILITIES`).
+**What was built (B19 in `docs/security/threat-model.md`):** neither of those, but the shape the owner chose: `on-request` in Codex's own sandbox under Botbench's profile, with **every** approval request taken for what this check found it to be, an escalation. Each becomes one card saying Codex asks to run it outside its sandbox, decided by the owner every time (refused in a fully autonomous run); no grant, mode or confinement rule ever answers one, and anything but the owner's own allow is a decline (`src/drivers/codex-app-server.ts`). What stays in the sandbox never asks, so the gap measured in (b) remains: a command the sandbox refuses without asking produces no item. Review and chat stay on `codex exec` (`src/drivers/codex.ts`, `CODEX_CAPABILITIES`).
 
 ## 1. The finding, confirmed live (2026-11-23)
 
@@ -127,3 +127,12 @@ Before the live run, the same protocol was driven against a scripted Responses e
 - The params of `item/fileChange/requestApproval` carry no paths or diff. They come in the `item/started` of the `fileChange` item with the same id.
 - `exec_command`'s `sandbox_permissions:"require_escalated"` is not marked in the request (only `reason`), so a client cannot tell an escalation from an ordinary request.
 - `apply_patch` is offered to a scripted endpoint only with a catalog entry that has `apply_patch_tool_type` (`-c model_catalog_json=…`), since the bundled models are `code_mode_only`.
+
+## 5. Measured again on the built driver (2026-11-23, Codex 0.171.0, gpt-5.6-luna, low effort)
+
+With Botbench's own arguments (`appServerArgs` in `src/drivers/codex-app-server.ts`, profile extending `:workspace`, `on-request`), driven by Botbench's own session:
+
+- **An allowed escalation leaves the copy but not the profile's deny rules.** `touch` into a new folder under `/Users/Shared` (outside the copy, not denied) asked once and, accepted, landed. `touch` into Botbench's data folder (denied) asked once and, accepted, produced no item and wrote nothing. So with a permissions profile an accepted request is not fully unsandboxed, unlike the plain `read-only` sandbox of section 1.
+- **config.toml merges into a profile of the same name.** A `[permissions.botbench-build.filesystem]` table in `$CODEX_HOME/config.toml` added `"/Users/Shared" = "write"` (reported in `writableRoots`, so the driver stopped) and a narrower `"<file under a denied folder>" = "read"` (not reported, and `codex sandbox` with the same flags read the file). Botbench's profile name is therefore new on each start. `sandbox_mode`, `approval_policy` and `[sandbox_workspace_write]` in config.toml had no effect on the profile.
+- **A later session flag does outrank Botbench's:** `-c permissions.<profile>.network.enabled=true` after Botbench's flags made `thread/start` report `networkAccess: true`, and the driver stopped before `turn/start`. `-c sandbox_mode="danger-full-access"` did not loosen anything.
+- A real session is recorded in `test/recordings/codex-app-server-build.json` by `scripts/capture-codex-app-server.ts`.

@@ -1858,4 +1858,22 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // Codex can build (src/drivers/codex-app-server.ts). A run and a task name the agent that builds them
+    // (`build_agent`, `builder_agent`): NULL is Claude Code, as every task before this was. Each is chosen when the run
+    // or task starts and never changed after. An approval may be a Codex escalation (`escalation`): Codex asked to run
+    // something outside its own sandbox. Such an approval is asked every time; no grant answers it and it earns none.
+    name: "codex builder",
+    sql: `
+ALTER TABLE runs ADD COLUMN build_agent TEXT CHECK (build_agent IS NULL OR build_agent IN ('codex'));
+CREATE TRIGGER runs_build_agent_fixed BEFORE UPDATE OF build_agent ON runs WHEN NEW.build_agent IS NOT OLD.build_agent
+BEGIN SELECT RAISE(ABORT, 'a run''s builder is chosen when it starts and never changed'); END;
+ALTER TABLE tasks ADD COLUMN builder_agent TEXT CHECK (builder_agent IS NULL OR builder_agent IN ('codex'));
+CREATE TRIGGER tasks_builder_agent_fixed BEFORE UPDATE OF builder_agent ON tasks WHEN NEW.builder_agent IS NOT OLD.builder_agent
+BEGIN SELECT RAISE(ABORT, 'a task''s builder is chosen when it starts and never changed'); END;
+ALTER TABLE approvals ADD COLUMN escalation INTEGER NOT NULL DEFAULT 0 CHECK (escalation IN (0, 1));
+CREATE TRIGGER approvals_escalation_fixed BEFORE UPDATE OF escalation ON approvals WHEN NEW.escalation IS NOT OLD.escalation
+BEGIN SELECT RAISE(ABORT, 'whether an approval is an escalation is fixed when it is asked'); END;
+`,
+  },
 ];

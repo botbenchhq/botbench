@@ -219,8 +219,9 @@ export const agentName = (agent: string): string => ({ "claude-code": "Claude Co
  */
 export function roleProblem(role: string, agent: string, can: DriverCapabilities): string | null {
   const name = agentName(agent);
+  if (role === IMPLEMENTER && can.buildProblem !== undefined) return `${name} cannot be the builder: ${can.buildProblem}`;
   if (role === IMPLEMENTER && !(can.permissionRequests && can.edits)) return `${name} cannot be the builder: in Botbench it cannot ask you for permission or edit files under Botbench's rules. It can review.`;
-  if (role === PLANNER && !can.permissionRequests) return `${name} cannot be the planner: in Botbench it cannot ask you before it runs a command. It can review.`;
+  if (role === PLANNER && (!can.permissionRequests || can.escalationsOnly === true)) return `${name} cannot be the planner: in Botbench it cannot ask you before it runs a command. It can review.`;
   if (role === REVIEWER && !can.interrupt) return `${name} cannot review: Botbench could not stop it.`;
   return null;
 }

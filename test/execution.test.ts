@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { gate } from "../src/approvals/gate.ts";
+import { CODEX_BUILD_CAPABILITIES, CodexDriver } from "../src/drivers/codex.ts";
+import { builderContainerProblem } from "../src/engine/containers.ts";
+import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { QUESTION_TOOL } from "../src/approvals/question.ts";
 import { loadConfig, repositoryExecution } from "../src/config.ts";
 import { claudeArgs, controlAnswer } from "../src/drivers/claude-code.ts";
@@ -56,7 +59,7 @@ test("execution: host when absent, host or container with an image when set; an 
 });
 
 test("with the host kind, the agent's launch settings and the setup and check argv are byte for byte what they were before the container kind", async (t) => {
-  // The digest was taken with this same function from the code before this change (git archive of origin/main at 0d4b131).
+  // The digest was taken with this same function from the code before this change (git archive of origin/main at 803e1f9).
   const BEFORE = "bb63ed7d2e689e4b5dcf50aee77c9264c19fa0721428f29a6cc0afca3c147e90";
   const saved = Object.fromEntries(["HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"].map((name) => [name, process.env[name]]));
   t.after(() => {
@@ -319,4 +322,19 @@ test("Settings says where each repository's commands run, the default as on this
   assert.equal(container.kind, "In a container");
   assert.match(container.about, /^In a Docker container of the image node:24, one for each task, with only the task's separate copy in it and no network\./);
   for (const words of [EXECUTION_ABOUT, NO_REPOSITORIES, container.kind, container.about, executionWords({ kind: "host" }).about]) assert.deepEqual(bannedIn(words), [], words);
+});
+
+test("a container task is built only by a builder whose shell commands Botbench can rewrite into it: Claude Code yes, Codex (which runs its own commands) no, with why", () => {
+  // The task's own builder decides, not the workbench's default: a task built by Codex would otherwise be handed the
+  // container and run its commands on this Mac.
+  assert.equal(builderContainerProblem({ kind: "host" }, { name: "codex", capabilities: CODEX_BUILD_CAPABILITIES }), null, "the host kind needs nothing");
+  assert.equal(builderContainerProblem({ kind: "container", image: "node:24" }, { name: "claude-code", capabilities: new ClaudeCodeDriver().capabilities }), null);
+  const codex = builderContainerProblem({ kind: "container", image: "node:24" }, { name: "codex", capabilities: CODEX_BUILD_CAPABILITIES });
+  assert.match(codex ?? "", /^This repository's commands run in a container, and Codex cannot have its commands run there\. Build it with Claude Code, or set the repository's "execution" to "host"\. Nothing ran on this Mac instead\.$/);
+});
+
+test("Codex handed a task's container refuses to start rather than run the task's commands on this Mac", async () => {
+  const place = { cwd: "/nonexistent-data/botbench/worktrees/run-1/task-1", dataDir: "/nonexistent-data/botbench", allowedHosts: [] as string[] };
+  // Refused before anything is started: no database, no program, nothing on this Mac is touched.
+  await assert.rejects(new CodexDriver().startAttempt({ db: null as never, cwd: place.cwd, allowEdits: true, gate: { socketPath: "/nonexistent-socket", secret: "x" }, confinement: place, container: C }), /This repository's commands run in a container, and Codex cannot have its commands run there\..* Nothing ran on this Mac instead\./);
 });

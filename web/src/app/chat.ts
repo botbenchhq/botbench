@@ -26,7 +26,12 @@ export interface Offered {
   chat: string | null;
   /** Whether it reads a repository attached to a chat, as the server says (src/api/chat.ts, readsChatRepository); left out when not known. */
   readsRepository?: boolean;
+  /** True for an agent other than Claude Code that can build a task now, as the server's check found it (Codex); left out otherwise. */
+  builds?: true;
 }
+
+/** `builds` for an agent other than Claude Code the server says can build now; nothing otherwise. Never read back from the device. */
+const buildsOf = (a: AgentState): { builds?: true } => (a.agent !== "claude-code" && Array.isArray(a.roles) && a.roles.includes("builder") ? { builds: true } : {});
 
 /** `readsRepository` when the server or the device said it, else nothing: not known. */
 const readsOf = (value: unknown): { readsRepository?: boolean } => (typeof value === "boolean" ? { readsRepository: value } : {});
@@ -42,7 +47,7 @@ export function agentState(agent: Pick<AgentState, "problem" | "installed" | "su
 
 export function chatOffer(agents: readonly AgentState[]): Offered[] {
   const rank = (agent: string): number => (ORDER.includes(agent) ? ORDER.indexOf(agent) : ORDER.length);
-  return [...agents].sort((a, b) => rank(a.agent) - rank(b.agent)).map((a) => ({ agent: a.agent, name: agentName(a.agent), problem: a.problem, version: a.version, state: agentState(a), chat: typeof a.chat === "string" ? a.chat : null, ...readsOf(a.readsRepository) }));
+  return [...agents].sort((a, b) => rank(a.agent) - rank(b.agent)).map((a) => ({ agent: a.agent, name: agentName(a.agent), problem: a.problem, version: a.version, state: agentState(a), chat: typeof a.chat === "string" ? a.chat : null, ...readsOf(a.readsRepository), ...buildsOf(a) }));
 }
 
 /** The agents last checked, as this device kept them: read part by part; anything else is nothing known. */
