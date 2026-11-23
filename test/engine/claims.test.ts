@@ -648,9 +648,10 @@ test("another workbench's composer sees the claim, for an attached issue and for
   assert.deepEqual(oldClaims(view, { attached: null, message: "Fix #82 and #83", now: later }), [], "only for the one issue a run would claim");
 
   const rows = peerRows(view, FIVE_MINUTES_LATER);
-  assert.deepEqual(rows.map((r) => [r.kind, r.workbench, r.branch, r.rest]), [["claim", "bob", bobBranch, " · Started on issue #82 5 minutes ago · github.com/jon-lange/botbench"]]);
+  // The repository is its own field: outside text, drawn apart from Botbench's words.
+  assert.deepEqual(rows.map((r) => [r.kind, r.workbench, r.branch, r.rest, r.repository, r.after]), [["claim", "bob", bobBranch, " · Started on issue #82 5 minutes ago · ", "github.com/jon-lange/botbench", ""]]);
   const folder = path.basename(alice.repo);
-  for (const row of rows) assert.ok(!row.rest.includes(folder), `the viewer's folder name ${folder} is not shown in place of the repository`);
+  for (const row of rows) assert.ok(!`${row.rest}${row.repository}${row.after}`.includes(folder), `the viewer's folder name ${folder} is not shown in place of the repository`);
 });
 
 test("the composer says before Send when a run will push a claim: only with the setting on, pull requests chosen, and one issue", () => {
