@@ -113,7 +113,7 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
   const { preview, attached, source } = state;
   const shown = preview ?? null;
   const hosts = source.state === "offered" ? source.hosts : [];
-  const written = shown === null ? null : authorWords(shown.author, shown.authorRelation);
+  const written = shown === null ? null : authorWords(shown.author, shown.authorRelation, state.allowHosts ? hosts : []);
   return (
     <div className="ds-stack ds-gap-lg">
       <form

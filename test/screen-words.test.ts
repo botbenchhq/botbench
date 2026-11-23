@@ -75,6 +75,13 @@ test("a task's title is never cut to one word: from 40 characters on it is cut a
     assert.ok(prompt.startsWith(title.slice(0, -1)), prompt);
     assert.ok(/\s/.test(prompt[title.length - 1] ?? " "), `cut at a word boundary: ${title}`);
   }
+  // A first word of 40 characters or more is never the whole title: the cut comes after the second word.
+  const word = "src/engine/a-very-long-module-path/file-name.ts";
+  assert.ok(word.length >= 40);
+  assert.equal(taskTitle(3, `${word} must read the settings file`), `${word} must…`);
+  assert.equal(taskTitle(3, `${word}   must read`), `${word}   must…`);
+  assert.equal(taskTitle(3, word), word);
+  assert.equal(taskTitle(3, `${word} must`), `${word} must`);
   // One long line with no later word boundary is shown whole rather than cut inside a word.
   assert.equal(taskTitle(3, `Rename ${"x".repeat(60)}`), `Rename ${"x".repeat(60)}`);
 });

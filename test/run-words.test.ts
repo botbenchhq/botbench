@@ -54,6 +54,17 @@ test("the author's name is apart from Botbench's words, and an account that no l
   assert.match(gone.text, SAME_RULES);
 });
 
+test("with the network hosts allowed, the sheet's sentence names them instead of saying commands are kept from the network", () => {
+  for (const relation of [...AUTHOR_RELATIONS, null]) {
+    const allowed = authorWords("someone", relation, ["registry.npmjs.org"]).text;
+    assert.match(allowed, /every command of the run asks you unless it runs kept away from your sign-ins and from every network host but the one you allowed for this run: registry\.npmjs\.org\.$/, String(relation));
+    assert.doesNotMatch(allowed, /sign-ins and the network/, String(relation));
+    assert.match(allowed, SAME_RULES, String(relation));
+  }
+  assert.match(authorWords("someone", "NONE", ["a.example", "b.example"]).text, /but the ones you allowed for this run: a\.example and b\.example\.$/);
+  assert.equal(authorWords("someone", "NONE", []).text, authorWords("someone", "NONE").text);
+});
+
 test("the network hosts' hint says they are reached and names them when ticked; unticked it is as it was", () => {
   const hosts = ["registry.npmjs.org", "github.com"];
   assert.equal(hostsHint(hosts, false), "Off, its commands reach no network (registry.npmjs.org, github.com included): a stranger's text and network access together are how your code could be sent away.");

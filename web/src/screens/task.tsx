@@ -22,6 +22,23 @@ import { mergeEvents, Transcript } from "../components/transcript.tsx";
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
 
 /** A unified diff as text, in a block that scrolls sideways on its own so the page never does. */
+/** The task's number and repository, and its run's mode for a task of a plan: in the header, or after a waiting card. */
+function TaskLines({ task, id, className }: { task: TaskDetail; id: number; className?: string }) {
+  return (
+    <>
+      <p data-testid="task-name" className={className}>
+        {`Task ${id} · `}
+        <span data-ds-content="">{folderName(task.repo)}</span>
+      </p>
+      {task.ofPlan !== null && (
+        <p data-testid="task-mode" className={className}>
+          {modeSentence(task.mode, task.issueHosts)}
+        </p>
+      )}
+    </>
+  );
+}
+
 /** The files whose diff wraps: prose, by their extension. */
 const PROSE = /\.(md|txt)$/i;
 
@@ -172,26 +189,23 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
       <Page>
         {/* The page header comes first and holds the view's one h1, also while the task is being read or cannot be: the task's own words, once read. */}
         <PageHeader title={taskTitle(id, task?.prompt ?? null)} theirs={task !== null}>
-          {task !== null && (
-            <p data-testid="task-name" className="ds-page-header__description">
-              {`Task ${id} · `}
-              <span data-ds-content="">{folderName(task.repo)}</span>
-            </p>
-          )}
-          {/* While its card is shown, the card says what the task waits for. */}
+          {/* While a card waits, the header holds the title alone and the card comes next; these lines follow the card. */}
           {task !== null && asking === undefined && (
-            <p data-testid="task-status" role="status" className="ds-page-header__description">
-              {statusSentence(task)}
-            </p>
-          )}
-          {task !== null && task.ofPlan !== null && (
-            <p data-testid="task-mode" className="ds-page-header__description">
-              {modeSentence(task.mode, task.issueHosts)}
-            </p>
+            <>
+              <TaskLines task={task} id={id} className="ds-page-header__description" />
+              <p data-testid="task-status" role="status" className="ds-page-header__description">
+                {statusSentence(task)}
+              </p>
+            </>
           )}
         </PageHeader>
-        {/* A request that waits for the owner comes first after the title: nothing else on the screen is as urgent. */}
-        {task !== null && asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />}
+        {/* A request that waits for the owner comes first after the title: nothing else on the screen is as urgent. The card says what the task waits for. */}
+        {task !== null && asking !== undefined && (
+          <>
+            <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />
+            <TaskLines task={task} id={id} />
+          </>
+        )}
         {task !== null && task.outsideText && <OutsideText issue={task.issue} what="task" />}
         {problem !== null && (
           <Alert tone="error" role="alert">

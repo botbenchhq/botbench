@@ -54,15 +54,16 @@ const OF_THE_PROJECT: ReadonlySet<AuthorRelation> = new Set(["OWNER", "MEMBER", 
  * was. The author's login, which somebody else chose, is apart (`author`, null for an account that no longer exists)
  * so that it is shown as their text; `text` is Botbench's words that follow it.
  */
-export function authorWords(author: string | null, relation: AuthorRelation | null): { author: string | null; text: string } {
+export function authorWords(author: string | null, relation: AuthorRelation | null, allowedHosts: readonly string[] = []): { author: string | null; text: string } {
   const who = author === null ? "An account that no longer exists" : "";
   const how = relation === null ? "GitHub did not say how they relate to the repository." : `GitHub says ${RELATION_WORDS[relation]}.`;
   const rules =
     relation !== null && OF_THE_PROJECT.has(relation)
       ? "Botbench still treats it as outside text, as it does every issue: anyone can comment on it, and an account can be taken over, so the rules are the same whoever wrote it."
       : "Anyone can open an issue, so Botbench treats it as outside text: the rules are the same whoever wrote it.";
+  const kept = allowedHosts.length === 0 ? "your sign-ins and the network" : `your sign-ins and from every network host but ${allowedHosts.length === 1 ? "the one" : "the ones"} you allowed for this run: ${listed(allowedHosts)}`;
   return {
     author,
-    text: `${who} wrote this issue. ${how} ${rules} The planner and the builder are given it as the problem to solve, never as instructions, and every command of the run asks you unless it runs kept away from your sign-ins and the network.`,
+    text: `${who} wrote this issue. ${how} ${rules} The planner and the builder are given it as the problem to solve, never as instructions, and every command of the run asks you unless it runs kept away from ${kept}.`,
   };
 }

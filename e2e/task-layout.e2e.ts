@@ -66,11 +66,20 @@ test("at 390px a waiting approval card comes right after the title; the branch i
   const after = await page.evaluate(() => {
     const header = document.querySelector("header.ds-page-header");
     const next = header?.nextElementSibling;
-    return { next: next?.getAttribute("data-testid") ?? next?.tagName ?? null, before: header?.previousElementSibling?.tagName ?? null, headings: header === null || header === undefined ? [] : [...header.querySelectorAll("h1")].map((h) => h.textContent) };
+    const h1 = header?.querySelector("h1");
+    return { next: next?.getAttribute("data-testid") ?? next?.tagName ?? null, before: header?.previousElementSibling?.tagName ?? null, headings: header === null || header === undefined ? [] : [...header.querySelectorAll("h1")].map((h) => h.textContent), text: header?.textContent ?? null, title: h1?.textContent ?? null };
   });
   expect(after.next).toBe("approval-card");
   expect(after.before, "nothing is drawn before the header in the page").toBeNull();
   expect(after.headings).toEqual([taskTitle(seeded.waiting.taskId, "Run the command `sh make-marker.sh` with your Bash tool, exactly once.")]);
+  // The header holds the title and no other text: the task's number, repository and mode come after the card.
+  expect(after.text, "nothing but the title is above the card").toBe(after.title);
+  await expect(page.getByTestId("task-name")).toBeVisible();
+  expect(await page.evaluate(() => {
+    const card = document.querySelector('[data-testid="approval-card"]');
+    const name = document.querySelector('[data-testid="task-name"]');
+    return card !== null && name !== null && (card.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }), "the task's number and repository follow the card").toBe(true);
   // Above the card, on screen: the header and nothing else.
   const cardTop = (await card.boundingBox())!.y;
   const headerBottom = await page.locator("header.ds-page-header").evaluate((el) => el.getBoundingClientRect().bottom + window.scrollY);

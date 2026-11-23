@@ -67,6 +67,8 @@ test("an issue is looked up and shown as plain text, attached as the row's value
   await hosts.check();
   await expect(sheet.locator("#issue-hosts-about")).toHaveText(hostsHint(["registry.npmjs.org"], true));
   await expect(sheet.locator("#issue-hosts-about")).not.toContainText("no network");
+  const allowed = authorWords(issue.author, null, ["registry.npmjs.org"]);
+  await expect(sheet.getByTestId("issue-outside")).toHaveText(`${allowed.author}${allowed.text}`);
   await checkDesign(page, "the issue as read, with its network hosts allowed");
   await hosts.uncheck();
   await expect(sheet.locator("#issue-hosts-about")).toHaveText(hostsHint(["registry.npmjs.org"], false));
