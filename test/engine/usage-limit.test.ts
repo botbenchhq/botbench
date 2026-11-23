@@ -251,7 +251,11 @@ test("a task whose time to try again passed while Botbench was stopped is resume
 
   const opened = Date.now();
   const second = await e.open([finishes("two")]);
-  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review", 5000);
+  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review", 5000).catch((err: unknown) => {
+    // Where it stood instead, so a failure says why.
+    const task = getTask(e.db, started.id)!;
+    throw new Error(`${err instanceof Error ? err.message : String(err)} It is ${task.status}${task.reason === null ? "" : ` (${task.reason})`}, after ${history(e.db, started.id).join(" → ")}; the builder was started ${second.driver.starts.length} times.`);
+  });
   assert.equal(second.driver.starts.length, 1);
   assert.ok(attemptStart(e.db, getTask(e.db, started.id)!.attemptId!) - opened < 3000, "resumed at once");
 });
