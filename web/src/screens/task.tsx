@@ -12,7 +12,7 @@ import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { answeredOther, notMergedLine, statusSentence, taskTitle } from "../components/task-status.ts";
+import { answeredOther, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
@@ -336,7 +336,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               <section aria-labelledby="decision-heading" className="ds-stack ds-gap-sm">
                 <h2 id="decision-heading">{task.decision.decision === "accept" ? (task.decision.decidedBy === "mode" ? "Accepted without you" : "Accepted") : "Rejected"}</h2>
                 {task.decision.reasons !== null && <p data-testid="decided-by">{task.decision.reasons}</p>}
-                <DecisionOutcome decision={task.decision} repo={task.repo} pushed={task.pullRequest.pushed ? task.pullRequest.remote : null} />
+                <DecisionOutcome decision={task.decision} repo={task.repo} merge={offersMerge(task)} pushed={task.pullRequest.pushed ? task.pullRequest.remote : null} />
               </section>
             ) : (
               task.branch !== null && task.remains?.discardedAt == null && (

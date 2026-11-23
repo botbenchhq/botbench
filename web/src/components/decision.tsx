@@ -162,11 +162,12 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
 }
 
 /**
- * What the owner has once a task is decided. Accepted: the branch and the command that merges it. Rejected with the
- * branch kept: the branch, to look at or delete. Rejected with the branch deleted: that it is gone. `compact` is for a
- * row of a run, whose screen already names the repository and says what was merged or pushed.
+ * What the owner has once a task is decided. Accepted: the branch and, when `merge` (its run keeps branches rather than
+ * opening pull requests), the command that merges it. Rejected with the branch kept: the branch, to look at or delete.
+ * Rejected with the branch deleted: that it is gone. `compact` is for a row of a run, whose screen already names the
+ * repository and says what was merged or pushed.
  */
-export function DecisionOutcome({ decision, repo, compact = false, pushed = null }: { decision: TaskDecision; repo: string; compact?: boolean; pushed?: string | null }) {
+export function DecisionOutcome({ decision, repo, merge, compact = false, pushed = null }: { decision: TaskDecision; repo: string; merge: boolean; compact?: boolean; pushed?: string | null }) {
   const noted = decision.note === null ? null : (
     <p data-testid="decision-note-shown">
       {"Your note: "}
@@ -175,7 +176,7 @@ export function DecisionOutcome({ decision, repo, compact = false, pushed = null
   );
   const removed = decision.leftovers.length === 0 ? null : `The ${decision.leftovers.length === 1 ? "file" : `${decision.leftovers.length} files`} the checks left ${decision.leftovers.length === 1 ? "was" : "were"} removed with the task's copy: ${decision.leftovers.join(", ")}.`;
   if (compact) {
-    if (decision.decision !== "accept") return noted;
+    if (decision.decision !== "accept" || !merge) return noted;
     return (
       <>
         {noted}
@@ -198,14 +199,18 @@ export function DecisionOutcome({ decision, repo, compact = false, pushed = null
       <CopyField label="Branch" value={decision.branchName} testId="branch" buttonName="Copy branch name" />
       {decision.decision === "accept" ? (
         <>
-          <p>
-            {"To bring the work into your own files, run this in the repository at "}
-            <code data-testid="decision-repo" data-ds-content="">
-              {repo}
-            </code>
-            {", on the branch you want it in:"}
-          </p>
-          <CopyField label="Merge command" value={`git merge ${decision.branchName}`} testId="merge-command" buttonName="Copy merge command" />
+          {merge && (
+            <>
+              <p>
+                {"To bring the work into your own files, run this in the repository at "}
+                <code data-testid="decision-repo" data-ds-content="">
+                  {repo}
+                </code>
+                {", on the branch you want it in:"}
+              </p>
+              <CopyField label="Merge command" value={`git merge ${decision.branchName}`} testId="merge-command" buttonName="Copy merge command" />
+            </>
+          )}
           <p data-testid="not-merged">{pushed === null ? "Nothing has been merged or pushed. The branch stays in the repository until you merge or delete it." : `Nothing has been merged. The branch was pushed to ${pushed} for its pull request, and stays in the repository until you merge or delete it.`}</p>
         </>
       ) : (
