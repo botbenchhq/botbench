@@ -18,7 +18,7 @@ import { NO_SPEECH } from "./support/speech.ts";
  * test/support/confined.ts or test/support/speech.ts, or skips for being off a Mac, makes this run fail until the
  * number is changed with it.
  */
-const EXPECTED_SKIPPED = { offMac: 151, macWithoutSpeech: 8, mac: 0 };
+const EXPECTED_SKIPPED = { offMac: 152, macWithoutSpeech: 8, mac: 0 };
 
 const REPO = path.resolve(import.meta.dirname, "..");
 

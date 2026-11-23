@@ -24,6 +24,8 @@ import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
 import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
+import { MakeRunSection } from "../components/make-run.tsx";
+import { offersRun } from "../app/run-source.ts";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
@@ -476,6 +478,25 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             {task.decision?.decision === "accept" && <PullRequestSection taskId={task.id} view={task.pullRequest} target={task.pullRequestTarget} onChanged={load} onSignedOut={onSignedOut} />}
 
             <DiscardSection task={task} startOpen={discard} onDiscarded={load} onSignedOut={onSignedOut} />
+
+            {task.runsMade.length > 0 && (
+              <section aria-labelledby="runs-made-heading" data-testid="runs-made" className="ds-stack ds-gap-sm">
+                <h2 id="runs-made-heading">Runs made from this task</h2>
+                <ul className="ds-list ds-list--dense">
+                  {task.runsMade.map((runId) => (
+                    <li key={runId} className="ds-list__row">
+                      <a href={`#/runs/${runId}`} className="ds-list__link">
+                        <span className="ds-list__body">
+                          <span className="ds-list__primary">{`Run ${runId}`}</span>
+                        </span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {offersRun(task.status) && <MakeRunSection taskId={task.id} repo={task.repo} />}
 
             <details data-testid="task-details" className="ds-disclosure">
               <summary className="ds-disclosure__summary">Details</summary>

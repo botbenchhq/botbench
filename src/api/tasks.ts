@@ -16,6 +16,7 @@ import { checkFixView } from "../engine/check-fix.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
+import { runsMadeFrom } from "../engine/run-source.ts";
 import { MAX_NOTE, replacedOne, undeliveredNote, waitingNote } from "../engine/notes.ts";
 import { commitsFileDiff, describeCommits, describeWork, type FileChange } from "../worktrees.ts";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
@@ -265,7 +266,8 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
     const checked = await ctx.agentChecks.read().catch(() => null);
     offer.agents = offer.agents.filter((agent) => checked === null || checked.agents.find((a) => a.agent === agent)?.problem == null);
   }
-  return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), handoffs: handoffsOf(db, task.id),
+  // `runsMade`: the runs the owner made from this task ("Make this a run", engine/run-source.ts), oldest first.
+  return { ...summary(db, task), runsMade: runsMadeFrom(db, task.id), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), handoffs: handoffsOf(db, task.id),
     // The agents the owner can move this task to now: only while its builder is at work, never its run's reviewer, and
     // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
     moveTo: offer.now ? offer.agents : [], ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
