@@ -156,7 +156,7 @@ test("the changed files and their diffs are those of the commit Botbench recorde
   // A commit made in the copy after the one Botbench recorded, as a builder may make with git itself.
   write(worktree.path, "stray.txt", "later\n");
   git(worktree.path, "add", "stray.txt");
-  git(worktree.path, "commit", "--quiet", "-m", "made in the copy");
+  git(worktree.path, "-c", "user.name=Owner", "-c", "user.email=owner@example.invalid", "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "made in the copy");
   assert.notEqual(git(worktree.path, "rev-parse", "HEAD").trim(), recorded.commit);
 
   const described = (await get(base, headers, `/api/tasks/${task.id}`)).body as { files: { path: string }[] };

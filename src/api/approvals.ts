@@ -39,6 +39,7 @@ export async function approvalRoutes(req: http.IncomingMessage, res: http.Server
   const { pathname } = url;
   const method = req.method;
   const one = /^\/api\/approvals\/([1-9]\d{0,14})$/.exec(pathname);
+  const reply = /^\/api\/approvals\/([1-9]\d{0,14})\/answer$/.exec(pathname);
   const revoke = /^\/api\/grants\/([1-9]\d{0,14})\/revoke$/.exec(pathname);
   try {
     if (method === "GET" && pathname === "/api/approvals") {
@@ -52,6 +53,12 @@ export async function approvalRoutes(req: http.IncomingMessage, res: http.Server
       json(res, 200, { approvals });
     } else if (method === "POST" && one) {
       await answer(req, res, ctx, Number(one[1]));
+    } else if (method === "POST" && reply) {
+      // The owner's answer to an agent's question: their own text, which the broker checks, stores as given and only ever hands the agent.
+      const body = await readJsonBody(req);
+      // voice: not on screen. It names the API's own fields for a caller whose request was malformed; the client never sends one.
+      if (!isObject(body) || typeof body.answer !== "string") throw new ApprovalError(400, 'expected { "answer": "..." }');
+      json(res, 200, { approval: ctx.broker.answerQuestion(Number(reply[1]), body.answer) });
     } else if (method === "GET" && pathname === "/api/grants") {
       json(res, 200, { grants: listStanding(ctx.db), offerStandingAfter: ctx.broker.offerStandingAfter });
     } else if (method === "POST" && revoke) {

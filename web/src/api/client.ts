@@ -19,7 +19,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "answered" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   /** `usageLimit`: the turn ended because the agent's usage limit was reached; `resetsAt` is when it said it resets, or null. */
@@ -938,6 +938,19 @@ export interface Approval {
   asksBecause: string | null;
   /** Where a file tool's request is aimed: relative to the task's copy when inside it, a full path when not; null when it names none or it is not known. */
   target: string | null;
+  /** Set when this is Claude Code's question to the owner, not a request to run something: the question and its choices, all in the agent's own words. */
+  question: Question | null;
+  /** The owner's answer to a question, as given; null until there is one. */
+  answer: string | null;
+}
+
+/** Claude Code's question to the owner, as its card shows it. Every word is the agent's: shown as plain text, never as markdown or HTML. */
+export interface Question {
+  text: string;
+  /** The agent's short label for it; "" when it gave none. */
+  header: string;
+  /** Two to four. `description` is "" when the agent gave none. */
+  choices: { label: string; description: string }[];
 }
 
 /** The scope of a standing permission a card offers. */
@@ -991,6 +1004,10 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
+  /** The owner answered Claude Code's question; the entry holds the answer. */
+  | "owner_answered"
+  /** In a fully autonomous run, Claude Code's question that nobody was asked: it chose for itself. */
+  | "question_unasked"
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory";
@@ -1012,6 +1029,9 @@ export const listPendingApprovals = async (): Promise<Approval[]> =>
   (await request<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals.filter((approval) => approval.storedDecision === null);
 export const answerApproval = (id: number, decision: "allow" | "decline", note?: string): Promise<{ approval: Approval }> =>
   request("POST", `/api/approvals/${id}`, note === undefined || note.trim() === "" ? { decision } : { decision, note }, 30_000);
+
+/** Answer Claude Code's question with one of its choices or the owner's own words. The server stores it as given and hands it only to the agent. */
+export const answerQuestion = (id: number, answer: string): Promise<{ approval: Approval }> => request("POST", `/api/approvals/${id}/answer`, { answer }, 30_000);
 
 /** Allow this request and give its command standing permission, with the scope its card offered. The server refuses a card that may not offer one. */
 export const grantStanding = (id: number): Promise<{ approval: Approval; grant: StandingGrant }> => request("POST", `/api/approvals/${id}`, { decision: "allow", standing: true }, 30_000);

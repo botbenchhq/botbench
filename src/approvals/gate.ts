@@ -4,6 +4,7 @@ import path from "node:path";
 import type { RunMode } from "../engine/modes.ts";
 import { floor, NOT_PLAIN, type FloorEntry } from "./floor.ts";
 import { matchGrant, type Grant } from "./grants.ts";
+import { QUESTION_TOOL } from "./question.ts";
 import { splitPlain } from "./shell.ts";
 
 /*
@@ -176,8 +177,11 @@ export function askWords(why: AskWhy, o: { tool: string; floor?: string; chat?: 
 
 /** The tools that change a file, and the field of their input that names it. */
 const EDIT_TOOLS: Record<string, string> = { Edit: "file_path", Write: "file_path", NotebookEdit: "notebook_path" };
-/** All a read-only role may use: reading and searching files, and the shell, each command of which goes through the gate. */
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "Bash"]);
+/**
+ * All a read-only role may use: reading and searching files, the shell, each command of which goes through the gate, and
+ * the question tool, which changes nothing and goes to the owner as a question (approvals/question.ts).
+ */
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "Bash", QUESTION_TOOL]);
 /** The tools that only read, and the field that names where. A search may leave it out and then means the directory it stands in. */
 const READ_TOOLS: Record<string, string> = { Read: "file_path", Glob: "path", Grep: "path" };
 /** In a worktree these are git's own entry and the CLI's settings: a change to either is not an ordinary edit. */
