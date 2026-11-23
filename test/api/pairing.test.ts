@@ -201,7 +201,8 @@ test("a code dies with the device that made it: signed out, or signed out by Sig
 });
 
 test("wrong codes and wrong tokens share one slow-down: the same failure count, the same doubling delay, reset by a right code", async (t) => {
-  const delay = 100;
+  // 200 ms, so the reset's upper bound below (8 delays) leaves the same 1.6 s for two requests as the token test's does.
+  const delay = 200;
   const { base, token } = await start(t, { signInDelayMs: delay });
   const { code } = await newCode(base, await owner(base, token));
   const slack = 5; // timers may fire a few milliseconds early
