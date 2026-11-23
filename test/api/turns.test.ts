@@ -11,7 +11,7 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
-import { now } from "../../src/store/db.ts";
+import { now, openStore } from "../../src/store/db.ts";
 
 // No test in this file starts a driver: turns that reach Claude Code are in test/live/turns.live.test.ts.
 
@@ -326,6 +326,63 @@ test("GET /api/attempts/:id/events returns stored events in order, and only thos
     assert.equal((await fetch(`${base}/api/attempts/${attempt}/events?after=${bad}`, { headers })).status, 400, `after=${bad}`);
   }
   assert.equal((await fetch(`${base}/api/attempts/${attempt}/events`, { method: "POST", headers: { ...headers, ...JSON_TYPE }, body: "{}" })).status, 404);
+});
+
+test("a chat turn a restart cut off is served, after the next start, as stopped because Botbench restarted, and not as running", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  // What the last Botbench left of a Codex chat turn it was killed in: the attempt still running, the prompt, part of a reply.
+  const before = openStore(home);
+  // A moment ago: recovery takes up only rows from before its start, and one from the same millisecond would be read as its own.
+  const at = new Date(Date.now() - 1000).toISOString();
+  const attempt = Number(before.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('codex', NULL, NULL, 'running', NULL, ?, ?)").run(at, at).lastInsertRowid);
+  const round = Number(before.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES ('ask', 'Name a colour', NULL, ?)").run(at).lastInsertRowid);
+  before.prepare("INSERT INTO chat_attempts (attempt_id, round_id, created_at) VALUES (?, ?, ?)").run(attempt, round, at);
+  insertEvent(before, attempt, 1, { type: "user_prompt", text: "[From Botbench] framed" });
+  insertEvent(before, attempt, 1, { type: "text", text: "Blue. It is" });
+  before.close();
+
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const server = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const headers = await signIn(base, fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim());
+  type Served = { status: string; turnRunning: boolean; events: Array<{ turn: number; payload: DriverEvent }> };
+  const read = async (): Promise<Served> => (await (await fetch(`${base}/api/attempts/${attempt}/events`, { headers })).json()) as Served;
+  // Start-up recovery runs beside the first requests.
+  let served = await read();
+  for (const deadline = Date.now() + 5000; served.status === "running" && Date.now() < deadline; served = await read()) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(served.status, "interrupted");
+  assert.equal(served.turnRunning, false);
+  assert.deepEqual(served.events.map((e) => e.payload.type), ["user_prompt", "text", "turn_ended"]);
+  assert.deepEqual(served.events.at(-1), { ...served.events.at(-1), turn: 1, payload: { type: "turn_ended", reason: "interrupted", detail: "Stopped: Botbench restarted" } });
+});
+
+test("a Claude Code chat turn that waited on an approval card at a restart ends once: the card as not answered, the turn as stopped because Botbench restarted", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const home = path.join(dir, "home");
+  const before = openStore(home);
+  const at = new Date(Date.now() - 1000).toISOString();
+  const attempt = Number(before.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', NULL, NULL, 'running', NULL, ?, ?)").run(at, at).lastInsertRowid);
+  insertEvent(before, attempt, 1, { type: "user_prompt", text: "Fetch the page" });
+  const approval = Number(before.prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at) VALUES (NULL, NULL, 1, ?, 'implementer', 'WebFetch', 'https://example.com', '/tmp', NULL, 'call-1', 'pending', ?)").run(attempt, at).lastInsertRowid);
+  before.close();
+
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
+  const server = await startServer({ config, home, signInDelayMs: 1 });
+  t.after(() => server.close());
+  const deadline = Date.now() + 5000;
+  const status = (): string => String(server.db.prepare("SELECT status FROM attempts WHERE id = ?").get(attempt)!.status);
+  while (status() === "running" && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(status(), "interrupted");
+  // The card: ended once, unanswered, by the broker.
+  assert.equal(server.db.prepare("SELECT status FROM approvals WHERE id = ?").get(approval)!.status, "superseded");
+  assert.deepEqual(server.db.prepare("SELECT rule FROM action_log WHERE approval_id = ? ORDER BY id").all(approval).map((r) => r.rule), ["ended_unanswered"]);
+  // The turn: ended once, by start-up recovery, and nothing else wrote an end for it.
+  const ends = server.db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'turn_ended'").all(attempt).map((r) => JSON.parse(String(r.payload)));
+  assert.deepEqual(ends, [{ type: "turn_ended", reason: "interrupted", detail: "Stopped: Botbench restarted" }]);
 });
 
 test("the event stream replays stored events after Last-Event-ID, each with its row id, and sends heartbeats", async (t) => {
