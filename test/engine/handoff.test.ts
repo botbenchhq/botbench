@@ -443,7 +443,12 @@ test("with Wait chosen, the same usage limit waits as before and nothing is hand
   const e = await line(t, { main: claude });
   const { task } = planned(e, { onLimit: "wait" });
   await until(() => getTask(e.db, task.id)!.status === "waiting_for_limit", "the task waits");
-  assert.equal(getTask(e.db, task.id)!.retryAt, limitedTurn().resetsAt);
+  // The recorded reset time is fixed (2026-11-23T17:00Z): once it has passed, the wait falls back to the usage-limit
+  // wait from now (engine/usage-limit.ts, `retryTime`), as it does for any reset already gone.
+  const reset = Date.parse(limitedTurn().resetsAt);
+  const retryAt = Date.parse(getTask(e.db, task.id)!.retryAt!);
+  if (reset > Date.now()) assert.equal(retryAt, reset);
+  else assert.ok(retryAt > Date.now(), `${getTask(e.db, task.id)!.retryAt} is not after now`);
   assert.deepEqual(taskHandoffs(e.db, task.id), []);
   assert.equal((e.codex as CodexBuildReplay).started.length, 0);
 });

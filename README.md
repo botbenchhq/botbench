@@ -271,6 +271,9 @@ Your settings go in `botbench.local.json` in the `botbench` folder (git ignores 
     "/Users/you/code/my-app": {
       "setup": ["npm ci"],
       "checks": ["npm run typecheck", { "command": "npm test", "timeoutSeconds": 900 }],
+      "machineChecks": [
+        { "command": "npm run e2e -- {files}", "needs": ["chrome"], "files": ["e2e/*.e2e.ts"], "timeoutSeconds": 1800 }
+      ],
       "preapproved": ["npm test", "npm run typecheck"],
       "allowedHosts": ["registry.npmjs.org"]
     }
@@ -280,8 +283,10 @@ Your settings go in `botbench.local.json` in the `botbench` folder (git ignores 
 
 - `setup` runs in each new copy before the agent starts; a command that fails ends the task.
 - `checks` run after the work is committed; the task shows "Checks passed" or "Checks failed". Each has a 10-minute limit unless you give `timeoutSeconds`.
+- `machineChecks` are checks that need what a check's sandbox does not give. Botbench runs them itself after the other checks, before the review; a failure goes back to the agent like a failing check's. Each says what it `needs`: `"chrome"` runs it in a check's sandbox that may also start headless Chrome (Chrome itself runs with `--no-sandbox`, as Playwright starts it); `"nested-sandbox"` is for a command that starts `sandbox-exec` itself, which macOS allows only outside any sandbox, so it runs with your own rights: list one only for a suite you would run yourself on the agent's work. It is never run for a run started from a GitHub issue or another workbench's message. With `files`, `{files}` in the command becomes the files the change touches that match those patterns (`*` within a name, `**` across folders); with none, the check is skipped and says so. The task shows which ran, which could not and why. See the [threat model](docs/security/threat-model.md#checks-that-need-the-real-machine-issue-201-enginemachine-checksts).
 - `preapproved` are commands a task may run without asking. They are offered when you start a task or run, and you confirm or edit them there.
 - `allowedHosts` are the only host names the repository's commands may reach. Without it, no network.
+- `baseBranch` (and `remote`) name main for this repository: what a pull request is opened into, and what "Bring up to date with main" merges into a task's branch. Without it, the branch your remote's HEAD names, else `main` or `master`. Bringing a task up to date merges main as your repository last fetched it (Botbench fetches nothing) into the task's branch in its own copy, as one new commit; the agent resolves any conflict; the checks run again. A run chooses whether a task offers it (the default), does it before the task is handed to you, or neither.
 - `execution` says where the repository's commands run: `{ "kind": "host" }` (the default) on your Mac, kept away from your sign-ins and the network, or `{ "kind": "container", "image": "node:24" }` in one Docker container per task, from an image already on your Mac (Botbench never pulls one), holding only the task's copy and no network. Claude Code stays on your Mac; each command it runs, and the setup and check commands, go into the container. When Docker or the image is not there the task does not start; nothing runs on your Mac instead. A container cannot be combined with `allowedHosts`. See [ADR 0009](docs/adr/0009-container-execution.md).
 
 The defaults are in [`botbench.config.json`](botbench.config.json). Every setting, including models per agent and your own additions to the always-ask list, is described in [`src/config.ts`](src/config.ts).

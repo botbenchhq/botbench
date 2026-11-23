@@ -1,4 +1,5 @@
 import { issueHostsFor, runIssue, runOutside } from "../engine/intake.ts";
+import { branchUpdateLine, taskBranchUpdates, updateWithMainOf } from "../engine/branch-update.ts";
 import { issueLink } from "./issues.ts";
 import type http from "node:http";
 import path from "node:path";
@@ -272,7 +273,31 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
     // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
     moveTo: offer.now ? offer.agents : [], ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
     // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
-    refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+    refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task),
+    mainUpdate: await mainUpdateOf(ctx, task) };
+}
+
+/**
+ * The task and main (engine/branch-update.ts): how far its branch is behind main while it is ready for review, what its
+ * run does about that, and the line about its latest update. `behind` is null when it was not read (the task is not
+ * ready for review) or could not be (`problem`).
+ */
+async function mainUpdateOf(ctx: RouteContext, task: Task): Promise<Record<string, unknown>> {
+  const updates = taskBranchUpdates(ctx.db, task.id);
+  const latest = updates.at(-1);
+  // An update left open by a task that then stopped or was cancelled is not shown as under way.
+  const shown = latest !== undefined && latest.outcome === null && task.status !== "building" && task.status !== "verifying" ? undefined : latest;
+  const status = task.status === "awaiting_decision" ? await ctx.tasks.mainStatus(task.id) : null;
+  return {
+    choice: updateWithMainOf(ctx.db, task.runId),
+    branch: status !== null && "branch" in status ? status.branch : (latest?.baseBranch ?? null),
+    behind: status !== null && "behind" in status ? status.behind : null,
+    problem: status !== null && "problem" in status ? status.problem : null,
+    underWay: shown !== undefined && shown.outcome === null,
+    // The agent that resolved its conflicts, by the session it worked in; the task's builder before one started.
+    line: branchUpdateLine(shown, String((shown?.attemptId == null ? undefined : ctx.db.prepare("SELECT driver FROM attempts WHERE id = ?").get(shown.attemptId)?.driver) ?? task.builderAgent ?? "claude-code")),
+    updates: updates.map(({ id, requestedBy, baseBranch, baseCommit, fromCommit, behind, mergeCommit, conflicts, outcome, problem, startedAt, endedAt }) => ({ id, requestedBy, baseBranch, baseCommit, fromCommit, behind, mergeCommit, conflicts, outcome, problem, startedAt, endedAt })),
+  };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
@@ -331,6 +356,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const pullRequest = /^\/api\/tasks\/([1-9]\d{0,14})\/pull-request$/.exec(pathname);
   const note = /^\/api\/tasks\/([1-9]\d{0,14})\/notes$/.exec(pathname);
   const move = /^\/api\/tasks\/([1-9]\d{0,14})\/move$/.exec(pathname);
+  const upToDate = /^\/api\/tasks\/([1-9]\d{0,14})\/update-with-main$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -394,6 +420,11 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       await sendNote(req, res, ctx, Number(note[1]));
     } else if (method === "POST" && move) {
       await moveTask(req, res, ctx, Number(move[1]));
+    } else if (method === "POST" && upToDate) {
+      // The owner's "Bring up to date with main" (engine/branch-update.ts). The body carries nothing.
+      const id = Number(upToDate[1]);
+      if (beingDecided(id)) throw new TaskError(409, "This task is being decided or discarded, so it cannot be brought up to date.");
+      json(res, 200, await detail(ctx, await ctx.tasks.updateWithMain(id)));
     } else {
       return false;
     }

@@ -1,4 +1,4 @@
-import type { Delivery, IssueChoice, KnownRepository, ModelList, OnLimit, ReviewerChoice, RunMode, RunSourceRef } from "../api/client.ts";
+import type { Delivery, IssueChoice, KnownRepository, ModelList, OnLimit, ReviewerChoice, RunMode, RunSourceRef, UpdateWithMain } from "../api/client.ts";
 import { chipWords } from "./chat.ts";
 import { noteProblem, sourceRepoProblem, type ComposerSource } from "./run-source.ts";
 import { MODE_NAMES } from "./run-words.ts";
@@ -102,7 +102,7 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit: OnLimit; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; source?: RunSourceRef } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit: OnLimit; updateWithMain?: UpdateWithMain; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; source?: RunSourceRef } & ({ prompt: string } | { specPath: string } | {}));
 
 /** The usage-limit view's question and its two choices (docs/product/voice.md); Wait is the default. */
 export const LIMIT_WORDS = {
@@ -173,7 +173,9 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; takeOver?: string[]; builder?: Builder | null }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: string[]; builder?: Builder | null }): Send {
+  // Sent only when it is not the server's default (ask).
+  const main = extras.updateWithMain === undefined || extras.updateWithMain === "ask" ? {} : { updateWithMain: extras.updateWithMain };
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -191,7 +193,7 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
   // A run made from a task or a chat sends the note alone: no spec file and no issue (blocked() has checked the note).
   const source = sourceOf(f);
-  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", source: source.ref };
+  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...main, source: source.ref };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
@@ -199,11 +201,11 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
-  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...takeOver };
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...main, ...takeOver };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "limit" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "limit" | "main" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
@@ -231,6 +233,8 @@ export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean;
     ...(run ? (["delivery"] as const) : []),
     // What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent.
     ...(run ? (["limit"] as const) : []),
+    // What happens when main moved on as a task is handed to you: Ask (the default), bring it up to date, or Off.
+    ...(run ? (["main"] as const) : []),
     ...(f.commandsKnown ? (["commands"] as const) : []),
     "models",
   ];

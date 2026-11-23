@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
-import type { Delivery, KnownRepository, OnLimit, RunMode } from "../api/client.ts";
+import type { Delivery, KnownRepository, OnLimit, RunMode, UpdateWithMain } from "../api/client.ts";
+import { MAIN_CHOICE_WORDS } from "../app/main-words.ts";
 import { BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
@@ -26,6 +27,7 @@ const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   review: { label: "Review", title: "Review", icon: "eye" },
   delivery: { label: "When accepted", title: "When you accept a task", icon: "circle-check" },
   limit: { label: "Usage limit", title: LIMIT_WORDS.title, icon: "clock" },
+  main: { label: "Main moved on", title: MAIN_CHOICE_WORDS.title, icon: "git-branch" },
   commands: { label: "Allowed commands", title: "Allowed commands", icon: "terminal" },
   models: { label: "Model", title: "Model", icon: "cpu" },
 };
@@ -59,6 +61,9 @@ export interface SheetState {
   /** What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent. */
   onLimit: OnLimit;
   setOnLimit(onLimit: OnLimit): void;
+  /** What happens when main moved on as a task is handed to you: Ask (the default), bring it up to date first, or Off. */
+  updateWithMain: UpdateWithMain;
+  setUpdateWithMain(choice: UpdateWithMain): void;
   /** Whether the run is kept to one task, as it would start now. */
   oneTask: boolean;
   setOneTask(oneTask: boolean): void;
@@ -227,6 +232,18 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
         </p>
         <Option group="limit" id="limit-wait" value="wait" checked={state.onLimit === "wait"} onChange={() => state.setOnLimit("wait")} name={LIMIT_WORDS.wait.name} description={LIMIT_WORDS.wait.description} />
         <Option group="limit" id="limit-switch" value="switch" checked={state.onLimit === "switch"} onChange={() => state.setOnLimit("switch")} name={LIMIT_WORDS.switch.name} description={LIMIT_WORDS.switch.description} />
+      </fieldset>
+    );
+  if (row === "main")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="main-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">{MAIN_CHOICE_WORDS.title}</legend>
+        <p id="main-hint" className="ds-option-picker__hint">
+          It cannot be changed once the run starts.
+        </p>
+        {(["ask", "auto", "off"] as const).map((choice) => (
+          <Option key={choice} group="main" id={`main-${choice}`} value={choice} checked={state.updateWithMain === choice} onChange={() => state.setUpdateWithMain(choice)} name={MAIN_CHOICE_WORDS[choice].name} description={MAIN_CHOICE_WORDS[choice].description} />
+        ))}
       </fieldset>
     );
   if (row === "commands") return <PreapprovedEditor choice={state.repository} scope={state.kind} />;

@@ -2470,4 +2470,91 @@ WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.ru
 BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
 `,
   },
+  {
+    // Checks that need the real machine, and bringing a task up to date with main (#201).
+    // `evidence.needs`: for a machine check (engine/machine-checks.ts), what it was allowed beyond a check, as the
+    // repository's settings name it ("chrome", "nested-sandbox", comma-separated); null for an ordinary check or setup
+    // command. Two outcomes are added, for machine checks only: `skipped` (the command had nothing to run: the change
+    // touches no file its placeholder names) and `not_run` (Botbench could not run it here, and says why in its output).
+    // `runs.update_with_main`: what a run does when one of its tasks is about to be handed to the owner while its branch
+    // is behind main: `ask` (the task offers it), `auto` (Botbench does it first) or `off`; chosen when the run starts.
+    // `branch_updates`: one row per time a task was brought up to date with main (engine/branch-update.ts): who asked,
+    // the branch and commit merged, the task's commit before, the merge commit once made, the files in conflict, the
+    // builder's attempt that resolved them, and how it ended. A row is written open and ended once; never deleted.
+    // What a task's checks found may change for a version of the work such a merge made.
+    name: "machine checks and branch updates",
+    sql: `
+DROP TRIGGER evidence_no_update;
+DROP TRIGGER evidence_no_delete;
+DROP INDEX evidence_task;
+ALTER TABLE evidence RENAME TO evidence_before_machine;
+CREATE TABLE evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  round INTEGER NOT NULL DEFAULT 1 CHECK (round >= 1),
+  position INTEGER NOT NULL CHECK (position >= 1),
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped', 'skipped', 'not_run')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  needs TEXT CHECK (needs IS NULL OR (kind = 'check' AND needs <> '')),
+  UNIQUE (task_id, kind, round, position),
+  CHECK (outcome NOT IN ('skipped', 'not_run') OR needs IS NOT NULL)
+);
+INSERT INTO evidence (id, task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms)
+  SELECT id, task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms FROM evidence_before_machine ORDER BY id;
+DROP TABLE evidence_before_machine;
+CREATE INDEX evidence_task ON evidence (task_id, id);
+CREATE TRIGGER evidence_no_update BEFORE UPDATE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+CREATE TRIGGER evidence_no_delete BEFORE DELETE ON evidence
+BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
+
+ALTER TABLE runs ADD COLUMN update_with_main TEXT NOT NULL DEFAULT 'ask' CHECK (update_with_main IN ('ask', 'auto', 'off'));
+CREATE TRIGGER runs_update_with_main_fixed BEFORE UPDATE OF update_with_main ON runs WHEN NEW.update_with_main IS NOT OLD.update_with_main
+BEGIN SELECT RAISE(ABORT, 'what a run does about a branch behind main is chosen when it starts and never changed'); END;
+
+CREATE TABLE branch_updates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  requested_by TEXT NOT NULL CHECK (requested_by IN ('owner', 'run')),
+  base_branch TEXT NOT NULL,
+  base_commit TEXT NOT NULL,
+  from_commit TEXT NOT NULL,
+  behind INTEGER NOT NULL CHECK (behind >= 1),
+  merge_commit TEXT,
+  conflicts TEXT NOT NULL DEFAULT '[]',
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT CHECK (outcome IS NULL OR outcome IN ('merged', 'resolved', 'unresolved', 'failed', 'stopped')),
+  problem TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  CHECK ((outcome IS NULL) = (ended_at IS NULL)),
+  CHECK (outcome IS NULL OR outcome IN ('merged', 'resolved') OR problem IS NOT NULL),
+  CHECK (outcome NOT IN ('merged', 'resolved') OR merge_commit IS NOT NULL)
+);
+CREATE INDEX branch_updates_task ON branch_updates (task_id, id);
+CREATE UNIQUE INDEX branch_updates_one_open ON branch_updates (task_id) WHERE ended_at IS NULL;
+CREATE TRIGGER branch_updates_fixed BEFORE UPDATE OF id, task_id, requested_by, base_branch, base_commit, from_commit, behind, started_at ON branch_updates
+BEGIN SELECT RAISE(ABORT, 'a branch update keeps what it was started with'); END;
+CREATE TRIGGER branch_updates_ended_once BEFORE UPDATE ON branch_updates WHEN OLD.ended_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a branch update that ended is kept as it ended'); END;
+CREATE TRIGGER branch_updates_no_delete BEFORE DELETE ON branch_updates
+BEGIN SELECT RAISE(ABORT, 'branch updates are never deleted'); END;
+
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM branch_updates WHERE task_id = NEW.id AND merge_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+`,
+  },
 ];

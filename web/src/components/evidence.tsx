@@ -6,6 +6,37 @@ import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
 import { MarkdownView } from "./markdown-view.tsx";
 import { reviewDiffLine } from "./review-diff-words.ts";
+import { needsLine } from "../app/main-words.ts";
+
+/**
+ * The machine checks of a round (src/engine/machine-checks.ts), each with what Botbench allowed it beyond a check, as a
+ * list under the check list: which ran outside the builder's sandbox, and how. Nothing for a round without one.
+ */
+export function MachineChecksNote({ rows }: { rows: readonly Evidence[] }) {
+  const machine = rows.filter((row) => needsLine(row) !== null);
+  if (machine.length === 0) return null;
+  return (
+    <div data-testid="machine-checks" className="ds-stack ds-gap-xs">
+      <p>{machine.length === 1 ? "One check needs more than a check's sandbox gives, so Botbench ran it itself, after the others:" : `${machine.length} checks need more than a check's sandbox gives, so Botbench ran them itself, after the others:`}</p>
+      <ul className="ds-list ds-list--dense">
+        {machine.map((row) => (
+          <li key={row.id} className="ds-list__row">
+            <div className="ds-list__content">
+              <span className="ds-list__body">
+                <span data-ds-content="" className="ds-list__primary">
+                  {row.command}
+                </span>
+                <span data-testid="check-needs" className="ds-list__secondary">
+                  {needsLine(row)}
+                </span>
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 import { StatusBadge } from "./status.tsx";
 
 /** A duration in words with its unit, and as an ISO 8601 duration for the time element. */
@@ -33,6 +64,11 @@ function result(row: Evidence): { words: string; look: string } {
     case "stopped":
       // Stopped by Botbench (the run was cancelled, or Botbench stopped): it says nothing about the command itself.
       return { words: "Stopped before it finished", look: "" };
+    // A machine check's only: why is in its output.
+    case "skipped":
+      return { words: "Skipped: this change gives it nothing to run", look: "ds-check-list__result--skipped" };
+    case "not_run":
+      return { words: "Skipped: it cannot run here", look: "ds-check-list__result--skipped" };
   }
 }
 
@@ -48,6 +84,8 @@ function summary(rows: readonly Evidence[], what: { one: string; many: string },
     count("failed") > 0 ? `${count("failed")} failed` : null,
     count("timed_out") > 0 ? `${count("timed_out")} timed out` : null,
     count("stopped") > 0 ? `${count("stopped")} stopped` : null,
+    count("skipped") > 0 ? `${count("skipped")} with nothing to run` : null,
+    count("not_run") > 0 ? `${count("not_run")} could not run here` : null,
   ].filter((part) => part !== null);
   const notRun = total - rows.length;
   if (notRun > 0) others.push(`${notRun} not run`);
@@ -62,7 +100,7 @@ function summary(rows: readonly Evidence[], what: { one: string; many: string },
 export function CommandEvidence({ rows, what, failedFirst = false, testId, total }: { rows: readonly Evidence[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string; total?: number }) {
   if (rows.length === 0) return null;
   // Checks are read by what needs the reader first; setup commands in the order they ran, which is why a later one never ran.
-  const RANK: Record<Evidence["outcome"], number> = { failed: 0, timed_out: 1, stopped: 2, passed: 3 };
+  const RANK: Record<Evidence["outcome"], number> = { failed: 0, timed_out: 1, not_run: 2, stopped: 3, skipped: 4, passed: 5 };
   const shownRows = failedFirst ? [...rows].sort((a, b) => RANK[a.outcome] - RANK[b.outcome] || a.position - b.position) : rows;
   return (
     <div data-testid={testId} className="ds-check-list">
@@ -171,9 +209,9 @@ export function ChecksResult({ checks, rows }: { checks: ChecksMark; rows: reado
   );
 }
 
-/** How many of the latest round's checks passed, or did not: "3 of 3 checks passed." */
+/** How many of the latest round's checks passed, or did not: "3 of 3 checks passed." A machine check with nothing to run is not counted against it. */
 function checksCount(checks: "passed" | "failed", rows: readonly Evidence[]): string {
-  const notPassed = rows.filter((row) => row.outcome !== "passed").length;
+  const notPassed = rows.filter((row) => row.outcome !== "passed" && row.outcome !== "skipped").length;
   return checks === "passed" ? `${rows.length} of ${plural(rows.length, "check", "checks")} passed.` : `${notPassed} of ${plural(rows.length, "check", "checks")} did not pass.`;
 }
 

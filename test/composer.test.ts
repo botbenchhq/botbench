@@ -115,9 +115,9 @@ test("the sheet shows only the rows that apply: a chat has a repository, one to 
   assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "run", ...known }), ["repository", "read", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "needed" }, kind: "task", ...known }), ["repository", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "limit", "main", "commands", "models"]);
   // No reviewer is set up at all: no Review row. The commands are not known until the repository is usable.
-  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "tasks", "delivery", "limit", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "tasks", "delivery", "limit", "main", "models"]);
 });
 
 test("Keep it to one task is offered for a run in every mode, is on by default in Fully autonomous only, and is sent as the owner chose it", () => {
@@ -183,9 +183,9 @@ const issue = { fetchId: 4, allowHosts: false, number: 123, title: "Crash when t
 
 test("From an issue is a row of a run in a repository with a GitHub remote only, after What to do", () => {
   const known = { reviewOffered: true, commandsKnown: true };
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "main", "commands", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known, issueOffered: true }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "limit", "main", "commands", "models"]);
 });
 
 test("the row's value is the issue's number and the start of its title, or None", () => {

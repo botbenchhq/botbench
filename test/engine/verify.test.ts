@@ -252,8 +252,8 @@ test("a database at the literal version 10 schema gains the check evidence and t
   t.after(() => db.close());
   assert.equal(schemaVersion(db), MIGRATIONS.length);
   assert.ok(MIGRATIONS.length >= 11);
-  // Every row is kept; unit 15 later numbers each as the first time its list was run.
-  assert.deepEqual(db.prepare("SELECT * FROM evidence").all().map((r) => ({ ...r })), before.map((r) => ({ ...r, round: 1 })));
+  // Every row is kept; unit 15 later numbers each as the first time its list was run, and #201 adds what a machine check needs (none here).
+  assert.deepEqual(db.prepare("SELECT * FROM evidence").all().map((r) => ({ ...r })), before.map((r) => ({ ...r, round: 1, needs: null })));
   const task = getTask(db, 5)!;
   assert.deepEqual([task.status, task.checks], ["failed", null]);
   // The kept row is still append-only, and a check row can now be added.

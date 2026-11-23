@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_REFINE_ROUNDS } from "./refine.ts";
+import { isUpdateWithMain, type UpdateWithMain } from "./branch-update.ts";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -96,6 +97,8 @@ export interface Run {
   oneTask: boolean;
   /** What a builder's usage limit does in this run, chosen when it started and never changed: wait for the reset, or switch to the next agent (engine/handoff.ts). */
   onLimit: OnLimit;
+  /** What happens when a task is about to be handed to the owner while its branch is behind main, chosen when it started (engine/branch-update.ts). */
+  updateWithMain: UpdateWithMain;
   /** The finished task or the chat the owner made this run from ("Make this a run", engine/run-source.ts); null for a run started any other way. Never changed. */
   source: RunSource | null;
   createdAt: string;
@@ -156,6 +159,7 @@ function toRun(row: Record<string, unknown>): Run {
     outsideHosts: row.outside_hosts === 1,
     oneTask: row.one_task === 1,
     onLimit: isOnLimit(row.on_limit) ? row.on_limit : "wait",
+    updateWithMain: isUpdateWithMain(row.update_with_main) ? row.update_with_main : "ask",
     source: row.source_task_id != null ? { kind: "task", id: Number(row.source_task_id) } : row.source_chat_id != null ? { kind: "chat", id: Number(row.source_chat_id) } : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -205,7 +209,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; onLimit?: OnLimit; takeOver?: readonly ClaimName[]; source?: RunSource }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: readonly ClaimName[]; source?: RunSource }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -214,8 +218,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; builder?: string 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, on_limit, source_task_id, source_chat_id, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, o.onLimit ?? "wait", o.source?.kind === "task" ? o.source.id : null, o.source?.kind === "chat" ? o.source.id : null, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, on_limit, update_with_main, source_task_id, source_chat_id, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, o.onLimit ?? "wait", o.updateWithMain ?? "ask", o.source?.kind === "task" ? o.source.id : null, o.source?.kind === "chat" ? o.source.id : null, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
@@ -509,6 +513,8 @@ export interface StartRun {
   oneTask?: unknown;
   /** What a builder's usage limit does: "wait" (the default) for it to reset, or "switch" to the next agent on the fallback list in Settings. */
   onLimit?: unknown;
+  /** What happens when a task's branch is behind main as it is handed to the owner: "ask" (the default; the task offers it), "auto" (Botbench brings it up to date first) or "off". */
+  updateWithMain?: unknown;
   /** Other workbenches' old claims on the run's issue the owner chose to take over, by branch (engine/claim-branch.ts); left out for none. */
   takeOver?: unknown;
   /** The finished task or the chat the run is made from, `{ task }` or `{ chat }` by id (engine/run-source.ts); left out or null for none. The prompt is then the owner's note. */
@@ -894,6 +900,7 @@ export function createRuns(options: RunsOptions): Runs {
     const delivery = deliveryChoice(input.delivery);
     const oneTask = oneTaskChoice(input.oneTask, mode);
     const onLimit = onLimitChoice(input.onLimit);
+    const updateWithMain = updateWithMainChoice(input.updateWithMain);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -925,7 +932,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (mode === "full") fullyAutonomousUsable(repo, builder);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel, builder.name);
     stopping();
-    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, onLimit, takeOver, ...(source === undefined ? {} : { source: { kind: source.kind, id: source.id } }), ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, onLimit, updateWithMain, takeOver, ...(source === undefined ? {} : { source: { kind: source.kind, id: source.id } }), ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -1030,6 +1037,14 @@ export function onLimitChoice(given: unknown): OnLimit {
   if (isOnLimit(given)) return given;
   // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
   throw new RunError(400, '"onLimit" must be "wait" (wait for the usage limit to reset) or "switch" (switch to the next agent).');
+}
+
+/** What a request says happens to a branch behind main: "ask" when it says nothing. Anything else is refused with the reason, before anything exists. */
+export function updateWithMainChoice(given: unknown): UpdateWithMain {
+  if (given === undefined || given === null) return "ask";
+  if (isUpdateWithMain(given)) return given;
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  throw new RunError(400, '"updateWithMain" must be "ask" (offer it on the task), "auto" (bring the branch up to date before it is handed to you) or "off".');
 }
 
 /** The mode a request names. Anything else is refused with the reason, before anything exists. */

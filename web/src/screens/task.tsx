@@ -6,7 +6,7 @@ import { DraftPeerCard } from "../components/peer-card.tsx";
 import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { DiffLine } from "../components/diff.tsx";
 import { Icon } from "../components/icon.tsx";
-import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
+import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, MachineChecksNote, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
 import { BranchCopy, ReviewDecision } from "../components/decision.tsx";
@@ -17,6 +17,7 @@ import { modelName, modelState, sessionModel, useModelList } from "../components
 import { ResumeControl } from "../components/resume.tsx";
 import { TaskNote } from "../components/task-note.tsx";
 import { MoveTask } from "../components/move-task.tsx";
+import { MainUpdateSection } from "../components/main-update.tsx";
 import { sessionAgent, sessionsLine, shownAttempts } from "../app/handoff-words.ts";
 import { answeredOther, fileMarks, fileMarksLine, notMergedLine, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
@@ -348,6 +349,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                 )}
                 {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                <MachineChecksNote rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />
               </section>
             )}
             {task.checks !== null && task.checks !== "none" && <CheckTogether taskId={task.id} repo={task.repo} ready={task.status === "awaiting_decision"} onSignedOut={onSignedOut} />}
@@ -454,6 +456,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </details>
                 </section>
               )}
+
+            {/* Just before the decision, which is where delivery starts: the branch against main, and bringing it up to date. */}
+            <MainUpdateSection task={task} onChanged={load} onSignedOut={onSignedOut} />
 
             {/* One section from ready for review on: Accept and Reject, then, once decided, the result in their place. */}
             {(task.decision !== null || task.status === "awaiting_decision") && (
