@@ -35,7 +35,7 @@ interface Line {
   planner: PlanReplay;
 }
 
-async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCommand[]; reviewer?: boolean; hold?: readonly number[]; planner?: readonly number[] } = {}): Promise<Line> {
+async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCommand[]; reviewer?: boolean; hold?: readonly number[]; planner?: readonly number[]; setup?: string; protectedPaths?: string[] } = {}): Promise<Line> {
   const dir = tempDir("botbench-modes-test-");
   const home = path.join(dir, "home");
   const db = openStore(home);
@@ -46,8 +46,8 @@ async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCom
   const builder = buildReplayDriver(script, o.hold === undefined ? {} : { hold: o.hold });
   const reviewers = o.reviewer ? { codex: reviewReplayDriver("review") } : {};
   const checks = o.checks ?? [cmd("test -f hello.txt")];
-  const repoCommands = () => ({ setup: [cmd("printf 'hi\\n' > hello.txt")], checks });
-  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", reviewers, repoCommands, onEvent: () => {}, onTaskChange: () => {} });
+  const repoCommands = () => ({ setup: [cmd(o.setup ?? "printf 'hi\\n' > hello.txt")], checks });
+  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", reviewers, repoCommands, ...(o.protectedPaths ? { protectedPaths: () => o.protectedPaths! } : {}), onEvent: () => {}, onTaskChange: () => {} });
   // The planner is a replayed real planner session that gave a plan of three tasks (or the turns the test names).
   const planner = planReplayDriver(loadPlanRecording(), o.planner ?? [THREE_TASKS]);
   const runs = createRuns({ db, home, driver: planner, broker, model: "haiku", implementerModel: "haiku", reviewers, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
@@ -236,6 +236,43 @@ test("a mode that is none of the three is refused, and a run's mode cannot be ch
   assert.equal(getRun(e.db, run.id)!.mode, "semi");
   // Left out, a run is manual unless the owner chose another default.
   assert.equal(createRun(e.db, { repo: e.repo, prompt: "Another", baseCommit: e.base }).mode, "manual");
+});
+
+// The replayed builder writes no file, so the setup command writes the work, as above: what it writes is committed as
+// the task's work, from the task's start commit to its head commit, and marked from there (src/engine/scope.ts).
+const PROTECTED_WORK = "printf 'hi\\n' > hello.txt && mkdir -p test/recordings && printf '{}\\n' > test/recordings/played.json";
+
+for (const mode of ["manual", "semi", "full"] as const) {
+  test(`${mode}: a build that changed a file under a protected path is handed to the owner, naming the file, and never accepted by the mode`, { skip: NO_SANDBOX }, async (t) => {
+    const e = await line(t, ["done"], { setup: PROTECTED_WORK, protectedPaths: ["test/recordings/"] });
+    const id = await oneTask(e, mode);
+    const task = getTask(e.db, id)!;
+    assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+    assert.equal(task.checks, "passed", "everything else would have let a fully autonomous run accept it");
+    assert.equal(task.reason, "It needs your review: It changed 1 file under a protected path, which only you can accept: test/recordings/played.json.");
+    assert.equal(taskDecision(e.db, id), null, "nothing was decided for the owner");
+    assert.ok(!actionLog(e.db, id).some((entry) => entry.rule === "mode_accepted"));
+    assert.ok(fs.existsSync(task.worktreePath!), "the task's copy is kept for the owner's decision");
+  });
+}
+
+test("fully autonomous: a task that changed a file the plan did not lead one to expect is handed to the owner, naming the file", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done"], { setup: "printf 'hi\\n' > hello.txt && printf 'x\\n' > notes.txt" });
+  const id = await oneTask(e, "full");
+  const task = getTask(e.db, id)!;
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(task.checks, "passed");
+  assert.equal(task.reason, "It needs your review: It changed 1 file not expected from the plan: notes.txt.");
+  assert.equal(taskDecision(e.db, id), null);
+  assert.ok(!actionLog(e.db, id).some((entry) => entry.rule === "mode_accepted"));
+});
+
+test("fully autonomous: a build that changed only expected files, none of them protected, is still accepted without the owner", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, ["done"], { protectedPaths: ["test/recordings/"] });
+  const id = await oneTask(e, "full");
+  const task = getTask(e.db, id)!;
+  assert.equal(task.status, "accepted", task.reason ?? "");
+  assert.equal(taskDecision(e.db, id)!.decidedBy, "mode");
 });
 
 test("only a fully autonomous run's task, whose checks passed, can be decided by the mode: the store refuses any other", { skip: NO_SANDBOX }, async (t) => {

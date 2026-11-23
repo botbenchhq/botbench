@@ -3,6 +3,7 @@ import { asRefusalKind, refusalBlocksAccept, type RefusalKind } from "../approva
 import { now } from "../store/db.ts";
 import { loopRecord, NO_ACCOUNT, reviewOutcome as loopOutcome } from "./refine.ts";
 import { reviewAssignment } from "./review.ts";
+import { protectedWords, unexpectedWords } from "./scope.ts";
 
 /*
  * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it).
@@ -10,8 +11,9 @@ import { reviewAssignment } from "./review.ts";
  *   semi    the owner approves the plan and decides; a command that runs inside the confinement runs without asking
  *   full    the plan is approved by the mode; confined commands run without asking; whatever would ask the owner is
  *           refused instead (the safety floor among it); a task is accepted by the mode when every check passed, the
- *           review is satisfied or there is none, and nothing refused blocks it (approvals/refusals.ts), and handed back
- *           to the owner, saying why, when not
+ *           review is satisfied or there is none, nothing refused blocks it (approvals/refusals.ts), and every changed
+ *           file is expected from the plan and none is under a protected path; handed back to the owner, saying why, when not
+ * In every mode a task that changed a file under a protected path waits for the owner with a reason naming the files.
  * A mode never loosens the safety floor, and broker failure denies in every mode. Nothing is ever merged; an accepted
  * task's branch is pushed only by a run that chose to open a pull request (decision.ts, `acceptedWords`).
  */
@@ -80,16 +82,19 @@ export interface AcceptFacts {
   review: ReviewOutcome;
   /** The requests the mode refused during the task. */
   refusals: readonly ModeRefusal[];
+  /** Changed files under a protected path, and changed files the plan did not lead one to expect (engine/scope.ts). None when left out. */
+  protectedFiles?: readonly string[];
+  unexpectedFiles?: readonly string[];
 }
 
 const shorten = (s: string, max = 200): string => (s.length > max ? `${s.slice(0, max)}…` : s);
 
 /**
  * Whether a fully autonomous run accepts a task without the owner, from what is known of it: every check passed (so at
- * least one is set up), the review is satisfied or the run has none, and nothing refused during the task blocks the
- * accept (`refusalBlocksAccept`: the safety rules, or a request that would have left the confinement). Answers the
+ * least one is set up), the review is satisfied or the run has none, nothing refused during the task blocks the
+ * accept (`refusalBlocksAccept`: the safety rules, or a request that would have left the confinement), no changed file
+ * is under a protected path, and every changed file is one the plan led one to expect (engine/scope.ts). Answers the
  * reasons it qualified, for the record, naming any refusal that did not block, or the plain reasons it needs the owner.
- * Whether the builder touched files the plan did not expect is not known to Botbench and is not judged here.
  */
 export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string } | { accept: false; why: string } {
   const why: string[] = [];
@@ -100,6 +105,8 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   else if (facts.review === "failed") why.push("The review did not finish.");
   const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
   if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${shorten(blocking.join("; "))}).`);
+  if ((facts.protectedFiles?.length ?? 0) > 0) why.push(protectedWords(facts.protectedFiles!));
+  if ((facts.unexpectedFiles?.length ?? 0) > 0) why.push(unexpectedWords(facts.unexpectedFiles!));
   if (why.length > 0) return { accept: false, why: `It needs your review: ${why.join(" ")}` };
   const review = facts.review === "satisfied" ? "the reviewer said it looks right and what it checked" : "this run has no reviewer";
   if (facts.refusals.length === 0) return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };

@@ -229,11 +229,13 @@ export const MAX_REVIEW_DIFF = 60_000;
 
 /**
  * What a reviewer is sent: the task's title and acceptance criteria and its diff as data between marked lines, and the
- * one short form its reply takes. `cut` gives how much of a longer diff was left out. `tools: false` is for a reviewer
- * started with no tools, which sees only what it is sent.
+ * one short form its reply takes. `files` is every file the work changed, listed in full even when the diff is cut, with
+ * the request to flag any that does not belong to the task. `cut` gives how much of a longer diff was left out.
+ * `tools: false` is for a reviewer started with no tools, which sees only what it is sent.
  */
-export function reviewerPrompt(o: { task: PlanTask; diff: string; cut: { shown: number; total: number } | null; tools?: boolean; previous?: PreviousReview }): string {
+export function reviewerPrompt(o: { task: PlanTask; files: readonly string[]; diff: string; cut: { shown: number; total: number } | null; tools?: boolean; previous?: PreviousReview }): string {
   const tools = o.tools !== false;
+  const files = o.files.length === 0 ? "(none)" : o.files.map((file) => `- ${file}`).join("\n");
   const diff = o.diff.trim() === "" ? "(The task changed no file.)" : o.diff;
   const cut = o.cut === null ? "" : `\nThe diff is ${o.cut.total} characters long and was cut after the first ${o.cut.shown}. ${tools ? "Read the rest from the files if you need it, and say" : "Say"} in your findings that you saw only part of it.`;
   const again = o.previous === undefined ? "" : `\n\n${againWords(o.previous)}`;
@@ -252,10 +254,15 @@ Findings:
 
 Write "Verdict: concerns" instead when anything should be fixed or checked before the work is accepted. Always write the "Checked:" heading with two to five lines naming what you examined, then the one line "Not checked:", even when there is no finding. Give one line per finding, with the file and line where you can; write "- none" when there is no finding. Write nothing before the verdict line.
 
+Also check that every changed file belongs to this task. Flag each changed file that does not, as a finding that names the file and says it does not belong to the task, and give the verdict "concerns" when there is one.
+
 The task:
 <task>
 ${taskPrompt(o.task)}
 </task>${again}
+
+Every file the task's work changed, ${o.files.length === 1 ? "1 file" : `${o.files.length} files`}:
+${dataBlock("changed-files", files)}
 
 The diff of the task's work, from the commit it started from to its branch:${cut}
 <diff>
