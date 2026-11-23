@@ -152,7 +152,7 @@ test("live: a task to create hello.txt ends awaiting a decision with Botbench's 
   assert.equal(worktreeCount(live.repo), 2);
 
   // The agent worked in the task's worktree under Botbench's home, and its transcript is the attempt's.
-  const worktree = path.join(live.home, "worktrees", task.branch!.split("/")[1]!, `task-${taskId}`);
+  const worktree = path.join(live.home, "worktrees", task.branch!.split("/").at(-2)!, `task-${taskId}`);
   assert.equal(fs.readFileSync(path.join(worktree, "hello.txt"), "utf8").trim(), "hi");
   const events = await transcript(live, task.attemptId!);
   assert.deepEqual(events[0]!.payload, { type: "user_prompt", text: "Use your Write tool to create a file named hello.txt containing exactly: hi" });

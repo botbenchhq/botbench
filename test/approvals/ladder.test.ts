@@ -7,6 +7,7 @@ import { actionLog, ApprovalError, createBroker, listApprovals, type Admission, 
 import { gate } from "../../src/approvals/gate.ts";
 import { approvalCount, listStanding, matchGrant, standingProblem, type Grant } from "../../src/approvals/grants.ts";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
+import { setChatWebAccess } from "../../src/approvals/web-access.ts";
 import { createTask } from "../../src/engine/task.ts";
 import { DB_FILE, openStore, schemaVersion } from "../../src/store/db.ts";
 import { MIGRATIONS } from "../../src/store/schema.ts";
@@ -125,24 +126,24 @@ test("a standing grant allows the whole command it names, in any run of its repo
 
   // The whole command, not its leading words: a further argument asks.
   for (const command of ["npm test -- --coverage", "npm test x", "npm test ''", "npm", "npm tes", "npm testx", "NPM test", "./npm test", "env npm test", "FOO=1 npm test"]) {
-    assert.deepEqual(verdict(command, grants), { verdict: "ask", why: "manual" }, command);
+    assert.deepEqual(verdict(command, grants), { verdict: "ask", why: "not_confined" }, command);
   }
   // An operator, a substitution, a redirect, a glob or a line break makes it not one plain command, which the floor names.
   for (const command of ["npm test && ls", "npm test; ls", "npm test | cat", "npm test > out", "npm test &", "npm test $(id)", "npm test `id`", "npm test *", "npm test\nls", "npm test\n"]) {
-    assert.deepEqual(verdict(command, grants), { verdict: "ask", floor: "not-a-plain-command", why: "manual" }, JSON.stringify(command));
+    assert.deepEqual(verdict(command, grants), { verdict: "ask", floor: "not-a-plain-command", why: "not_confined" }, JSON.stringify(command));
   }
   // A call that carries more than its command asks.
-  for (const input of [{ command: "npm test", run_in_background: true }, { command: "npm test", timeout: 5 }]) assert.deepEqual(verdict("", grants, { input }), { verdict: "ask", why: "manual" });
+  for (const input of [{ command: "npm test", run_in_background: true }, { command: "npm test", timeout: 5 }]) assert.deepEqual(verdict("", grants, { input }), { verdict: "ask", why: "not_confined" });
 
   // Another repository, role or directory.
-  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: "/Users/owner/code/other" } }), { verdict: "ask", why: "manual" });
-  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: `${REPO}-2` } }), { verdict: "ask", why: "manual" });
-  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, role: "reviewer" } }), { verdict: "ask", why: "manual" });
-  assert.deepEqual(verdict("npm test", grants, { cwd: path.join(WORKTREE, "packages") }), { verdict: "ask", why: "manual" });
+  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: "/Users/owner/code/other" } }), { verdict: "ask", why: "not_confined" });
+  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, repo: `${REPO}-2` } }), { verdict: "ask", why: "not_confined" });
+  assert.deepEqual(verdict("npm test", grants, { scope: { ...scope, role: "reviewer" } }), { verdict: "ask", why: "not_confined" });
+  assert.deepEqual(verdict("npm test", grants, { cwd: path.join(WORKTREE, "packages") }), { verdict: "ask", why: "not_confined" });
   assert.deepEqual(verdict("npm test", [standing(["npm", "test"], { cwd: "packages" })], { cwd: path.join(WORKTREE, "packages") }), ALLOWED);
   // A standing grant that names a run, or no words, grants nothing.
-  assert.deepEqual(verdict("npm test", [standing(["npm", "test"], { runId: 5 })]), { verdict: "ask", why: "manual" });
-  assert.deepEqual(verdict("npm test", [standing([])]), { verdict: "ask", why: "manual" });
+  assert.deepEqual(verdict("npm test", [standing(["npm", "test"], { runId: 5 })]), { verdict: "ask", why: "not_confined" });
+  assert.deepEqual(verdict("npm test", [standing([])]), { verdict: "ask", why: "not_confined" });
   assert.equal(matchGrant({ ...scope, cwd: ".", words: [] }, [standing([])]), null);
 
   // A run's pre-approved grant for the same command is the one named when both exist.
@@ -351,7 +352,9 @@ test("AE6: a request the floor catches, or one the splitter cannot read, never o
   assert.equal(count(r.db, "grants"), 0);
   assert.equal(rules(r.db).includes("standing_granted"), false);
 
-  // Other tools are counted by their name and never offered: a grant for a tool's name would allow any input.
+  // Other tools are counted by their name and never offered: a grant for a tool's name would allow any input. With Web
+  // access at Ask, a fetch is put to the owner each time.
+  setChatWebAccess(r.db, "ask");
   for (let n = 0; n < 4; n++) assert.equal(await decide(r, a, '{"url":"https://example.com"}', `toolu_web_${n}`, "allow", { tool: "WebFetch", input: { url: "https://example.com" } }), null);
   assert.equal(approvalCount(r.db, { role: "implementer", repo: r.repo, cwd: ".", tool: "WebFetch", words: null }), 4);
   const web = await a.ask('{"url":"https://example.com"}', "toolu_web_last", { tool: "WebFetch", input: { url: "https://example.com" } });

@@ -3,6 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
+import { Icon } from "../components/icon.tsx";
 import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
@@ -345,6 +346,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                               <code data-ds-content="">{file.path}</code>
                               {fileMarks(file).map((mark) => (
                                 <span key={mark} className="ds-badge ds-badge--warning">
+                                  <Icon name={mark === "Protected" ? "shield" : "circle-alert"} className="ds-badge__icon" />
                                   {mark}
                                 </span>
                               ))}
@@ -378,7 +380,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                     <summary className="ds-disclosure__summary">What Claude Code can do here</summary>
                     <div className="ds-disclosure__content">
                       <p data-testid="can-do-text">
-                        {`Claude Code may read and change files inside this task's copy of the project without asking. ${task.mode === "manual" ? `${task.preapproved.length > 0 ? "The commands listed above, and those you chose Always allow for (see Permissions), run without asking; every other shell command waits for your answer first" : "Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)"}, and Botbench sends you anything else it wants to do as well.` : task.mode === "semi" ? "Its run is semi-autonomous, so its shell commands run without asking, apart from those the safety rules always ask you about; Botbench sends you anything else it wants to do as well." : "Its run is fully autonomous, so its shell commands run without asking, and what would need your answer is refused instead: those the safety rules always ask about, and anything else it wants to do."} The separate copy (a git worktree) keeps changes apart from your own files. A command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.`}
+                        {`Claude Code may read and change files inside this task's copy of the project without asking. ${task.mode === "manual" ? `A shell command kept inside this copy runs without asking, apart from those the safety rules always ask you about; with Ask before every command on in Settings, every one waits for your answer first, unless you ${task.preapproved.length > 0 ? "listed it above or " : ""}chose Always allow for it (see Permissions). Botbench sends you anything else it wants to do as well.` : task.mode === "semi" ? "A shell command kept inside this copy runs without asking, apart from those the safety rules always ask you about; Botbench sends you anything else it wants to do as well." : "Its run is fully autonomous, so its shell commands run without asking, and what would need your answer is refused instead: those the safety rules always ask about, and anything else it wants to do."} The separate copy (a git worktree) keeps changes apart from your own files. A command you allow${task.preapproved.length > 0 ? " or list in advance" : ""} runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.`}
                       </p>
                     </div>
                   </details>

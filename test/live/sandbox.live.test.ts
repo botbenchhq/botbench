@@ -108,8 +108,12 @@ function resultOf(events: DriverEvent[], marker: string): { call: Call; result: 
 const keychainHasItem = (): boolean => spawnSync("security", ["find-generic-password", "-s", KEYCHAIN_ITEM], { stdio: "ignore" }).status === 0;
 const homeHas = (place: string): boolean => fs.existsSync(path.join(os.homedir(), place));
 
-test("live: with the sandbox on every shell command still asks the owner first; an allowed command cannot read Botbench's data folder, a sign-in folder, SSH keys or the Keychain, gets no gate secret and no network, while writing its own copy works and the CLI's own turn finishes", { timeout: TASK_TIMEOUT }, async (t) => {
+test("live: with the sandbox on and Ask before every command on, every shell command still asks the owner first; an allowed command cannot read Botbench's data folder, a sign-in folder, SSH keys or the Keychain, gets no gate secret and no network, while writing its own copy works and the CLI's own turn finishes", { timeout: TASK_TIMEOUT }, async (t) => {
   const live = await start(t);
+  // A command kept inside the task's copy runs without a card by default; this test is about the card, so the owner's
+  // setting Ask before every command is on.
+  const every = await fetch(`${live.base}/api/settings`, { method: "PUT", headers: { ...live.headers, ...JSON_TYPE }, body: JSON.stringify({ askEveryCommand: true }) });
+  assert.equal(every.status, 200, await every.text());
   const commands = {
     decoy: `cat ${live.decoy}`,
     network: "curl -sS -m 15 -o /dev/null -w 'status=%{http_code}' https://example.com",

@@ -7,6 +7,9 @@ import type { AuthorRelation } from "../../../src/github.ts";
 
 export type TurnEndReason = "completed" | "interrupted" | "error";
 
+/** The detail of a stopped `turn_ended` the server writes for a turn a restart cut off; the same words as its `RESTART_STOPPED`. */
+export const RESTART_STOPPED = "Stopped: Botbench restarted";
+
 /** The normalized events a driver emits; the same union as the server's `DriverEvent`. */
 export type DriverEvent =
   | { type: "user_prompt"; text: string }
@@ -16,7 +19,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "bookkeeping" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -609,8 +612,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; takeOver?: string[] }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; takeOver?: string[] }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -653,6 +656,8 @@ export const getDefaultMode = async (): Promise<RunMode> => (await request<{ def
 export type WebAccess = "allow" | "ask" | "off";
 export const getChatWebAccess = async (): Promise<WebAccess> => (await request<{ chatWebAccess: WebAccess }>("GET", "/api/settings", undefined, 30_000)).chatWebAccess;
 export const setChatWebAccess = async (value: WebAccess): Promise<WebAccess> => (await request<{ chatWebAccess: WebAccess }>("PUT", "/api/settings", { chatWebAccess: value }, 30_000)).chatWebAccess;
+export const getAskEveryCommand = async (): Promise<boolean> => (await request<{ askEveryCommand: boolean }>("GET", "/api/settings", undefined, 30_000)).askEveryCommand;
+export const setAskEveryCommand = async (on: boolean): Promise<boolean> => (await request<{ askEveryCommand: boolean }>("PUT", "/api/settings", { askEveryCommand: on }, 30_000)).askEveryCommand;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 /** This installation's workbench name, and whether the settings file sets it (then it is changed there, not here). */
 export interface WorkbenchSetting {
@@ -798,6 +803,9 @@ export type LogRule =
   | "mode_refused"
   | "mode_accepted"
   | "delivery"
+  | "web_allowed"
+  | "web_refused"
+  | "bookkeeping"
   | "issue_claim";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */

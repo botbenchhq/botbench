@@ -520,7 +520,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     </li>
                   ))}
                 </ul>
-                <p>You listed these when you started the run, for when its tasks are built. Planning uses none of them: every command it wants asks.</p>
+                <p>You listed these when you started the run, for when its tasks are built. Planning uses none of them.</p>
               </section>
             )}
 
