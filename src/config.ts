@@ -148,9 +148,22 @@ export interface AutonomyConfig {
   mode?: RunMode;
   /** After a review with concerns, how many rounds of fixes the builder may be asked for before the task is Ready for review. 0 to 5; 2 when absent. */
   maxRefineRounds?: number;
+  /**
+   * How long, in whole seconds, a builder or a planner may send nothing while it works before Botbench stops it and
+   * everything it started. Time spent waiting on the owner's answer to a request does not count. 0 turns the limit
+   * off; 600 (10 minutes) when absent; at most 86,400 (a day).
+   */
+  silenceLimitSeconds?: number;
 }
 const OFFER_STANDING_AFTER = 3;
-const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds"] as const;
+const SILENCE_LIMIT_SECONDS = 600;
+const MAX_SILENCE_LIMIT_SECONDS = 86_400;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "silenceLimitSeconds"] as const;
+
+/** How long a builder or planner may send nothing before it is stopped, in milliseconds; 0 when the limit is off. */
+export function silenceLimitMs(config: Config): number {
+  return (config.autonomy?.silenceLimitSeconds ?? SILENCE_LIMIT_SECONDS) * 1000;
+}
 
 /** How many rounds of fixes a run started now allows after a review with concerns. */
 export function maxRefineRounds(config: Config): number {
@@ -278,6 +291,8 @@ function validate(c: Json, where: string): Config {
     if (autonomy.mode !== undefined && !isRunMode(autonomy.mode)) fail(`"autonomy.mode" must be "manual", "semi" or "full": the mode a new run is given when none is chosen.`);
     const rounds = autonomy.maxRefineRounds;
     if (rounds !== undefined && !(typeof rounds === "number" && Number.isSafeInteger(rounds) && rounds >= 0 && rounds <= MAX_REFINE_ROUNDS)) fail(`"autonomy.maxRefineRounds" must be a whole number from 0 to ${MAX_REFINE_ROUNDS}: how many rounds of fixes the builder may be asked for after a review with concerns.`);
+    const silence = autonomy.silenceLimitSeconds;
+    if (silence !== undefined && !(typeof silence === "number" && Number.isSafeInteger(silence) && silence >= 0 && silence <= MAX_SILENCE_LIMIT_SECONDS)) fail(`"autonomy.silenceLimitSeconds" must be a whole number of seconds from 0 to ${MAX_SILENCE_LIMIT_SECONDS}: how long a builder or planner may send nothing while it works before Botbench stops it. 0 turns the limit off.`);
   }
   return c as unknown as Config;
 }

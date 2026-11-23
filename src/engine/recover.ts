@@ -41,6 +41,13 @@ export const CONTINUE_PROMPT =
 export const CHANGED_NOTHING_PROMPT =
   "[From Botbench, not from the owner] Your last turn ended without changing any file in this folder, so there was nothing to check or review. Do the task now, in this turn, yourself: anything left running when the turn ends is stopped and not kept. Change the files the task needs before you finish.";
 
+/**
+ * What Botbench says to the agent when the owner resumes a task it stopped because the agent sent nothing for `limit`
+ * (engine/silence.ts). Botbench's words, and they say so.
+ */
+export const silentPrompt = (limit: string): string =>
+  `[From Botbench, not from the owner] Your work on this task was stopped because you sent nothing for ${limit}, Botbench's limit for silence, so Botbench stopped you and everything you had started. The files in this folder are as you left them. Carry on with the task from where you left off, and finish it. Do not wait on anything that may not end.`;
+
 const PS_LIMIT_MS = 5000;
 /** A CLI is started just before its attempt row is written; the clock `ps` reads has whole seconds. */
 const START_SLACK_MS = 5000;

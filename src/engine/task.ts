@@ -12,12 +12,13 @@ import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
-import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
+import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
 import { firstLine } from "../shorten.ts";
+import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
@@ -77,6 +78,9 @@ export interface Task {
   updatedAt: string;
 }
 
+
+/** How the builder's last turn ended, for a task the owner resumes, when the agent is told about it: no file changed, or it went silent. */
+type Before = "changed nothing" | "silent" | null;
 
 /** A reviewer the run names and this Botbench cannot start: its review fails, saying so. */
 function unknownReviewer(agent: string): Driver {
@@ -377,6 +381,8 @@ export interface TasksOptions {
   reviewers?: Partial<Record<string, Driver>>;
   /** The time a reviewer gets; 10 minutes when left out. */
   reviewLimitMs?: number;
+  /** How long a builder may send nothing before it is stopped (engine/silence.ts); 10 minutes when left out, and 0 for no limit. */
+  silenceLimitMs?: number;
   /** Called when a transcript event was stored. */
   onEvent: () => void;
   /** Called after each state a task reaches, and after evidence is added to it. */
@@ -394,6 +400,7 @@ export interface TasksOptions {
  */
 export function createTasks(options: TasksOptions): Tasks {
   const { db, home, driver, broker } = options;
+  const silenceLimit = options.silenceLimitMs ?? SILENCE_LIMIT_MS;
   /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
   /** A builder's first prompt: the task's own, then, for a run started from an issue, the issue as outside text. */
@@ -798,19 +805,33 @@ export function createTasks(options: TasksOptions): Tasks {
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
     move(id, "building", { attemptId: session.attemptId, ...(resumed !== null ? { note: `${why[resumed]}, from attempt ${task.attemptId}${fromSession ? "" : ", in a new session"}` } : {}) });
     let end: TurnEndReason | "not sent";
+    let silence: SilenceWatch | null = null;
     try {
       // Botbench began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
-      end = closed || stopped?.aborted === true || cancelled(task) ? "not sent" : await session.sendTurn(prompt);
+      if (closed || stopped?.aborted === true || cancelled(task)) end = "not sent";
+      else {
+        // Registered after the listener above, so it reads the requests the CLI waits on as they stand after each event.
+        silence = watchSilence(session, silenceLimit, () => asking.size > 0);
+        end = await session.sendTurn(prompt);
+      }
     } catch (err) {
       end = "error";
       detail = words(err);
+    } finally {
+      silence?.clear();
     }
+    // Stopped for silence, unless the turn finished meanwhile: its end is the silence, whatever the CLI said as it was stopped.
+    const silent = silence?.fired() === true && end !== "completed";
     let leftover: string | null = null;
     try {
       // A task is one turn for now, so its CLI process is not kept.
       await session.close();
+      // Nothing of a silent agent may be left running: its whole process group is confirmed gone before the stop is recorded.
+      if (silent) await confirmGroupGone(db, session.attemptId);
     } catch (err) {
-      leftover = `Its Claude Code process could not be stopped: ${words(err)}`;
+      leftover = silent
+        ? `${agentName(driver.name)} went silent for ${durationWords(silenceLimit)}, the silence limit in Botbench's settings, and Botbench could not stop its process: ${words(err)}`
+        : `Its ${agentName(driver.name)} process could not be stopped: ${words(err)}`;
     }
     current = null;
     parkCurrent = null;
@@ -834,6 +855,8 @@ export function createTasks(options: TasksOptions): Tasks {
       }
       await finish(task, "cancelled", CANCELLED);
     }
+    // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
+    else if (silent) await finish(task, "interrupted", silenceReason(agentName(driver.name), silenceLimit));
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
     else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped);
     else if (end === "completed") await verify(task, reply, stopped);
@@ -924,14 +947,14 @@ export function createTasks(options: TasksOptions): Tasks {
    * known to be stopped, taking up the session it had reported (told what happened), or with the task's own prompt
    * when it had reported none.
    */
-  const carryOn = async (id: number, by: "restart" | "owner", changedNothingBefore = false): Promise<void> => {
+  const carryOn = async (id: number, by: "restart" | "owner", before: Before = null): Promise<void> => {
     const task = getTask(db, id);
     if (!task || (task.status !== "building" && task.status !== "verifying") || closed) return;
-    await atWork(task, (stop) => carryOnNow(task, by, stop, changedNothingBefore));
+    await atWork(task, (stop) => carryOnNow(task, by, stop, before));
   };
 
-  /** `changedNothingBefore`: the owner resumed a task whose builder's turn had ended without changing a file, and it is told so. */
-  const carryOnNow = async (task: Task, by: "restart" | "owner", stop: AbortController, changedNothingBefore = false): Promise<void> => {
+  /** `before`: the owner resumed a task whose builder's turn had ended without changing a file, or had gone silent, and it is told so. */
+  const carryOnNow = async (task: Task, by: "restart" | "owner", stop: AbortController, before: Before = null): Promise<void> => {
     const stage = stageOf(db, task);
     const commands = options.repoCommands?.(task.repo) ?? { setup: [], checks: [] };
     if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
@@ -960,7 +983,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
     const reviewer = refineRoundOf(db, task.id) === null ? null : reviewAssignment(db, task.id)?.agent ?? null;
-    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? builderPrompt(task) : changedNothingBefore ? CHANGED_NOTHING_PROMPT : CONTINUE_PROMPT;
+    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? builderPrompt(task) : before === "changed nothing" ? CHANGED_NOTHING_PROMPT : before === "silent" ? silentPrompt(durationWords(silenceLimit)) : CONTINUE_PROMPT;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 
@@ -1110,6 +1133,8 @@ export function createTasks(options: TasksOptions): Tasks {
     const task = getTask(db, id);
     if (!task) throw new TaskError(404, "No such task.");
     const again = changedNothing(task);
+    // Read before the reason is cleared: the agent is told why it was stopped.
+    const before: Before = again ? "changed nothing" : stoppedForSilence(task) ? "silent" : null;
     if (task.status !== "interrupted" && !again) throw new TaskError(409, `Only a stopped task, or one whose builder changed no file, can be resumed. This task ${STANDS[task.status]}.`);
     const blocker = resumeBlocker(db, task);
     if (blocker !== null) throw new TaskError(409, blocker);
@@ -1131,7 +1156,7 @@ export function createTasks(options: TasksOptions): Tasks {
     options.onTaskChange(resumed);
     if (run !== null) options.onRunChange?.(run);
     chain = chain
-      .then(() => carryOn(id, "owner", again))
+      .then(() => carryOn(id, "owner", before))
       .then(() => {
         const runId = getTask(db, id)?.runId ?? null;
         settle(runId);

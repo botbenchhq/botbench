@@ -161,6 +161,26 @@ test("killing a group that is already gone is not an error", async () => {
   assert.equal(processGroupAlive(pgid), false);
 });
 
+test("a group whose leader has just exited, which macOS answers with EPERM, is waited for and not an error", { skip: process.platform !== "darwin" && "EPERM for such a group is macOS's" }, async (t) => {
+  // A real perl forks a child that leads a group of its own and exits at once. Until perl collects it (1.5 seconds
+  // later), the group holds only that exited process, and signalling the group gives EPERM, as it does when Claude
+  // Code has exited and Botbench has not yet collected it.
+  const script = '$| = 1; my $c = fork(); if ($c == 0) { setpgrp(0, 0); exit 0 } select(undef, undef, undef, 0.2); print "$c\\n"; select(undef, undef, undef, 1.5); waitpid($c, 0); sleep 30';
+  const { child } = launch("/usr/bin/perl", ["-e", script], { cwd: process.cwd() });
+  t.after(() => void child.kill("SIGKILL"));
+  child.stdout.setEncoding("utf8");
+  const [chunk] = (await once(child.stdout, "data")) as [string];
+  const group = Number(chunk.trim());
+  assert.ok(Number.isInteger(group) && group > 1);
+  assert.throws(() => process.kill(-group, "SIGTERM"), (err: NodeJS.ErrnoException) => err.code === "EPERM", "the group answers EPERM while its exited leader is not collected");
+  assert.equal(processGroupAlive(group), true, "EPERM is not read as gone: the group is confirmed empty only once the system no longer knows it");
+
+  await killProcessGroup(group);
+
+  assert.equal(processGroupAlive(group), false);
+  assert.throws(() => process.kill(-group, 0), (err: NodeJS.ErrnoException) => err.code === "ESRCH");
+});
+
 test("an output line that is not JSON becomes an error event", () => {
   assert.deepEqual(parseClaudeLine("this is not json"), [{ type: "error", message: "Claude Code printed a line Botbench could not read.", raw: "this is not json" }]);
   const [event] = parseClaudeLine('{"type":"assistant","message":');
