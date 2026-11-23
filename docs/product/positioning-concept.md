@@ -43,6 +43,10 @@ Supplied by the owner. Its figures and competitor claims have not been checked i
 - Pricing hypothesis, untested: solo free, Peers per developer per month, compute supplied by the user.
 - Proposed proof: 10 two-developer teams, one task that crosses a component boundary, compared with their normal process. Go or no-go on five measures: 8 of 10 pair and hand off unaided; 20% less active coordination time with no more rework; no more integration failures; 5 teams use it again within two weeks; 3 agree to a paid pilot.
 
+### North Star (owner, 22 November 2026)
+
+Two developers collaborating through their own workbenches is the North Star, not the single-developer run. The plan's Milestone 6 builds it in five proven steps.
+
 ### Messaging today
 
 Until Peers exists, "Together" is only true of one owner's agents from several vendors working one job. The README and the app lead with the tagline and do not claim sandboxing, cross-developer coordination or pull requests.
