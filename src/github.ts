@@ -14,8 +14,10 @@ import { gitEnv } from "./worktrees.ts";
  *   gh issue view <number> --repo=<host/owner/name> --json=...     one issue, read only (engine/intake.ts)
  *   gh api --method=GET --hostname=<host> repos/<owner>/<name>/issues/<number>   the same issue as GitHub's REST API
  *                                                                  gives it, read only, for how its author relates to the repository
- *   gh pr list --repo=... --state=open --json=... --limit=100      the open pull requests, read only (engine/peers.ts)
+ *   gh pr list --repo=... --state=all --json=... --limit=100       the latest pull requests in any state, read only (engine/peers.ts)
  *
+ * The one write besides a pull request goes through git, not gh, and only for a run that opens pull requests: an issue
+ * claim (its lock and named branch) pushed and deleted (engine/claims.ts).
  * Never `gh pr merge`, never `gh repo delete`, never anything that changes a branch, and nothing that writes to an
  * issue: no comment, label, close or assignment.
  */
@@ -110,7 +112,7 @@ export const ghArgs = {
     if (title === "") throw new Error("A pull request needs a title.");
     return ["pr", "create", `--repo=${repoName(repo)}`, `--base=${o.base}`, `--head=${o.head}`, `--title=${title}`, "--body-file=-"];
   },
-  /** The repository's open pull requests, read only: what other workbenches have in flight (engine/peers.ts). */
+  /** The repository's pull requests in one state or all, read only: what other workbenches have in flight (engine/peers.ts). */
   prListOpen: (repo: RepoRef, state: "open" | "all" = "open"): string[] => ["pr", "list", `--repo=${repoName(repo)}`, `--state=${state}`, `--json=${PR_FIELDS}`, `--limit=${PR_LIST_LIMIT}`],
   /** The number is checked to be a plain positive whole number, so it can only ever be read as the issue's number. */
   issueView: (repo: RepoRef, number: number): string[] => {
@@ -150,23 +152,13 @@ export interface ListedPullRequest {
   /** The numbers of the issues of this same repository it closes, as GitHub reports them. */
   closes: number[];
   files: string[];
-  /**
-   * Present, and true, when `files` may not be every file it changes: gh's own answer held as many files as gh gives,
-   * or a path Botbench could not keep (too long, empty). Counted on gh's answer, before anything was left out.
-   */
-  filesCapped?: true;
 }
-
-/** A list of pull requests; `capped` when gh's answer held as many entries as Botbench asks for, counted before any was left out. */
-export type ListedPullRequests = ListedPullRequest[] & { capped?: boolean };
-/** `list` with `capped` set, not enumerable, so the list still compares and prints as the plain list it is. */
-export const withCapped = (list: ListedPullRequest[], capped: boolean): ListedPullRequests => Object.defineProperty(list, "capped", { value: capped, enumerable: false });
 
 /**
  * The pull requests of `repo` in what `gh pr list --json=...` printed: only those of this same repository (not a
  * fork's), each at the address GitHub gives a pull request of `repo`. Anything else in the answer is left out.
  */
-export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullRequests {
+export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullRequest[] {
   const parsed = parseJson(stdout, "which pull requests are open");
   if (!Array.isArray(parsed)) throw new Error("The gh tool's list of pull requests could not be read.");
   const base = `https://${repo.host}/${repo.owner}/${repo.name}`;
@@ -183,13 +175,27 @@ export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullR
     const url = `${base}/pull/${number}`;
     if (pr.url.toLowerCase() !== url.toLowerCase()) continue;
     const closes = Array.isArray(pr.closingIssuesReferences) ? pr.closingIssuesReferences.flatMap((i) => (isObject(i) && sameRepo(i.repository) && typeof i.number === "number" && Number.isSafeInteger(i.number) && i.number >= 1 && i.number <= MAX_ISSUE_NUMBER ? [i.number] : [])) : [];
-    const raw = Array.isArray(pr.files) ? pr.files : [];
-    const kept = raw.flatMap((f) => (isObject(f) && typeof f.path === "string" && f.path !== "" && f.path.length <= PATH_LIMIT && !f.path.includes("\0") ? [f.path] : []));
-    const files = kept.slice(0, PR_FILE_LIMIT);
-    const capped = raw.length >= PR_FILE_LIMIT || kept.length < raw.length;
-    found.push({ number, url, title: plain(pr.title, TITLE_LIMIT), state: pr.state, headRefName: pr.headRefName, closes: [...new Set(closes)], files: [...new Set(files)], ...(capped ? { filesCapped: true as const } : {}) });
+    const files = Array.isArray(pr.files) ? pr.files.flatMap((f) => (isObject(f) && typeof f.path === "string" && f.path !== "" && f.path.length <= PATH_LIMIT && !f.path.includes("\0") ? [f.path] : [])).slice(0, PR_FILE_LIMIT) : [];
+    found.push({ number, url, title: plain(pr.title, TITLE_LIMIT), state: pr.state, headRefName: pr.headRefName, closes: [...new Set(closes)], files: [...new Set(files)] });
   }
-  return withCapped(found, parsed.length >= PR_LIST_LIMIT);
+  return found;
+}
+
+/**
+ * One page of a repository's pull requests: those the parser kept, and whether gh's answer filled the page (`full`), so
+ * that older pull requests may be missing from it. `full` counts every entry gh gave, a fork's and an unreadable one
+ * included: a page of 100 with one fork's pull request in it is still full though only 99 are kept.
+ */
+export interface PullRequestPage {
+  pullRequests: ListedPullRequest[];
+  full: boolean;
+}
+
+/** `parsePullRequestList`, with whether gh's answer held as many entries as were asked for. */
+export function parsePullRequestPage(stdout: string, repo: RepoRef): PullRequestPage {
+  const pullRequests = parsePullRequestList(stdout, repo);
+  // parsePullRequestList has made sure the answer is a list.
+  return { pullRequests, full: (JSON.parse(stdout) as unknown[]).length >= PR_LIST_LIMIT };
 }
 
 /** The largest issue number Botbench asks for: GitHub's numbers are 32-bit. */
@@ -369,8 +375,13 @@ export interface GitHub {
   openPullRequest(repo: RepoRef, o: { base: string; head: string; title: string; body: string; cwd: string }): Promise<PullRequest>;
   /** Read one issue, and how its author relates to the repository; nothing is written to it. */
   issue(repo: RepoRef, number: number): Promise<IssueView>;
-  /** The repository's open pull requests, read only (engine/peers.ts). */
-  openPullRequests(repo: RepoRef): Promise<ListedPullRequests>;
+  /** The repository's latest pull requests in every state, open, closed and merged, read only (engine/peers.ts). */
+  pullRequests(repo: RepoRef): Promise<PullRequestPage>;
+  /**
+   * The repository's open pull requests only, read only: for checking together (engine/combined.ts), when the page of
+   * every state is full and may have left out an older open one. `full` says this page may be cut too.
+   */
+  openPullRequests(repo: RepoRef): Promise<PullRequestPage>;
 }
 
 /** The GitHub Botbench uses: the owner's `gh`, run by `run`. */
@@ -393,10 +404,10 @@ export function createGitHub(run: RunGh = runGh, cwd = process.cwd()): GitHub {
       const view = parseIssueView(await ok(ghArgs.issueView(repo, number)), repo, number);
       return { ...view, authorRelation: parseIssueRelation(await ok(ghArgs.issueApi(repo, number)), repo, number) };
     },
+    pullRequests: async (repo) => parsePullRequestPage(await ok(ghArgs.prListOpen(repo, "all")), repo),
     openPullRequests: async (repo) => {
-      const listed = parsePullRequestList(await ok(ghArgs.prListOpen(repo)), repo);
-      // Whether gh's answer may have been cut is kept: it was counted before forks and closed ones were left out.
-      return withCapped(listed.filter((pr) => pr.state === "OPEN"), listed.capped === true);
+      const page = parsePullRequestPage(await ok(ghArgs.prListOpen(repo, "open")), repo);
+      return { pullRequests: page.pullRequests.filter((pr) => pr.state === "OPEN"), full: page.full };
     },
   };
 }

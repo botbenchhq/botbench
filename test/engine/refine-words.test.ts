@@ -116,6 +116,16 @@ test("the outcome and its plain line say what came of the reviews and the fixes"
     [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns")], refinements: [fix("", true, "failed")], cap: 2 }, "failed", "Codex raised 1 concern. Claude Code's fixes did not finish: needs your judgment."],
     [{ agent: "codex", builder: "claude-code", reviews: [reviewed(null, "It is wrong.")], refinements: [fix("Fixed.")], cap: 2 }, "unresolved", "Codex raised concerns. Claude Code replied to them. Needs your judgment."],
     [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns")], refinements: [], cap: 0 }, "unresolved", "Codex raised 1 concern. Needs your judgment."],
+    // A finished round with no reply (or only whitespace) and no change is no answer, never "replied to them".
+    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns")], refinements: [fix("", false)], cap: 2 }, "unresolved", "Codex raised 1 concern. Claude Code did not answer. Needs your judgment."],
+    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns")], refinements: [fix(" \n\t", false)], cap: 2 }, "unresolved", "Codex raised 1 concern. Claude Code did not answer. Needs your judgment."],
+    [
+      { agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed("concerns")], refinements: [fix(ADDRESSED), fix("", false)], cap: 2 },
+      "unresolved",
+      "Codex raised 3 concerns, then 1. Claude Code addressed 1. Claude Code did not answer the last round. Needs your judgment.",
+    ],
+    // Changed work with no words is an answer: the change is the reply.
+    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns")], refinements: [fix("", true)], cap: 2 }, "unresolved", "Codex raised 1 concern. Claude Code replied to them. Needs your judgment."],
   ];
   for (const [given, outcome, line] of cases) {
     assert.equal(reviewOutcome(given), outcome, line);

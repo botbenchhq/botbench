@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { realRepo } from "../approvals/grants.ts";
-import { MAX_ISSUE_NUMBER, PR_FILE_LIMIT, PR_LIST_LIMIT, redact } from "../github.ts";
+import { MAX_ISSUE_NUMBER, PR_LIST_LIMIT, redact } from "../github.ts";
 import { now, transaction } from "../store/db.ts";
 import { isOwnBranch } from "../workbench.ts";
-import { branchCommit, combinedRoot, describeCommits, prepareCombinedCopy, remoteAddress, removeCombinedCopy } from "../worktrees.ts";
+import { branchCommit, combinedRoot, describeCommits, peerChangedFiles, prepareCombinedCopy, remoteAddress, removeCombinedCopy } from "../worktrees.ts";
 import { allowedHostsFor } from "./intake.ts";
 import type { PeerPullRequest, Peers, PeersView } from "./peers.ts";
 import { runCommand, type CommandOutcome, type CommandRun, type StationCommand } from "./stations.ts";
@@ -163,15 +163,25 @@ export function freshness(check: Pick<CombinedCheck, "pullRequest" | "peerCommit
   return { state: "stale", taskMoved, pullRequestMoved, taskNow: o.taskHead, pullRequestNow: pr.head };
 }
 
-/** The open pull requests of other workbenches in `view` that change one of `files`, with the files both change. */
-export function overlapping(view: PeersView, files: readonly string[]): { pr: PeerPullRequest; files: string[] }[] {
-  if (view.state !== "ready") return [];
+/**
+ * The files each open pull request of another workbench changes, by its number, as git read them from its fetched head
+ * (`peerFiles` of CheckTogether); null for one whose files could not be read.
+ */
+export type PeerFiles = ReadonlyMap<number, readonly string[] | null>;
+
+/**
+ * The open pull requests of other workbenches in `view` that change one of `files`, with the files both change. Which
+ * files a pull request changes is what git read from its commits (`peerFiles`), not GitHub's list of them; one whose
+ * files could not be read, or that is not in `peerFiles`, may change any of them and counts as overlapping.
+ */
+export function overlapping(view: PeersView, files: readonly string[], peerFiles: PeerFiles): { pr: PeerPullRequest; files: string[] }[] {
+  if (view.state !== "ready" || files.length === 0) return [];
   const ours = new Set(files);
   return view.pullRequests.flatMap((pr) => {
-    const both = pr.files.filter((file) => ours.has(file));
-    // A pull request whose list of files may be cut (gh gave as many as it gives, or a path could not be kept) may change one of these.
-    const maybe = files.length > 0 && (pr.filesCapped === true || pr.files.length >= PR_FILE_LIMIT);
-    return both.length === 0 && !maybe ? [] : [{ pr, files: both }];
+    const theirs = peerFiles.get(pr.number);
+    if (theirs === undefined || theirs === null) return [{ pr, files: [] }];
+    const both = theirs.filter((file) => ours.has(file));
+    return both.length === 0 ? [] : [{ pr, files: both }];
   });
 }
 
@@ -184,11 +194,11 @@ const listWords = (items: readonly string[]): string => (items.length <= 1 ? (it
  * changes one of the task's `files` has a check together that passed and is current. A conflict, a failed or unmade
  * check, and a stale one do not count. `why` is the plain reason, to follow "It needs your review:".
  */
-export function checkTogetherGate(o: { required: boolean; files: readonly string[]; view: PeersView; checks: readonly CombinedCheck[]; taskHead: string | null }): { ok: true } | { ok: false; why: string; waitingOn: number[] } {
+export function checkTogetherGate(o: { required: boolean; files: readonly string[]; view: PeersView; peerFiles: PeerFiles; checks: readonly CombinedCheck[]; taskHead: string | null }): { ok: true } | { ok: false; why: string; waitingOn: number[] } {
   if (!o.required) return { ok: true };
   if (o.view.state !== "ready") return { ok: false, why: `This repository requires checking together with other workbenches' pull requests, and Botbench could not read them: ${o.view.problem}`, waitingOn: [] };
   if (o.view.mayBeMore === true) return { ok: false, why: `This repository requires checking together, and it has at least ${PR_LIST_LIMIT} open pull requests, more than Botbench reads at once, so it cannot tell which of them change the same files.`, waitingOn: [] };
-  const blockers = overlapping(o.view, o.files).filter(({ pr }) => !o.checks.some((c) => c.pullRequest === pr.number && c.outcome === "passed" && freshness(c, { taskHead: o.taskHead, view: o.view }).state === "current"));
+  const blockers = overlapping(o.view, o.files, o.peerFiles).filter(({ pr }) => !o.checks.some((c) => c.pullRequest === pr.number && c.outcome === "passed" && freshness(c, { taskHead: o.taskHead, view: o.view }).state === "current"));
   if (blockers.length === 0) return { ok: true };
   const named = listWords(blockers.map(({ pr }) => prWords(pr)));
   return { ok: false, why: `This repository requires checking together, and there is no passing check together with ${named} at the commits both are at now.`, waitingOn: blockers.map(({ pr }) => pr.number) };
@@ -206,6 +216,11 @@ export interface CheckTogether {
   start(taskId: number, pullRequest: unknown): Promise<{ finished: Promise<CombinedCheck> }>;
   /** The pull request a check together of the task is running with now, or null. */
   running(taskId: number): number | null;
+  /**
+   * The files each open pull request of another workbench in `view` changes, read by git from its head on the remote
+   * (src/worktrees.ts peerChangedFiles), from `baseCommit`. Kept per head, so a head is fetched once. Never rejects.
+   */
+  peerFiles(task: Task, view: PeersView): Promise<PeerFiles>;
   /** The gate a fully autonomous run's accept passes through (engine/task.ts). Never rejects: a doubt is a wait. */
   gate(task: Task, files: readonly string[], head: string | null): Promise<{ ok: true } | { ok: false; why: string }>;
   /** Stop what is running and wait until each has stored its end and removed its copy. */
@@ -230,6 +245,8 @@ export interface CheckTogetherOptions {
 export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
   const { db, home } = o;
   const busy = new Map<number, { pullRequest: number; finished: Promise<CombinedCheck> }>();
+  // The files a peer's head changes from a base, by "<head> <base>": a commit's files never change.
+  const filesOf = new Map<string, Promise<string[] | null>>();
   const stop = new AbortController();
 
   const run = async (task: Task, taskCommit: string, pr: PeerPullRequest, fetchUrl: string, commands: { setup: readonly StationCommand[]; checks: readonly StationCommand[] }): Promise<CombinedCheck> => {
@@ -285,7 +302,43 @@ export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
     return check;
   };
 
+  const peerFiles = async (task: Task, view: PeersView): Promise<PeerFiles> => {
+    const found = new Map<number, string[] | null>();
+    if (view.state !== "ready" || view.pullRequests.length === 0) return found;
+    const base = task.baseCommit;
+    const address = await remoteAddress(task.repo, o.remote(task.repo)).catch(() => null);
+    for (const pr of view.pullRequests) {
+      if (base === null || address === null || pr.head === null) {
+        found.set(pr.number, null);
+        continue;
+      }
+      const key = `${pr.head} ${base}`;
+      let read = filesOf.get(key);
+      if (read === undefined) {
+        const dir = path.join(combinedRoot(home), `files-${task.id}-${randomBytes(6).toString("hex")}`);
+        read = peerChangedFiles({ repo: task.repo, home, dir, fetchUrl: address.fetch, peerBranch: pr.branch, baseCommit: base })
+          // A head that moved between the view and the fetch is not the one the view names: its files are not known.
+          .then((r) => (r.peerCommit === pr.head ? r.files : null), () => null)
+          .finally(() => {
+            try {
+              removeCombinedCopy(home, dir);
+            } catch (err) {
+              console.error(`Removing the copy for reading pull request #${pr.number}'s files failed: ${words(err)}`);
+            }
+          });
+        filesOf.set(key, read);
+        // An answer that could not be read is asked again next time.
+        void read.then((files) => {
+          if (files === null) filesOf.delete(key);
+        });
+      }
+      found.set(pr.number, await read);
+    }
+    return found;
+  };
+
   return {
+    peerFiles,
     async start(taskId, given) {
       if (typeof given !== "number" || !Number.isSafeInteger(given) || given < 1 || given > MAX_ISSUE_NUMBER) throw new TaskError(400, "Give the number of another workbench's open pull request.");
       const task = getTask(db, taskId);
@@ -320,7 +373,7 @@ export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
         const view = await o.peers.view(task.repo, { fresh: true });
         const taskHead = task.branch === null ? null : await branchCommit(task.repo, task.branch).catch(() => null);
         // The branch must still be at the commit the mode qualified; a branch at another commit is the owner's.
-        const verdict = checkTogetherGate({ required, files, view, checks: combinedChecks(db, task.id), taskHead: taskHead === head ? taskHead : null });
+        const verdict = checkTogetherGate({ required, files, view, peerFiles: await peerFiles(task, view), checks: combinedChecks(db, task.id), taskHead: taskHead === head ? taskHead : null });
         return verdict.ok ? { ok: true } : { ok: false, why: verdict.why };
       } catch (err) {
         return { ok: false, why: `This repository requires checking together, and Botbench could not tell whether it was done: ${words(err)}` };
@@ -344,9 +397,11 @@ export async function checkTogetherView(o: { db: DatabaseSync; peers: Peers; che
   const taskHead = task.branch === null ? null : await branchCommit(task.repo, task.branch).catch(() => null);
   const checks = stored.map((check) => ({ ...check, freshness: freshness(check, { taskHead, view }) }));
   const files = await changedFiles(task);
-  const overlaps = new Map(overlapping(view, files).map(({ pr, files: both }) => [pr.number, both]));
+  // Read only for a task that can still be checked together: each peer head is fetched once, then kept.
+  const peerFiles = task.status === "awaiting_decision" ? await o.checkTogether.peerFiles(task, view) : new Map<number, string[] | null>();
+  const overlaps = new Map(overlapping(view, files, peerFiles).map(({ pr, files: both }) => [pr.number, both]));
   const offers = task.status === "awaiting_decision" && view.state === "ready" ? view.pullRequests.map((pr) => ({ number: pr.number, title: pr.title, url: pr.url, workbench: pr.workbench, head: pr.head, overlaps: overlaps.get(pr.number) ?? [] })) : [];
-  const gate = task.status === "awaiting_decision" ? checkTogetherGate({ required, files, view, checks, taskHead }) : null;
+  const gate = task.status === "awaiting_decision" ? checkTogetherGate({ required, files, view, peerFiles, checks, taskHead }) : null;
   return {
     required,
     running: o.checkTogether.running(task.id),

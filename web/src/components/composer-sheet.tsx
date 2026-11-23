@@ -20,6 +20,7 @@ const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   issue: { label: "From an issue", title: "From an issue", icon: "external-link" },
   spec: { label: "Spec file", title: "Spec file", icon: "file" },
   mode: { label: "Mode", title: "Mode", icon: "shield" },
+  tasks: { label: "Tasks", title: "How many tasks", icon: "circle-dashed" },
   review: { label: "Review", title: "Review", icon: "eye" },
   delivery: { label: "When accepted", title: "When you accept a task", icon: "circle-check" },
   commands: { label: "Allowed commands", title: "Allowed commands", icon: "terminal" },
@@ -47,6 +48,9 @@ export interface SheetState {
   review: ReviewChoiceState;
   delivery: Delivery;
   setDelivery(delivery: Delivery): void;
+  /** Whether the run is kept to one task, as it would start now. */
+  oneTask: boolean;
+  setOneTask(oneTask: boolean): void;
   issue: IssueChoiceState;
   models: ModelChoiceState;
   sameBuild: boolean;
@@ -158,6 +162,17 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
       <ModePicker name="run-mode" legend="Mode" hideLegend hint="A single task always runs in Manual. Plan a run to choose another mode." value="manual" onChange={() => {}} only="manual" />
     ) : (
       <ModePicker name="run-mode" legend="Mode" hideLegend hint={state.issue.attached !== null ? ISSUE_NOT_FULL : "Fully autonomous accepts only work whose checks all passed and that its reviewer, if any, said looks right and named what it checked; the rest waits for you. The mode cannot be changed once the run starts."} value={state.mode} onChange={state.setMode} {...(state.issue.attached !== null ? { refused: { mode: "full" as const, state: "Not for a run from an issue" } } : {})} />
+    );
+  if (row === "tasks")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="tasks-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">How many tasks</legend>
+        <p id="tasks-hint" className="ds-option-picker__hint">
+          Fully autonomous keeps a run to one task unless you choose otherwise. It cannot be changed once the run starts.
+        </p>
+        <Option group="tasks" id="tasks-one" value="one" checked={state.oneTask} onChange={() => state.setOneTask(true)} name="Keep it to one task" description="Claude Code plans one task that does all of the work. If it plans more, it is asked once more for one; if it still plans more, Botbench joins them into one task." />
+        <Option group="tasks" id="tasks-several" value="several" checked={!state.oneTask} onChange={() => state.setOneTask(false)} name="Let it plan several" description="Claude Code splits the work into up to 20 tasks, built one after another." />
+      </fieldset>
     );
   if (row === "issue") return <IssueOptions state={state.issue} />;
   if (row === "review") return <ReviewOptions state={state.review} />;

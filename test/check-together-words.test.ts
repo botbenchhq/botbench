@@ -42,9 +42,9 @@ test("the requirement says what it means and what it still waits on", () => {
 });
 
 test("no sentence about checking together uses a word the screens never show, the server's reasons included", () => {
-  const view = { state: "ready" as const, repo: "/r", repository: "github.com/o/r", checkedAt: "", branches: [], pullRequests: [{ workbench: "bob", number: 12, title: "t", url: "", branch: "botbench/bob/run-1/task-1", closes: [], files: ["src/a.ts"], head: B }] };
-  const gate = checkTogetherGate({ required: true, files: ["src/a.ts"], view, checks: [], taskHead: A });
-  const unread = checkTogetherGate({ required: true, files: ["src/a.ts"], view: { state: "unavailable", repo: "/r", problem: "gh is not signed in.", checkedAt: "" }, checks: [], taskHead: A });
+  const view = { state: "ready" as const, repo: "/r", repository: "github.com/o/r", checkedAt: "", branches: [], claims: [], pullRequests: [{ workbench: "bob", number: 12, title: "t", url: "", branch: "botbench/bob/run-1/task-1", closes: [], files: ["src/a.ts"], head: B }] };
+  const gate = checkTogetherGate({ required: true, files: ["src/a.ts"], view, peerFiles: new Map([[12, ["src/a.ts"]]]), checks: [], taskHead: A });
+  const unread = checkTogetherGate({ required: true, files: ["src/a.ts"], view: { state: "unavailable", repo: "/r", problem: "gh is not signed in.", checkedAt: "" }, peerFiles: new Map(), checks: [], taskHead: A });
   const offers = [{ number: 12, title: "t", url: "", workbench: "bob", head: B, overlaps: [] }];
   const sentences = [
     gate.ok ? "" : `It needs your review: ${gate.why}`,

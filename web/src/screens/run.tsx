@@ -344,6 +344,14 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   {run.repo}
                 </dd>
               </div>
+              {run.claim !== null && (
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Other workbenches</dt>
+                  <dd data-testid="run-claim" data-ds-content="" className="ds-key-value__value">
+                    {run.claim.words}
+                  </dd>
+                </div>
+              )}
               {run.specPath !== null && (
                 <div className="ds-key-value__item">
                   <dt className="ds-key-value__label">Spec file</dt>
@@ -512,7 +520,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                     </li>
                   ))}
                 </ul>
-                <p>You listed these when you started the run, for when its tasks are built. Planning uses none of them: every command it wants asks.</p>
+                <p>You listed these when you started the run, for when its tasks are built. Planning uses none of them.</p>
               </section>
             )}
 

@@ -6,15 +6,16 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { createBroker } from "../../src/approvals/broker.ts";
 import type { Config } from "../../src/config.ts";
-import { checkTogetherGate, checkTogetherView, combinedChecks, createCheckTogether, freshness, setCheckTogetherRequired, type CheckTogether, type CombinedCheck } from "../../src/engine/combined.ts";
+import { checkTogetherGate, checkTogetherView, combinedChecks, createCheckTogether, freshness, setCheckTogetherRequired, type CheckTogether, type CombinedCheck, type PeerFiles } from "../../src/engine/combined.ts";
 import { taskDecision } from "../../src/engine/decision.ts";
 import type { PeersView } from "../../src/engine/peers.ts";
 import { createRun, createRuns, storePlan } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, TaskError } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
+import { chooseWorkbench } from "../../src/workbench.ts";
 import { combinedRoot } from "../../src/worktrees.ts";
-import { makeScene, PEER_BRANCH, peerCommit, readyTask, remoteState, repoState, scenePeers, type Scene } from "../support/check-together.ts";
+import { makeScene, OTHER_PRS, PEER_BRANCH, PEER_PR, PEER_WORKBENCH, peerCommit, readyTask, remoteState, repoState, scenePeers, type Scene } from "../support/check-together.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { loadPlanRecording, planReplayDriver, THREE_TASKS } from "../support/replay-plan.ts";
@@ -22,7 +23,7 @@ import { git, ownerCommit, tempDir, write } from "../support/repo.ts";
 
 // Checking a task together with another workbench's open pull request (engine/combined.ts), with real git, a real bare
 // remote holding bob's pushed branch, real SQLite and the repository's commands run as real confined child processes.
-// The one value that is not read from a real program is the open pull request gh would list (test/support/check-together.ts says why).
+// The open pull request is a real one, replayed from gh's captured list (test/support/check-together.ts).
 
 type T = { after(fn: () => unknown): void };
 const cmd = (command: string): StationCommand => ({ command, limitMs: 20_000 });
@@ -57,15 +58,15 @@ test("a conflict names the files in conflict, runs no command, pushes nothing, a
   const b = bench(t, { "README.md": "# Bob's sample\n", "src/bob.txt": "bob\n" }, [cmd("true")]);
   const task = await readyTask(b.db, b.scene, { "README.md": "# Alice's sample\n" });
   const before = { repo: repoState(b.scene.repo), remote: remoteState(b.scene.bare) };
-  const { finished } = await b.together.start(task.id, 7);
-  assert.equal(b.together.running(task.id), 7);
+  const { finished } = await b.together.start(task.id, PEER_PR);
+  assert.equal(b.together.running(task.id), PEER_PR);
   const check = await finished;
   assert.equal(check.outcome, "conflict", String(check.problem));
   assert.deepEqual(check.conflicts, ["README.md"]);
   assert.deepEqual(check.commands, [], "nothing ran on a merge that was not made");
   assert.equal(check.taskCommit, task.headCommit);
   assert.equal(check.peerCommit, git(b.scene.peer, "rev-parse", "HEAD").trim(), "the head of bob's branch that was fetched");
-  assert.deepEqual([check.workbench, check.peerBranch, check.pullRequest], ["bob", PEER_BRANCH, 7]);
+  assert.deepEqual([check.workbench, check.peerBranch, check.pullRequest], [PEER_WORKBENCH, PEER_BRANCH, PEER_PR]);
   assert.deepEqual(combinedChecks(b.db, task.id).map((c) => c.id), [check.id], "stored as the task's evidence");
   assert.equal(b.together.running(task.id), null);
   assert.deepEqual(leftCopies(b.scene.home), []);
@@ -87,8 +88,9 @@ test("what cannot be checked together is refused with the reason, before anythin
   await refused(99, 404, /Pull request #99 is not an open pull request from another workbench on this repository/);
   await refused("7", 400, /Give the number/);
   await refused(7, 404, /No such task/, 9999);
-  b.scene.prs[0]!.headRefName = "botbench/alice/run-9/task-9";
-  await refused(7, 404, /not an open pull request from another workbench/, task.id);
+  // Once this installation has had the other workbench's name, its pull request is no longer another workbench's.
+  chooseWorkbench(b.db, PEER_WORKBENCH, "owner");
+  await refused(PEER_PR, 404, /not an open pull request from another workbench/, task.id);
   assert.deepEqual(leftCopies(b.scene.home), []);
   assert.deepEqual(combinedChecks(b.db, task.id), []);
 });
@@ -98,26 +100,26 @@ test("a fetch that fails is stored as not run, saying why, and its copy is remov
   const task = await readyTask(b.db, b.scene, { "src/a.txt": "alice\n" });
   // bob deletes the branch from the remote after the view was read. The copy's clone has started, and the fetch comes
   // only after it, which cannot finish while this synchronous call holds the event loop: so the fetch finds no branch.
-  const { finished } = await b.together.start(task.id, 7);
+  const { finished } = await b.together.start(task.id, PEER_PR);
   git(b.scene.bare, "update-ref", "-d", `refs/heads/${PEER_BRANCH}`);
   const check = await finished;
   assert.equal(check.outcome, "not_run");
   assert.equal(check.peerCommit, null);
-  assert.match(String(check.problem), /^Botbench could not merge pull request #7 with this task's work: /);
+  assert.match(String(check.problem), new RegExp(`^Botbench could not merge pull request #${PEER_PR} with this task's work: `));
   assert.deepEqual(check.commands, []);
   assert.deepEqual(leftCopies(b.scene.home), [], "removed on failure too");
-  assert.equal(checkTogetherGate({ required: true, files: ["src/bob.txt", "src/a.txt"], view: { state: "ready", repo: "", repository: "", checkedAt: "", branches: [], pullRequests: [{ workbench: "bob", number: 7, title: "", url: "", branch: PEER_BRANCH, closes: [], files: ["src/a.txt"], head: null }] }, checks: combinedChecks(b.db, task.id), taskHead: task.headCommit }).ok, false, "a check that did not run does not count");
+  assert.equal(checkTogetherGate({ required: true, files: ["src/bob.txt", "src/a.txt"], view: { state: "ready", repo: "", repository: "", checkedAt: "", branches: [], claims: [], pullRequests: [{ workbench: PEER_WORKBENCH, number: PEER_PR, title: "", url: "", branch: PEER_BRANCH, closes: [], files: ["src/a.txt"], head: null }] }, peerFiles: new Map(), checks: combinedChecks(b.db, task.id), taskHead: task.headCommit }).ok, false, "a check that did not run does not count");
 });
 
 test("a clean merge with passing checks: each command's output is stored, both heads are recorded, nothing is pushed and the copy is gone", { skip: NO_SANDBOX }, async (t) => {
   const b = bench(t, { "src/bob.txt": "bob\n" }, [cmd("test -f src/bob.txt && test -f src/alice.txt && echo both-here"), cmd("git log --oneline -1")], [cmd("echo set-up")]);
   const task = await readyTask(b.db, b.scene, { "src/alice.txt": "alice\n" });
   const before = { repo: repoState(b.scene.repo), remote: remoteState(b.scene.bare) };
-  const check = await (await b.together.start(task.id, 7)).finished;
+  const check = await (await b.together.start(task.id, PEER_PR)).finished;
   assert.equal(check.outcome, "passed", JSON.stringify(check.commands.map((c) => [c.command, c.outcome, c.output])));
   assert.deepEqual(check.commands.map((c) => [c.kind, c.position, c.outcome]), [["setup", 1, "passed"], ["check", 1, "passed"], ["check", 2, "passed"]]);
   assert.match(check.commands[1]!.output, /both-here/);
-  assert.match(check.commands[2]!.output, /Check together with botbench\/bob\/run-1\/task-1/, "the checks ran on the merge");
+  assert.ok(check.commands[2]!.output.includes(`Check together with ${PEER_BRANCH}`), "the checks ran on the merge");
   assert.equal(check.peerCommit, git(b.scene.peer, "rev-parse", "HEAD").trim());
   assert.equal(check.taskCommit, task.headCommit);
   assert.deepEqual(b.passed, [task.id], "a pass clears its blocker");
@@ -134,7 +136,7 @@ test("a check that fails only when combined: each side passes it alone, the merg
   const alone = (dir: string): number | null => spawnSync("/bin/sh", ["-c", check], { cwd: dir }).status;
   assert.equal(alone(task.worktreePath!), 0, "the task alone passes");
   assert.equal(alone(b.scene.peer), 0, "bob's branch alone passes");
-  const result = await (await b.together.start(task.id, 7)).finished;
+  const result = await (await b.together.start(task.id, PEER_PR)).finished;
   assert.equal(result.outcome, "failed");
   assert.deepEqual(result.commands.map((c) => [c.outcome, c.exitCode]), [["failed", 3]]);
   assert.match(result.commands[0]!.output, /cannot both exist/);
@@ -144,7 +146,7 @@ test("a check that fails only when combined: each side passes it alone, the merg
 test("stale: once bob pushes a new commit, or the task's branch moves, the result names the commit it ran on and the new one, and the check is offered again", async (t) => {
   const b = bench(t, { "README.md": "# Bob's sample\n" }, [cmd("true")]);
   const task = await readyTask(b.db, b.scene, { "README.md": "# Alice's sample\n" });
-  const ran = await (await b.together.start(task.id, 7)).finished;
+  const ran = await (await b.together.start(task.id, PEER_PR)).finished;
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: {}, roles: {}, repositories: {} };
   const peers = scenePeers(b.db, b.scene, config);
   const shown = async () => (await checkTogetherView({ db: b.db, peers, checkTogether: b.together, task: getTask(b.db, task.id)! })) as { checks: (CombinedCheck & { freshness: ReturnType<typeof freshness> })[]; offers: { number: number; head: string | null }[] };
@@ -154,7 +156,8 @@ test("stale: once bob pushes a new commit, or the task's branch moves, the resul
   const after = await shown();
   assert.deepEqual(after.checks[0]!.freshness, { state: "stale", taskMoved: false, pullRequestMoved: true, taskNow: task.headCommit, pullRequestNow: moved });
   assert.notEqual(after.checks[0]!.peerCommit, moved, "it still names the commit it ran on");
-  assert.deepEqual(after.offers.map((o) => [o.number, o.head]), [[7, moved]], "offered again, at the new head");
+  assert.deepEqual(after.offers.filter((o) => o.number === PEER_PR).map((o) => [o.number, o.head]), [[PEER_PR, moved]], "offered again, at the new head");
+  assert.deepEqual(after.offers.map((o) => o.number).sort((x, y) => x - y), [PEER_PR, ...OTHER_PRS].sort((x, y) => x - y), "every open pull request of another workbench is offered");
 
   // The task's branch moves (a commit added on top of it): stale for that side too.
   write(task.worktreePath!, "src/extra.txt", "x\n");
@@ -164,14 +167,36 @@ test("stale: once bob pushes a new commit, or the task's branch moves, the resul
   assert.equal(ran.taskCommit, task.headCommit);
 
   // Checking again runs on both heads as they are now, so its result is current.
-  const again = await (await b.together.start(task.id, 7)).finished;
+  const again = await (await b.together.start(task.id, PEER_PR)).finished;
   assert.deepEqual([again.taskCommit, again.peerCommit], [added, moved]);
   assert.deepEqual((await shown()).checks[0]!.freshness, { state: "current" });
 });
 
+test("the files another workbench's pull request changes are read by git from its head on the remote, not from GitHub's list; nothing of the repository or the remote changes", async (t) => {
+  const b = bench(t, { "src/bob.txt": "bob\n", "docs/bob.md": "notes\n" }, [cmd("true")]);
+  const task = await readyTask(b.db, b.scene, { "src/a.txt": "alice\n" });
+  const before = { repo: repoState(b.scene.repo), remote: remoteState(b.scene.bare) };
+  const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: {}, roles: {}, repositories: {} };
+  const view = await scenePeers(b.db, b.scene, config).view(b.scene.repo);
+  assert.equal(view.state, "ready");
+  const listedByGh = view.state === "ready" ? view.pullRequests.find((pr) => pr.number === PEER_PR)!.files : [];
+  assert.ok(!listedByGh.includes("src/bob.txt"), "GitHub's captured list for that pull request names other files");
+  const files = await b.together.peerFiles(task, view);
+  assert.deepEqual(files.get(PEER_PR), ["docs/bob.md", "src/bob.txt"], "what bob's commits change, read by git");
+  for (const other of OTHER_PRS) assert.deepEqual(files.get(other), [], "a branch at main changes nothing");
+  assert.deepEqual(leftCopies(b.scene.home), [], "the copy it was read in is gone");
+  assert.deepEqual({ repo: repoState(b.scene.repo), remote: remoteState(b.scene.bare) }, before, "no ref, object or FETCH_HEAD in the repository; nothing pushed");
+  // bob's head moves on the remote after the view was read: the files of the head the view names are not known.
+  peerCommit(b.scene, { "src/c.txt": "c\n" }, "bob's second commit");
+  const stale = await b.together.peerFiles(getTask(b.db, task.id)!, { ...view, pullRequests: view.state === "ready" ? view.pullRequests.map((pr) => (pr.number === PEER_PR ? { ...pr, head: "f".repeat(40) } : pr)) : [] } as PeersView);
+  assert.equal(stale.get(PEER_PR), null, "a head that is not the one fetched counts as unknown, so as overlapping");
+});
+
 // The gate, as a rule on what is stored and what the view shows. Literal views and results stand for what the store
 // and the remote hold; each case is one the tests above make real.
-const view = (prs: { number: number; files: string[]; head: string | null }[]): PeersView => ({ state: "ready", repo: "/r", repository: "github.com/o/r", checkedAt: "", branches: [], pullRequests: prs.map((p) => ({ workbench: "bob", title: "t", url: "", branch: `botbench/bob/run-1/task-${p.number}`, closes: [], ...p })) });
+const view = (prs: { number: number; files: string[]; head: string | null }[]): PeersView => ({ state: "ready", repo: "/r", repository: "github.com/o/r", checkedAt: "", branches: [], claims: [], pullRequests: prs.map((p) => ({ workbench: "bob", title: "t", url: "", branch: `botbench/bob/run-1/task-${p.number}`, closes: [], ...p })) });
+/** The files git read for each pull request of a literal view: here, what the view lists for it. */
+const filesOf = (v: PeersView): PeerFiles => new Map(v.state === "ready" ? v.pullRequests.map((pr) => [pr.number, pr.files] as const) : []);
 const A = "a".repeat(40);
 const B = "b".repeat(40);
 const C = "c".repeat(40);
@@ -180,27 +205,26 @@ const result = (o: Partial<CombinedCheck>): CombinedCheck => ({ id: 1, taskId: 1
 test("the gate: with the setting on, each overlapping open pull request of another workbench needs a passing check at both current heads", () => {
   const files = ["src/a.ts"];
   const v = view([{ number: 7, files: ["src/a.ts"], head: B }, { number: 8, files: ["docs/x.md"], head: C }]);
-  assert.deepEqual(checkTogetherGate({ required: false, files, view: v, checks: [], taskHead: A }), { ok: true }, "the setting off");
-  const none = checkTogetherGate({ required: true, files, view: v, checks: [], taskHead: A });
+  assert.deepEqual(checkTogetherGate({ required: false, files, view: v, peerFiles: filesOf(v), checks: [], taskHead: A }), { ok: true }, "the setting off");
+  const none = checkTogetherGate({ required: true, files, view: v, peerFiles: filesOf(v), checks: [], taskHead: A });
   assert.equal(none.ok, false);
   assert.match((none as { why: string }).why, /requires checking together, and there is no passing check together with bob's pull request #7/);
   assert.deepEqual((none as { waitingOn: number[] }).waitingOn, [7], "#8 changes none of the task's files");
-  assert.deepEqual(checkTogetherGate({ required: true, files, view: v, checks: [result({})], taskHead: A }), { ok: true });
-  for (const outcome of ["conflict", "failed", "not_run"] as const) assert.equal(checkTogetherGate({ required: true, files, view: v, checks: [result({ outcome })], taskHead: A }).ok, false, `${outcome} does not count`);
-  assert.equal(checkTogetherGate({ required: true, files, view: view([{ number: 7, files, head: C }]), checks: [result({})], taskHead: A }).ok, false, "stale: bob's head moved");
-  assert.equal(checkTogetherGate({ required: true, files, view: v, checks: [result({})], taskHead: C }).ok, false, "stale: the task's branch moved");
-  assert.equal(checkTogetherGate({ required: true, files, view: v, checks: [result({ pullRequest: 8 })], taskHead: A }).ok, false, "a pass with another pull request does not count");
-  const unread = checkTogetherGate({ required: true, files, view: { state: "unavailable", repo: "/r", problem: "gh is not signed in", checkedAt: "" }, checks: [result({})], taskHead: A });
+  assert.deepEqual(checkTogetherGate({ required: true, files, view: v, peerFiles: filesOf(v), checks: [result({})], taskHead: A }), { ok: true });
+  for (const outcome of ["conflict", "failed", "not_run"] as const) assert.equal(checkTogetherGate({ required: true, files, view: v, peerFiles: filesOf(v), checks: [result({ outcome })], taskHead: A }).ok, false, `${outcome} does not count`);
+  assert.equal(checkTogetherGate({ required: true, files, view: view([{ number: 7, files, head: C }]), peerFiles: new Map([[7, files]]), checks: [result({})], taskHead: A }).ok, false, "stale: bob's head moved");
+  assert.equal(checkTogetherGate({ required: true, files, view: v, peerFiles: filesOf(v), checks: [result({})], taskHead: C }).ok, false, "stale: the task's branch moved");
+  assert.equal(checkTogetherGate({ required: true, files, view: v, peerFiles: filesOf(v), checks: [result({ pullRequest: 8 })], taskHead: A }).ok, false, "a pass with another pull request does not count");
+  const unread = checkTogetherGate({ required: true, files, view: { state: "unavailable", repo: "/r", problem: "gh is not signed in", checkedAt: "" }, peerFiles: new Map(), checks: [result({})], taskHead: A });
   assert.equal(unread.ok, false, "a view that cannot be read is a wait, never a pass");
   assert.deepEqual(freshness(result({}), { taskHead: A, view: view([]) }), { state: "closed" });
-  // What gh's limits may hide is a wait: a list as long as Botbench asks for, and a pull request listed with as many files as gh gives.
-  assert.equal(checkTogetherGate({ required: true, files, view: { ...v, mayBeMore: true } as PeersView, checks: [result({})], taskHead: A }).ok, false, "there may be more open pull requests");
-  const many = Array.from({ length: 100 }, (_, i) => `docs/f${i}.md`);
-  const capped = checkTogetherGate({ required: true, files, view: view([{ number: 9, files: many, head: C }]), checks: [], taskHead: A });
-  assert.deepEqual([capped.ok, (capped as { waitingOn: number[] }).waitingOn], [false, [9]], "a pull request listed with 100 files may change more");
-  const flagged = view([{ number: 9, files: ["docs/x.md"], head: C }]);
-  if (flagged.state === "ready") flagged.pullRequests[0]!.filesCapped = true;
-  assert.deepEqual((checkTogetherGate({ required: true, files, view: flagged, checks: [], taskHead: A }) as { waitingOn: number[] }).waitingOn, [9], "a list of files gh may have cut counts as overlapping");
+  // What gh's limit may hide is a wait: even the list of open pull requests alone was as long as Botbench asks for.
+  assert.equal(checkTogetherGate({ required: true, files, view: { ...v, mayBeMore: true } as PeersView, peerFiles: filesOf(v), checks: [result({})], taskHead: A }).ok, false, "there may be more open pull requests");
+  // Which files a pull request changes is what git read from its head; one whose files could not be read may change any.
+  const unknown = checkTogetherGate({ required: true, files, view: v, peerFiles: new Map([[7, null]]), checks: [], taskHead: A });
+  assert.deepEqual((unknown as { waitingOn: number[] }).waitingOn, [7, 8], "files that could not be read count as overlapping");
+  const gitSays = checkTogetherGate({ required: true, files, view: v, peerFiles: new Map([[7, ["docs/y.md"]], [8, ["src/a.ts"]]]), checks: [], taskHead: A });
+  assert.deepEqual((gitSays as { waitingOn: number[] }).waitingOn, [8], "git's files count, not GitHub's list");
 });
 
 test("fully autonomous with the setting on: a task whose transcript asks to skip the shared check waits for the owner; a passing check together lets its mode accept it", { skip: NO_SANDBOX }, async (t) => {
@@ -236,13 +260,13 @@ test("fully autonomous with the setting on: a task whose transcript asks to skip
 
   const waiting = getTask(db, id)!;
   assert.equal(waiting.status, "awaiting_decision", waiting.reason ?? "");
-  assert.match(String(waiting.reason), /^It needs your review: This repository requires checking together, and there is no passing check together with bob's pull request #7/);
+  assert.match(String(waiting.reason), new RegExp(`^It needs your review: This repository requires checking together, and there is no passing check together with ${PEER_WORKBENCH}'s pull request #${PEER_PR} at`));
   assert.equal(taskDecision(db, id), null, "not accepted by the mode");
   assert.match(waiting.prompt, /skip the shared check together/i, "the words asking to skip it are the task's own, and change nothing");
   const shown = (await checkTogetherView({ db, peers: scenePeers(db, scene, config), checkTogether: together, task: waiting })) as { required: boolean; waitingOn: number[] };
-  assert.deepEqual([shown.required, shown.waitingOn], [true, [7]], "still required, still waiting on #7");
+  assert.deepEqual([shown.required, shown.waitingOn], [true, [PEER_PR]], "still required, still waiting on the other workbench's pull request only");
 
-  const check = await (await together.start(id, 7)).finished;
+  const check = await (await together.start(id, PEER_PR)).finished;
   assert.equal(check.outcome, "passed", JSON.stringify(check.commands.map((c) => [c.command, c.output])));
   await tasks.idle();
   const decided = taskDecision(db, id);

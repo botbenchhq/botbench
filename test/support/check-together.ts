@@ -3,12 +3,12 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createPeers, type Peers } from "../../src/engine/peers.ts";
 import { createTask, getTask, moveTask, type Task } from "../../src/engine/task.ts";
-import type { GitHub, ListedPullRequest } from "../../src/github.ts";
+import type { GitHub } from "../../src/github.ts";
 import { chooseWorkbench } from "../../src/workbench.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import type { Config } from "../../src/config.ts";
 import { replayIssues } from "./replay-issue.ts";
-import { PEERS_ADDRESS } from "./replay-peers.ts";
+import { loadPeersOpenCapture, PEERS_ADDRESS, replayOpenPeers } from "./replay-peers.ts";
 import { git, initRepo, ownerCommit, write } from "./repo.ts";
 
 /*
@@ -17,13 +17,34 @@ import { git, initRepo, ownerCommit, write } from "./repo.ts";
  * repository (`url.<bare>.insteadOf`), a second workbench ("bob") that cloned that remote, committed and pushed its
  * task branch there, and a real task of this workbench ("alice") in its own worktree, committed and ready for review.
  *
- * What is not captured from GitHub: the one open pull request of bob's branch. The only output captured from the real
- * gh (test/recordings/gh-peers.json) lists no open pull request, and recordings are never changed, so the list gh
- * would give is written here as the parsed value `ListedPullRequest`, as test/peers.test.ts does for the same rule. The
- * rest of the view (the head commit of the branch, which workbench it is) is read by the real code from the real remote.
+ * The other workbench's open pull request is a real one: gh's list of the owner's repository's open pull requests,
+ * captured once from the real gh (test/recordings/gh-peers-open.json) and replayed through the GitHub seam by the real
+ * parser (test/support/replay-peers.ts). Its workbench ("bob" in the words below), its number and its head branch are
+ * that pull request's; the branch is pushed under that same name to the bare remote, so its head commit and the files
+ * it changes are read by the real code from the real remote with real git. Which files gh listed for it is not used.
  */
 
-export const PEER_BRANCH = "botbench/bob/run-1/task-1";
+/** The captured open pull request the scene's other workbench has: the newest one from a named workbench's task branch. */
+function capturedPeers(): { number: number; branch: string; workbench: string }[] {
+  const listed = JSON.parse(loadPeersOpenCapture().outputs.open.result.stdout) as { number: number; headRefName: string }[];
+  const found = listed.flatMap((pr) => {
+    const m = /^botbench\/([a-z0-9][a-z0-9-]*)\/run-\d+\/task-\d+$/.exec(pr.headRefName);
+    return m === null || m[1] === "alice" ? [] : [{ number: pr.number, branch: pr.headRefName, workbench: m[1]! }];
+  });
+  if (found.length === 0) throw new Error("test/recordings/gh-peers-open.json holds no open pull request from a named workbench's task branch.");
+  return found.sort((a, b) => a.number - b.number);
+}
+const PEERS = capturedPeers();
+const PEER = PEERS[0]!;
+/**
+ * The capture's other open pull requests from named workbenches. Their branches are pushed to the bare remote at main,
+ * so the view reads a head for each and they change none of the task's files: they are listed, and wait on nothing.
+ */
+export const OTHER_PRS = PEERS.slice(1).map((pr) => pr.number);
+/** The other workbench's pull request: its number, head branch and workbench name, as captured. */
+export const PEER_PR = PEER.number;
+export const PEER_BRANCH = PEER.branch;
+export const PEER_WORKBENCH = PEER.workbench;
 
 export interface Scene {
   dir: string;
@@ -32,13 +53,11 @@ export interface Scene {
   bare: string;
   /** bob's clone of the remote, where bob's commits are made and pushed from. */
   peer: string;
-  /** The open pull requests gh would list now; a test may change them. */
-  prs: ListedPullRequest[];
   github: GitHub;
 }
 
 /** The repository with `files`, its bare remote, and bob's clone with bob's branch pushed holding `peerFiles`. */
-export function makeScene(dir: string, files: Record<string, string>, peerFiles: Record<string, string>, o: { pullRequest?: number } = {}): Scene {
+export function makeScene(dir: string, files: Record<string, string>, peerFiles: Record<string, string>): Scene {
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo, files);
@@ -51,10 +70,9 @@ export function makeScene(dir: string, files: Record<string, string>, peerFiles:
   git(dir, "clone", "--quiet", "--branch", "main", bare, peer);
   git(peer, "checkout", "--quiet", "-b", PEER_BRANCH);
   peerCommit({ peer } as Scene, peerFiles, "bob's work");
-  const number = o.pullRequest ?? 7;
-  const prs: ListedPullRequest[] = [{ number, url: `https://github.com/jon-lange/botbench/pull/${number}`, title: "Bob's change", state: "OPEN", headRefName: PEER_BRANCH, closes: [], files: Object.keys(peerFiles) }];
-  const github: GitHub = { ...replayIssues().github, openPullRequests: async () => prs };
-  return { dir, home, repo, bare, peer, prs, github };
+  for (const other of PEERS.slice(1)) git(repo, "push", "--quiet", bare, `main:refs/heads/${other.branch}`);
+  const { github } = replayOpenPeers(replayIssues().github);
+  return { dir, home, repo, bare, peer, github };
 }
 
 /** bob commits `files` on bob's branch and pushes it, as bob's workbench would. Answers the new head. */

@@ -5,6 +5,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Approval } from "../approvals/broker.ts";
 import type { DriverCapabilities } from "../drivers/contract.ts";
+import type { DriverEvent } from "../drivers/events.ts";
 import { killProcessGroup, processGroupAlive } from "../drivers/launch.ts";
 import { now, transaction } from "../store/db.ts";
 import { insertEvidence, type CommandRun, type EvidenceKind } from "./stations.ts";
@@ -90,17 +91,37 @@ export async function stopRecordedGroup(pgid: number, recordedAt: string | null)
   return ours;
 }
 
+/** How a turn cut off by a restart ends in its transcript: the detail of its closing `turn_ended`, shown as it is (web/src/api/client.ts). */
+export const RESTART_STOPPED = "Stopped: Botbench restarted";
+
 /**
  * Stop whatever is left of an attempt's CLI process group from before this start, so that no second agent is
  * started beside it in the same worktree. Resolves once the group is gone and the attempt no longer names it;
  * rejects when it cannot be stopped. A CLI is started just before its attempt row is written.
+ *
+ * An attempt still running then had its turn cut off by the restart (a chat or review turn, a builder's, a planner's):
+ * its last turn, when it has no end, is closed as stopped, in the same write that marks the attempt interrupted, so the
+ * transcript says what happened rather than looking unfinished. A second call finds the attempt no longer running and
+ * adds nothing; an attempt that ended in the ordinary way is left as it is.
  */
 export async function stopSurvivor(db: DatabaseSync, attemptId: number): Promise<void> {
   const row = db.prepare("SELECT pgid, created_at FROM attempts WHERE id = ?").get(attemptId);
   if (!row) return;
   if (typeof row.pgid === "number") await stopRecordedGroup(row.pgid, String(row.created_at));
-  // Whatever state the attempt was left in, nothing of it runs any more.
-  db.prepare("UPDATE attempts SET pgid = NULL, status = CASE status WHEN 'running' THEN 'interrupted' ELSE status END, updated_at = ? WHERE id = ?").run(now(), attemptId);
+  transaction(db, () => {
+    const at = now();
+    // Read again in the write: the status decides whether the turn is closed.
+    const running = db.prepare("SELECT 1 FROM attempts WHERE id = ? AND status = 'running'").get(attemptId) !== undefined;
+    const last = db.prepare("SELECT max(turn) AS turn FROM events WHERE attempt_id = ?").get(attemptId)?.turn;
+    // Only a turn that was sent is closed: a session that had sent nothing yet had no turn to cut off.
+    const has = (type: string): boolean => db.prepare("SELECT 1 FROM events WHERE attempt_id = ? AND turn = ? AND type = ?").get(attemptId, last as number, type) !== undefined;
+    if (running && typeof last === "number" && has("user_prompt") && !has("turn_ended")) {
+      const event: DriverEvent = { type: "turn_ended", reason: "interrupted", detail: RESTART_STOPPED };
+      db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, ?, ?, ?, ?)").run(attemptId, last, at, event.type, JSON.stringify(event));
+    }
+    // Whatever state the attempt was left in, nothing of it runs any more.
+    db.prepare("UPDATE attempts SET pgid = NULL, status = CASE status WHEN 'running' THEN 'interrupted' ELSE status END, updated_at = ? WHERE id = ?").run(at, attemptId);
+  });
 }
 
 /** Whether `dir` is a temporary folder of a command as stations.ts makes one, and nothing else that could be removed. */

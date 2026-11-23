@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
+import { setAskEveryCommand } from "../../src/engine/modes.ts";
 import { taskPrompt, type PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, createRun, createRuns, editPlan, getRun, RunError, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
 import { commandLists, DEFAULT_LIMIT_MS, runCommand, taskEvidence, type StationCommand } from "../../src/engine/stations.ts";
@@ -296,6 +297,8 @@ test("cancelling while setup runs kills the setup command and builds nothing mor
 
 test("an approval pending in task 1 keeps task 2 queued, with no worktree, until the owner answers", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["ask", "done"]);
+  // The recorded command runs confined, so only Ask before every command puts it to the owner.
+  setAskEveryCommand(e.db, true);
   const run = planned(e, THREE.slice(0, 2));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
   const [first, second] = tasks.map((task) => task.id) as [number, number];
@@ -316,6 +319,7 @@ test("an approval pending in task 1 keeps task 2 queued, with no worktree, until
 
 test("cancelling a run while its task waits for an answer closes the pending approval and builds nothing more", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["ask", "done"]);
+  setAskEveryCommand(e.db, true);
   const run = planned(e, THREE.slice(0, 2));
   const { tasks } = e.runs.approve(run.id, run.planVersion);
   await until("a request waits for the owner", () => e.broker.pending().length === 1);

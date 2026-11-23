@@ -99,7 +99,7 @@ test("live: Botbench is killed with SIGKILL during a real build turn; on the nex
   const [first] = attemptRows(botbench.home);
   assert.ok(first && first.pgid !== null && first.resume_cursor !== null, "the CLI's process group and session are recorded");
   survivor = first.pgid;
-  const worktree = path.join(botbench.home, "worktrees", working.branch!.split("/")[1]!, `task-${taskId}`);
+  const worktree = path.join(botbench.home, "worktrees", working.branch!.split("/").at(-2)!, `task-${taskId}`);
 
   await botbench.kill();
   assert.equal(processGroupAlive(survivor), true, "Claude Code outlived the Botbench that started it");

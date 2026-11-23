@@ -1,11 +1,12 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, checkDesign, expect, nav, openCanDo, openDetails, openWork, primaries, signIn, startTaskIn, tallShot, test, token, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, expect, nav, openCanDo, openDetails, openWork, primaries, signIn, startTaskIn, tallShot, test, token, watchRequests } from "./helpers.ts";
 import type { Botbench } from "./botbench.ts";
 
 // Approvals in the real client, at a phone's size: a real Botbench process, a real temporary repository,
-// and the owner's Claude Code on its cheapest model asking for real to run the repository's script.
+// and the owner's Claude Code on its cheapest model asking for real to run the repository's script. A command kept
+// inside the task's copy runs without a card by default, so these tests turn on Ask before every command first.
 
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done";
@@ -27,6 +28,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   const repo = scriptRepo(botbench);
   const before = checkoutState(repo);
   await signIn(page, botbench);
+  await askBeforeEveryCommand(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
   // The tray is on every screen and empty while nothing waits. It is not a control until something does.
@@ -129,7 +131,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   const details = await openDetails(page);
   await expect(details.getByTestId("task-repo")).toHaveText(repo);
   const branch = (await details.getByTestId("branch").textContent())!;
-  const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
+  const worktree = path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1");
   expect(git(worktree, "status", "--porcelain")).toBe("");
 
   // Allow, from the keyboard. The card goes, the tray empties, and the task resumes and finishes.
@@ -151,7 +153,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(page.getByTestId("branch")).toHaveText(branch);
   if (SHOTS) await tallShot(page, path.join(SHOTS, "task-ready-for-review.png"));
   await expect((await openCanDo(page)).getByTestId("can-do-text")).toHaveText(
-    "Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
+    "Claude Code may read and change files inside this task's copy of the project without asking. A shell command kept inside this copy runs without asking, apart from those the safety rules always ask you about; with Ask before every command on in Settings, every one waits for your answer first, unless you chose Always allow for it (see Permissions). Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
   );
   await checkDesign(page, "task, finished after an approval");
 
@@ -163,6 +165,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
 test("LIVE: Decline, with a note, shows the declined result in the transcript; the script does not run and the task still finishes", async ({ page, botbench }) => {
   const repo = scriptRepo(botbench);
   await signIn(page, botbench);
+  await askBeforeEveryCommand(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   await expect(page.getByTestId("approval-tray")).toBeEmpty();
   await startTask(page, repo);
@@ -196,13 +199,13 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   await expect(resolved).toContainText(`Your note: ${note}`);
   await expect(resolved.locator("b")).toHaveCount(0);
   await expect(page.locator('[data-event="tool_result"]').filter({ hasText: "The owner denied this request" })).toContainText("What Claude Code was told");
-  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. No file was changed, so nothing was committed.", { timeout: 120_000 });
-  await expect(page.getByTestId("no-changes")).toBeVisible();
+  // A build that changed no file ends as failed, saying so, for the owner to resume or discard (since builds that change nothing stop there).
+  await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. Claude Code finished without changing any file\./, { timeout: 120_000 });
   await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
   await checkDesign(page, "task, finished after a decline");
 
-  const branch = (await page.getByTestId("branch").textContent())!;
+  const { branch } = (await (await page.request.get(`${botbench.base}/api/tasks/1`)).json()) as { branch: string };
   expect(git(repo, "ls-tree", "-r", "--name-only", branch).split("\n").filter(Boolean).sort()).toEqual(["README.md", "make-marker.sh"]);
-  expect(git(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1"), "status", "--porcelain")).toBe("");
+  expect(git(path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1"), "status", "--porcelain")).toBe("");
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
 });

@@ -5,7 +5,7 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { combinedRoot } from "../../src/worktrees.ts";
-import { makeScene, readyTask, repoState, type Scene } from "../support/check-together.ts";
+import { makeScene, OTHER_PRS, PEER_PR, PEER_WORKBENCH, readyTask, repoState, type Scene } from "../support/check-together.ts";
 import { tempDir } from "../support/repo.ts";
 import path from "node:path";
 
@@ -72,15 +72,16 @@ test("a task whose words ask to skip the shared check still shows it as required
   const before = await call(api, "GET", route);
   assert.equal(before.status, 200, JSON.stringify(before.body));
   assert.equal(before.body.required, true, "the task's words change nothing");
-  assert.deepEqual(before.body.waitingOn, [7]);
-  assert.deepEqual((before.body.offers as Body[]).map((o) => [o.number, o.workbench, o.overlaps]), [[7, "bob", ["README.md"]]]);
+  assert.deepEqual(before.body.waitingOn, [PEER_PR]);
+  assert.deepEqual((before.body.offers as Body[]).filter((o) => o.number === PEER_PR).map((o) => [o.number, o.workbench, o.overlaps]), [[PEER_PR, PEER_WORKBENCH, ["README.md"]]]);
+  assert.deepEqual((before.body.offers as Body[]).filter((o) => o.number !== PEER_PR).map((o) => [o.number, o.overlaps]), OTHER_PRS.map((n) => [n, []]), "the other open pull request changes none of its files");
   assert.deepEqual(before.body.checks, []);
 
-  assert.equal((await call(api, "POST", route, { pullRequest: 7 }, false)).status, 401);
+  assert.equal((await call(api, "POST", route, { pullRequest: PEER_PR }, false)).status, 401);
   const missing = await call(api, "POST", route, { pullRequest: 99 });
   assert.deepEqual([missing.status, missing.body.error], [404, "Pull request #99 is not an open pull request from another workbench on this repository."]);
   const repoBefore = repoState(api.scene.repo);
-  const started = await call(api, "POST", route, { pullRequest: 7 });
+  const started = await call(api, "POST", route, { pullRequest: PEER_PR });
   assert.equal(started.status, 202, JSON.stringify(started.body));
   let after = before;
   for (let i = 0; i < 100 && (after.body.checks as unknown[]).length === 0; i++) {
@@ -89,14 +90,14 @@ test("a task whose words ask to skip the shared check still shows it as required
   }
   const [check] = after.body.checks as Body[];
   assert.ok(check, "the check together was stored");
-  assert.deepEqual([check.outcome, check.conflicts, check.pullRequest, check.workbench, check.taskCommit], ["conflict", ["README.md"], 7, "bob", task.headCommit]);
+  assert.deepEqual([check.outcome, check.conflicts, check.pullRequest, check.workbench, check.taskCommit], ["conflict", ["README.md"], PEER_PR, PEER_WORKBENCH, task.headCommit]);
   assert.deepEqual(check.freshness, { state: "current" });
   assert.equal(after.body.running, null);
-  assert.deepEqual(after.body.waitingOn, [7], "a conflict does not count as passing");
+  assert.deepEqual(after.body.waitingOn, [PEER_PR], "a conflict does not count as passing");
   assert.equal(after.body.required, true);
   assert.equal(repoState(api.scene.repo), repoBefore, "the repository is as it was");
   assert.ok(!fs.existsSync(combinedRoot(api.scene.home)) || fs.readdirSync(combinedRoot(api.scene.home)).length === 0, "the copy is gone");
 
-  const notReady = await call(api, "POST", `/api/tasks/${task.id + 1000}/check-together`, { pullRequest: 7 });
+  const notReady = await call(api, "POST", `/api/tasks/${task.id + 1000}/check-together`, { pullRequest: PEER_PR });
   assert.equal(notReady.status, 404);
 });

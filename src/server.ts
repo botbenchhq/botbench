@@ -23,11 +23,12 @@ import { IMPLEMENTER, PLANNER, roleModel } from "./engine/roles.ts";
 import { defaultMode } from "./engine/modes.ts";
 import { createDictation, type DictationOptions } from "./dictation/dictation.ts";
 import { createDeliveries } from "./engine/delivery.ts";
-import { createRuns } from "./engine/run.ts";
+import { createRuns, getRun } from "./engine/run.ts";
 import { createGitHub, type GitHub } from "./github.ts";
 import { createPeers } from "./engine/peers.ts";
 import { createCheckTogether } from "./engine/combined.ts";
 import { clearCombinedCopies } from "./worktrees.ts";
+import { createClaims } from "./engine/claims.ts";
 import { chooseWorkbench, workbenchName } from "./workbench.ts";
 import { createTasks } from "./engine/task.ts";
 import { createPush, type Push } from "./push.ts";
@@ -134,12 +135,25 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db.close();
     throw err;
   }
+  // Pushes, pull requests and issue claims use the owner's own git and gh; only for a run that chose pull requests, or
+  // the owner's own action. An issue claim also needs the repository's settings to turn claims on (engine/claims.ts).
+  const github = options.github ?? createGitHub();
+  const claims = createClaims({ db, config, github, onRunChange: (id) => {
+      // A claim's step is shown on the run's screen: it reads the run again.
+      const run = getRun(db, id);
+      if (run !== null) stream.announceRun(run);
+    }, stopRun: (id) => {
+      // A run whose claim gave way to another workbench's earlier one is stopped as a cancel stops it.
+      try {
+        runs.cancel(id, "stopped: another workbench holds the claim on its issue");
+      } catch (err) {
+        console.error(`Stopping run ${id} after its issue claim gave way failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } });
   const chatClaude = options.chatClaude ?? driver;
   const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
   const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
-  // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
-  const github = options.github ?? createGitHub();
   // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
   const peers = createPeers({ db, config, github });
   // Checking a task together with another workbench's open pull request, in a temporary copy (engine/combined.ts).
@@ -159,8 +173,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     }, onRunChange: (run) => {
       stream.announceRun(run);
       push.runChanged(run);
+      claims.runChanged(run);
     } });
-  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), silenceLimitMs: silenceLimitMs(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
+  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), silenceLimitMs: silenceLimitMs(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: (run) => {
+      stream.announceRun(run);
+      claims.runChanged(run);
+    }, onTaskChange: stream.announceTask });
   // Each agent Botbench drives, listed in this order, checked by its own program and kept for a short time.
   const agentChecks = createAgentChecks([driver, ...Object.values(reviewers)]);
   // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.
@@ -177,8 +195,14 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   });
   const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
   const dictation = createDictation({ home, ...dictationOptions });
-  const deliveries = createDeliveries({ db, config, github, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const deliveries = createDeliveries({ db, config, github, onTaskChange: (task) => {
+      stream.announceTask(task);
+      // A delivery that failed may leave its run with no pull request on its way: its claim is released then.
+      if (task.runId !== null) claims.runChanged({ id: task.runId });
+    }, claims });
+  // Claims a stopped Botbench left on the remote for runs that ended without a pull request are released now.
+  claims.recover();
+  const ctx = { db, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -206,6 +230,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     // A check together ending now may still ask the tasks to look at its task again, so it stops first.
     await checkTogether.close();
     await Promise.allSettled([chat.close().then(() => turns.close()), tasks.close(), runs.close(), connect.close(), deliveries.close()]);
+    // A claim's push or delete in flight writes its step to the store when it ends; each git call has a time limit.
+    await claims.idle();
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
     // A notification in flight may still delete an expired device's row; each has a time limit.

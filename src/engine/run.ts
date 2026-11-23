@@ -11,14 +11,16 @@ import { now, transaction } from "../store/db.ts";
 import { createPlanningWorktree, removePlanningWorktree, sharedGitDir, sourceHead } from "../worktrees.ts";
 import { stopSurvivor } from "./recover.ts";
 import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS, watchSilence } from "./silence.ts";
-import { agentName, correctionPrompt, IMPLEMENTER, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
+import { agentName, correctionPrompt, IMPLEMENTER, mergePlan, oneTaskPrompt, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
-import { isRunMode, MODE_WORDS, type RunMode } from "./modes.ts";
+import { isRunMode, MODE_WORDS, planApprovedByMode, type RunMode } from "./modes.ts";
 import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
+import { messageIssue, takeOverGiven, type ClaimName } from "./claim-branch.ts";
+import { ownWorkbenches } from "../workbench.ts";
 
 /*
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
@@ -31,8 +33,9 @@ import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
  *
  * The planner is read-only. It works in a detached worktree of the run's base commit under the Botbench home, never in
  * the owner's checkout; the driver starts it without any tool that writes; every shell command it wants goes to the
- * owner through the gate under the planner role, where no grant applies, unless the run's mode lets a confined one run
- * (engine/modes.ts). A fully autonomous run's plan is approved by the mode as soon as it is stored. The worktree is removed when planning ends,
+ * owner through the gate under the planner role, where no grant applies, unless it is a confined one the floor does not
+ * name, which runs (approvals/gate.ts). A fully autonomous run's plan is approved by the mode as soon as it is stored,
+ * and so is a semi-autonomous run's, unless it read outside text (engine/modes.ts, `planApprovedByMode`). The worktree is removed when planning ends,
  * however it ends. What the planner replies is data: it is validated and stored as text.
  */
 
@@ -79,6 +82,11 @@ export interface Run {
   outsideText: boolean;
   /** The owner let the commands of this marked run reach the repository's allowed network hosts all the same. */
   outsideHosts: boolean;
+  /**
+   * The run is kept to one task, chosen when it started and never changed: its planner is asked for one; a plan of
+   * several is sent back once, and one that still holds several is merged by Botbench (`mergePlan`).
+   */
+  oneTask: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -134,6 +142,7 @@ function toRun(row: Record<string, unknown>): Run {
     issueFetchId: int(row.issue_fetch_id),
     outsideText: row.outside_text === 1,
     outsideHosts: row.outside_hosts === 1,
+    oneTask: row.one_task === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -182,7 +191,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -191,10 +200,12 @@ export function createRun(db: DatabaseSync, o: { repo: string; prompt?: string; 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
+    // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
+    for (const c of o.takeOver ?? []) db.prepare("INSERT INTO claim_takeovers (run_id, branch, holder, issue, started_at, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, c.branch, c.workbench, c.issue, c.startedAt, at);
     insertEvent(db, id, at, "planning", null);
     return getRun(db, id)!;
   });
@@ -252,6 +263,8 @@ function replacePlan(db: DatabaseSync, runId: number, tasks: readonly PlanTask[]
 }
 
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
+/** Why a plan of a run kept to one task cannot hold `n` tasks. */
+const ONE_TASK_ONLY = (n: number): string => `This run is kept to one task, so its plan holds exactly 1 task; this one holds ${tasksWord(n)}. Put the work in one task.`;
 
 /**
  * The planner's plan arrived: store it and wait for the owner. Only a run that is being planned takes a plan; a
@@ -261,8 +274,9 @@ export function storePlan(db: DatabaseSync, runId: number, tasks: readonly PlanT
   return transaction(db, () => {
     const run = known(db, runId);
     if (run.status !== "planning") throw notWaiting(run, "store");
-    const checked = validatePlan({ tasks });
+    const checked = validatePlan({ tasks }, { oneTask: run.oneTask });
     if (!checked.ok) throw new Error(`The plan cannot be stored: ${checked.errors.join(" ")}`);
+    if (run.oneTask && checked.tasks.length !== 1) throw new Error(`The plan cannot be stored: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     replacePlan(db, runId, checked.tasks);
     writeRun(db, runId, "awaiting_plan_approval", { reason: o.note ?? null, plannerModel: o.plannerModel ?? null, planChanged: true, detail: `plan of ${tasksWord(checked.tasks.length)}${o.note ? `; ${o.note}` : ""}` });
     return getRun(db, runId)!;
@@ -279,8 +293,9 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
     versionGiven(planVersion);
     if (run.status !== "awaiting_plan_approval") throw notWaiting(run, "edit");
     sameVersion(run, planVersion);
-    const checked = validatePlan({ tasks });
+    const checked = validatePlan({ tasks }, { oneTask: run.oneTask });
     if (!checked.ok) throw new RunError(400, checked.errors.join(" "));
+    if (run.oneTask && checked.tasks.length !== 1) throw new RunError(400, ONE_TASK_ONLY(checked.tasks.length));
     replacePlan(db, runId, checked.tasks);
     writeRun(db, runId, "awaiting_plan_approval", { planChanged: true, detail: `plan edited by the owner: ${tasksWord(checked.tasks.length)}` });
     return getRun(db, runId)!;
@@ -291,7 +306,8 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
  * The owner approves the plan as it stands: one queued task row per plan task, each naming the run, and the run is
  * running. All in one write. The tasks are queued on the run's build model; a run that recorded none takes
  * `implementerModel`, the configured one. No worktree is made here: building a task is the build station's. `by` "mode"
- * is a fully autonomous run approving its own plan as the planner gave it; only such a run's plan is approved that way.
+ * is a fully autonomous run, or a semi-autonomous one that read no outside text, approving its own plan as the planner
+ * gave it; only such a run's plan is approved that way.
  */
 export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknown, implementerModel: string | null = null, by: "owner" | "mode" = "owner"): { run: Run; tasks: Task[] } {
   return transaction(db, () => {
@@ -299,11 +315,12 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
     versionGiven(planVersion);
     if (run.status !== "awaiting_plan_approval") throw notWaiting(run, "approve");
     sameVersion(run, planVersion);
-    if (by === "mode" && run.mode !== "full") throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}, so its plan waits for your approval.`);
+    if (by === "mode" && !planApprovedByMode(run)) throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}${run.outsideText ? " and was started from a GitHub issue" : ""}, so its plan waits for your approval.`);
     const plan = planTasks(db, runId);
     // What is approved is checked once more as it is stored: nothing reaches a builder that a plan may not hold.
-    const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) });
+    const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) }, { oneTask: run.oneTask });
     if (!checked.ok) throw new RunError(409, `The plan cannot be approved as it is: ${checked.errors.join(" ")}`);
+    if (run.oneTask && checked.tasks.length !== 1) throw new RunError(409, `The plan cannot be approved as it is: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     const link = db.prepare("UPDATE plan_tasks SET task_id = ? WHERE run_id = ? AND position = ?");
     const tasks = plan.map((task) => {
       const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: run.buildModel === undefined ? implementerModel : run.buildModel });
@@ -311,7 +328,7 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
       return made;
     });
     // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-    writeRun(db, runId, "running", { reason: null, planChanged: true, detail: `plan approved ${by === "owner" ? "by the owner" : "by the run's mode, fully autonomous"}: ${tasksWord(tasks.length)} queued` });
+    writeRun(db, runId, "running", { reason: null, planChanged: true, detail: `plan approved ${by === "owner" ? "by the owner" : `by the run's mode, ${MODE_WORDS[run.mode]}`}: ${tasksWord(tasks.length)} queued` });
     return { run: getRun(db, runId)!, tasks: tasks.map((id) => getTask(db, id)!) };
   });
 }
@@ -321,13 +338,13 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
  * not started are cancelled in one write; the task being built, if any, is stopped by the build line, which then
  * records it. Tasks that have finished are left as they are, with their branches.
  */
-export function cancelRun(db: DatabaseSync, runId: number): Run {
+export function cancelRun(db: DatabaseSync, runId: number, by = "cancelled by the owner"): Run {
   return transaction(db, () => {
     const run = known(db, runId);
     if (run.status === "cancelled") throw new RunError(409, `Run ${run.id} was already cancelled.`);
     if (run.status === "failed") throw new RunError(409, `Run ${run.id} failed, so there is nothing to cancel.`);
     if (run.status === "awaiting_decision" || run.status === "done") throw new RunError(409, `Run ${run.id}'s tasks have all been built, so there is nothing left to cancel.`);
-    writeRun(db, runId, "cancelled", { detail: "cancelled by the owner" });
+    writeRun(db, runId, "cancelled", { detail: by });
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id").all(runId)) {
       moveTaskIn(db, Number(row.id), "cancelled", { reason: "The run was cancelled before this task started." });
     }
@@ -444,6 +461,10 @@ export interface StartRun {
   delivery?: unknown;
   /** The GitHub issue the owner was shown, `{ fetchId, allowHosts }` (engine/intake.ts); left out or null for none. */
   issue?: unknown;
+  /** Keep the run to one task: true or false; left out, on in a fully autonomous run and off in any other. */
+  oneTask?: unknown;
+  /** Other workbenches' old claims on the run's issue the owner chose to take over, by branch (engine/claim-branch.ts); left out for none. */
+  takeOver?: unknown;
 }
 
 export interface Runs {
@@ -455,7 +476,7 @@ export interface Runs {
   /** Send the plan as it stands back to the planner with the owner's feedback. The run is planning until the planner answers. */
   requestChanges(id: number, feedback: unknown, planVersion: unknown): Run;
   /** Cancel a run that is planning, waits for approval or is building. A planner or a builder at work is stopped. */
-  cancel(id: number): Run;
+  cancel(id: number, by?: string): Run;
   /** Resolves when no planner is at work and nothing is being recovered. */
   idle(): Promise<void>;
   /** Stop the planner at work and leave no CLI process and no planning worktree behind. */
@@ -493,8 +514,8 @@ export interface RunsOptions {
   silenceLimitMs?: number;
 }
 
-/** How one go of the planner ended. */
-type Outcome = { tasks: PlanTask[]; model: string | null } | { problem: string } | { cancelled: true };
+/** How one go of the planner ended. `note` says what Botbench did to the plan, when it merged it. */
+type Outcome = { tasks: PlanTask[]; model: string | null; note?: string } | { problem: string } | { cancelled: true };
 
 const STOPPED = "Botbench stopped before this run's plan was made.";
 /** The work of a run started from an issue with no message of the owner's own. Botbench's words, in the work's place. */
@@ -562,7 +583,7 @@ export function createRuns(options: RunsOptions): Runs {
         // The broker never rejects: whatever fails on the way to the owner comes back as a decline.
         void broker
           .request({ taskId: null, runId: run.id, attemptId: session.attemptId, role: PLANNER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined, files: answer.files !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
           .catch(report(`Answering a permission request of run ${run.id}'s planner`));
       }
       if (event.type === "permission_resolved") {
@@ -602,23 +623,40 @@ export function createRuns(options: RunsOptions): Runs {
       if (!gone()) move(run.id, "planning", { attemptId: session.attemptId, detail: `planner attempt ${session.attemptId}` });
       const issue = runIssue(db, run.id);
       const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
+      const oneTask = { oneTask: run.oneTask };
       // `close` stops only a session it can see: one still being started when Botbench began stopping is sent no turn.
-      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
+      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
       if (first === null && !gone()) outcome = { problem: STOPPED };
       else if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };
       else {
-        let plan = parsePlan(first.text);
+        let plan = parsePlan(first.text, oneTask);
         if (!plan.ok) {
           // Sent back once, with what was wrong. A second plan that is not accepted ends the planning.
           const second = await turn(correctionPrompt(plan.errors));
           if (gone()) outcome = { cancelled: true };
           else if (second.end !== "completed") outcome = { problem: problemOf(second.end) };
           else {
-            plan = parsePlan(second.text);
+            plan = parsePlan(second.text, oneTask);
             outcome = plan.ok ? { tasks: plan.tasks, model } : { problem: `The planner returned a plan Botbench could not accept, twice. What was wrong with the second: ${plan.errors.join(" ")}` };
           }
         } else outcome = { tasks: plan.tasks, model };
+      }
+      // A run kept to one task: a plan of several is sent back once. One that still holds several, or a reply that is
+      // no plan, is merged by Botbench from the latest plan of several, and the run's record says so.
+      if (run.oneTask && "tasks" in outcome && outcome.tasks.length > 1) {
+        const several = outcome.tasks;
+        const again = await turn(oneTaskPrompt(several.length));
+        if (gone()) outcome = { cancelled: true };
+        else if (again.end !== "completed" && closed) outcome = { problem: problemOf(again.end) };
+        else {
+          const replied = again.end === "completed" ? parsePlan(again.text, oneTask) : null;
+          const latest = replied !== null && replied.ok ? replied.tasks : several;
+          outcome =
+            latest.length === 1
+              ? { tasks: latest, model }
+              : { tasks: [mergePlan(latest)], model, note: `This run is kept to one task. ${agentName(driver.name)} planned ${latest.length} tasks even when asked again for one, so Botbench joined them into one task: their titles in order, and all of their criteria.` };
+        }
       }
     } catch (err) {
       outcome = { problem: words(err) };
@@ -662,9 +700,11 @@ export function createRuns(options: RunsOptions): Runs {
     // Cancelled while the planner worked: the run already says so, and a plan that arrived late is not stored.
     if (!now_ || now_.status !== "planning" || "cancelled" in outcome) return;
     if ("tasks" in outcome) {
-      const stored = announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: leftover }));
-      // A fully autonomous run does not wait at the plan gate: building starts on the plan as the planner gave it.
-      if (stored.mode === "full") approveNow(id, stored.planVersion, "mode");
+      const note = [outcome.note, leftover].filter((part): part is string => typeof part === "string").join(" ");
+      const stored = announce(storePlan(db, id, outcome.tasks, { plannerModel: outcome.model, note: note === "" ? null : note }));
+      // A fully autonomous run, and a semi-autonomous one that read no outside text, do not wait at the plan gate:
+      // building starts on the plan as the planner gave it.
+      if (planApprovedByMode(stored)) approveNow(id, stored.planVersion, "mode");
       return;
     }
     // Botbench is stopping: the run is left planning, and the next start plans it again (see `recover`).
@@ -779,6 +819,7 @@ export function createRuns(options: RunsOptions): Runs {
     // Left out: the same choice as planning when one was made, as the New run screen offers it; else the configured one.
     const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : input.model !== undefined ? input.model : (options.implementerModel ?? null);
     const delivery = deliveryChoice(input.delivery);
+    const oneTask = oneTaskChoice(input.oneTask, mode);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -798,10 +839,17 @@ export function createRuns(options: RunsOptions): Runs {
     if (issueChoice !== null && issue === null) throw new RunError(400, "There is no issue read with that number. Look the issue up again.");
     if (issue !== null && issue.repoPath !== realRepo(repo)) throw new RunError(400, `That issue was read for another repository (${issue.repoPath}), not ${repo}. Look it up again for this one.`);
     if (issue !== null && mode === "full") throw new RunError(400, OUTSIDE_NOT_FULL);
+    // A claim taken over is another workbench's, on this run's issue, and old enough by its name (engine/claims.ts).
+    let takeOver: ClaimName[];
+    try {
+      takeOver = takeOverGiven(input.takeOver, { issue: issue?.number ?? messageIssue(hasPrompt ? (input.prompt as string) : null), own: ownWorkbenches(db), now: Date.now() });
+    } catch (err) {
+      throw new RunError(400, words(err));
+    }
     if (mode === "full") fullyAutonomousUsable(repo);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel);
     stopping();
-    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -843,8 +891,8 @@ export function createRuns(options: RunsOptions): Runs {
     return run;
   };
 
-  const cancel = (id: number): Run => {
-    const run = cancelRun(db, id);
+  const cancel = (id: number, by?: string): Run => {
+    const run = cancelRun(db, id, by);
     // Stops the builder at work, or its setup command; the build line then commits what it did and records it cancelled.
     void options.line.stopRun(id).catch(report(`Stopping the build of run ${id}`));
     // A request of its planner or of its builders that waits for the owner has nobody to answer to any more.
@@ -890,6 +938,14 @@ export function issueGiven(given: unknown): { fetchId: number; allowHosts: boole
   const { fetchId, allowHosts, ...rest } = given as Record<string, unknown>;
   if (Object.keys(rest).length > 0 || typeof fetchId !== "number" || !Number.isSafeInteger(fetchId) || fetchId < 1 || typeof allowHosts !== "boolean") throw new RunError(400, shape);
   return { fetchId, allowHosts };
+}
+
+/** Whether a request keeps its run to one task: as it says, or, left out, on only in a fully autonomous run. Anything else is refused with the reason, before anything exists. */
+export function oneTaskChoice(given: unknown, mode: RunMode): boolean {
+  if (given === undefined || given === null) return mode === "full";
+  if (typeof given === "boolean") return given;
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  throw new RunError(400, '"oneTask" must be true (keep the run to one task) or false.');
 }
 
 /** The mode a request names. Anything else is refused with the reason, before anything exists. */

@@ -24,6 +24,8 @@ interface Preapproved {
   commands: string[];
   /** Whether a check command is configured; null when the settings could not be read. */
   hasChecks: boolean | null;
+  /** Whether a run from an issue that opens pull requests pushes a claim first (src/engine/claims.ts); false when unknown. */
+  claimIssues: boolean;
   note: string | null;
 }
 
@@ -104,11 +106,11 @@ export function useRepository(repo: string, onSignedOut: () => void): Repository
     let stale = false;
     const older = new AbortController();
     getRepoSettings(usablePath, older.signal).then(
-      (settings) => !stale && setPreapproved({ path: usablePath, commands: settings.preapproved, hasChecks: settings.hasChecks, note: null }),
+      (settings) => !stale && setPreapproved({ path: usablePath, commands: settings.preapproved, hasChecks: settings.hasChecks, claimIssues: settings.claimIssues, note: null }),
       (err: unknown) => {
         if (stale) return;
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setPreapproved({ path: usablePath, commands: [], hasChecks: null, note: "The commands configured for this repository could not be read, so none is listed." });
+        setPreapproved({ path: usablePath, commands: [], hasChecks: null, claimIssues: false, note: "The commands configured for this repository could not be read, so none is listed." });
       },
     );
     return () => {
@@ -133,8 +135,8 @@ export function useRepository(repo: string, onSignedOut: () => void): Repository
 }
 
 const ABOUT = {
-  task: "Claude Code may run these commands in this task without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones Botbench's safety rules catch, such as git push, sudo and deleting outside the task's copy of the project, and anything chained, piped or redirected.",
-  run: "When this run's tasks are built, Claude Code may run these commands without asking you first, with further arguments too. A script or a test command runs whatever its files hold at that moment. While planning it never does: planning only reads, and every command it wants asks. Dangerous commands always ask: the ones Botbench's safety rules catch, such as git push, sudo and deleting outside a task's copy of the project, and anything chained, piped or redirected.",
+  task: "Commands kept inside the task's copy run without asking anyway. These also run without asking when a command would otherwise ask you (with Ask before every command on in Settings, or when it cannot be kept inside the copy), with further arguments too. A script or a test command runs whatever its files hold at that moment. Dangerous commands always ask: the ones Botbench's safety rules catch, such as git push, sudo and deleting outside the task's copy of the project, and anything chained, piped or redirected.",
+  run: "Commands kept inside a task's copy run without asking anyway. When this run's tasks are built, these also run without asking when a command would otherwise ask you (with Ask before every command on in Settings, or when it cannot be kept inside the copy), with further arguments too. A script or a test command runs whatever its files hold at that moment. Planning never uses them: planning only reads. Dangerous commands always ask: the ones Botbench's safety rules catch, such as git push, sudo and deleting outside a task's copy of the project, and anything chained, piped or redirected.",
 };
 
 /** The commands the owner confirms may run without asking, once the repository is known: listed, removable, and added to. */
@@ -150,7 +152,7 @@ export function PreapprovedEditor({ choice, scope }: { choice: RepositoryChoice;
         </Alert>
       )}
       {listed.commands.length === 0 ? (
-        <p data-testid="preapproved-none">No command is listed, so every shell command asks.</p>
+        <p data-testid="preapproved-none">No command is listed. Commands kept inside the task's copy still run without asking, unless Ask before every command is on in Settings.</p>
       ) : (
         <ul data-testid="preapproved-list" className="ds-list">
           {listed.commands.map((command) => (
