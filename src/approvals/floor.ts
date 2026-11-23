@@ -258,12 +258,13 @@ const allLive = (segments: readonly Words[]): QuotedWord[][] => segments.map((se
 const KEY_TOOLS = new Set(["security", "ssh-add", "ssh-keygen"]);
 /** Programs that only read or list the files they are given, and run none of them: the one place a project file of a key tool's name is an argument and nothing more. */
 const READS_FILES = new Set(["ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc", "file", "stat", "du", "diff", "less", "more", "tree", "git"]);
-/** Words that make a reading program run something after all (`find -exec`, `git -c`). */
-const RUNS_SOMETHING = /^-(exec|execdir|ok|okdir|c)$/;
+/** Words that make a reading program run something after all (`find -exec`, `git -c`, `rg --pre`, `git difftool -x` or `--extcmd`). */
+const RUNS_SOMETHING = /^-(exec|execdir|ok|okdir|c|x)$|^--(pre|extcmd|exec|config-env|upload-pack|receive-pack)(=|$)/;
 const namesKeyTool = (segment: Words, i: number, reading: Reading): boolean => {
   const word = segment[i]!;
   if (!KEY_TOOLS.has(program(word))) return false;
-  const projectFile = word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && insideWorktree(word, reading);
+  // A word that is an option with a value (`--extcmd=docs/security`) hands the program a path to use, not a file to read.
+  const projectFile = word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && !word.startsWith("-") && !word.includes("=") && insideWorktree(word, reading);
   // An argument of a program known only to read: the piece's program (after any variables it sets) is one, and nothing in it runs another.
   const first = segment.findIndex((w) => !ASSIGNS.test(w));
   const readOnly = first !== -1 && first < i && READS_FILES.has(program(segment[first]!)) && !segment.some((w) => RUNS_SOMETHING.test(w));

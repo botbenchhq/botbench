@@ -418,7 +418,7 @@ test("the keychain and key tools ask by their name or a full path, and a project
     assert.equal(floor(command, at()), "guarded-place", command);
   }
   // The project's own file of that name, run as the program, is whatever binary it is: it asks.
-  for (const command of ["./security dump-keychain", "docs/security x", "env ./ssh-keygen -t ed25519", "FOO=1 ./security x", "ls; ./security x", "ls | xargs ./security", "if true; then ./ssh-add -l; fi", "stdbuf -o0 docs/security x", "flock /tmp/l docs/security", "watch docs/security", "find . -exec docs/security {} ;", "bash docs/security"]) {
+  for (const command of ["./security dump-keychain", "docs/security x", "env ./ssh-keygen -t ed25519", "FOO=1 ./security x", "ls; ./security x", "ls | xargs ./security", "if true; then ./ssh-add -l; fi", "stdbuf -o0 docs/security x", "flock /tmp/l docs/security", "watch docs/security", "find . -exec docs/security {} ;", "bash docs/security", "rg --pre docs/security x", "git difftool -x docs/security", "git difftool --extcmd=docs/security", "git difftool --extcmd docs/security", "rg --pre=docs/security x"]) {
     assert.equal(floor(command, at()), "guarded-place", command);
   }
   // From a folder outside the worktree, a relative path is not the project's own file.

@@ -183,11 +183,26 @@ export function real(target: string, hops = 0): string {
 }
 
 /**
+ * Whether the CLI lands a tool's path where a plain join with its folder does. Claude Code (2.1.322) trims the path and
+ * expands a leading `~` to the home folder first, so `~/.zshrc` or one with spaces around it is not what the join says;
+ * such a path is never taken as inside anything.
+ */
+const readsAsJoined = (file: string): boolean => file === file.trim() && !file.startsWith("~");
+
+/** Where the CLI lands a tool's path, as it reads it: trimmed, a leading `~` or `~/` as the home folder. */
+function landing(from: string, file: string): string {
+  const trimmed = file.trim();
+  if (trimmed === "~") return os.homedir();
+  if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
+  return path.resolve(from, trimmed);
+}
+
+/**
  * Where `file` really is relative to the worktree, links followed, when it is inside it both as
  * written and after following links; null when it is not, or is the worktree itself.
  */
 export function insideWorktree(worktree: string, cwd: string, file: unknown): string | null {
-  if (typeof file !== "string" || file === "" || file.includes("\0")) return null;
+  if (typeof file !== "string" || file === "" || file.includes("\0") || !readsAsJoined(file)) return null;
   const within = (root: string, target: string): string | null => {
     const relative = path.relative(root, target);
     return relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ? null : relative;
@@ -261,7 +276,7 @@ function decide(request: GateRequest, grants: readonly Grant[], settings: FloorS
       const inCopy = (here === path.resolve(request.worktree) && real(here) === real(path.resolve(request.worktree))) || insideWorktree(request.worktree, request.worktree, here) !== null;
       return inCopy ? { verdict: "allow", rule: "worktree_read" } : { verdict: "ask", why: "outside_copy" };
     }
-    const target = typeof where === "string" ? path.resolve(request.cwd, where) : null;
+    const target = typeof where === "string" && readsAsJoined(where) ? path.resolve(request.cwd, where) : null;
     const inside = target !== null && (target === path.resolve(request.worktree) || insideWorktree(request.worktree, request.cwd, where) !== null);
     if (inside) return { verdict: "allow", rule: "worktree_read" };
     // The CLI's own saved output of this attempt's calls, links followed: nothing of another session's, nothing else of the CLI's folder.
@@ -290,9 +305,10 @@ export function requestTarget(tool: string, input: unknown, worktree: string, cw
   const field = EDIT_TOOLS[tool] ?? READ_TOOLS[tool];
   const where = isObject(input) && field !== undefined ? input[field] : undefined;
   if (typeof where !== "string" || where === "" || where.includes("\0")) return null;
-  if (cwd === null && !path.isAbsolute(where)) return null;
+  if (cwd === null && !path.isAbsolute(where.trim()) && !where.trim().startsWith("~")) return null;
   const from = cwd ?? worktree;
-  const full = path.resolve(from, where);
+  // Where the CLI would land it, also for a path it reads differently from a plain join (`~/.zshrc`).
+  const full = landing(from, where);
   if (full === path.resolve(worktree) && real(full) === real(path.resolve(worktree))) return ".";
   return insideWorktree(worktree, from, where) ?? full;
 }

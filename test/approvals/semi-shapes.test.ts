@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
@@ -191,6 +192,36 @@ test("a Write or an Edit inside the task's copy never asks, in any mode, also fr
     else assert.equal(git.card?.asksBecause, "It changes git's own files or Claude Code's settings in the task's copy.");
   }
   assert.ok(!fs.existsSync(path.join(r.dir, "elsewhere.txt")), "nothing here writes a file: the CLI would, once allowed");
+});
+
+test("a file path the CLI reads differently from a plain join (a leading ~, spaces around it) is never taken as inside the copy: it asks, or is refused when fully autonomous, and its card says where it lands", async (t) => {
+  // Claude Code 2.1.322 trims a tool's path and expands a leading `~` or `~/` to the home folder before it uses it
+  // (found in review of #86); a join with the folder the agent stands in would put `~/.zshrc` inside the copy.
+  const r = await rig(t);
+  const home = os.homedir();
+  for (const mode of ["manual", "semi", "full"] as const) {
+    const a = agent(r, mode);
+    const cases = [
+      ["Write", { file_path: "~/.zshrc", content: "x" }, path.join(home, ".zshrc")],
+      ["Edit", { file_path: "~/.ssh/config", old_string: "a", new_string: "b" }, path.join(home, ".ssh", "config")],
+      ["Read", { file_path: "~/.ssh/id_ed25519" }, path.join(home, ".ssh", "id_ed25519")],
+      ["Read", { file_path: "~" }, home],
+      ["Write", { file_path: ` ${path.join(r.dir, "elsewhere.txt")}`, content: "x" }, path.join(r.dir, "elsewhere.txt")],
+      ["Write", { file_path: `${path.join(r.dir, "elsewhere.txt")} `, content: "x" }, path.join(r.dir, "elsewhere.txt")],
+    ] as const;
+    let i = 0;
+    for (const [tool, input, lands] of cases) {
+      const { heard, answer, card } = await a.ask(tool, input, `${mode}-tilde-${++i}`);
+      const what = `${mode} ${tool} ${JSON.stringify(input.file_path)}`;
+      assert.equal(heard.verdict, "ask", what);
+      assert.equal(answer.files, undefined, what);
+      if (mode === "full") assert.match(answer.refused ?? "", /was refused/, what);
+      else {
+        assert.ok(answer.approvalId !== null, what);
+        assert.deepEqual([card?.target, card?.asksBecause], [lands, "Outside the task's copy."], what);
+      }
+    }
+  }
 });
 
 test("each card shows the folder its own call was made from, after the agent moved into a sub-folder and back, whatever order the requests come in", async (t) => {
