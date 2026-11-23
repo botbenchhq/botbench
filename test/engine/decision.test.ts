@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker } from "../../src/approvals/broker.ts";
-import { decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains } from "../../src/engine/decision.ts";
+import { acceptByMode, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains } from "../../src/engine/decision.ts";
 import type { PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, createRun, createRuns, getRun, storePlan } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
@@ -129,6 +129,18 @@ test("Discard never deletes a branch that holds commits Botbench did not make: t
   assert.deepEqual(botbenchBranches(s.repo), [task.branch]);
   assert.equal(fs.existsSync(task.worktreePath!), true);
   assert.equal(taskDecision(s.db, task.id), null);
+});
+
+test("the mode never accepts a branch that moved past the commit Botbench made and checked: it is left for the owner, with nothing changed", async (t) => {
+  const s = store(t);
+  const task = await readyTask(s, { checks: "passed" });
+  // A commit added after the mode checked the task's changed files, which it did not see.
+  write(task.worktreePath!, "test/recordings/late.json", "{}\n");
+  ownerCommit(task.worktreePath!, "a later commit");
+  await refused(acceptByMode(s.db, task.id, "Accepted without you."), 409, /has moved past the commit Botbench made and checked, so only you can accept it/);
+  assert.equal(statusOf(s.db, task.id), "awaiting_decision");
+  assert.equal(taskDecision(s.db, task.id), null);
+  assert.equal(fs.existsSync(task.worktreePath!), true, "the copy is kept for the owner");
 });
 
 test("deciding a task that is not ready for review is refused with a plain reason, and changes nothing", async (t) => {

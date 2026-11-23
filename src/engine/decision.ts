@@ -253,6 +253,9 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
     if (elsewhere.length > 0) throw new TaskError(409, `The branch ${branch} is checked out at ${elsewhere.join(", ")}, so it cannot be deleted and nothing was decided. Switch that folder to another branch first, or reject the task and keep the branch.`);
   } else if (at === null) {
     throw new TaskError(409, `The branch ${branch} is not in the repository any more, so there is no branch to keep and nothing was decided. Reject the task and delete the branch instead.`);
+  } else if (reasons !== undefined && at !== task.headCommit) {
+    // The mode qualified the task, its changed files among it, at Botbench's own commit: a branch moved since is the owner's to judge.
+    throw new TaskError(409, `The branch ${branch} has moved past the commit Botbench made and checked, so only you can accept it.`);
   }
 
   try {

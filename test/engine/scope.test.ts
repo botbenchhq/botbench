@@ -33,6 +33,8 @@ test("tests: a test file is expected when the plan asks for a test or it tests a
   assert.deepEqual(marks("Add add(a, b) to calc.py", ["calc.py", "test_calc.py", "tests/test_other.py"]), { "calc.py": "expected", "test_calc.py": "expected", "tests/test_other.py": "unexpected" });
   assert.deepEqual(marks("Add add(a, b), with a test", ["calc.py", "test/calc.test.ts"]), { "calc.py": "unexpected", "test/calc.test.ts": "expected" });
   assert.deepEqual(marks("Make test/scope.test.ts pass", ["test/scope.test.ts", "src/engine/scope.ts", "src/engine/task.ts"]), { "test/scope.test.ts": "expected", "src/engine/scope.ts": "expected", "src/engine/task.ts": "unexpected" });
+  // A test the plan names leads to its source file even when only the source changed.
+  assert.deepEqual(marks("Make test/scope.test.ts pass", ["src/engine/scope.ts", "src/engine/task.ts"]), { "src/engine/scope.ts": "expected", "src/engine/task.ts": "unexpected" });
   // A file with no name before its extension is linked to nothing.
   assert.deepEqual(marks("Add .env.example, with a test", [".env.example", ".gitignore"]), { ".env.example": "expected", ".gitignore": "unexpected" });
   assert.ok(isTestFile("test/a.ts") && isTestFile("src/a.test.ts") && isTestFile("pkg/a_test.go") && isTestFile("test_a.py") && isTestFile("src/a.spec.tsx"));

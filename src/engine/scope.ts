@@ -18,8 +18,8 @@ import type { Task } from "./task.ts";
  *   2. a check that ran on the task names it the same way (a check `test -f hello.txt` expects hello.txt);
  *   3. it is a test file and the plan asks for a test (the word "test" or "tests"), or it shares its name, without the
  *      test markers and the extension, with a file expected by 1 or 2 (calc.test.ts beside calc.ts);
- *   4. a test file expected by 1 or 2 shares its name with it, the same way: the named test leads one to expect the
- *      file it tests.
+ *   4. a test file the plan or a check names (by 1 or 2, changed or not) shares its name with it, the same way: the
+ *      named test leads one to expect the file it tests.
  * Only words the owner wrote or chose are read: the plan, the task's prompt and the configured checks. An issue's text,
  * the agents' replies and the contents of the changed files are never read for this, so nothing an agent writes can
  * make a file expected. A protected path is compared as a folder ("test/recordings/") or one exact file.
@@ -78,7 +78,9 @@ export function fileScope(o: { files: readonly string[]; plan: string; checks: r
   const asksForTests = /\btests?\b/i.test(o.plan);
   // A name with no stem (".gitignore", ".github/…") is linked to no other file.
   const namedStems = new Set([...named].map(stem).filter((s) => s !== ""));
-  const namedTestStems = new Set([...named].filter(isTestFile).map(stem).filter((s) => s !== ""));
+  // A test the plan or a check names leads to the file it tests whether or not the test itself changed.
+  const namedTests = [...[...named].filter(isTestFile), ...words.filter((word) => /\.[A-Za-z0-9]+$/.test(word) && isTestFile(word))];
+  const namedTestStems = new Set(namedTests.map(stem).filter((s) => s !== ""));
   return o.files.map((file) => {
     const expected = named.has(file) || (isTestFile(file) ? asksForTests || namedStems.has(stem(file)) : namedTestStems.has(stem(file)));
     return { path: file, expected, protected: isProtected(file, o.protectedPaths) };
