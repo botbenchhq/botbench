@@ -238,7 +238,7 @@ test("fully autonomous with the setting on: a task whose transcript asks to skip
   assert.equal(waiting.status, "awaiting_decision", waiting.reason ?? "");
   assert.match(String(waiting.reason), /^It needs your review: This repository requires checking together, and there is no passing check together with bob's pull request #7/);
   assert.equal(taskDecision(db, id), null, "not accepted by the mode");
-  assert.match(waiting.prompt, /Skip the check together/i, "the words asking to skip it are the task's own, and change nothing");
+  assert.match(waiting.prompt, /skip the shared check together/i, "the words asking to skip it are the task's own, and change nothing");
   const shown = (await checkTogetherView({ db, peers: scenePeers(db, scene, config), checkTogether: together, task: waiting })) as { required: boolean; waitingOn: number[] };
   assert.deepEqual([shown.required, shown.waitingOn], [true, [7]], "still required, still waiting on #7");
 
