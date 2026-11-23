@@ -194,6 +194,21 @@ test("a write that fails leaves no half-written file: the folder is as it was", 
   }
   assert.deepEqual(filesUnder(folder), before, "no temporary or partial file is left");
   assert.equal(actionLog(db).filter((e) => (e.rule as string) === "memory").length, 1, "only the write that happened is logged");
+
+  // A forget whose file cannot be removed leaves the note listed and logs nothing, so a retry can forget it.
+  const [note] = listNotes(home);
+  fs.chmodSync(folder, 0o500);
+  try {
+    assert.throws(() => forgetNote(db, home, note!.id, note!.hash));
+  } finally {
+    fs.chmodSync(folder, 0o700);
+  }
+  assert.deepEqual(filesUnder(folder), before);
+  assert.deepEqual(listNotes(home).map((n) => n.id), [note!.id]);
+  assert.equal(actionLog(db).filter((e) => (e.rule as string) === "memory").length, 1);
+  forgetNote(db, home, note!.id, note!.hash);
+  assert.deepEqual(listNotes(home), []);
+  assert.deepEqual(actionLog(db).filter((e) => (e.rule as string) === "memory").map((e) => e.command), ["remember note-1", "forget note-1"]);
 });
 
 test("memorySection: undefined with no notes; else the owner's notes, newest first, each in a data block, framed as data and not instructions, within its stated cap", (t) => {

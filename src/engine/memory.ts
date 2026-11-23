@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { writeFileAtomic } from "../store/atomic.ts";
-import { now } from "../store/db.ts";
+import { now, transaction } from "../store/db.ts";
 import { dataBlock, NOT_PLAIN } from "./roles.ts";
 
 /*
@@ -261,6 +261,18 @@ function logWrite(db: DatabaseSync, home: string, o: { kind: "remember" | "edit"
 }
 
 /**
+ * A write and its log entry together: the entry is added first, in a transaction, and `write` changes the files inside
+ * it. An entry that cannot be added changes no file; a write that fails takes its entry back. Only a commit that fails
+ * after the files changed, which SQLite reports for a full disk, could leave a change with no entry.
+ */
+function logged(db: DatabaseSync, home: string, o: Parameters<typeof logWrite>[2], write: () => void): void {
+  transaction(db, () => {
+    logWrite(db, home, o);
+    write();
+  });
+}
+
+/**
  * Save `text`, the owner's own words from a chat message (rememberedNote), as a new note. Its number is one no note
  * had before (the index keeps the next one), so a screen that still shows a forgotten note cannot change a new one.
  */
@@ -277,14 +289,15 @@ export function captureNote(db: DatabaseSync, home: string, text: string): Memor
   checkRoom(home, { [name]: raw, [MEMORY_INDEX]: index });
   ensureFolder(home);
   const file = memoryPath(home, name);
-  writeFileAtomic(file, raw, 0o600);
-  try {
-    writeFileAtomic(memoryPath(home, MEMORY_INDEX), index, 0o600);
-  } catch (err) {
-    fs.rmSync(file, { force: true });
-    throw err;
-  }
-  logWrite(db, home, { kind: "remember", id, detail: `You asked Botbench to remember a note in a chat (${count(note.length)} characters). It is kept on this Mac only, in Botbench's data folder.` });
+  logged(db, home, { kind: "remember", id, detail: `You asked Botbench to remember a note in a chat (${count(note.length)} characters). It is kept on this Mac only, in Botbench's data folder.` }, () => {
+    writeFileAtomic(file, raw, 0o600);
+    try {
+      writeFileAtomic(memoryPath(home, MEMORY_INDEX), index, 0o600);
+    } catch (err) {
+      fs.rmSync(file, { force: true });
+      throw err;
+    }
+  });
   return { id, text: note, hash: memoryHash(raw), savedAt, editedAt: null };
 }
 
@@ -297,22 +310,33 @@ export function editNote(db: DatabaseSync, home: string, id: number, text: strin
   const was = readIndex(home);
   const index = indexText({ ...was, entries: was.entries.map((e) => (e.id === id ? { ...e, editedAt } : e)) });
   checkRoom(home, { [noteName(id)]: raw, [MEMORY_INDEX]: index });
-  writeFileAtomic(memoryPath(home, noteName(id)), raw, 0o600);
-  writeFileAtomic(memoryPath(home, MEMORY_INDEX), index, 0o600);
-  logWrite(db, home, { kind: "edit", id, detail: `You edited a note in Settings (${count(note.length)} characters).` });
+  const file = memoryPath(home, noteName(id));
+  logged(db, home, { kind: "edit", id, detail: `You edited a note in Settings (${count(note.length)} characters).` }, () => {
+    writeFileAtomic(file, raw, 0o600);
+    try {
+      writeFileAtomic(memoryPath(home, MEMORY_INDEX), index, 0o600);
+    } catch (err) {
+      // The note goes back to the version its writer read, so the edit is either whole and logged or not made.
+      writeFileAtomic(file, `${before.text}\n`, 0o600);
+      throw err;
+    }
+  });
   return { ...before, text: note, hash: memoryHash(raw), editedAt };
 }
 
 /**
- * Forget note `id`, when `hash` is the version of it its writer read: its line leaves the index and its file is
- * removed. No copy, backup or trash is kept, and the action log holds none of its text.
+ * Forget note `id`, when `hash` is the version of it its writer read: its file is removed, then its line leaves the
+ * index. The file goes first, so a removal that fails leaves the note listed and a retry can forget it; an index that
+ * still names a removed file lists nothing for it (readNotes). No copy, backup or trash is kept, and the action log
+ * holds none of its text.
  */
 export function forgetNote(db: DatabaseSync, home: string, id: number, hash: string): void {
   current(home, id, hash, "it was not forgotten");
   const was = readIndex(home);
-  writeFileAtomic(memoryPath(home, MEMORY_INDEX), indexText({ ...was, entries: was.entries.filter((e) => e.id !== id) }), 0o600);
-  fs.rmSync(memoryPath(home, noteName(id)), { force: true });
-  logWrite(db, home, { kind: "forget", id, detail: "You forgot a note in Settings. Its file was removed, and no copy of it was kept." });
+  logged(db, home, { kind: "forget", id, detail: "You forgot a note in Settings. Its file was removed, and no copy of it was kept." }, () => {
+    fs.rmSync(memoryPath(home, noteName(id)), { force: true });
+    writeFileAtomic(memoryPath(home, MEMORY_INDEX), indexText({ ...was, entries: was.entries.filter((e) => e.id !== id) }), 0o600);
+  });
 }
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
