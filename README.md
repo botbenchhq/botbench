@@ -10,7 +10,7 @@ Botbench is a local-first workbench for the coding agents you already use. Hand 
 
 **Work on your own.** Give agents tasks in separate working copies, choose how much supervision they need, and inspect the work before you accept it.
 
-**Work with a teammate.** Separately run Botbench installations already see each other's work, can claim a GitHub issue so only one of them takes it, and can check two changes together before either is merged.
+**Work with a teammate.** Separately run Botbench installations already see each other's work, can claim a GitHub issue so only one of them takes it (a setting you turn on for a repository), and can check two changes together before either is merged.
 
 **Where it is going.** Connect your workbench with a colleague's, so your agents and theirs coordinate who does what, exchange the context each of you chose to share, manage what depends on what, and deliver work that fits together, while each person keeps control of their own agents, environments and permissions. This part is not built yet; [Where it is going](#where-it-is-going) says what is planned.
 
@@ -20,7 +20,7 @@ Walk away. Come back to the branch.
 
 [Quickstart](#quickstart) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going)
 
-> **Current availability.** Early, and macOS only. Claude Code, signed in with your own subscription, plans and builds; Codex, Grok and Antigravity review and chat. Messages sent directly between workbenches and a container for each task are in development. Commands are confined by the macOS sandbox, which is not a virtual machine or a container. It is not a hosted service, and it never merges a pull request.
+> **Current availability.** Early, and macOS only. Claude Code, signed in with your own subscription, plans and builds. Codex can build too, in its own sandbox, and Codex, Grok and Antigravity review and chat. Messages sent directly between workbenches and a container for each task are in development. Each task works in a separate copy of your repository, which separates changes and is not a security boundary; commands are confined by the macOS sandbox, which is not a virtual machine or a container ([Is it a sandbox?](#is-it-a-sandbox)). It is not a hosted service, and it never merges a pull request.
 
 <!-- CAPTURE: a 20 to 30 second screen recording at phone size, from a real task in a practice repository: type the task in the message box, Send, the approval card appears, Allow once, the task reads Ready for review with its changed file and branch, Accept. Upload it to GitHub and put its <video> tag here, above the screenshots. -->
 
@@ -105,7 +105,7 @@ When two workbenches change the same repository, Botbench can merge your ready t
 
 About ten minutes. It ends with a branch made by Claude Code in a practice repository, and costs one short Claude Code turn on your subscription.
 
-**You need:** macOS; Node 24 or later; git, set up so you can commit; [Claude Code](https://www.anthropic.com/claude-code) 2.1.322 or later, installed and signed in (`claude --version`, `claude auth status`). Codex 0.171.0 or later only if you want reviews.
+**You need:** macOS; Node 24 or later; git, set up so you can commit; [Claude Code](https://www.anthropic.com/claude-code) 2.1.322 or later, installed and signed in (`claude --version`, `claude auth status`). Codex 0.171.0 or later only if you want it to review or build.
 
 **1. Get it and build the screens.** The server itself has nothing to install.
 
@@ -179,7 +179,8 @@ From here, try Work → New run on a real repository (or, in Add context, What t
 | **Works today** | Claude Code plans and builds; one task at a time, each in its own copy and branch | `src/drivers/claude-code.ts`, `src/engine/` |
 | | Approval cards, commands allowed in advance, Always allow, and a list of dangerous commands that always ask | `src/approvals/` |
 | | Confined commands, per-repository checks and setup commands | `src/confinement.ts`, `src/engine/stations.ts` |
-| | Codex, Grok or Antigravity as reviewer (reviews only; they cannot plan or build), and rounds of fixes in which Claude Code answers the review | `src/drivers/`, `src/engine/review.ts`, `src/engine/refine.ts` |
+| | Codex as a builder, chosen per task or run once Botbench's check finds that this Codex can build: it works in its own sandbox, in the task's copy, with no network, and asks you each time it wants to run something outside that sandbox (a fully autonomous run refuses those). Claude Code still plans a run | `src/drivers/codex.ts`, `src/drivers/codex-app-server.ts`, [`docs/security/codex-app-server-check.md`](docs/security/codex-app-server-check.md) |
+| | Codex, Grok or Antigravity as reviewer (Grok and Antigravity review only; none of the three plans), and rounds of fixes in which the builder answers the review | `src/drivers/`, `src/engine/review.ts`, `src/engine/refine.ts` |
 | | Three modes per run: manual, semi-autonomous, fully autonomous | `src/engine/modes.ts`, `src/approvals/gate.ts` |
 | | Opening a pull request for an accepted task, with your own `git` and `gh`; never merged | `src/engine/delivery.ts`, `src/github.ts` |
 | | A run started from one GitHub issue you name, read with your own `gh` and treated as outside text (no command allowed in advance or always allowed, no network unless you allow it, never fully autonomous); its pull request closes the issue. Nothing is posted to GitHub | `src/engine/intake.ts` |
@@ -198,15 +199,14 @@ Planned work is under [Where it is going](#where-it-is-going).
 
 Planned, not in this code.
 
-Botbench is two things meant to work as one product. **The workbench** is one place to bring your agents, subscriptions, models, tools, context and memory together, and to run them within your own policies. **The coordination layer** connects separately owned workbenches, so that your agents and a colleague's can coordinate who does what, exchange context each owner chose to share, manage what depends on what, and finish work together, with the people watching and steering instead of relaying every message. Each person keeps their own agents, environments and permissions. A message from another workbench will never be permission to run anything.
+Botbench is two things meant to work as one product. Much of the first exists today ([What works today](#what-works-today)); most of the second is ahead. **The workbench** is one place to bring your agents, subscriptions, models, tools, context and memory together, and to run them within your own policies. **The coordination layer** connects separately owned workbenches, so that your agents and a colleague's can coordinate who does what, exchange context each owner chose to share, manage what depends on what, and finish work together, with the people watching and steering instead of relaying every message. Each person keeps their own agents, environments and permissions. A message from another workbench will never be permission to run anything.
 
 Coding is where this starts. It is not meant to be where it ends.
 
 What is being built next, each with its issue:
 
-- **Workbenches that talk directly** (Peers P5, [#154](https://github.com/jon-lange/botbench/issues/154)): paired workbenches send each other typed messages. The decision record and threat review are written, in [ADR 0004](docs/adr/0004-peers-direct-messages.md); the first part of the code is in progress. How much of that a person must approve is an open question, set out in [`docs/product/peers-autonomy-tradeoff.md`](docs/product/peers-autonomy-tradeoff.md).
+- **Workbenches that talk directly** (Peers P5, [#154](https://github.com/jon-lange/botbench/issues/154)): paired workbenches send each other typed messages. The decision record and threat review are written, in [ADR 0004](docs/adr/0004-peers-direct-messages.md); the first part is being built on a branch and none of it is in this code yet. How much of that a person must approve is an open question, set out in [`docs/product/peers-autonomy-tradeoff.md`](docs/product/peers-autonomy-tradeoff.md).
 - **Work that depends on a teammate's work**, including two changes to different files that must meet one shared contract ([#172](https://github.com/jon-lange/botbench/issues/172)).
-- **Codex as a builder**, not only a reviewer ([#70](https://github.com/jon-lange/botbench/issues/70)).
 - **One container per task** ([#72](https://github.com/jon-lange/botbench/issues/72)).
 - **A shorter first run** ([#174](https://github.com/jon-lange/botbench/issues/174)).
 
@@ -217,7 +217,7 @@ The order and the reasons are in [the plan](docs/plans/2026-11-21-2234-feat-botb
 1. You start a **task** (a prompt and a repository) or a **run** (a prompt or a spec file, which Claude Code turns into a plan of tasks; in a manual run, and in any run started from a GitHub issue, nothing is built before you approve the plan).
 2. Each task is built in a separate copy of your repository (a git worktree) on its own branch, `botbench/<workbench>/run-<n>/task-<n>`.
 3. Using a tool never asks, in any mode: the agent reads, searches and edits inside its copy, and a shell command that runs inside the sandbox goes without asking. An action or change that reaches outside the copy waits for your answer: a short list of dangerous commands (a push, sudo, deleting or writing outside the copy), a file outside the copy, or a command that could not be kept inside the sandbox. A fully autonomous run refuses these instead. Web search and fetch follow your Web access setting (Allow by default). If you would rather be asked before every command, turn on Ask before every command in Settings; commands you allowed in advance or chose Always allow for still go without asking then.
-4. Botbench commits the work and runs the checks you set for the repository. If you chose a reviewer (Codex, Grok or Antigravity), it reads the change; with concerns, Claude Code gets the review and makes a round of fixes, up to the run's limit, and the checks and the review run again.
+4. Botbench commits the work and runs the checks you set for the repository. If you chose a reviewer (Codex, Grok or Antigravity), it reads the change; with concerns, the builder gets the review and makes a round of fixes, up to the run's limit, and the checks and the review run again.
 5. You read the diff, the checks and the transcript, then Accept (the branch is kept, and opened as a pull request if the run says so) or Reject (you choose whether to keep the branch). A fully autonomous run accepts a task without you only when at least one check ran and every check passed, the reviewer (if there is one) said it looks right and named what it checked, nothing was refused that is on the always-ask list or would have reached outside the task's copy, and every changed file was expected from the plan and none is under a protected path. Otherwise it waits for you and says why.
 
 ## Questions you may have
