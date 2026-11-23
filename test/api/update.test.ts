@@ -48,7 +48,7 @@ async function place(t: T): Promise<Place> {
 
 async function start(t: T, p: Place): Promise<{ server: BotbenchServer; call: (method: string, route: string, body?: unknown) => Promise<{ status: number; body: Body }> }> {
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} } as Config;
-  const server = await startServer({ config, home: p.home, signInDelayMs: 1, allowHttpPushEndpoints: true, installDir: p.install, updates: { releasesUrl: p.releases.url, gitUrl: p.remote, serviceLabel: NO_SERVICE } });
+  const server = await startServer({ config, home: p.home, signInDelayMs: 1, allowHttpPushEndpoints: true, installDir: p.install, updates: { releasesUrl: p.releases.url, gitUrl: p.remote, serviceLabel: NO_SERVICE, stepTimeoutMs: 90_000 } });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
   const token = fs.readFileSync(path.join(p.home, LOGIN_TOKEN_FILE), "utf8").trim();

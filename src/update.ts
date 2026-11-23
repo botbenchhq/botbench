@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -144,13 +144,18 @@ function stepEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
+/** Every command an update has running, so that a Botbench that stops does not wait on one. */
+const live = new Set<ChildProcess>();
+
 function run(cmd: string, args: string[], cwd: string, timeout = STEP_TIMEOUT_MS, label = [cmd, ...args].join(" ")): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { cwd, env: stepEnv({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" }), timeout, killSignal: "SIGKILL", maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { cwd, env: stepEnv({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" }), timeout, killSignal: "SIGKILL", maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+      live.delete(child);
       if (err === null) return resolve(stdout);
       const said = `${stderr}\n${stdout}`.trim().split("\n").slice(-6).join("\n");
       reject(new Error(`${label} failed${said ? `: ${said}` : `: ${err.message}`}`));
     });
+    live.add(child);
   });
 }
 
@@ -204,8 +209,8 @@ export const INSTALL_STEPS: readonly (readonly [string, readonly string[]])[] = 
   ["npm", ["run", "build", "--prefix", "web"]],
 ];
 
-export async function installAndBuild(dir: string): Promise<void> {
-  for (const [cmd, args] of INSTALL_STEPS) await run(cmd, [...args], dir);
+export async function installAndBuild(dir: string, timeout = STEP_TIMEOUT_MS): Promise<void> {
+  for (const [cmd, args] of INSTALL_STEPS) await run(cmd, [...args], dir, timeout);
 }
 
 /** The tag's commit, exactly as committed, unpacked into `dest` (made empty first). */
@@ -396,6 +401,8 @@ export interface UpdateOptions {
   serviceLabel: string;
   checkEveryMs?: number;
   fetch?: typeof fetch;
+  /** The longest each install or build command may take; 10 minutes unless a test asks for less. */
+  stepTimeoutMs?: number;
 }
 
 export interface Updates {
@@ -434,6 +441,7 @@ export function createUpdates(o: {
   let timer: NodeJS.Timeout | undefined;
   const wakers = new Set<() => void>();
   const set = (kind: UpdateStateKind, v: string | null, message: string | null = null): void => {
+    if (kind === "updating" && message !== null) log(`Updating to ${v}: ${message}`);
     state = { kind, version: v, message, at: now() };
   };
   const sleep = (ms: number): Promise<void> =>
@@ -482,7 +490,7 @@ export function createUpdates(o: {
     try {
       set("updating", release.version, "Installing and building the new version.");
       await unpack(o.installDir, target, stage);
-      await installAndBuild(stage);
+      await installAndBuild(stage, o.options!.stepTimeoutMs);
       set("updating", release.version, "Checking that the new version starts.");
       await checkBuildStarts(stage, path.join(work, "h"), release.version);
       await checkMigrations(stage, o.db, path.join(work, "m"));
@@ -495,7 +503,7 @@ export function createUpdates(o: {
     fs.rmSync(backup, { force: true });
     o.db.prepare("VACUUM INTO ?").run(backup);
     fs.chmodSync(backup, 0o600);
-    await switchCheckout(o.installDir, previous, target);
+    await switchCheckout(o.installDir, previous, target, (dir) => installAndBuild(dir, o.options!.stepTimeoutMs));
     writeJournal(o.home, { version: release.version, previous, target, at: now(), state: "pending" });
     log(`Botbench ${release.version} is installed in ${o.installDir} (commit ${target.slice(0, 12)}, from ${previous.slice(0, 12)}).`);
     if (!(await serviceExists(o.options!.serviceLabel))) {
@@ -565,6 +573,8 @@ export function createUpdates(o: {
       closed = true;
       clearTimeout(timer);
       for (const wake of [...wakers]) wake();
+      // A command still running is stopped rather than waited for; the step it was on fails and says so.
+      if (running !== null) for (const child of live) child.kill("SIGKILL");
       await running;
     },
   };
