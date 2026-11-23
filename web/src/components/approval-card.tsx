@@ -266,16 +266,17 @@ function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approva
     if (said.line === null) block.setAttribute("data-ds-content", "");
     else block.removeAttribute("data-ds-content");
   });
-  // Nor can it disable both answers: until the card has settled they are drawn unavailable here, so a press is never
-  // silently dropped. Nothing is sent before then, so the Approval's own disabled props are all still false.
+  // Nor can it disable both answers: until the card has settled, and while Always allow is sent, they are drawn
+  // unavailable here, so a press is never silently dropped. The Approval's own disabled props are all false then.
+  const answersOff = !settled || sending === "grant";
   useLayoutEffect(() => {
-    if (settled) return;
+    if (!answersOff) return;
     const buttons = [...(card.current?.querySelectorAll(":scope > .ds-approval__actions > button") ?? [])];
     for (const button of buttons) button.setAttribute("disabled", "");
     return () => {
       for (const button of buttons) button.removeAttribute("disabled");
     };
-  }, [settled]);
+  }, [answersOff]);
 
   const answer = (decision: "allow" | "decline", typed: string): void => {
     // Until the card has settled, and while an answer is sent, a press does nothing.
