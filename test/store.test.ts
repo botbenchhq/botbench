@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { writeFileAtomic } from "../src/store/atomic.ts";
 import { DB_FILE, migrate, now, openStore, schemaVersion, transaction } from "../src/store/db.ts";
 import { MIGRATIONS } from "../src/store/schema.ts";
+import { getTask, moveTask } from "../src/engine/task.ts";
 
 function tempDir(t: { after(fn: () => void): void }): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-"));
@@ -131,6 +132,30 @@ test("a database at an older schema version is migrated forward and keeps its ro
   // The table added by the later migration works against the kept row.
   db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (1, 1, ?, 'text', '{}')").run("2026-11-21T00:00:00.000Z");
   assert.equal(db.prepare("SELECT count(*) AS n FROM events WHERE attempt_id = 1").get()?.n, 1);
+});
+
+test("the latest migration gives each task a stored time to try again, empty for a task from before it, kept when the task waits for a usage limit and cleared when it leaves that wait", (t) => {
+  const home = tempDir(t);
+  // A real database at the version before this migration, holding a task at work.
+  const old = new DatabaseSync(path.join(home, DB_FILE));
+  migrate(old, MIGRATIONS.slice(0, MIGRATIONS.length - 1));
+  old.prepare("INSERT INTO tasks (repo_path, prompt, status, created_at, updated_at) VALUES ('/r', 'p', 'building', 'then', 'then')").run();
+  assert.ok(!columnNames(old, "tasks").includes("retry_at"));
+  old.close();
+
+  const db = openStore(home);
+  t.after(() => db.close());
+  assert.equal(schemaVersion(db), CURRENT);
+  assert.ok(columnNames(db, "tasks").includes("retry_at"));
+  assert.equal(getTask(db, 1)!.retryAt, null);
+  const at = "2026-11-22T14:30:00.000Z";
+  assert.equal(moveTask(db, 1, "waiting_for_limit", { retryAt: at }).retryAt, at);
+  // Read again from the store, as a restarted Botbench reads it.
+  assert.equal(db.prepare("SELECT retry_at FROM tasks WHERE id = 1").get()?.retry_at, at);
+  const back = moveTask(db, 1, "building");
+  assert.equal(back.retryAt, null);
+  // A wait is entered only from a builder's turn: from nowhere else.
+  assert.throws(() => moveTask(db, 1, "verifying") && moveTask(db, 1, "waiting_for_limit", { retryAt: at }), /cannot move to waiting_for_limit/);
 });
 
 test("a migration that fails part-way leaves the schema and its version untouched", (t) => {

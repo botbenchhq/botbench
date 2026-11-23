@@ -117,6 +117,7 @@ const NOT_READY: Record<Exclude<TaskStatus, "awaiting_decision" | "accepted" | "
   interrupted: "was stopped",
   failed: "failed",
   cancelled: "was cancelled",
+  waiting_for_limit: "is waiting for a usage limit to reset",
 };
 
 function ready(task: Task): void {

@@ -13,7 +13,27 @@ const STATUS_WORD: Record<TaskStatus, string> = {
   interrupted: "Stopped",
   failed: "Failed",
   cancelled: "Cancelled",
+  waiting_for_limit: "Usage limit",
 };
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const two = (n: number): string => String(n).padStart(2, "0");
+
+/**
+ * A task waiting for a usage limit, in words, with the time it tries again in this device's own time: "at 14:30" the
+ * same day, with the day named on another. Without a time, only the wait; once the time has come, that it is trying now.
+ */
+export function waitingWords(retryAt: string | null, now = new Date()): string {
+  const base = "Waiting for a usage limit to reset.";
+  const at = retryAt === null ? Number.NaN : Date.parse(retryAt);
+  if (!Number.isFinite(at)) return base;
+  if (at <= now.getTime()) return `${base} It is trying again now.`;
+  const when = new Date(at);
+  const clock = `${two(when.getHours())}:${two(when.getMinutes())}`;
+  const sameDay = when.getFullYear() === now.getFullYear() && when.getMonth() === now.getMonth() && when.getDate() === now.getDate();
+  return `${base} It will try again ${sameDay ? `at ${clock}` : `on ${DAYS[when.getDay()]} ${when.getDate()} ${MONTHS[when.getMonth()]} at ${clock}`}.`;
+}
 
 /** Whether the task stands still until the owner answers a request of its agent. */
 const waiting = (task: Pick<TaskSummary, "status" | "waitingOnApproval">): boolean => task.status === "building" && task.waitingOnApproval;
@@ -35,11 +55,12 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
   interrupted: LOOKS.stopped,
   failed: LOOKS.failed,
   cancelled: LOOKS.cancelled,
+  waiting_for_limit: LOOKS.usageLimit,
 };
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & { pullRequest: Pick<PullRequestView, "state" | "number"> }): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date()): string {
   // Why the task needs the owner: a fully autonomous run that did not accept it, or, in any mode, a protected file it changed.
   const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
@@ -76,6 +97,8 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       return `Failed. ${task.reason ?? "No reason was recorded."}`;
     case "cancelled":
       return `Cancelled. ${task.reason ?? "Its run was cancelled."}`;
+    case "waiting_for_limit":
+      return waitingWords(task.retryAt ?? null, now);
   }
 }
 
