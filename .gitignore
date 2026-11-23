@@ -5,3 +5,5 @@ smelt.local.json
 web/dist
 test-results
 playwright-report
+# Reference projects cloned into a task copy for comparison; never committed.
+.reference/
