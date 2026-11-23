@@ -47,7 +47,7 @@ export type AttemptStatus = "running" | "interrupted" | "failed" | "ended";
 /** The permission rule for the file-editing tools on every path below the working directory. */
 const EDITS_BELOW_CWD = "Edit(./**)";
 
-/** The only tools a read-only attempt has: reading and searching files, and the shell, every command of which asks. */
+/** The only tools a read-only attempt has: reading and searching files, and the shell, each command of which goes through the gate. */
 const READ_ONLY_TOOLS = "Read,Glob,Grep,Bash";
 /** Named as denied as well, should a CLI version hand a tool out in spite of the list above. */
 const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
@@ -182,7 +182,7 @@ function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean): s
  * with the listed tools and no other, so the model has no tool that writes a file, starts
  * an agent or fetches a page; the writing tools are also named as denied. It works on a
  * repository's content like an attempt that may edit, so no settings file is loaded, and
- * with `gated` every shell command asks through the gate. `readOnly` wins over `allowEdits`.
+ * with `gated` every shell command goes through the gate. `readOnly` wins over `allowEdits`.
  *
  * Every attempt, of any kind, is denied the tools that outlive the turn (`OUTLIVING_TOOLS`).
  *
@@ -606,7 +606,7 @@ class ClaudeCodeSession implements DriverSession {
     if (given.decision === "allow") {
       // An allow runs the input the owner was shown, unchanged.
       this.answerControl(requestId, { behavior: "allow", updatedInput: request.input });
-      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : given.web === true ? "web" : given.chat === true ? "chat" : "allowed", note: null });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : given.web === true ? "web" : given.chat === true ? "chat" : given.bookkeeping === true ? "bookkeeping" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
       this.answerControl(requestId, { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` });

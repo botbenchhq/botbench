@@ -36,6 +36,16 @@ export async function signIn(page: Page, botbench: Botbench): Promise<void> {
 export const nav = (page: Page): Locator => page.getByRole("navigation", { name: "Screens" });
 
 /** The home screen, from the navigation. Its one h1, Chat, is for assistive technology only. */
+/**
+ * Turns on the owner's setting Ask before every command, as Settings saves it, so that an ordinary command of a Manual
+ * task asks again. For the tests whose subject is the approval card itself: by default a command kept inside the task's
+ * copy runs without one. Call it after signing in.
+ */
+export async function askBeforeEveryCommand(page: Page, botbench: Botbench): Promise<void> {
+  const res = await page.request.put(`${botbench.base}/api/settings`, { data: { askEveryCommand: true } });
+  expect(res.status(), await res.text()).toBe(200);
+}
+
 export async function openComposer(page: Page): Promise<void> {
   await nav(page).getByRole("link", { name: "Chat", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();

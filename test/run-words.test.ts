@@ -77,7 +77,7 @@ test("the network hosts' hint says they are reached and names them when ticked; 
 test("a run's mode line names the network hosts the owner allowed for a run from an issue, and is as it was otherwise", () => {
   for (const mode of ["manual", "semi", "full"] as const) assert.equal(modeSentence(mode, []), MODE_SENTENCE[mode], mode);
   const semi = modeSentence("semi", ["registry.npmjs.org", "github.com"]);
-  assert.equal(semi, "Semi-autonomous: commands run without asking, kept away from your sign-ins and from every network host but the ones you allowed for this run: registry.npmjs.org and github.com. You approve the plan and the result.");
-  assert.doesNotMatch(semi, /kept away from your sign-ins and the network/);
+  assert.equal(semi, "Semi-autonomous: you approve the plan, as this run was started from a GitHub issue, and decide on each result. Commands kept inside the task's copy run without asking, away from your sign-ins and from every network host but the ones you allowed for this run: registry.npmjs.org and github.com.");
+  assert.doesNotMatch(semi, /without your plan approval/);
   assert.equal(modeSentence("manual", ["registry.npmjs.org"]), `${MODE_SENTENCE.manual} Its commands may reach the network host you allowed for this run: registry.npmjs.org.`);
 });

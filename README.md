@@ -2,7 +2,7 @@
 
 **Put your coding agents to work. Together.**
 
-Botbench runs on your Mac and hands coding work to the agents you already use. You describe a task from a browser on the Mac or on your phone. Claude Code, signed in with your own subscription, does it in a separate copy of your repository and asks you before it runs a command. You come back to a git branch with the diff, the transcript and your checks' results, and you accept it or reject it.
+Botbench runs on your Mac and hands coding work to the agents you already use. You describe a task from a browser on the Mac or on your phone. Claude Code, signed in with your own subscription, does it in a separate copy of your repository, using its tools there as it would on its own, and asks you before an action that reaches outside that copy (a push, sudo, a write elsewhere). You come back to a git branch with the diff, the transcript and your checks' results, and you accept it or reject it.
 
 It is for developers on macOS who use Claude Code. If a teammate runs their own Botbench on the same GitHub repository, each of you sees the other's pushed branches and open pull requests before starting your own work. It is early and private, it is not a hosted service, and it is not a security sandbox. It never merges a pull request.
 
@@ -22,21 +22,16 @@ It is for developers on macOS who use Claude Code. If a teammate runs their own 
 
 | Without Botbench | With Botbench |
 |---|---|
-| You keep a terminal open and answer each permission prompt as it comes. | Each command that needs you waits as a card you can answer from your phone. Commands you allowed in advance, or that run inside the sandbox in a semi-autonomous run, go without asking. |
+| You keep a terminal open and answer each permission prompt as it comes. | The agent uses its tools inside a sandboxed copy without asking. An action that reaches outside the copy waits as a card you can answer from your phone. |
 | The agent edits your checkout, and you sort out what changed. | Each task works in its own copy on its own branch. Your files and your branch are not touched. |
 | "Done" is the agent's word. | Botbench runs your repository's checks and keeps their output. Another vendor's agent can review the change; its review is shown as a model's opinion, never as a check. |
 | Two developers find out they took the same issue when the second pull request opens. | Each workbench's branches carry its own name, and you see the other workbenches' open pull requests and pushed branches. When you start, Botbench says if another workbench already has a pull request for your issue; when you review, it says if another workbench's open pull request changes the same files. |
 
 ## How a piece of work goes
 
-1. You start a **task** (a prompt and a repository) or a **run** (a prompt or a spec file, which Claude Code turns into a plan of tasks for you to edit and approve).
+1. You start a **task** (a prompt and a repository) or a **run** (a prompt or a spec file, which Claude Code turns into a plan of tasks; in a manual run, and in any run started from a GitHub issue, nothing is built before you approve the plan).
 2. Each task is built in a separate copy of your repository (a git worktree) on its own branch, `botbench/<workbench>/run-<n>/task-<n>`.
-3. Every shell command waits for your answer, except:
-   - a command you allowed for the task or run when you started it;
-   - a command you chose Always allow for;
-   - in a semi-autonomous or fully autonomous run, a command that runs inside the sandbox.
-
-   A short list of dangerous commands always asks; a fully autonomous run refuses them instead.
+3. Using a tool never asks, in any mode: the agent reads, searches and edits inside its copy, and a shell command that runs inside the sandbox goes without asking. An action or change that reaches outside the copy waits for your answer: a short list of dangerous commands (a push, sudo, deleting or writing outside the copy), a file outside the copy, or a command that could not be kept inside the sandbox. A fully autonomous run refuses these instead. Web search and fetch follow your Web access setting (Allow by default). If you would rather be asked before every command, turn on Ask before every command in Settings; commands you allowed in advance or chose Always allow for still go without asking then.
 4. Botbench commits the work and runs the checks you set for the repository. If you chose a reviewer (Codex, Grok or Antigravity), it reads the change; with concerns, Claude Code gets the review and makes a round of fixes, up to the run's limit, and the checks and the review run again.
 5. You read the diff, the checks and the transcript, then Accept (the branch is kept, and opened as a pull request if the run says so) or Reject (you choose whether to keep the branch). A fully autonomous run accepts a task without you only when at least one check ran and every check passed, the reviewer (if there is one) said it looks right and named what it checked, nothing was refused that is on the always-ask list or would have reached outside the task's copy, and every changed file was expected from the plan and none is under a protected path. Otherwise it waits for you and says why.
 
@@ -121,7 +116,7 @@ Add a file hello.txt that says hello, then run ls to show that it is there.
 
 Any model will do; the chip under the box shows the one in use, and a small one such as Haiku is enough (tap the chip to change it). Choose Send.
 
-**6. Answer the approval.** Within a minute the task shows a card, "Claude Code asks to run a command", with the command it wants to run (the model chooses the exact command, and may ask more than once). Choose Allow once on each card.
+**6. Watch it work.** Within a minute the transcript shows Claude Code writing the file and running `ls`. Neither asks you: both stay inside the task's copy. A card appears only for an action that reaches outside the copy; if you see one, read it and choose Allow once or Deny.
 
 **7. Review and accept.** The task reads Ready for review, with "No checks are set up for this repository", `hello.txt` under Changed files, and its branch, such as `botbench/your-mac/run-1/task-1`. The middle part is your workbench's name, made from the Mac's name at first start; Settings → Workbench shows it. Choose Accept. Botbench keeps the branch and removes the task's copy.
 

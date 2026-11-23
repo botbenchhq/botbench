@@ -144,7 +144,7 @@ export function createTurns(options: { db: DatabaseSync; home: string; driver: D
         void options.broker
           .request({ taskId: null, chat: true, attemptId, role: CHAT_ROLE, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, files: answer.files !== undefined, web: answer.web !== undefined, chat: answer.chat !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, files: answer.files !== undefined, web: answer.web !== undefined, chat: answer.chat !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
           .catch((err: unknown) => console.error(`Answering a permission request of chat attempt ${attemptId} failed: ${err instanceof Error ? err.message : String(err)}`));
       }
       if (event.type === "permission_resolved") {

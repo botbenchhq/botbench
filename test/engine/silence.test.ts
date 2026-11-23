@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { taskDecision } from "../../src/engine/decision.ts";
-import type { RunMode } from "../../src/engine/modes.ts";
+import { setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
 import { createRun, createRuns, getRun, storePlan, type Runs } from "../../src/engine/run.ts";
 import { plannerSilenceReason, silenceReason } from "../../src/engine/silence.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
@@ -129,6 +129,8 @@ test("a builder that stays alive and sends nothing is stopped at the limit with 
 test("a builder waiting on the owner's answer is not stopped however long the owner takes, and the silence clock starts again from the answer", WITHIN, async (t) => {
   const limitMs = 400;
   const e = await line(t, ["read go; echo ask npm test; read answer; sleep 600 & wait"], limitMs);
+  // A confined command runs without asking unless the owner turned on Ask before every command.
+  setAskEveryCommand(e.db, true);
 
   const started = await e.tasks.start(e.repo, "Run the tests");
   await until(() => listApprovals(e.db, "pending").length === 1, "the request waits for the owner");
