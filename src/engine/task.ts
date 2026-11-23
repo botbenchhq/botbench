@@ -186,21 +186,39 @@ export function insertQueuedTask(db: DatabaseSync, o: { runId: number; repo: str
   return id;
 }
 
+/** A peer's message the owner gave to Claude Code (Peers P5, ADR 0004 decision 8): the work is outside text, its rows the peer's. */
+export interface GivenMessage {
+  pairingId: string;
+  messageId: string;
+  peerName: string;
+  peerFingerprint: string;
+  /** The owner ticked the repository's network hosts for it; none otherwise. */
+  allowHosts: boolean;
+}
+
 /**
  * Store a new task as queued, as a run of its own. The row, the grants for the commands the owner pre-approved for
  * that run, and the task's first event are written together: none exists without the others.
  * Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null; preapproved?: readonly string[]; builderAgent?: string | null }): Task {
+export function createTask(db: DatabaseSync, o: { repo: string; prompt: string; requestedModel?: string | null; preapproved?: readonly string[]; builderAgent?: string | null; given?: GivenMessage; inWrite?: (taskId: number) => void }): Task {
   return transaction(db, () => {
     const at = now();
     // The repository is kept by its real path as it is now. Grants and counts compare this stored path, so a link
     // that is pointed elsewhere later does not carry one repository's trust to another.
     const repo = realRepo(o.repo);
     // A task started on its own is a run of one: it takes the next run id, which no other run or task ever gets.
-    const runId = Number(db.prepare("INSERT INTO runs (kind, repo_path, prompt, build_agent, created_at, updated_at) VALUES ('single', ?, ?, ?, ?, ?)").run(repo, o.prompt, o.builderAgent ?? null, at, at).lastInsertRowid);
+    // A task given a peer's message is marked as having read outside text, with the peer, for good (store/schema.ts).
+    const g = o.given;
+    const runId = Number(
+      db
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, build_agent, created_at, updated_at, outside_text, outside_hosts, peer_pairing_id, peer_message_id, peer_name, peer_fingerprint) VALUES ('single', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt, o.builderAgent ?? null, at, at, g === undefined ? 0 : 1, g?.allowHosts === true ? 1 : 0, g?.pairingId ?? null, g?.messageId ?? null, g?.peerName ?? null, g?.peerFingerprint ?? null).lastInsertRowid,
+    );
     const id = insertQueuedTask(db, { runId, repo, prompt: o.prompt, requestedModel: o.requestedModel ?? null, builderAgent: o.builderAgent ?? null });
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId, taskId: id, commands: o.preapproved ?? [] });
+    // The caller's own write, in the same transaction: the card given to this task is decided with it, or neither is stored.
+    o.inWrite?.(id);
     return getTask(db, id)!;
   });
 }
@@ -402,6 +420,8 @@ export interface Tasks {
    * `preapproved` are the commands the owner lets this task's run use without asking; each must be one plain command.
    */
   start(repo: unknown, prompt: string, model?: string | null, preapproved?: readonly string[], builder?: string | null): Promise<Task>;
+  /** A task of the main agent given a peer's message: manual, with no command allowed in advance, marked as having read outside text. */
+  startGiven(repo: string, prompt: string, given: GivenMessage, inWrite: (taskId: number) => void): Promise<Task>;
   /** Why `builder` (an agent's name, or null for the main agent) cannot build a task of a run in `mode` (manual when left out) now, in words for the owner; null when it can. */
   builderProblem(builder: string | null, mode?: RunMode): string | null;
   /** Build a running run's queued tasks, one at a time, in plan order, after whatever is being built now. */
@@ -473,6 +493,20 @@ export interface TasksOptions {
   onTaskChange: (task: Task) => void;
   /** Called when a run's build reaches its end. */
   onRunChange?: (run: { id: number; status: string }) => void;
+  /** Messages to a paired workbench (src/peers/drafts.ts). None, and no word of them in a prompt, when left out. */
+  peerMessages?: PeerMessageHooks;
+}
+
+/** What a builder's turns have to do with a paired workbench (Peers P5, ADR 0004 decisions 8, 9 and 12). */
+export interface PeerMessageHooks {
+  /**
+   * Botbench's words added to a builder's prompt: the peer's message as outside text for work given one, how to draft a
+   * message (where a pairing is in force for the repository and the run is not fully autonomous), and word of a draft
+   * refused over the cap per run. `fresh`: a new session, which has not seen what an earlier prompt gave it.
+   */
+  promptFor(task: Task, fresh: boolean): Promise<string>;
+  /** The texts of a builder's turns: each `botbench-peer-message` block in them is a draft, counted and logged, then a card or refused. */
+  takeDrafts(task: Task, attemptId: number, texts: readonly string[]): Promise<void>;
 }
 
 /**
@@ -516,11 +550,17 @@ export function createTasks(options: TasksOptions): Tasks {
    * (engine/learnings.ts), then the owner's notes on this workbench when there are any (engine/memory.ts), then, for a
    * run started from an issue, the issue as outside text.
    */
-  const builderPrompt = (task: Task): string => {
+  const builderPrompt = async (task: Task): Promise<string> => {
     const issue = runIssue(db, task.runId);
     const learnings = learningsSection(task.worktreePath ?? task.repo);
     const memory = memorySection(home);
-    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${memory === undefined ? "" : `\n\n${memory}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    return `${task.prompt}${learnings === undefined ? "" : `\n\n${learnings}`}${memory === undefined ? "" : `\n\n${memory}`}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}${await peerSection(task, true)}`;
+  };
+  /** The peer's part of a builder's prompt (`PeerMessageHooks.promptFor`), set apart; nothing when there is none or it cannot be read. */
+  const peerSection = async (task: Task, fresh: boolean): Promise<string> => {
+    if (options.peerMessages === undefined) return "";
+    const words = await options.peerMessages.promptFor(task, fresh);
+    return words === "" ? "" : `\n\n${words}`;
   };
   /**
    * The agent that builds a task: the one it was started with (`builderAgent`), or the main agent for a task that names
@@ -747,7 +787,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let files: string[] = [];
     if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
     const issue = fresh ? runIssue(db, task.runId) : null;
-    const prompt = `${checkFixPrompt({ failed: open.failed, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    const prompt = `${checkFixPrompt({ failed: open.failed, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}${await peerSection(task, fresh)}`;
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
     const note = again === "limit" ? LIMIT_ROUND_NOTE : "Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.";
     return again !== null ? prompt.replace("[From Botbench, not from the owner] ", `[From Botbench, not from the owner] ${note}\n\n`) : prompt;
@@ -878,7 +918,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
     const issue = fresh ? runIssue(db, task.runId) : null;
     // A new session has not seen the issue a run was started from: it is given again, as the first build's prompt gives it.
-    const prompt = `${refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
+    const prompt = `${refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}${await peerSection(task, fresh)}`;
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
     const note = again === "limit" ? LIMIT_ROUND_NOTE : "Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.";
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
@@ -1043,7 +1083,7 @@ export function createTasks(options: TasksOptions): Tasks {
       return void move(id, cancelled(task) ? "cancelled" : "failed", { reason });
     }
 
-    await drive(task, session, admission, builderPrompt(task), null, stop.signal);
+    await drive(task, session, admission, await builderPrompt(task), null, stop.signal);
   };
 
   /**
@@ -1100,6 +1140,8 @@ export function createTasks(options: TasksOptions): Tasks {
     /** Set when the turn ended on the agent's usage limit (`limitedEnd`): the reset time it gave, or null. */
     let usageLimit = null as { resetsAt: string | null } | null;
     let reply = "";
+    /** Every text the builder wrote in this drive's turns: a draft to a paired workbench may be in any of them. */
+    const texts: string[] = [];
     // A task with a review whose round has no fixes yet is on a round of fixes (engine/refine.ts).
     const refineRound = refineRoundOf(db, id);
     // One not on a round of fixes for a review, with a failed check no round has ended for, is on a round of fixes for that check.
@@ -1130,7 +1172,10 @@ export function createTasks(options: TasksOptions): Tasks {
         if (event.type === "tool_result" && !escalated.has(event.id) && calls.has(event.id)) logOrSay(() => logSandboxedCall(db, calls.get(event.id)!, { taskId: id, runId: task.runId, attemptId: session.attemptId, cwd: ".", detail: `${agentName(builderOf(task).name)} ran this without asking, kept by its own sandbox to the task's copy, away from your sign-ins and the network.` }));
       }
       if (event.type === "session_started") sessionStarted = true;
-      if (event.type === "text") reply = event.text;
+      if (event.type === "text") {
+        reply = event.text;
+        texts.push(event.text);
+      }
       if (event.type === "turn_ended") {
         detail = event.detail;
         usageLimit = event.usageLimit ?? null;
@@ -1243,6 +1288,11 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     admission.release();
     options.onEvent();
+    // Drafts to a paired workbench become cards, or are refused, whatever became of the turn. A failure here makes no
+    // card and sends nothing (broker failure means deny); the task goes on.
+    if (options.peerMessages !== undefined && texts.length > 0) {
+      await options.peerMessages.takeDrafts(getTask(db, id) ?? task, session.attemptId, texts).catch((err: unknown) => console.error(`The drafts in task ${id}'s reply to a paired workbench were not taken: ${words(err)}. Nothing was sent.`));
+    }
 
     // However the turn ended, what it wrote is committed and the task says where it stands.
     if (leftover !== null) await finish(task, "failed", leftover);
@@ -1409,7 +1459,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const stop = new AbortController();
     active = { taskId: id, runId: task.runId, stop };
     try {
-      await drive(task, session, admission, RESUME_PROMPT, "answer", stop.signal);
+      await drive(task, session, admission, `${RESUME_PROMPT}${await peerSection(task, false)}`, "answer", stop.signal);
     } finally {
       active = null;
     }
@@ -1466,14 +1516,16 @@ export function createTasks(options: TasksOptions): Tasks {
     const reviewer = onRefine ? reviewAssignment(db, task.id)?.agent ?? null : null;
     // A round of fixes for a failing check is sent the failing check again, the same way.
     const checkFix = onRefine ? null : checkFixRoundOf(db, task.id);
-    const prompt =
+    const sent =
       reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, by === "limit" ? "limit" : "restart")
       : checkFix !== null ? await checkFixPromptFor(task, checkFix, cursor === null, by === "limit" ? "limit" : "restart")
-      : cursor === null ? builderPrompt(task)
+      : cursor === null ? await builderPrompt(task)
       : by === "limit" ? LIMIT_PROMPT
       : before === "changed nothing" ? CHANGED_NOTHING_PROMPT
       : before === "silent" ? silentPrompt(durationWords(silenceLimit))
       : CONTINUE_PROMPT;
+    // The same session is told what Botbench refused since (a draft over the cap per run); the other prompts say it themselves.
+    const prompt = reviewer === null && checkFix === null && cursor !== null ? `${sent}${await peerSection(task, false)}` : sent;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 
@@ -1640,6 +1692,18 @@ export function createTasks(options: TasksOptions): Tasks {
     return task;
   };
 
+  const startGiven = async (repo: string, prompt: string, given: GivenMessage, inWrite: (taskId: number) => void): Promise<Task> => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const cannot = builderProblem(null);
+    if (cannot !== null) throw new TaskError(400, cannot);
+    const checked = await checkRepository(repo);
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = createTask(db, { repo: checked, prompt, requestedModel: options.model ?? null, given, inWrite });
+    options.onTaskChange(task);
+    chain = chain.then(() => build(task.id)).catch(report(`Building task ${task.id}`));
+    return task;
+  };
+
   const resume = (id: number): Task => {
     if (closed) throw new TaskError(503, "Botbench is shutting down.");
     const task = getTask(db, id);
@@ -1764,5 +1828,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, builderProblem, buildRun, stopRun, resume, sendNote, reconsider, idle, close };
+  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, reconsider, idle, close };
 }

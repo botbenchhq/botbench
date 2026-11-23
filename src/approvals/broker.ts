@@ -1,3 +1,4 @@
+import { askedByFor, askedByValues, OWNER, type AskedBy } from "../peers/asked-by.ts";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -183,6 +184,16 @@ export type LogRule =
   | "peer_protocol"
   /** Traffic the peer listener refused, at most one row a minute per caller, with how many (src/peers/listener.ts). */
   | "peer_refused"
+  /** A question or an answer to or from a paired workbench: written, sent, delivered, received, shown on a card, decided (src/peers/). */
+  | "peer_message"
+  /** A question or an answer not sent or not taken because its kind is switched off for that workbench (ADR 0004 decision 11). */
+  | "peer_kind_refused"
+  /** An agent drafted a message to a paired workbench; logged and counted before anything else is decided (decision 12). */
+  | "peer_send_attempt"
+  /** An agent's draft refused without a card: the run had sent its most messages to other workbenches (decision 12). */
+  | "peer_send_over_limit"
+  /** The owner changed whether a kind may be sent to or received from a paired workbench (decision 11). */
+  | "peer_settings"
   /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
   | "issue_claim"
   /** The owner answered an agent's question; `detail` holds the answer as given. */
@@ -247,6 +258,8 @@ export interface Approval {
   question: Question | null;
   /** The owner's answer to a question, as given; null until there is one. */
   answer: string | null;
+  /** Who asked (ADR 0004 decision 10); for a peer, its card's line "Asked by Claude Code, working on a message from bob's workbench". */
+  askedBy: AskedBy & { words: string | null };
 }
 
 export interface LogEntry {
@@ -266,6 +279,8 @@ export interface LogEntry {
   detail: string | null;
   /** What kind of request a fully autonomous run refused (src/approvals/refusals.ts), on a `mode_refused` entry; null on any other, and on one from before kinds were recorded. */
   refusal: RefusalKind | null;
+  /** Who asked (ADR 0004 decision 10): the owner, this workbench's agent, or a named peer workbench. */
+  askedBy: AskedBy;
 }
 
 export interface ApprovalRequest {
@@ -418,6 +433,14 @@ const int = (v: unknown): number | null => (typeof v === "number" ? v : null);
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const words = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/** Who asked, as a row of approvals or the action log keeps it. */
+export const askedByOfRow = (row: Record<string, unknown>): AskedBy => ({
+  by: row.asked_by === "peer" ? "peer" : row.asked_by === "agent" ? "agent" : "owner",
+  pairingId: text(row.asked_by_pairing_id),
+  peerName: text(row.asked_by_peer_name),
+  peerFingerprint: text(row.asked_by_peer_fingerprint),
+});
+
 function toApproval(row: Record<string, unknown>): Approval {
   return {
     id: Number(row.id),
@@ -443,11 +466,12 @@ function toApproval(row: Record<string, unknown>): Approval {
     target: text(row.target),
     question: parseStoredQuestion(row.question),
     answer: text(row.answer),
+    askedBy: { ...askedByOfRow(row), words: row.asked_by === "peer" ? `Asked by ${row.builder_agent === "codex" ? "Codex" : "Claude Code"}, working on a message from ${String(row.asked_by_peer_name)}'s workbench` : null },
   };
 }
 
 /** An approval with what its card is titled by: its task's prompt, or what its run was given (the prompt, or the spec file's path). */
-const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path, (SELECT 'Issue #' || f.number || ': ' || f.title FROM issue_fetches f WHERE f.id = r.issue_fetch_id)) AS prompt, CASE WHEN a.chat = 1 THEN 0 ELSE COALESCE(tr.outside_text, r.outside_text, 1) END AS outside_text FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs tr ON tr.id = t.run_id LEFT JOIN runs r ON r.id = a.run_id";
+const APPROVAL_COLUMNS = "a.*, COALESCE(t.prompt, r.prompt, r.spec_path, (SELECT 'Issue #' || f.number || ': ' || f.title FROM issue_fetches f WHERE f.id = r.issue_fetch_id)) AS prompt, CASE WHEN a.chat = 1 THEN 0 ELSE COALESCE(tr.outside_text, r.outside_text, 1) END AS outside_text, t.builder_agent AS builder_agent FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs tr ON tr.id = t.run_id LEFT JOIN runs r ON r.id = a.run_id";
 
 /** Approvals, oldest first; all of them or those with one status. */
 export function listApprovals(db: DatabaseSync, status?: ApprovalStatus): Approval[] {
@@ -484,6 +508,7 @@ const toLogEntry = (row: Record<string, unknown>): LogEntry => ({
   cwd: String(row.cwd),
   detail: text(row.detail),
   refusal: asRefusalKind(row.refusal),
+  askedBy: askedByOfRow(row),
 });
 
 /** The action log, oldest first; everything or one task's. The log is only ever read here and added to by `appendLog`. */
@@ -521,11 +546,15 @@ export interface LogWrite {
   detail?: string | null;
   /** Only with `mode_refused`: what kind of request was refused. */
   refusal?: RefusalKind | null;
+  /** Who asked, when it is not the owner; a run given a peer's message always names its peer (src/peers/asked-by.ts). */
+  askedBy?: AskedBy;
 }
 
 /** Add one entry to the action log. The broker writes every entry but the owner's decisions on tasks (engine/decision.ts). */
 export function appendLog(db: DatabaseSync, e: LogWrite): void {
-  db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail, refusal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null, e.refusal ?? null);
+  // Who asked (ADR 0004 decision 10): a run given a peer's message names that peer on every row; else `e.askedBy`, the owner unless said.
+  const asked = askedByValues(askedByFor(db, e.taskId, e.runId, e.askedBy ?? OWNER));
+  db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null, e.refusal ?? null, ...asked);
 }
 
 /**
@@ -850,8 +879,8 @@ export function createBroker(options: {
     try {
       id = transaction(db, () => {
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, question) VALUES (?, ?, 0, ?, ?, ?, ?, ?, NULL, ?, 'pending', ?, ?)")
-          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, question.text, cwd, r.toolCallId, now(), storedQuestion(question));
+          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, question, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, 0, ?, ?, ?, ?, ?, NULL, ?, 'pending', ?, ?, ?, ?, ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.attemptId, r.role, r.tool, question.text, cwd, r.toolCallId, now(), storedQuestion(question), ...askedByValues(askedByFor(db, r.taskId, r.runId)));
         const approvalId = Number(inserted.lastInsertRowid);
         appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: question.text, cwd, detail: null });
         return approvalId;
@@ -1018,8 +1047,8 @@ export function createBroker(options: {
     try {
       id = transaction(db, () => {
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target, escalation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)")
-          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target, escalation ? 1 : 0);
+          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target, escalation, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target, escalation ? 1 : 0, ...askedByValues(askedByFor(db, r.taskId, r.runId)));
         const approvalId = Number(inserted.lastInsertRowid);
         appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
@@ -1141,7 +1170,7 @@ export function createBroker(options: {
       if (verdict.verdict !== "ask" || verdict.floor !== undefined) return verdict.verdict === "ask" ? `Botbench always asks about it (${verdict.floor})` : "it is not a command Botbench asks about";
       if (split === null) return "it is not one plain command";
       // What a stranger's text may have led to is asked about every time.
-      if (approval.outsideText) return "its run read a GitHub issue, which people outside the project wrote";
+      if (approval.outsideText) return approval.askedBy.by === "peer" ? `its work was given a message from ${approval.askedBy.peerName}'s workbench, which people outside this Mac wrote` : "its run read a GitHub issue, which people outside the project wrote";
       const problem = standingProblem(split);
       if (problem !== null) return problem;
       const task = db.prepare("SELECT repo_path FROM tasks WHERE id = ?").get(approval.taskId);

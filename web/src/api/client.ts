@@ -1032,7 +1032,17 @@ export type LogRule =
   /** A fixed reply or notice sent to a paired workbench without asking. */
   | "peer_protocol"
   /** What the listener for paired workbenches refused, at most one entry a minute, with how many. */
-  | "peer_refused";
+  | "peer_refused"
+  /** A question or an answer to or from a paired workbench. */
+  | "peer_message"
+  /** A question or an answer not sent or not taken, because its kind is switched off for that workbench. */
+  | "peer_kind_refused"
+  /** An agent drafted a message to a paired workbench; counted before anything else is decided. */
+  | "peer_send_attempt"
+  /** An agent's draft refused without a card: its run had sent its most messages to other workbenches. */
+  | "peer_send_over_limit"
+  /** The owner changed what a paired workbench may send or receive. */
+  | "peer_settings";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

@@ -17,6 +17,7 @@ import {
   type RefusalReason,
   type SignedEnvelope,
 } from "./envelope.ts";
+import { showIncomingCard } from "./cards.ts";
 import type { WorkbenchKey } from "./key.ts";
 import { confirmByPeer, endPairing, getPairing, maySend, mayReceive, nextSequence, pairingState, recordPeerReceive, storeEnvelope, type Pairing } from "./pairings.ts";
 
@@ -205,6 +206,9 @@ export function receiveEnvelope(db: DatabaseSync, key: WorkbenchKey, wire: { env
     if (isMessageKind(e.kind) && tooManyWaiting(db, p.id)) return refuse("too_many_cards", `${p.peerName} has ${WAITING_CARDS} cards waiting already.`);
 
     storeEnvelope(db, { envelope: e, signature: String(wire.signature) }, "in", at, digest);
+    // A question or an answer becomes a card for the owner and nothing else (decision 8), in the same write, so the ten
+    // waiting cards are counted exactly. Nothing here starts, wakes or answers an agent.
+    if (isMessageKind(e.kind)) showIncomingCard(db, { pairingId: p.id, messageId: e.messageId, contextId: e.contextId!, kind: e.kind }, at);
     let acknowledgement: SignedEnvelope | null = null;
     if (isMessageKind(e.kind) || e.kind === "pair_confirmation" || e.kind === "settings_notice") {
       acknowledgement = response(key, p, "acknowledgement", e.messageId, at);

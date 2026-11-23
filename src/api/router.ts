@@ -34,6 +34,7 @@ import type { Chat } from "./chat.ts";
 import type { AgentChecks } from "./agents.ts";
 import type { Watch } from "../engine/watch.ts";
 import { watchRoutes } from "./watch.ts";
+import { peerMessageRoutes } from "./peer-messages.ts";
 import { peerPairingRoutes } from "./peer-pairing.ts";
 import type { PeerLink } from "../peers/service.ts";
 
@@ -175,6 +176,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await memoryRoutes(req, res, ctx, url)) return;
   if (await peersRoutes(req, res, ctx, url)) return;
   if (await peerPairingRoutes(req, res, ctx, url)) return;
+  if (await peerMessageRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (await boardRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;
