@@ -230,11 +230,11 @@ test("CRITICAL: Botbench's answer to each permission request: its data folder is
     assert.equal((answer as { answer?: string }).answer, "deny", `${into} is in Botbench's data folder, also through a link`);
   }
   assert.deepEqual(agyDecide(req({ name: "run_command", kind: "execute", rawInput: { CommandLine: "ls -la" } }), chat), { ask: { name: "Bash", input: { command: "ls -la" } } });
-  assert.deepEqual(agyDecide(req({ paths: ["/etc/hosts"] }), chat), { ask: { name: "Read", input: { file_path: "/private/etc/hosts" } } });
+  assert.deepEqual(agyDecide(req({ paths: ["/etc/hosts"] }), chat), { ask: { name: "Read", input: { file_path: fs.realpathSync("/etc/hosts") } } });
   assert.deepEqual(agyDecide(req({ name: "write_file", kind: "edit", paths: ["/tmp/x/out.txt"] }), chat), { ask: { name: "Edit", input: { file_path: path.join(fs.realpathSync("/tmp"), "x", "out.txt") } } });
   assert.equal((agyDecide(req({ name: "schedule", kind: "other" }), chat) as { answer: string }).answer, "deny", "a tool Botbench did not give is refused");
   // A request naming a place inside and one outside is put to the check by the one outside.
-  assert.deepEqual(agyDecide(req({ paths: [path.join(folder, "a"), "/etc/hosts"] }), chat), { ask: { name: "Read", input: { file_path: "/private/etc/hosts" } } });
+  assert.deepEqual(agyDecide(req({ paths: [path.join(folder, "a"), "/etc/hosts"] }), chat), { ask: { name: "Read", input: { file_path: fs.realpathSync("/etc/hosts") } } });
   assert.deepEqual(agyDecide(req({ name: "write_file", kind: "move", paths: [path.join(folder, "a"), "/tmp/b"] }), chat), { ask: { name: "write_file", input: { file_path: path.join(fs.realpathSync("/tmp"), "b") } } });
   // A command's own folder counts: one run in Botbench's data folder is refused.
   const inData = { CommandLine: "ls", Cwd: path.join(data, "antigravity") };
