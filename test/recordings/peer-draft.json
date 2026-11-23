@@ -1,0 +1,41 @@
+{
+  "about": "A real Claude Code session, recorded through Botbench's driver, permission check and broker by test/support/capture-peer-draft.ts, as a task's builder in a repository paired with bob's workbench is driven: given the task's words and Botbench's instructions for drafting (src/peers/drafts.ts draftRules), it replied with one botbench-peer-message block holding a question. `events` is the whole attempt as Botbench stored it.",
+  "cli": "2.1.322 (Claude Code)",
+  "model": "haiku",
+  "recordedAt": "2026-11-23T13:27:40.863Z",
+  "prompt": "Do not use any tool. You need to know which port bob's login service listens on, and you cannot find it here. Reply with one sentence, then ask bob's workbench for it.\n\n[From Botbench, not from the owner] This repository is shared with bob's workbench, another person's Botbench. To ask it something you cannot find out here, write the message in its own fenced block in your reply, exactly like this:\n\n```botbench-peer-message\n{\"kind\": \"question\", \"text\": \"The message, in plain words.\"}\n```\n\nThe kind is \"question\": a new question, which opens a thread. Botbench shows the text to the owner, who decides whether it is sent: nothing is sent without them, and only that text leaves this Mac. Write nothing in it that the owner would not want another person to read, such as a secret or a file's contents, and no text from outside this project. At most 5 such messages in this run.",
+  "events": [
+    {
+      "type": "user_prompt",
+      "text": "Do not use any tool. You need to know which port bob's login service listens on, and you cannot find it here. Reply with one sentence, then ask bob's workbench for it.\n\n[From Botbench, not from the owner] This repository is shared with bob's workbench, another person's Botbench. To ask it something you cannot find out here, write the message in its own fenced block in your reply, exactly like this:\n\n```botbench-peer-message\n{\"kind\": \"question\", \"text\": \"The message, in plain words.\"}\n```\n\nThe kind is \"question\": a new question, which opens a thread. Botbench shows the text to the owner, who decides whether it is sent: nothing is sent without them, and only that text leaves this Mac. Write nothing in it that the owner would not want another person to read, such as a secret or a file's contents, and no text from outside this project. At most 5 such messages in this run."
+    },
+    {
+      "type": "session_started",
+      "resumeCursor": "f55439d8-5e84-4c2f-84cd-9f9c187ef4f2",
+      "model": "claude-haiku-5-5",
+      "keySource": "none"
+    },
+    {
+      "type": "text",
+      "text": "I can't find which port bob's login service listens on from this repository, so I'm asking bob's workbench.\n\n```botbench-peer-message\n{\"kind\": \"question\", \"text\": \"Which port does bob's login service listen on?\"}\n```"
+    },
+    {
+      "type": "rate_limit",
+      "limited": false,
+      "status": "allowed_warning",
+      "resetsAt": "2026-11-26T23:00:00.000Z"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 2,
+      "outputTokens": 207,
+      "cacheReadTokens": 7394,
+      "cacheWriteTokens": 9840
+    },
+    {
+      "type": "turn_ended",
+      "reason": "completed",
+      "detail": null
+    }
+  ]
+}

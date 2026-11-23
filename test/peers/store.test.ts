@@ -27,68 +27,7 @@ import {
   type PairRequest,
 } from "../../src/peers/pairings.ts";
 import { decideDraftCard, decideIncomingCard, showDraftCard, showIncomingCard, threadFriction } from "../../src/peers/cards.ts";
-
-const REPO = "github.com/jon-lange/botbench";
-
-interface Side {
-  home: string;
-  db: DatabaseSync;
-  key: WorkbenchKey;
-}
-function side(t: { after(fn: () => void): void }): Side {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-peers-"));
-  const s: Side = { home, db: openStore(home), key: workbenchKey(home) };
-  t.after(() => {
-    s.db.close();
-    fs.rmSync(home, { recursive: true, force: true });
-  });
-  return s;
-}
-
-/** A pair request as the joining side makes it: its fields and an HMAC of them made with the invite's secret. */
-function pairRequest(b: Side, inviteId: string, secret: Buffer, pairingKey = newPairingKey()): { request: PairRequest; hmac: Buffer; bytes: Buffer } {
-  const fields = { inviteId, pairingKey, key: b.key.publicKey, name: "bob", address: "127.0.0.1:4791" };
-  const body = Buffer.from(JSON.stringify(fields));
-  const hmac = createHmac("sha256", secret).update(body).digest();
-  const bytes = Buffer.concat([body, hmac]);
-  return { request: { inviteId, pairingKey, requestDigest: requestDigest(bytes), peer: { key: fields.key, name: fields.name, address: fields.address } }, hmac, bytes };
-}
-const hmacCheck = (bytes: Buffer, hmac: Buffer) => (secret: Buffer): boolean => timingSafeEqual(createHmac("sha256", secret).update(bytes.subarray(0, bytes.length - 32)).digest(), hmac);
-
-/** What bob's side holds once alice's signed answer to its request arrived. */
-const answerFor = (alice: Side, pairingId: string, pairingKey: string, over: { key?: string; repository?: string; answeredKey?: string } = {}) => ({
-  invite: { fingerprint: alice.key.fingerprint, repository: REPO },
-  sentPairingKey: pairingKey,
-  answer: { pairingId, pairingKey: over.answeredKey ?? pairingKey, repository: over.repository ?? REPO, peer: { key: over.key ?? alice.key.publicKey, name: "alice", address: "127.0.0.1:4790" } },
-});
-
-/** Alice invites, bob joins, both owners confirm, and alice's confirmation reaches bob: a pairing in force both ways. */
-function pair(alice: Side, bob: Side): string {
-  const invite = createInvite(alice.db, REPO);
-  const { request, hmac, bytes } = pairRequest(bob, invite.id, invite.secret);
-  const accepted = acceptPairRequest(alice.db, alice.key, request, hmacCheck(bytes, hmac));
-  assert.ok("pairing" in accepted);
-  const id = accepted.pairing.id;
-  const joined = joinPairing(bob.db, bob.key, answerFor(alice, id, request.pairingKey));
-  assert.ok("pairing" in joined);
-  assert.equal(pairingState(getPairing(bob.db, id)!), "waiting_for_peer");
-  assert.equal(confirmByOwner(alice.db, id), true);
-  const confirmation = writeOutgoing(alice.db, alice.key, { pairingId: id, kind: "pair_confirmation", contextId: null, parentId: null, body: "" });
-  assert.ok("sent" in confirmation);
-  const got = receiveEnvelope(bob.db, bob.key, confirmation.sent);
-  assert.equal(got.outcome, "stored");
-  assert.equal(receiveEnvelope(alice.db, alice.key, (got as { acknowledgement: SignedEnvelope }).acknowledgement).outcome, "stored");
-  assert.equal(pairingState(getPairing(bob.db, id)!), "in_force");
-  return id;
-}
-
-const send = (from: Side, m: Outgoing, o = {}): SignedEnvelope => {
-  const out = writeOutgoing(from.db, from.key, m, o);
-  if (!("sent" in out)) assert.fail(`not sent: ${out.refused}: ${out.problem}`);
-  return out.sent;
-};
-const ask = (from: Side, pairingId: string, contextId = newId(), parentId: string | null = null, body = "Which field names does the login answer use?"): SignedEnvelope => send(from, { pairingId, kind: "question", contextId, parentId, body });
-const count = (db: DatabaseSync, sql: string, ...args: (string | number)[]): number => Number(db.prepare(sql).get(...args)?.n);
+import { answerFor, ask, count, hmacCheck, pair, pairRequest, REPO, send, side, type Side } from "../support/peer-store.ts";
 
 test("an invite is used once: a retried pair request gets the same pairing, another request on it is refused, and its secret is erased", (t) => {
   const alice = side(t);
@@ -254,8 +193,8 @@ test("an ended pairing refuses everything that names it, on both sides, and is n
   const bob = side(t);
   const id = pair(alice, bob);
   const q = ask(alice, id);
+  // The question is a card for bob's owner as it is stored (decision 8).
   const got = receiveEnvelope(bob.db, bob.key, q);
-  showIncomingCard(bob.db, { pairingId: id, messageId: q.envelope.messageId, contextId: q.envelope.contextId!, kind: "question" });
   // Alice's owner asks a second question while bob's notice of the end is lost.
   const pending = ask(alice, id);
   const ended = endPairing(bob.db, bob.key, id, "owner_ended");
@@ -378,7 +317,6 @@ test("a peer may send 30 messages an hour and have 10 cards waiting; past that a
   for (let i = 0; i < 10; i++) {
     const q = ask(alice, id);
     assert.equal(receiveEnvelope(bob.db, bob.key, q, { at }).outcome, "stored");
-    showIncomingCard(bob.db, { pairingId: id, messageId: q.envelope.messageId, contextId: q.envelope.contextId!, kind: "question" }, at);
     asked.push(q);
   }
   const eleventh = ask(alice, id);
@@ -387,8 +325,15 @@ test("a peer may send 30 messages an hour and have 10 cards waiting; past that a
   decideIncomingCard(bob.db, id, asked[0]!.envelope.messageId, "dismissed", at);
   assert.equal(receiveEnvelope(bob.db, bob.key, eleventh, { at }).outcome, "stored");
   // 30 in the hour, cards or not: the 31st is refused, and taken an hour later.
-  for (let i = 0; i < 19; i++) assert.equal(receiveEnvelope(bob.db, bob.key, ask(alice, id), { at }).outcome, "stored");
-  for (const row of bob.db.prepare("SELECT message_id FROM peer_cards WHERE decided_at IS NULL").all()) decideIncomingCard(bob.db, id, String(row.message_id), "dismissed", at);
+  const dismissAll = () => {
+    for (const row of bob.db.prepare("SELECT message_id FROM peer_cards WHERE decided_at IS NULL").all()) decideIncomingCard(bob.db, id, String(row.message_id), "dismissed", at);
+  };
+  for (let i = 0; i < 19; i++) {
+    // Each stored question is a card, so the owner keeps the waiting ones under ten.
+    if (i % 9 === 0) dismissAll();
+    assert.equal(receiveEnvelope(bob.db, bob.key, ask(alice, id), { at }).outcome, "stored");
+  }
+  dismissAll();
   const thirtyFirst = ask(alice, id);
   assert.equal((receiveEnvelope(bob.db, bob.key, thirtyFirst, { at: new Date(at.getTime() + 60_000) }) as { reason: string }).reason, "too_many_messages");
   assert.equal(receiveEnvelope(bob.db, bob.key, thirtyFirst, { at: new Date(at.getTime() + 3600_000) }).outcome, "stored");
@@ -432,11 +377,12 @@ test("the friction record answers, per thread, cards a person answered, how long
   const q = send(alice, { pairingId: id, kind: "question", contextId: thread, parentId: null, body: draft, messageId });
   decideDraftCard(alice.db, id, messageId, "sent", q.envelope.body, new Date(t0 + 91_000));
   // Bob's card waits 10 minutes, then bob gives it to the agent; its answer's draft is sent changed.
-  receiveEnvelope(bob.db, bob.key, q);
-  showIncomingCard(bob.db, { pairingId: id, messageId, contextId: thread, kind: "question" }, new Date(t0 + 100_000));
+  // Stored, it is a card at once.
+  receiveEnvelope(bob.db, bob.key, q, { at: new Date(t0 + 100_000) });
   decideIncomingCard(bob.db, id, messageId, "given_to_agent", new Date(t0 + 700_000));
   const answerId = newId();
   showDraftCard(bob.db, { pairingId: id, messageId: answerId, contextId: thread, kind: "answer", draft: "id, name", draftedAt: new Date(t0 + 800_000) }, new Date(t0 + 800_000));
+  send(bob, { pairingId: id, kind: "answer", contextId: thread, parentId: messageId, body: "id, name, expiresAt", messageId: answerId });
   decideDraftCard(bob.db, id, answerId, "sent", "id, name, expiresAt", new Date(t0 + 830_000));
   // A second draft, not sent.
   const declined = newId();

@@ -191,6 +191,10 @@ export interface PeersConfig {
    * No peer listener, and so no pairing, when absent. Keep the port fixed: a paired workbench reaches this one there.
    */
   listen?: { address: string; port: number };
+  /** The most messages an agent may draft to paired workbenches in one run, a chat counting as one (ADR 0004 decision 12): 0 to 50; 5 when absent. */
+  messagesPerRun?: number;
+  /** The most round trips in one thread with a paired workbench (decision 6): 1 to 10; 3 when absent. */
+  roundTripsPerThread?: number;
 }
 export interface AutonomyConfig {
   /** After the owner has allowed the same command this many times, its next card offers standing permission. A whole number of at least 1; 3 when absent. */
@@ -288,8 +292,12 @@ function checkFile(json: Json, file: string): void {
 export function peersProblem(peers: unknown, inFile = false): string | null {
   if (peers === undefined) return null;
   if (!isObject(peers)) return `"peers" must be an object, such as { "listen": { "address": "127.0.0.1", "port": 4790 } }.`;
-  const unknown = Object.keys(peers).find((key) => key !== "listen");
-  if (unknown !== undefined) return `"peers" has unknown setting "${unknown}". Known settings: listen.`;
+  const unknown = Object.keys(peers).find((key) => key !== "listen" && key !== "messagesPerRun" && key !== "roundTripsPerThread");
+  if (unknown !== undefined) return `"peers" has unknown setting "${unknown}". Known settings: listen, messagesPerRun, roundTripsPerThread.`;
+  const cap = peers.messagesPerRun;
+  if (cap !== undefined && (typeof cap !== "number" || !Number.isInteger(cap) || cap < 0 || cap > 50)) return `"peers.messagesPerRun" must be a whole number from 0 to 50: the most messages an agent may draft to other workbenches in one run. 5 when left out.`;
+  const trips = peers.roundTripsPerThread;
+  if (trips !== undefined && (typeof trips !== "number" || !Number.isInteger(trips) || trips < 1 || trips > 10)) return `"peers.roundTripsPerThread" must be a whole number from 1 to 10: the most round trips in one thread with another workbench. 3 when left out.`;
   const listen = peers.listen;
   if (listen === undefined) return null;
   if (!isObject(listen) || Object.keys(listen).some((key) => key !== "address" && key !== "port")) return `"peers.listen" must be { "address": "127.0.0.1", "port": 4790 }: where the listener for paired workbenches listens. Leave "peers" out to keep it off.`;
