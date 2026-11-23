@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { acceptTask, ApiError, rejectTask, type TaskDecision, type TaskDetail } from "../api/client.ts";
 import { Alert } from "./header.tsx";
 import { ConfirmAction } from "./confirm.tsx";
-import { ChecksFinding, latestRound } from "./evidence.tsx";
+import { ChecksFinding, latestRound, REVIEW_LINE } from "./evidence.tsx";
 import { Icon } from "./icon.tsx";
 import { LOOKS } from "./looks.ts";
 import { StatusBadge } from "./status.tsx";
@@ -242,7 +242,7 @@ export function ReviewDecision({ task, onDecided, onSignedOut, children }: { tas
           <dt className="ds-review-decision__source">Review</dt>
           <dd data-testid="decision-review" className="ds-review-decision__finding">
             {task.reviewer === null ? "Not reviewed: this run has no reviewer." : (task.reviewLine ?? "Not reviewed.")}
-            {task.reviewer !== null && task.reviewLine !== null && <span className="ds-review-decision__caveat">A model's opinion, not a check.</span>}
+            {task.reviewer !== null && task.reviewLine !== null && <span className="ds-review-decision__caveat">{REVIEW_LINE}</span>}
           </dd>
         </div>
       </dl>

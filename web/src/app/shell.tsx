@@ -69,13 +69,21 @@ function Redirect({ to }: { to: string }) {
   return null;
 }
 
-function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
-  // From 1024px Permissions and Usage are sections of the two-pane Settings, at their own addresses.
-  if (wide && (route.screen === "trust" || route.screen === "usage")) return <SettingsScreen section={route.screen === "trust" ? "permissions" : "usage"} onSignedOut={onSignedOut} />;
+/**
+ * Permissions and Usage at their own addresses: from 1024px sections of the two-pane Settings, below it screens of their
+ * own. One component draws both, so crossing 1024px redraws the layout around the section instead of swapping screens.
+ */
+function SettingsSectionScreen({ section, onSignedOut }: { section: "permissions" | "usage"; onSignedOut: () => void }) {
+  const wide = useWide();
+  if (wide) return <SettingsScreen section={section} onSignedOut={onSignedOut} />;
+  return section === "permissions" ? <TrustScreen onSignedOut={onSignedOut} /> : <UsageScreen onSignedOut={onSignedOut} />;
+}
+
+function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "turn") return <TurnScreen key={`${route.start ?? ""} ${route.proposal ?? ""}`} start={route.start} proposal={route.proposal ?? null} onSignedOut={onSignedOut} />;
   if (route.screen === "redirect") return <Redirect to={route.to} />;
-  if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
-  if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
+  if (route.screen === "trust") return <SettingsSectionScreen section="permissions" onSignedOut={onSignedOut} />;
+  if (route.screen === "usage") return <SettingsSectionScreen section="usage" onSignedOut={onSignedOut} />;
   if (route.screen === "work") return <BoardScreen onSignedOut={onSignedOut} />;
   if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
@@ -108,16 +116,20 @@ const openRow = (route: Route): string | null => (route.screen === "run" ? `run 
  * opening a row replaces only the screen: the column keeps its search, its scroll position and its focus. The screen
  * is in a plain region of its own, not a section, so its header and navigation stay the page's landmarks. Below 1024px
  * the screen is drawn alone, exactly as before.
+ *
+ * The screen sits at the same place in the tree at every width: below 1024px, and on Settings, the two wrappers are
+ * there and take no part in the layout (`display: contents`). So crossing 1024px in either direction redraws the layout
+ * and does not mount the screen again: its h1, what the owner typed in a message box and where it was read stay.
  */
 function Beside({ route, wide, onSignedOut, children }: { route: Route; wide: boolean; onSignedOut: () => void; children: ReactNode }) {
   // Kept here, so the search is still there after a visit to Settings, which has no column.
   const [query, setQuery] = useState("");
   const settings = route.screen === "settings" || route.screen === "trust" || route.screen === "usage";
-  if (!wide || settings) return children;
+  const column = wide && !settings;
   return (
-    <div className="ds-split-panel ds-split-panel--fill h-screen">
-      <WorkColumn current={openRow(route)} query={query} onQuery={setQuery} onSignedOut={onSignedOut} />
-      <div className="ds-split-panel__detail p-0">{children}</div>
+    <div className={column ? "ds-split-panel ds-split-panel--fill h-screen" : "contents"}>
+      {column ? <WorkColumn current={openRow(route)} query={query} onQuery={setQuery} onSignedOut={onSignedOut} /> : null}
+      <div className={column ? "ds-split-panel__detail p-0" : "contents"}>{children}</div>
     </div>
   );
 }
@@ -163,7 +175,7 @@ export function Shell() {
     return (
       <ApprovalsProvider onSignedOut={onSignedOut}>
         <Beside route={route} wide={wide} onSignedOut={onSignedOut}>
-          {screenFor(route, onSignedOut, wide)}
+          {screenFor(route, onSignedOut)}
         </Beside>
       </ApprovalsProvider>
     );

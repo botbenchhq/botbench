@@ -410,8 +410,19 @@ export interface TaskSummary {
   pullRequest: PullRequestView;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
-  /** The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of another. */
-  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean } | null;
+  /** For a task Botbench took up again by itself after a restart: the one plain line that says so, with the time. */
+  restartLine: string | null;
+  /** For a task resumed or sent a note by the owner whose work waits for another task's to end first: that task. */
+  waitingFor: WaitingFor | null;
+  /** The task is building on a round started by the owner's note to it when it was ready for review. */
+  onNoteRound: boolean;
+  /** For a task that such a round brought back with nothing changed: the plain line that says so. */
+  noteRoundLine: string | null;
+  /**
+   * The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of
+   * another; `forRound` when it was sent while the task was ready for review, and starts a round of its own.
+   */
+  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean; forRound: boolean } | null;
   /** The latest note, when it was not delivered, with why. */
   undeliveredNote: { id: number; text: string; sentAt: string; reason: string } | null;
   /** The mode of its run; manual for a task started on its own. */
@@ -638,6 +649,12 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
 }
 
 /** One task of a run as the run's screen shows it. */
+/** The task another one waits behind: its number and the first line of its prompt. */
+export interface WaitingFor {
+  taskId: number;
+  title: string;
+}
+
 export interface RunTask {
   id: number;
   status: TaskStatus;
@@ -657,6 +674,10 @@ export interface RunTask {
   leftovers: string[] | null;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
+  /** Taken up again by Botbench itself after a restart: the plain line that says so, with the time. */
+  restartLine: string | null;
+  /** Resumed or sent a note by the owner, and waiting for another task's work to end first: that task. */
+  waitingFor: WaitingFor | null;
 }
 
 /** A run reached a state or its plan changed. The run itself is read from its route. */
@@ -887,7 +908,7 @@ export interface ChatItem {
 /** One row of the board: a planned run, a task started on its own (a run of one), or a chat. */
 export type BoardItem =
   | ({ kind: "run"; cancellable: boolean } & RunSummary & RowMenuFacts)
-  | ({ kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; discardable: boolean; createdAt: string; updatedAt: string } & RowMenuFacts)
+  | ({ kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; restartLine: string | null; waitingFor: WaitingFor | null; discardable: boolean; createdAt: string; updatedAt: string } & RowMenuFacts)
   | ({ kind: "chat" } & ChatItem);
 export type BoardGroupName = "needs-you" | "running" | "finished" | "chats";
 /** One group of the board: its real count, and its items (Finished and Chats send only their newest). */

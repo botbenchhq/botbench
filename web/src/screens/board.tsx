@@ -4,7 +4,7 @@ import { checksWords } from "../components/evidence.tsx";
 import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.tsx";
 import { runFacts, runLook, runWord } from "../components/run-status.ts";
 import { StatusBadge } from "../components/status.tsx";
-import { statusLook, statusWord } from "../components/task-status.ts";
+import { statusLook, statusWord, waitingForWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { agentName } from "../app/chat.ts";
 import { cancelStatement, moreName, rowMenu, type RowAction } from "../app/row-menu.ts";
@@ -40,7 +40,10 @@ function RowContent({ item }: { item: BoardItem }) {
       </span>
     );
   }
-  const [look, word, facts] = item.kind === "run" ? [runLook(item), runWord(item), runFacts(item)] : [statusLook(item), statusWord(item), `Task ${item.id}${item.checks === null ? "" : ` · ${checksWords(item.checks)}`} · ${folderName(item.repo)}`];
+  // A task waiting behind another names it, and one Botbench took up again after a restart says so, with the time.
+  const taskFacts = (task: Extract<BoardItem, { kind: "task" }>): string =>
+    [`Task ${task.id}`, ...(task.checks === null ? [] : [checksWords(task.checks)]), folderName(task.repo), ...(waitingForWords(task) === null ? [] : [waitingForWords(task)!]), ...(task.restartLine === null ? [] : [task.restartLine])].join(" · ");
+  const [look, word, facts] = item.kind === "run" ? [runLook(item), runWord(item), runFacts(item)] : [statusLook(item), statusWord(item), taskFacts(item)];
   return (
     <span className="ds-run-status">
       <span data-ds-content="" className="ds-run-status__title">

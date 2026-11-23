@@ -7,7 +7,7 @@ import { countLine, matching, workRows } from "../web/src/app/work-list.ts";
 // as /api/board sends them.
 
 const task = (id: number, title: string, status: "awaiting_decision" | "building" | "failed", updatedAt: string, waitingOnApproval = false): BoardItem => ({
-  kind: "task", id, repo: "/tmp/api", title, status, reason: null, checks: null, waitingOnApproval, resuming: false, discardable: false, branch: null, pullRequest: null, createdAt: updatedAt, updatedAt,
+  kind: "task", id, repo: "/tmp/api", title, status, reason: null, checks: null, waitingOnApproval, resuming: false, restartLine: null, waitingFor: null, discardable: false, branch: null, pullRequest: null, createdAt: updatedAt, updatedAt,
 });
 const run = (id: number, title: string, updatedAt: string): BoardItem => ({
   kind: "run", id, repo: "/tmp/api", title, status: "awaiting_plan_approval", reason: null, attemptId: 1, taskCount: 2, finishedCount: 0, readyCount: 0, decidedCount: 0, waitingOnApproval: false, mode: "manual", outsideText: false, cancellable: false, branch: null, pullRequest: null, createdAt: updatedAt, updatedAt,
