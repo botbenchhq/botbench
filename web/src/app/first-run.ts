@@ -2,7 +2,8 @@ import type { DriverState } from "../api/client.ts";
 
 /*
  * The first run of an installation: until its first chat, task or run is stored, the home screen shows two plain lines
- * above the message box, what to do first and the state of the agent a chat needs. No tour and no overlay. Decided
+ * above the message box, what to do first and the agent a chat needs: signed in, or, under the header's line that names
+ * what is wrong with it, where to connect one. No tour and no overlay. Decided
  * here, without a browser; whether it is the first run is the server's to say (GET /api/first-run).
  */
 
@@ -25,17 +26,12 @@ export function agentStatus(driver: DriverState | null, failed: boolean): AgentS
   return !driver.installed ? "not-installed" : !driver.supported ? "unsupported" : !driver.signedIn ? "signed-out" : "unavailable";
 }
 
-const WORDS: Record<AgentStatus, string> = {
-  checking: "Checking Claude Code.",
-  ready: "Claude Code is signed in.",
-  "not-checked": "Botbench could not check Claude Code.",
-  "not-installed": "Claude Code is not installed.",
-  unsupported: "This version of Claude Code is not supported.",
-  "signed-out": "Claude Code is signed out.",
-  unavailable: "Claude Code cannot be used yet.",
-};
-
-/** The second line: the agent's state, and whether it is followed by the link to connect one (only when it cannot be used). */
+/**
+ * The second line: Claude Code's state while it is checked or when it can be used; when it cannot, only where to connect
+ * an agent (`connect`), as the header's line above already names what is wrong.
+ */
 export function agentLine(status: AgentStatus): { words: string; connect: boolean } {
-  return { words: WORDS[status], connect: status !== "checking" && status !== "ready" };
+  if (status === "checking") return { words: "Checking Claude Code.", connect: false };
+  if (status === "ready") return { words: "Claude Code is signed in.", connect: false };
+  return { words: `${CONNECT.before}${CONNECT.link}${CONNECT.after}`, connect: true };
 }

@@ -22,9 +22,10 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
 
-    // Two plain lines above the box, beside the header's one line on the agent: three at most, and nothing over the screen.
+    // Two plain lines above the box, under the header's one line on what is wrong with the agent: three at most, and
+    // nothing over the screen.
     const lines = page.getByTestId("first-run");
-    await expect(lines.locator("p")).toHaveText(["Tap + to choose a repository, or just ask a question.", "Claude Code is not installed. Connect an agent in Settings → Agents."]);
+    await expect(lines.locator("p")).toHaveText(["Tap + to choose a repository, or just ask a question.", "Connect an agent in Settings → Agents."]);
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");
     await expect(page.locator("dialog[open], [role=dialog]:visible, [aria-modal=true]")).toHaveCount(0);
     const above = await page.locator("main").evaluate((main) => {

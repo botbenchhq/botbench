@@ -15,15 +15,15 @@ test("the agent's line says it is signed in when Claude Code can be used, with n
   assert.deepEqual(agentLine(agentStatus(null, false)), { words: "Checking Claude Code.", connect: false });
 });
 
-test("the agent's line names what is wrong and links to Settings → Agents whenever Claude Code cannot be used", () => {
-  const cases: [DriverState | null, boolean, string][] = [
-    [probe({ installed: false, supported: false, signedIn: false, problem: "Claude Code is not installed, or `claude` is not on the PATH." }), false, "Claude Code is not installed."],
-    [probe({ supported: false, signedIn: false, problem: "Claude Code 1.0.0 is older than Botbench supports." }), false, "This version of Claude Code is not supported."],
-    [probe({ signedIn: false, problem: "Claude Code is signed out. Run `claude auth login` in a terminal." }), false, "Claude Code is signed out."],
-    [probe({ problem: "Claude Code did not report its sign-in status." }), false, "Claude Code cannot be used yet."],
-    [null, true, "Botbench could not check Claude Code."],
+test("whenever Claude Code cannot be used, the agent's line is only the link to Settings → Agents: the header's line names what is wrong", () => {
+  const cases: [DriverState | null, boolean][] = [
+    [probe({ installed: false, supported: false, signedIn: false, problem: "Claude Code is not installed, or `claude` is not on the PATH." }), false],
+    [probe({ supported: false, signedIn: false, problem: "Claude Code 1.0.0 is older than Botbench supports." }), false],
+    [probe({ signedIn: false, problem: "Claude Code is signed out. Run `claude auth login` in a terminal." }), false],
+    [probe({ problem: "Claude Code did not report its sign-in status." }), false],
+    [null, true],
   ];
-  for (const [driver, failed, words] of cases) assert.deepEqual(agentLine(agentStatus(driver, failed)), { words, connect: true });
+  for (const [driver, failed] of cases) assert.deepEqual(agentLine(agentStatus(driver, failed)), { words: "Connect an agent in Settings → Agents.", connect: true });
 });
 
 test("the first-run words are short, plain and use none of the words Botbench never shows, and the link opens Settings at Agents", () => {

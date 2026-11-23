@@ -54,10 +54,10 @@ const HEADER_PROBLEM: Record<AgentStatus, string | null> = {
 };
 
 /** The one link to connect an agent, at the end of a sentence that says the agent cannot be used. */
-function ConnectAgent() {
+function ConnectAgent({ first = false }: { first?: boolean }) {
   return (
     <>
-      {` ${CONNECT.before}`}
+      {`${first ? "" : " "}${CONNECT.before}`}
       <a href={AGENTS_ADDRESS} className="ds-link">
         {CONNECT.link}
       </a>
@@ -348,7 +348,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   };
   const chatting = !inRepository(repo);
   const peerWarnings = chatting ? [] : issueWarnings(peers, { attached: kind === "run" ? (issue.attached?.number ?? null) : null, message: prompt });
-  const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null } : null);
+  // A chat whose agent cannot answer is blocked like one whose Claude Code cannot: the reason ends with the link to connect one.
+  const stopReason = blockedBy(facts) ?? (chatting && !targets.ok ? { reason: targets.why, required: null, connect: true as const } : null);
   const askedCount = chatting && targets.ok ? targets.targets.length : 1;
   /** While a chat reply runs and the composer would send a chat, the button is Stop. */
   const showStop = chatting && running;
@@ -473,9 +474,10 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
   const claudeStatus = agentStatus(driver, driverFailed);
   const problem = HEADER_PROBLEM[claudeStatus];
-  // On a first run, an empty chat shows what to do first and the agent's state: with the header's line when the agent
-  // cannot be used, three short lines at most above the box.
-  const welcome = firstRun === true && chatting && shown.length === 0 ? agentLine(claudeStatus) : null;
+  // On a first run, an empty chat shows what to do first and, when the chat asks Claude Code (as it does until another
+  // agent is chosen), a line on it: signed in, or, under the header's line that names what is wrong, where to connect
+  // one. Three short lines at most above the box.
+  const welcome = firstRun === true && chatting && shown.length === 0 ? { agent: asksClaude ? agentLine(claudeStatus) : null } : null;
   /** The model each chat attempt was asked for, as this screen sent it; an attempt from before a reload has none recorded. */
   const [asked, setAsked] = useState<Record<number, string | null | undefined>>({});
   /** The name of the model asked for when the one that answered is a different one; null when it is the same or the ask is not known. */
@@ -563,13 +565,14 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 }
               />
             ) : welcome !== null ? (
-              // A first run: two plain lines, no tour and nothing over the screen. Gone once a chat, task or run is stored.
+              // A first run: at most two plain lines, no tour and nothing over the screen. Gone once a chat, task or run is stored.
               <div data-testid="first-run" className="ds-stack ds-gap-xs pt-md">
                 <p className="ds-composer__reason">{FIRST_STEP}</p>
-                <p data-testid="first-run-agent" className="ds-composer__reason">
-                  {welcome.words}
-                  {welcome.connect && <ConnectAgent />}
-                </p>
+                {welcome.agent !== null && (
+                  <p data-testid="first-run-agent" className="ds-composer__reason">
+                    {welcome.agent.connect ? <ConnectAgent first /> : welcome.agent.words}
+                  </p>
+                )}
               </div>
             ) : (
               // An empty chat shows nothing above the box. Work in a repository says, in one muted line, where and what follows.
