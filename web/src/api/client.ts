@@ -651,6 +651,10 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   issueHosts: string[];
   /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
   claim: { state: "claiming" | "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
+  /** The stricter modes the owner may move the run to now, loosest first; empty for a manual or finished run. */
+  modeChoices: RunMode[];
+  /** Each change of mode the owner made, oldest first, with the sentence the run screen shows for it. */
+  modeChanges: { at: string; from: RunMode; to: RunMode; words: string }[];
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -751,6 +755,12 @@ export interface WorkbenchSetting {
   setInFile: boolean;
 }
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
+/** Where one repository of the settings file runs its commands (src/execution.ts). */
+export interface RepositoryExecution {
+  path: string;
+  execution: { kind: "host" } | { kind: "container"; image: string };
+}
+export const getRepositoryExecutions = async (): Promise<RepositoryExecution[]> => (await request<{ repositories: RepositoryExecution[] }>("GET", "/api/settings", undefined, 30_000)).repositories;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
 
 /** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
@@ -933,6 +943,8 @@ export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Pr
 export const approvePlan = (id: number, planVersion: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/approve`, { planVersion }, 30_000);
 export const requestPlanChanges = (id: number, planVersion: number, feedback: string): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/request-changes`, { planVersion, feedback }, 30_000);
 export const cancelRun = (id: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/cancel`, {}, 30_000);
+/** Make the run's mode stricter; the server refuses a looser or the same mode, and a finished run. */
+export const changeRunMode = (id: number, mode: RunMode): Promise<RunDetail> => request("POST", `/api/runs/${id}/mode`, { mode }, 30_000);
 
 export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 
@@ -1047,7 +1059,9 @@ export type LogRule =
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory"
   /** A task was moved to another agent; the entry's detail is the line its screen shows. */
-  | "handoff";
+  | "handoff"
+  /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
+  | "peer_message_conflict";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

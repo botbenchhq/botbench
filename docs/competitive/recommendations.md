@@ -34,7 +34,7 @@ Scores in the same order: value, differentiation, effort, risk.
 |---|---|---|---|
 | **A2A** | 2 · 1 · 1 · 1 | Use its message and task field names in ADR 0004's messages now. Do not open an A2A endpoint until ADR 0004's controls are proven. | Free today, and it keeps the door open to other vendors' agents. In A2A a message starts work on the receiver, which ADR 0004 forbids; a Botbench endpoint would only open a card. |
 | **Containers for #72** | 3 · 2 · 3 · 1 | Build on plain `docker run` behind a narrow "where commands run" setting, shaped so Docker's `sbx` can be added later. Use any of them only to run commands, never the agent CLI. | `sbx` is the likeliest second backend and needs no Docker Desktop, but two facts need a real run first: whether a non-interactive command returns its exit status, and whether network rules are per sandbox. Its own way of running Claude Code bypasses permissions. |
-| **Agent Client Protocol (ACP)** | 2 · 1 · 2 · 2 | Approved as a small, bounded spike that runs beside P5 and never blocks it (owner, 23 November 2026). Evaluate one ACP driver as the route to more agents, with a short live check like the one done for Codex (`docs/security/codex-app-server-check.md`). | Tutti, OpenHands and Agenta all reach most agents this way. The open question is Botbench's own: can every permission request be routed through the broker? If not, do not adopt it. |
+| **Agent Client Protocol (ACP)** | 2 · 1 · 2 · 2 | Spike done on 23 November 2026 (`docs/security/acp-check.md`): not as one generic driver; worth it for Grok first and Antigravity second, with the hand-written Claude Code and Codex drivers kept. The original recommendation was to evaluate one ACP driver as the route to more agents, with a short live check like the one done for Codex (`docs/security/codex-app-server-check.md`). | Tutti, OpenHands and Agenta all reach most agents this way. The open question is Botbench's own: can every permission request be routed through the broker? If not, do not adopt it. |
 | **GitHub as the shared medium** | 3 · 3 · 1 · 1 | Keep it for engineering work, as one medium and not the definition of shared work. No sync of claims to issue assignees (owner, 23 November 2026). | It is the server both developers already trust. Claims stay independent of GitHub's assignment; an opt-in link may be revisited. Work that is not in a git repository will need another medium, so claims, dependencies and hand-offs should not assume one. |
 
 ## Defer
@@ -65,6 +65,17 @@ Each of these scored low on value for the two-developer case today, or high on e
 | **A peer's message that starts work by itself** | Open Agent Bridge, A2A's default | ADR 0004 already forbids it. The bridge is the cautionary example. |
 | **Measuring success by agents, providers or connectors supported** | The category | OpenAgents lists 26 CLI adapters and OpenMausBot 31 drivers. It is not where a small team wins. |
 | **Copying Agor code, reading OpenMausBot's `enterprise/`, copying Agenta's `ee/`** | Licences | Agor's licence forbids using its code in a commercial product or service for others whose main purpose is orchestrating AI coding agents (until it becomes Apache 2.0 on 15 January 2029). Botbench is close enough to that line to take ideas only. |
+
+## What the first experiments changed (23 November 2026)
+
+Records in [`results/`](results/README.md).
+
+- **Rank 1 is done in its first version.** The unattended-safety run held. The overlapping-issues run did not pass: one duplicate through a stale claim, as many conflicting pairs as three uncoordinated sessions, and 23 requests to a person where the plain sessions made none.
+- **Rank 3 (claims that lapse) moves up and gains a bug.** A stopped workbench blocked its issue for an hour, and after a takeover its restart opened a second pull request (#188). Fix the bug first.
+- **Rank 4 (dependencies and knowing what others are changing) matters more than the claim on an issue.** Conflicts came from different issues touching the same code, which a claim does not see, and the warning arrived at review, after the work.
+- **A new item: warnings that carry signal (#189).** Sixteen of seventeen overlap warnings named only a shared test file.
+- **A new question for the owner: how much a person approves on a team's own issues.** A run from an issue needs its plan approved and its result accepted, by design for outside text. On ten of a team's own issues that was 23 interventions. It is the same tradeoff as for messages (`docs/product/peers-autonomy-tradeoff.md`) and should be decided with it.
+- **The integrate row for ACP is settled for now:** not a generic driver, and the Grok test's answer is no until its long-lived tools can be switched off (`docs/security/acp-check.md`).
 
 ## What would change these recommendations
 

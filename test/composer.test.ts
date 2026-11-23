@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
 import { chatOffer, readKnownAgents } from "../web/src/app/chat.ts";
-import { arrive, blocked, builderChip, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, LIMIT_WORDS, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { arrive, blocked, builderChip, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, LIMIT_WORDS, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 import { fallbackOrders, moveAbout, moveButton, moveRefused, orderWords, sessionAgent, sessionsLine, shownAttempts } from "../web/src/app/handoff-words.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
@@ -134,11 +134,13 @@ test("Keep it to one task is offered for a run in every mode, is on by default i
 });
 
 test("the repository, kind, mode, review and delivery are remembered on the device, and anything else read back is ignored", () => {
-  const chosen: Remembered = { repo: { kind: "known", path: REPO }, kind: "run", mode: { repo: REPO, mode: "semi" }, review: "codex gpt-5", delivery: "pull_request" };
+  const chosen: Remembered = { repo: { kind: "known", path: REPO }, kind: "run", mode: { repo: REPO, mode: "semi" }, review: "codex gpt-5", delivery: "pull_request", sameBuild: false };
   assert.deepEqual(readRemembered(writeRemembered(chosen)), chosen);
   assert.deepEqual(readRemembered(writeRemembered({ ...chosen, repo: { kind: "other", path: "/x" } })).repo, { kind: "other", path: "/x" });
   assert.deepEqual(readRemembered(null), DEFAULTS);
-  assert.deepEqual(DEFAULTS, { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" });
+  assert.deepEqual(DEFAULTS, { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch", sameBuild: true });
+  // Building on the planning model unless a build model of its own was chosen; anything but true or false is that default.
+  assert.equal(readRemembered(JSON.stringify({ ...chosen, sameBuild: "no" })).sameBuild, true);
   assert.deepEqual(readRemembered("not json"), DEFAULTS);
   assert.deepEqual(readRemembered(JSON.stringify({ repo: { kind: "known", path: 3 }, kind: "everything", mode: { repo: REPO, mode: "reckless" }, review: 1, delivery: "push" })), DEFAULTS);
   // "Needed" is a state of one visit, never remembered.
@@ -212,11 +214,12 @@ test("a run from an issue cannot be sent fully autonomous, nor with a spec file,
   assert.equal(sendFor(inRepo({ kind: "task", issue }), extras).do, "task");
 });
 
-test("Plan a run starts in the mode from Settings: a mode chosen here counts only for the repository it was chosen for, and Fully autonomous is never remembered", () => {
-  // Screenshot 009 of the self-review: a Fully autonomous chosen once, on another visit, was read back as the default.
+test("Plan a run starts in the mode last chosen for its repository, Fully autonomous included, and otherwise in the mode from Settings", () => {
+  // Screenshot 009 of the self-review: a Fully autonomous chosen once, on another visit, was read back as the default
+  // for every repository. A mode is now remembered only with the repository it was chosen for.
   assert.equal(readRemembered(JSON.stringify({ ...DEFAULTS, mode: "full" })).mode, null, "a mode remembered by an earlier version, for no repository, is dropped");
-  assert.equal(readRemembered(writeRemembered({ ...DEFAULTS, mode: { repo: REPO, mode: "full" } })).mode, null, "Fully autonomous is a default only when set in Settings");
-  assert.deepEqual(readRemembered(writeRemembered({ ...DEFAULTS, mode: { repo: REPO, mode: "semi" } })).mode, { repo: REPO, mode: "semi" });
+  assert.equal(readRemembered(JSON.stringify({ ...DEFAULTS, mode: { repo: "", mode: "full" } })).mode, null, "a mode for no named repository is dropped");
+  for (const mode of RUN_MODES) assert.deepEqual(readRemembered(writeRemembered({ ...DEFAULTS, mode: { repo: REPO, mode } })).mode, { repo: REPO, mode }, mode);
   // Nothing chosen: the Settings default, Manual when the owner never changed it; null while it is being read.
   assert.equal(modeFor(null, REPO, "manual"), "manual");
   assert.equal(modeFor(null, REPO, null), null);
@@ -224,6 +227,52 @@ test("Plan a run starts in the mode from Settings: a mode chosen here counts onl
   assert.equal(modeFor({ repo: REPO, mode: "full" }, REPO, "manual"), "full");
   assert.equal(modeFor({ repo: "/Users/owner/code/other", mode: "full" }, REPO, "manual"), "manual");
   assert.equal(modeFor({ repo: "/Users/owner/code/other", mode: "semi" }, REPO, "semi"), "semi");
+});
+
+test("a run planned last time is what the composer opens on: Plan a run in that repository, with its mode, reviewer and delivery, and Send still sends nothing on its own", () => {
+  const last: Remembered = { repo: { kind: "known", path: REPO }, kind: "run", mode: { repo: REPO, mode: "full" }, review: "codex gpt-5", delivery: "pull_request", sameBuild: false };
+  const back = readRemembered(writeRemembered(last));
+  assert.deepEqual(back, last, "a fully autonomous choice is kept with its repository, and so is a build model of its own");
+  assert.deepEqual(arrive(back, null), { repo: { kind: "known", path: REPO }, kind: "run", opens: null });
+  assert.equal(modeFor(back.mode, REPO, "manual"), "full");
+  // Another repository gets the Settings default, whatever was chosen for this one.
+  assert.equal(modeFor(back.mode, "/Users/owner/code/web", "manual"), "manual");
+  // Opening the composer with all of it chosen sends nothing: an empty box only puts the cursor there.
+  assert.deepEqual(sendFor(inRepo({ kind: "run", mode: "full", hasChecks: true, text: "" }), extras), { do: "focus" });
+});
+
+test("a remembered Fully autonomous that cannot start here falls back to Semi-autonomous, saying why in one sentence; it never starts looser", () => {
+  const remembered = { remembered: true, hasChecks: true, issue: false };
+  // No check command: Semi-autonomous, which can be sent; the line under the box names the mode and why.
+  const noChecks = startMode("full", { ...remembered, hasChecks: false });
+  assert.deepEqual(noChecks, { mode: "semi", why: "Fully autonomous, your last choice for this repository, needs a check command, and this repository has none, so this run starts Semi-autonomous." });
+  assert.equal(blocked(inRepo({ kind: "run", mode: noChecks.mode, hasChecks: false })), null);
+  const sent = sendFor(inRepo({ kind: "run", mode: noChecks.mode, hasChecks: false }), extras);
+  assert.equal(sent.do === "run" && sent.mode, "semi");
+  assert.equal(modeLine(noChecks), `Mode: Semi-autonomous. ${noChecks.why}`);
+  // From a GitHub issue: the same, with the issue's reason. The refusal itself still stands for a Fully autonomous one.
+  const fromIssue = startMode("full", { ...remembered, issue: true });
+  assert.deepEqual(fromIssue, { mode: "semi", why: "A run started from a GitHub issue cannot be fully autonomous, so this run starts Semi-autonomous, not Fully autonomous as you last chose for this repository." });
+  assert.equal(blocked(inRepo({ kind: "run", mode: fromIssue.mode, issue })), null);
+  assert.deepEqual(blocked(inRepo({ kind: "run", mode: "full", issue })), { reason: ISSUE_NOT_FULL, required: null });
+  // Each sentence is one sentence.
+  for (const why of [noChecks.why!, fromIssue.why!]) assert.equal(why.split(/\.\s/).length, 1, why);
+  // Chosen on this visit, Fully autonomous is not changed behind the owner's back: Send says why it is disabled, as before.
+  assert.deepEqual(startMode("full", { ...remembered, remembered: false, hasChecks: false }), { mode: "full", why: null });
+  assert.match(blocked(inRepo({ kind: "run", mode: "full", hasChecks: false }))!.reason, /^Fully autonomous needs a check command for this repository\./);
+  // Checks not known yet, a mode that can start, or the mode still being read: as it is.
+  assert.deepEqual(startMode("full", { ...remembered, hasChecks: null }), { mode: "full", why: null });
+  for (const mode of ["manual", "semi"] as const) assert.deepEqual(startMode(mode, { ...remembered, hasChecks: false, issue: true }), { mode, why: null });
+  assert.deepEqual(startMode(null, remembered), { mode: null, why: null });
+  // Never looser than what was remembered (the modes go from strictest to loosest).
+  for (const mode of RUN_MODES)
+    for (const hasChecks of [true, false, null])
+      for (const fromAnIssue of [true, false]) {
+        const start = startMode(mode, { remembered: true, hasChecks, issue: fromAnIssue });
+        assert.ok(RUN_MODES.indexOf(start.mode!) <= RUN_MODES.indexOf(mode), `${mode} ${hasChecks} ${fromAnIssue}`);
+      }
+  assert.equal(modeLine({ mode: "full", why: null }), "Mode: Fully autonomous.");
+  assert.equal(modeLine({ mode: null, why: null }), null);
 });
 
 test("the model chip says what Send uses first: for a run with a build model of its own, the planning model, then the build model", () => {
@@ -323,9 +372,9 @@ test("the Read a repository row names the repository or None, and its view retur
 });
 
 test("a repository to read is never remembered, nor mistaken for the repository a task starts in", () => {
-  const remembered: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" };
+  const remembered: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch", sameBuild: true };
   // What is written holds only what Remembered holds; nothing to read rides along.
-  assert.deepEqual(Object.keys(JSON.parse(writeRemembered(remembered))).sort(), ["delivery", "kind", "mode", "repo", "review"]);
+  assert.deepEqual(Object.keys(JSON.parse(writeRemembered(remembered))).sort(), ["delivery", "kind", "mode", "repo", "review", "sameBuild"]);
   // A stored value that carries another key (an older or altered one) is still read part by part, and the key is dropped.
   const read = readRemembered(JSON.stringify({ ...remembered, read: { kind: "known", path: OTHER_REPO }, repository: OTHER_REPO }));
   assert.deepEqual(read, remembered);

@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { chatWebAccess, isWebAccess, setChatWebAccess } from "../approvals/web-access.ts";
 import { askEveryCommand, defaultMode, isRunMode, setAskEveryCommand, setDefaultMode } from "../engine/modes.ts";
 import { BUILDER_AGENTS, fallbacksProblem, readFallbacks, setFallbacks } from "../engine/handoff.ts";
+import { HOST_EXECUTION } from "../execution.ts";
 import { chooseWorkbench, workbenchName, workbenchProblem } from "../workbench.ts";
 import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -28,7 +29,9 @@ export async function settingsRoutes(req: http.IncomingMessage, res: http.Server
   try {
     // The agents a fallback list may name: those this Botbench can build with (engine/handoff.ts).
     const builders = BUILDER_AGENTS.filter((agent) => agent === ctx.driver.name || ctx.builders[agent] !== undefined);
-    const current = () => ({ defaultMode: defaultMode(ctx.db, ctx.config.autonomy?.mode), chatWebAccess: chatWebAccess(ctx.db), askEveryCommand: askEveryCommand(ctx.db), workbench: { name: workbenchName(ctx.db), setInFile: ctx.config.workbench !== undefined }, fallbacks: readFallbacks(ctx.db, builders), fallbackAgents: builders });
+    // Where each repository in the settings file runs its commands (src/execution.ts): set there, shown here, never changed here.
+    const repositories = Object.entries(ctx.config.repositories ?? {}).map(([repo, settings]) => ({ path: repo, execution: settings.execution ?? HOST_EXECUTION }));
+    const current = () => ({ defaultMode: defaultMode(ctx.db, ctx.config.autonomy?.mode), chatWebAccess: chatWebAccess(ctx.db), askEveryCommand: askEveryCommand(ctx.db), workbench: { name: workbenchName(ctx.db), setInFile: ctx.config.workbench !== undefined }, repositories, fallbacks: readFallbacks(ctx.db, builders), fallbackAgents: builders });
     if (req.method === "GET") {
       json(res, 200, current());
     } else if (req.method === "PUT") {
