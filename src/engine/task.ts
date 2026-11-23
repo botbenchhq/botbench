@@ -621,7 +621,12 @@ export function createTasks(options: TasksOptions): Tasks {
   const refine = async (task: Task, reviewer: string, stopped?: AbortSignal): Promise<void> => {
     const at = moveFrom(task.id, "reviewing", "building", { note: `round ${refineRoundOf(db, task.id)} of fixes` });
     if (at === null) return;
-    const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
+    await startRound(at, reviewer, false, stopped);
+  };
+
+  /** Start the builder on the round of fixes of a task at `building`: in its earlier session when it has one, unless `fresh`. */
+  const startRound = async (at: Task, reviewer: string, fresh: boolean, stopped?: AbortSignal): Promise<void> => {
+    const attempt = fresh || at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
     const admission = admitBuilder(at);
     let session: DriverSession;
@@ -640,12 +645,21 @@ export function createTasks(options: TasksOptions): Tasks {
   /**
    * A round of fixes ended, completed or failed: what the builder wrote is committed, the round is recorded, and the
    * loop goes on. Work that changed is checked again and reviewed again; a round that failed or changed nothing ends
-   * the loop, and the task is Ready for review.
+   * the loop, and the task is Ready for review. A round that took up the builder's earlier session (`resumed`) and
+   * completed with no reply and no change is not taken as an answer: Botbench notes it on the task and runs the round
+   * once more in a new session, with the whole task (detect, log and retry fresh, as issue #111 cites paperclip's claude-local adapter doing).
+   * That new session's round is recorded however it ends; one with no reply and no change is a round with no answer.
    */
-  const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal): Promise<void> => {
+  const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal, resumed = false): Promise<void> => {
     const from = taskReviews(db, task.id).at(-1)?.headCommit ?? task.headCommit!;
     const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
     const headCommit = (await commit(task))?.headCommit ?? null;
+    const reviewer = reviewAssignment(db, task.id)?.agent ?? null;
+    if (resumed && end === "completed" && reply.trim() === "" && headCommit === from && reviewer !== null && !closed && stopped?.aborted !== true && !cancelled(task)) {
+      // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+      const at = moveFrom(task.id, "building", "building", { note: `round ${round} of fixes: ${agentName(driver.name)} took up its earlier session (attempt ${attemptId}) and ended its turn with no reply and no change; the round runs once more in a new session` });
+      if (at !== null) return startRound(at, reviewer, true, stopped);
+    }
     const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
     insertRefinement(db, { taskId: task.id, round, attemptId, outcome: end === "completed" ? "finished" : "failed", changed: headCommit !== null && headCommit !== from, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
     options.onTaskChange(getTask(db, task.id)!);
@@ -858,7 +872,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
     else if (silent) await finish(task, "interrupted", silenceReason(agentName(driver.name), silenceLimit));
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
-    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped);
+    else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped, fromSession);
     else if (end === "completed") await verify(task, reply, stopped);
     // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
     else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");

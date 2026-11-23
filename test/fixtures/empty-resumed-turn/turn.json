@@ -1,0 +1,33 @@
+{
+  "about": "Derived, not recorded as it stands: no empty resumed turn could be recorded from the sandbox this was written in (it cannot run a signed-in Claude Code). The events are those of the resumed attempt (attempt 2) of test/recordings/redrive-other-request.json, a real Claude Code 2.1.322 session resumed with --resume, with its tool call, permission request and answer, tool result and text taken out: what is left is how a resumed turn that ends with no reply and no change reads through the driver. The usage numbers are the recorded turn's, which did more than this one; nothing reads them here.",
+  "derivedFrom": "test/recordings/redrive-other-request.json attempts[1]",
+  "cli": "2.1.322 (Claude Code)",
+  "model": "haiku",
+  "recordedAt": "2026-11-22T11:14:03.504Z",
+  "events": [
+    {
+      "type": "session_started",
+      "resumeCursor": "ea73a1d4-7a93-49c6-9541-1b19d5df575d",
+      "model": "claude-haiku-5-5",
+      "keySource": "none"
+    },
+    {
+      "type": "rate_limit",
+      "limited": false,
+      "status": "allowed",
+      "resetsAt": "2026-11-26T23:00:00.000Z"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 4,
+      "outputTokens": 83,
+      "cacheReadTokens": 41180,
+      "cacheWriteTokens": 447
+    },
+    {
+      "type": "turn_ended",
+      "reason": "completed",
+      "detail": null
+    }
+  ]
+}
