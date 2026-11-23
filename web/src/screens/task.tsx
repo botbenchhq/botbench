@@ -239,7 +239,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
           )
         ) : (
           <>
-            {answeredOther(models, session?.model ?? null, task.requestedModel) && (
+            {/* The model asked for is the first agent's: after a move to another agent it says nothing of the one at work now. */}
+            {task.handoffs.length === 0 && answeredOther(models, session?.model ?? null, task.requestedModel) && (
               <dl className="ds-key-value">
                 <div className="ds-key-value__item">
                   <dt className="ds-key-value__label">Model</dt>
