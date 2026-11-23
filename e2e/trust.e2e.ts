@@ -99,8 +99,13 @@ test("Check a command answers for each mode in words, the rule behind each named
     // A new command clears the old answer until it is checked.
     await box.fill("npm test");
     await expect(result).toHaveCount(0);
-    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Check", exact: true }).click();
     await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: this repository's settings offer npm test as an allowed command for each task\.$/));
+
+    // A command of two lines is checked as it would run, line break and all: its second line is on the always-ask list.
+    await run("true\ngit push");
+    await expect(box).toHaveValue("true\ngit push");
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Rule: git-push$/));
 
     // An empty command is refused in words, with no answer.
     await box.fill("");

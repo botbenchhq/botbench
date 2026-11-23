@@ -137,10 +137,11 @@ function CommandCheck({ onSignedOut }: { onSignedOut: () => void }) {
             <label htmlFor={`${id}-command`} className="ds-field__label">
               Command
             </label>
-            <input
+            {/* A box of several lines: a command pasted with a line break is checked as it would run, and a single-line field would drop the break. */}
+            <textarea
               data-testid="check-command"
               id={`${id}-command`}
-              type="text"
+              rows={2}
               autoCapitalize="none"
               autoCorrect="off"
               autoComplete="off"

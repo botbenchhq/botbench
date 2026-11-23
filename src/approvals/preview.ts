@@ -1,8 +1,9 @@
+import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { askEveryCommand, RUN_MODES, type RunMode } from "../engine/modes.ts";
 import { IMPLEMENTER } from "../engine/roles.ts";
-import { askWords, gate, type AskWhy, type FloorSettings } from "./gate.ts";
+import { askWords, gate, real, type AskWhy, type FloorSettings } from "./gate.ts";
 import { entryProblem, MAX_ENTRY, realRepo, showWords, standingGrants, type Grant, type GrantKind } from "./grants.ts";
 import { splitPlain } from "./shell.ts";
 
@@ -35,6 +36,39 @@ export interface ModePreview {
   words: string;
 }
 
+/**
+ * Follow links as they would be followed in a task's copy at `copy`, which does not exist: each place inside it is looked
+ * up in the repository's checkout at `checkout`, and a link found there is followed from where it would lie in the copy.
+ * So `out -> ../repo/build`, inside the checkout named repo, leads out of the copy, and a link by the checkout's full path
+ * leads to the owner's checkout, as from a real copy. What lies outside the copy is followed on disk, as the gate does.
+ * The checkout's links are only read, never followed into it or changed; a link it has that its last commit does not, or
+ * the other way round, is the one difference from a copy left.
+ */
+export function copyLinks(copy: string, checkout: string): (absolute: string) => string {
+  const follow = (target: string, hops: number): string => {
+    const relative = path.relative(copy, target);
+    if (relative === "") return copy;
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return real(target);
+    const parts = relative.split(path.sep);
+    for (let i = 0; i < parts.length; i++) {
+      let link: string | null = null;
+      try {
+        const at = path.join(checkout, ...parts.slice(0, i + 1));
+        if (fs.lstatSync(at).isSymbolicLink()) link = fs.readlinkSync(at);
+      } catch {
+        // Not in the checkout: neither it nor anything under it is in the copy yet, and is kept as written.
+        return target;
+      }
+      if (link === null) continue;
+      // A loop of links leads nowhere that is known to be inside: as `real` does, it is taken as the root.
+      if (hops > 40) return path.parse(target).root;
+      return follow(path.join(path.resolve(path.join(copy, ...parts.slice(0, i)), link), ...parts.slice(i + 1)), hops + 1);
+    }
+    return target;
+  };
+  return (absolute) => follow(path.resolve(absolute), 0);
+}
+
 /** Why a command cannot be checked, in words; null when it can. */
 export function commandProblem(command: string): string | null {
   if (command.trim() === "") return "Give a command to check.";
@@ -51,13 +85,11 @@ export function previewCommand(db: DatabaseSync, o: { settings: FloorSettings & 
   const problem = commandProblem(o.command);
   if (problem !== null) throw new Error(problem);
   const repo = realRepo(o.repo);
-  // A task's copy is read in two places, and the stricter answer is given. Where it lies, inside Botbench's data folder
-  // (it need not exist), so that the other tasks' copies and Botbench's records around it are guarded as for a real one;
-  // and the repository's own checkout in its place, so that a link the repository holds (`out -> ..`) leads where it
-  // would lead from a copy. The checkout is only looked at, as the gate looks at paths: its links are followed, nothing
-  // in it is read or changed. A link the checkout has that its committed files do not, or the other way round, is the
-  // one difference left.
-  const copies = [path.join(o.settings.dataDir, "worktrees", "run-preview", "task-preview"), repo];
+  // Where a task's copy lies, as a build's request names it: inside Botbench's data folder, so that the other tasks'
+  // copies and Botbench's records around it are guarded as for a real one. It does not exist, so the links a copy would
+  // hold are taken from the repository's checkout and followed from where the copy lies (`copyLinks`).
+  const worktree = path.join(o.settings.dataDir, "worktrees", "run-preview", "task-preview");
+  const settings = { ...o.settings, followLinks: copyLinks(worktree, repo) };
   const listed: Grant[] = o.preapproved
     .filter((entry) => entryProblem(entry) === null)
     .map((entry, i) => ({ id: -(i + 1), kind: "preapproved", role: IMPLEMENTER, repo, cwd: ".", words: splitPlain(entry)!, runId: PREVIEW_RUN, taskId: null, createdAt: "" }));
@@ -71,9 +103,7 @@ export function previewCommand(db: DatabaseSync, o: { settings: FloorSettings & 
     everyCommand = true;
   }
   return RUN_MODES.map((mode) => {
-    const verdicts = copies.map((worktree) => gate({ tool: "Bash", input: { command: o.command }, worktree, cwd: worktree, mode, confined: true, askEveryCommand: everyCommand, outsideText: false, scope: { role: IMPLEMENTER, repo, runId: PREVIEW_RUN } }, grants, o.settings));
-    // The first that does not let it run: a deny, a refusal or an ask; else the first, as both allow.
-    const verdict = verdicts.find((v) => v.verdict !== "allow") ?? verdicts[0]!;
+    const verdict = gate({ tool: "Bash", input: { command: o.command }, worktree, cwd: worktree, mode, confined: true, askEveryCommand: everyCommand, outsideText: false, scope: { role: IMPLEMENTER, repo, runId: PREVIEW_RUN } }, grants, settings);
     switch (verdict.verdict) {
       case "allow": {
         if (verdict.rule === "preapproved" || verdict.rule === "standing") {

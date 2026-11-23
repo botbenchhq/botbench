@@ -70,6 +70,8 @@ test("a confined command nobody listed runs without asking by its mode; a chaine
   }
   assert.ok(ask("npm test && ls", ["npm test"]).every((m) => m.rule === "mode_confined"), "a chained command never runs on a listed command");
   assert.deepEqual(ask("ls && git push").map((m) => m.verdict), ["ask", "ask", "refuse"]);
+  // A command of two lines is read as two: the second is on the always-ask list.
+  assert.deepEqual(ask("true\ngit push").map((m) => [m.verdict, m.floor]), [["ask", "git-push"], ["ask", "git-push"], ["refuse", "git-push"]]);
 });
 
 test("the safety rules win over a listed command, and over a command the owner added to them", (t) => {
@@ -122,9 +124,20 @@ test("a link the repository tracks is followed as a task's copy of it would foll
   ownerCommit(repo, "a link out");
   const modes = previewCommand(db, { settings: { home: path.join(dir, "owner"), dataDir: home }, repo, preapproved: [], command: "rm -r out" });
   assert.deepEqual(modes.map((m) => [m.verdict, m.floor]), [["ask", "recursive-delete-outside-worktree"], ["ask", "recursive-delete-outside-worktree"], ["refuse", "recursive-delete-outside-worktree"]]);
+  const check = (command: string) => previewCommand(db, { settings: { home: path.join(dir, "owner"), dataDir: home }, repo, preapproved: [], command });
   // A plain folder of the repository is inside the copy: it runs.
   fs.mkdirSync(path.join(repo, "build"));
-  assert.ok(previewCommand(db, { settings: { home: path.join(dir, "owner"), dataDir: home }, repo, preapproved: [], command: "rm -r build" }).every((m) => m.rule === "mode_confined"));
+  assert.ok(check("rm -r build").every((m) => m.rule === "mode_confined"));
+  // A link inside the repository that stays inside it, also from a copy: it runs.
+  fs.symlinkSync("build", path.join(repo, "lib"));
+  assert.ok(check("rm -r lib").every((m) => m.rule === "mode_confined"));
+  // A link back in through the checkout's own folder name: from the owner's checkout it is inside, but a copy is not
+  // named "repo", so from a copy it leads out. And one by the checkout's full path leads to the owner's checkout.
+  fs.symlinkSync("../repo/build", path.join(repo, "back"));
+  fs.symlinkSync(path.join(repo, "build"), path.join(repo, "full"));
+  for (const command of ["rm -r back", "rm -r full"]) {
+    assert.deepEqual(check(command).map((m) => [m.verdict, m.floor]), [["ask", "recursive-delete-outside-worktree"], ["ask", "recursive-delete-outside-worktree"], ["refuse", "recursive-delete-outside-worktree"]], command);
+  }
 });
 
 test("every line the check sends a screen keeps to the glossary", (t) => {
