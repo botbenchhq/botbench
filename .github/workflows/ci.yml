@@ -1,0 +1,232 @@
+name: CI
+
+# The checks on every pull request and on every push to main. Modelled on jon-lange/settleview's ci.yml.
+# - Linux, on every run: install, typecheck, the client build, the design-system checker, npm audit, and npm test as
+#   far as it runs off a Mac (the tests that start macOS's sandbox-exec are skipped, and counted).
+# - macOS, on pushes to main and on pull requests that change src/, test/, e2e/ or web/: the whole of npm test (the
+#   sandbox tests need sandbox-exec) and the browser suite without its LIVE and MILESTONE tests. macOS minutes are
+#   billed at ten times Linux's while the repository is private, so it runs only where it can find something.
+# - Secret scan (gitleaks, over the whole history) and CodeQL, on every run.
+# Live tests (test/live/, the browser suite's LIVE and MILESTONE tests) never run here: they drive the owner's own
+# signed-in vendor CLIs, and CI has none and gets none.
+# No secret is used by any job. Only pull_request, never pull_request_target: a fork's pull request runs with a
+# read-only token and no secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Actions are pinned by full commit hash (the version in the comment): a moved tag cannot change what runs here.
+
+jobs:
+  linux:
+    name: Checks and tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Install (root and web, from the lockfiles)
+        run: |
+          npm ci
+          npm ci --prefix web
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build the client
+        run: npm run build --prefix web
+
+      - name: Design-system checker
+        run: node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json
+
+      - name: npm audit (root and web; fails on high or critical)
+        run: |
+          npm audit --audit-level=high
+          npm audit --prefix web --audit-level=high
+
+      # npm test with the skips counted: test/run-without-sandbox.ts fails unless exactly the expected number of tests
+      # were skipped for being off a Mac.
+      - name: npm test without a sandbox (sandbox tests skipped and counted)
+        run: npm run test:without-sandbox -- --test-timeout=120000
+
+  # Whether this run needs the macOS job: always on a push to main or a manual run; on a pull request only when it
+  # changes src/, test/, e2e/ or web/. A skipped job counts as passed for a required check, which a workflow-level
+  # paths filter would not (the check would never report and the pull request would wait for it).
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      macos: ${{ steps.paths.outputs.macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Changed paths
+        id: paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "macos=true" >> "$GITHUB_OUTPUT"; echo "Not a pull request: the macOS job runs."; exit 0
+          fi
+          changed="$(git diff --name-only "$BASE" HEAD)"
+          printf 'Changed:\n%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -qE '^(src|test|e2e|web)/'; then
+            echo "macos=true" >> "$GITHUB_OUTPUT"; echo "src/, test/, e2e/ or web/ changed: the macOS job runs."
+          else
+            echo "macos=false" >> "$GITHUB_OUTPUT"; echo "Nothing under src/, test/, e2e/ or web/ changed: the macOS job is skipped."
+          fi
+
+  macos:
+    name: Full tests and browser suite (macOS)
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Install (root and web, from the lockfiles)
+        run: |
+          npm ci
+          npm ci --prefix web
+
+      # The dictation tests turn macOS's own speech into a phone's recording with ffmpeg (test/support/speech.ts).
+      - name: ffmpeg, when the runner has none
+        run: command -v ffmpeg || brew install ffmpeg
+
+      # The browser suite drives the Google Chrome installed on the runner (e2e/playwright.config.ts: channel chrome),
+      # so no Playwright browser is downloaded.
+      - name: Google Chrome is installed
+        run: test -d "/Applications/Google Chrome.app"
+
+      - name: Build the client
+        run: npm run build --prefix web
+
+      - name: npm test (the whole suite)
+        run: npm test -- --test-timeout=120000
+
+      - name: Browser suite without LIVE and MILESTONE tests
+        run: npm run e2e -- --trace off --grep-invert "LIVE|MILESTONE"
+
+      - name: Keep the browser suite's results when it fails
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: browser-suite-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  gitleaks:
+    name: Secret scan (gitleaks, whole history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # From the release's gitleaks_8.30.1_checksums.txt.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # every commit, not only the checked-out tree
+          persist-credentials: false
+
+      - name: Install gitleaks (the release binary, checked against its checksum)
+        run: |
+          curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+
+      # .gitleaks.toml is read from the checkout. --redact: a finding's value is never printed in the log.
+      - name: gitleaks over every commit
+        run: /tmp/gitleaks git --redact --no-banner --verbose --config .gitleaks.toml .
+
+  codeql:
+    name: CodeQL (JavaScript and TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # the upload to code scanning; this job only
+      actions: read  # the upload reads this workflow run; a private repository must grant it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      # The results are written to a file and uploaded in the next step: code scanning needs GitHub Advanced Security on
+      # a private repository, and refuses the upload without it. That refusal alone does not fail the job.
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          category: javascript-typescript
+          upload: never
+          output: codeql-results
+
+      - name: What CodeQL found
+        run: |
+          for f in codeql-results/*.sarif; do
+            echo "$f: $(jq '[.runs[].results[]] | length' "$f") results"
+            jq -r '.runs[].results[] | "- \(.ruleId): \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' "$f"
+          done
+
+      - name: Upload to code scanning
+        continue-on-error: true  # refused on a private repository without GitHub Advanced Security
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          sarif_file: codeql-results
+          category: javascript-typescript
+
+      - name: Keep the results with the run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codeql-results
+          path: codeql-results/
+          retention-days: 30

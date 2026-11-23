@@ -1,0 +1,21 @@
+# gitleaks (https://github.com/gitleaks/gitleaks): what must never reach GitHub. Run by the gitleaks job of
+# .github/workflows/ci.yml over every commit, and by hand with `gitleaks git .` from the repository's folder.
+#
+# gitleaks' own rules (private keys, cloud, GitHub, AI-provider, Slack, Stripe, ... tokens), and below the known
+# false positives, each with why it is not a secret. A placeholder in docs or tests carries gitleaks' standard
+# `gitleaks:allow` comment on its line instead of an entry here.
+
+title = "Botbench"
+
+[extend]
+useDefault = true
+
+# The copied design system's hashes.json holds the SHA-256 of every file in the copy (NOTICE). Files whose names say
+# "token" (design tokens: tokens.css, botbench.tokens.json, design-tokens.md) make gitleaks' generic-api-key rule read
+# their hash as a key. Allowed only in those two files, and only for a value that is exactly a SHA-256 in hex.
+[[allowlists]]
+description = "SHA-256 hashes of design-token files in the copied design system's hashes.json"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^web/vendor/(?:design-system|groundwork)/hashes\.json$''']
+regexes = ['''^[0-9a-f]{64}$''']
