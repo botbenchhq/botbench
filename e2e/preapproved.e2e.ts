@@ -49,7 +49,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(page.getByTestId("preapproved-about")).toContainText("Dangerous commands always ask");
   expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   // Send is still the one primary action; the sheet has none of its own.
-  expect(await primaries(page)).toEqual(["Send"]);
+  await expect.poll(() => primaries(page)).toEqual(["Send"]);
   await checkDesign(page, "add context, the repository's pre-approved commands");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u9-new-task.png"), fullPage: true });
 

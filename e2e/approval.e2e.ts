@@ -131,7 +131,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   const details = await openDetails(page);
   await expect(details.getByTestId("task-repo")).toHaveText(repo);
   const branch = (await details.getByTestId("branch").textContent())!;
-  const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
+  const worktree = path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1");
   expect(git(worktree, "status", "--porcelain")).toBe("");
 
   // Allow, from the keyboard. The card goes, the tray empties, and the task resumes and finishes.
@@ -199,13 +199,13 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   await expect(resolved).toContainText(`Your note: ${note}`);
   await expect(resolved.locator("b")).toHaveCount(0);
   await expect(page.locator('[data-event="tool_result"]').filter({ hasText: "The owner denied this request" })).toContainText("What Claude Code was told");
-  await expect(page.getByTestId("task-status")).toHaveText("Ready for review. No file was changed, so nothing was committed.", { timeout: 120_000 });
-  await expect(page.getByTestId("no-changes")).toBeVisible();
+  // A build that changed no file ends as failed, saying so, for the owner to resume or discard (since builds that change nothing stop there).
+  await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. Claude Code finished without changing any file\./, { timeout: 120_000 });
   await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
   await checkDesign(page, "task, finished after a decline");
 
-  const branch = (await page.getByTestId("branch").textContent())!;
+  const { branch } = (await (await page.request.get(`${botbench.base}/api/tasks/1`)).json()) as { branch: string };
   expect(git(repo, "ls-tree", "-r", "--name-only", branch).split("\n").filter(Boolean).sort()).toEqual(["README.md", "make-marker.sh"]);
-  expect(git(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1"), "status", "--porcelain")).toBe("");
+  expect(git(path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1"), "status", "--porcelain")).toBe("");
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
 });

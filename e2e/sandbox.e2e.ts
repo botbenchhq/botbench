@@ -17,8 +17,8 @@ test("LIVE: a command that runs without asking and tries to reach a host the rep
   await startTaskIn(page, repo, PROMPT);
   await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 
-  // No card: the command runs confined, with the sandbox on.
-  await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 240_000 });
+  // No card: the command runs confined, with the sandbox on. It changes no file, so the task ends as failed, saying so.
+  await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. Claude Code finished without changing any file\./, { timeout: 240_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
 
   // One row, the design system's tool call: Failed, a plain verb and the real command, and why in a plain note; open without a tap.

@@ -160,7 +160,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(await openCanDo(page)).toContainText("with Ask before every command on in Settings, every one waits for your answer first, unless you chose Always allow for it (see Permissions)");
   expect((await api<{ approvals: { status: string }[] }>(page, botbench, "/api/approvals")).approvals.map((a) => a.status)).toEqual(["allowed", "allowed"]);
   const branch = (await page.getByTestId("branch").textContent())!;
-  expect(fs.readFileSync(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1", "marker.txt"), "utf8")).toBe("ran\nran\nran\n");
+  expect(fs.readFileSync(path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1", "marker.txt"), "utf8")).toBe("ran\nran\nran\n");
   await checkDesign(page, "task, finished on a standing permission");
 
   // A command on the safety floor: allowed once, its second card still offers nothing.
@@ -178,7 +178,8 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await checkDesign(page, "task, a card for a command on the safety floor");
   await again.getByRole("button", { name: "Deny", exact: true }).click();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
-  await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 120_000 });
+  // Nothing was pushed or changed, so the task ends as failed, saying so.
+  await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. Claude Code finished without changing any file\./, { timeout: 120_000 });
 
   // Trust: the one standing permission, its scope in words and how often it was used.
   await openFromSettings(page, "Permissions");
