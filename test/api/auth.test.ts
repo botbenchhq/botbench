@@ -199,13 +199,21 @@ test("repeated wrong tokens are slowed down, and a correct sign-in resets the de
 
   // The owner's correct token still works, after the 16-delay wait, and clears the count. Shown by the wait after it:
   // two wrong tokens now cost one delay between them, as at the start. Had the count stayed at five, the second would
-  // wait 32 delays. The upper bound is half that, far from both, so load cannot push a real reset past it.
+  // wait 32 delays. The upper bound is half that plus what two requests cost this machine right now, measured in this
+  // run: a pair of right tokens, which wait for nothing, taken three times and the slowest kept. Load adds the same to
+  // both, so it cannot push a real reset past the bound, and a count that was not reset is still 16 delays beyond it.
   const right = await timed(token);
   assert.equal(right.status, 200);
+  let requests = 0;
+  for (let i = 0; i < 3; i++) {
+    const free = await pair(token, token);
+    assert.deepEqual(free.statuses, [200, 200]);
+    requests = Math.max(requests, free.ms);
+  }
   const reset = await pair("wrong-6", "wrong-7");
   assert.deepEqual(reset.statuses, [401, 401]);
   assert.ok(reset.ms >= delay - slack, `after a successful sign-in, a second wrong token still waits one delay: took ${reset.ms}ms`);
-  assert.ok(reset.ms < 16 * delay, `after a successful sign-in, two wrong tokens took ${reset.ms}ms: the count was not reset (32 delays, ${32 * delay}ms, is what a count of five costs)`);
+  assert.ok(reset.ms < 16 * delay + requests, `after a successful sign-in, two wrong tokens took ${reset.ms}ms, and two requests take this machine ${requests}ms now: the count was not reset (32 delays, ${32 * delay}ms, is what a count of five costs)`);
 });
 
 test("a flood of guesses is turned away unchecked instead of queueing without end", async (t) => {

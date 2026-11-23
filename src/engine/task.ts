@@ -1362,7 +1362,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // Botbench stopping meanwhile leaves it to the next start, with the agent it had (the move was not made).
     else if (asked !== undefined && !closed) await handOffNow(task, asked.to, asked.model, "owner", session.attemptId, stopped);
     // Gone silent: Stopped for the owner, who can resume it, in any mode. A fully autonomous run never accepts it.
-    else if (silent) await finish(task, "interrupted", silenceReason(name, silenceLimit));
+    else if (silent) await finish(task, "interrupted", silenceReason(name, silenceLimit, watches.at(-1)!.stoppedDuring()));
     // The usage limit, in any kind of builder turn. A run that says Switch hands the task to the next usable agent on
     // the fallback list at once (engine/handoff.ts). Otherwise, and when no agent can take it, the task waits for the
     // limit and is resumed once. Reached again after that wait (by the resumed turn, or any later turn, also across a

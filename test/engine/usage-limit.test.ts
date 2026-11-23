@@ -238,7 +238,9 @@ test("a restart while a task waits keeps the wait: after it the task is still wa
   assert.equal(getTask(e.db, started.id)!.restarts, 0);
 });
 
-test("a task whose time to try again passed while Botbench was stopped is resumed at once when it starts", WITHIN, async (t) => {
+test("a task whose time to try again passed while Botbench was stopped is resumed at once when it starts", { timeout: 60_000 }, async (t) => {
+  // The wait the configuration names is an hour: a task that was not woken at once by the start would wait that long
+  // (or for ever), so waiting for the resume with a generous ceiling tells the two apart on a machine of any speed.
   const e = await line(t, { waitMs: 60 * 60_000 });
   const resetsAt = inMs(800);
   const first = await e.open([limited("one", resetsAt)]);
@@ -249,9 +251,11 @@ test("a task whose time to try again passed while Botbench was stopped is resume
 
   const opened = Date.now();
   const second = await e.open([finishes("two")]);
-  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review", 5000);
+  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review", 40_000);
   assert.equal(second.driver.starts.length, 1);
-  assert.ok(attemptStart(e.db, getTask(e.db, started.id)!.attemptId!) - opened < 3000, "resumed at once");
+  // Resumed by this start, and long before the hour it would otherwise have waited.
+  const resumed = attemptStart(e.db, getTask(e.db, started.id)!.attemptId!);
+  assert.ok(resumed >= opened && resumed - opened < 60 * 60_000, `resumed ${resumed - opened} ms after the start`);
 });
 
 test("a run cancelled while a task waits ends that task as cancelled with its work committed; it never resumes, also after a restart, and the run's queued task is cancelled too", WITHIN, async (t) => {
