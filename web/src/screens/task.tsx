@@ -3,6 +3,7 @@ import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type Fi
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
 import { DiffLine } from "../components/diff.tsx";
+import { Icon } from "../components/icon.tsx";
 import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
@@ -345,6 +346,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                               <code data-ds-content="">{file.path}</code>
                               {fileMarks(file).map((mark) => (
                                 <span key={mark} className="ds-badge ds-badge--warning">
+                                  <Icon name={mark === "Protected" ? "shield" : "circle-alert"} className="ds-badge__icon" />
                                   {mark}
                                 </span>
                               ))}
