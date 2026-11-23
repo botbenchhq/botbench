@@ -1386,4 +1386,37 @@ INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated
 DROP TABLE owner_settings_before_actions;
 `,
   },
+  {
+    // An owner's note to a task that is building (src/engine/notes.ts): its task, its words and when it was sent, and how
+    // it stands: `waiting` for the builder's turn to end, `delivered` as the next message of the session in `attempt_id`,
+    // `replaced` by a later note before it was delivered, or `not_delivered` with a plain `reason`. One note waits for a
+    // task at a time. A row is only ever added, leaves waiting once with what that change says (`settled_at`, and the
+    // attempt or the reason), and is never changed after or deleted, so every note the owner sent stays known.
+    name: "task_notes",
+    sql: `
+CREATE TABLE task_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  text TEXT NOT NULL CHECK (length(trim(text)) > 0 AND length(text) <= 4000),
+  sent_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('waiting', 'delivered', 'replaced', 'not_delivered')),
+  attempt_id INTEGER REFERENCES attempts (id),
+  reason TEXT,
+  settled_at TEXT,
+  CHECK ((state = 'waiting') = (settled_at IS NULL)),
+  CHECK ((state = 'delivered') = (attempt_id IS NOT NULL)),
+  CHECK ((state = 'not_delivered') = (reason IS NOT NULL))
+);
+CREATE INDEX task_notes_task ON task_notes (task_id, id);
+CREATE UNIQUE INDEX task_notes_one_waiting ON task_notes (task_id) WHERE state = 'waiting';
+CREATE TRIGGER task_notes_written_waiting BEFORE INSERT ON task_notes WHEN NEW.state <> 'waiting'
+BEGIN SELECT RAISE(ABORT, 'a note is first written as waiting'); END;
+CREATE TRIGGER task_notes_words_fixed BEFORE UPDATE OF id, task_id, text, sent_at ON task_notes
+BEGIN SELECT RAISE(ABORT, 'what a note says, its task and when it was sent cannot be changed'); END;
+CREATE TRIGGER task_notes_settled_once BEFORE UPDATE OF state, attempt_id, reason, settled_at ON task_notes WHEN OLD.state <> 'waiting' OR NEW.state = 'waiting'
+BEGIN SELECT RAISE(ABORT, 'a note leaves waiting once, and is never changed after'); END;
+CREATE TRIGGER task_notes_no_delete BEFORE DELETE ON task_notes
+BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
+`,
+  },
 ];
