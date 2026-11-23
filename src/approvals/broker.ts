@@ -378,6 +378,8 @@ export interface Broker {
   answerQuestion(id: number, answer: string): Approval;
   /** How many approvals of the same command earn the offer of standing permission. */
   readonly offerStandingAfter: number;
+  /** What the gate is given besides the request: the owner's home, Botbench's data folder and the floor entries the owner's config adds. */
+  readonly floorSettings: FloorSettings & { dataDir: string };
   /**
    * What the card of a pending approval may offer as standing permission, or null when it may offer none: the
    * request is not one plain shell command, the floor always asks about it, its directory is not known, it was
@@ -591,7 +593,7 @@ export function createBroker(options: {
   const { db } = options;
   const offerStandingAfter = options.offerStandingAfter ?? OFFER_STANDING_AFTER;
   if (!Number.isSafeInteger(offerStandingAfter) || offerStandingAfter < 1) throw new Error(`offerStandingAfter must be a whole number of at least 1, not ${String(options.offerStandingAfter)}.`);
-  const floorSettings: FloorSettings = { home: os.homedir(), dataDir: options.home, ...(options.floor ? { extra: options.floor } : {}) };
+  const floorSettings: FloorSettings & { dataDir: string } = { home: os.homedir(), dataDir: options.home, ...(options.floor ? { extra: options.floor } : {}) };
   const socketPath = path.join(options.home, SOCKET_FILE);
   /** Admissions by the hash of their secret: the secret itself is held only by the admission and the CLI child. */
   const tickets = new Map<string, Ticket>();
@@ -1408,5 +1410,5 @@ export function createBroker(options: {
   const endParked = (taskId: number, why: string): void => supersedeWhere(why, "task_id = ?", taskId);
   const endRunApprovals = (runId: number, why: string): void => supersedeWhere(why, "run_id = ?", runId);
 
-  return { endRunApprovals, socketPath, offerStandingAfter, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, answerQuestion, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
+  return { endRunApprovals, socketPath, offerStandingAfter, floorSettings, standingOffer, grantStanding, revokeStanding, listen, admit, request, answer, answerQuestion, onStoredAnswer: (listener) => void storedListeners.push(listener), endParked, pending: () => listApprovals(db, "pending"), close };
 }

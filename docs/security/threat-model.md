@@ -105,6 +105,17 @@ What a standing permission can still do, stated exactly:
 - **A stolen session can give and take back.** It could already allow any card; with an eligible card it can also make that allow permanent. It cannot make a card eligible except by allowing real requests of an agent, and cannot grant what the floor names.
 - **A process that rewrites the database file** can forge a grant together with its log entry, as it can forge the rest of the log: accepted, as before. The floor still applies to a forged grant (tested).
 
+### Checking a command on the Permissions screen (issue #156, item 5)
+
+`GET /api/permissions/preview?path=…&command=…` answers what a command would get in each mode in a task of a repository, by calling `gate()` (`src/approvals/preview.ts`). It is a new input into the gate from a client, so, per STRIDE:
+
+- **Spoofing.** Behind the auth gate like every other route; without a session it is refused as any route is.
+- **Tampering.** It writes nothing. The grants it hands the gate are the repository's config-listed commands, made into grants in memory for a run id no run has (0), and the standing grants read from the store; nothing is inserted, logged or asked, and no approval or card is created (tested: the row counts of `approvals`, `action_log`, `grants` and the other tables are the same after a check). The gate's own rules, floor and settings are the broker's (`broker.floorSettings`): no request field changes them.
+- **Repudiation.** Nothing to record: a check decides nothing and allows nothing. A real request is still decided and logged by the broker when it comes.
+- **Information disclosure.** The answer is the resolved real path of the repository given and the rule names and words the cards already show. The path is followed with `realpath`, and the floor's `real` follows links in the command's paths, so a signed-in client learns whether a path exists and where its links lead, as `GET /api/repos/settings` already tells it. Nothing is read from inside files.
+- **Denial of service.** The command is refused over 500 characters (`MAX_ENTRY`), empty, or with a NUL, before the gate is asked; the floor's reading of 500 characters is bounded and runs no program.
+- **Elevation of privilege.** None: an answer is not a grant, and nothing a check returns is used by the broker. What it says can differ from what a real task gets, and the screen says so: the owner may edit the offered commands when starting a task, and a run from a GitHub issue gets no grant. It answers for a Claude Code builder's confined request; a Codex builder's request to leave its own sandbox always asks, or is refused in a fully autonomous run, whatever the check says.
+
 ### Runs, the planner and the plan gate (U11)
 
 New boundaries: a client names a file for Botbench to read (the spec), a planner agent reads a repository, and what the planner writes becomes the tasks later agents are given.
