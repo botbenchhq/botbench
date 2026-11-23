@@ -2470,4 +2470,53 @@ WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.ru
 BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
 `,
   },
+  {
+    // An owner's note to a task that is ready for review (issue #156, src/engine/note-rounds.ts): the note is stored in
+    // `task_notes` marked `for_round`, with the commit its round starts from (`round_from`), the task goes back to building, and the builder's session is taken up again in
+    // the same copy with the note as its next prompt. `note_rounds`: one row per such round that ended, append-only:
+    // its note, how many reviews the task had when it began, the builder's attempt, how its turn ended, whether it changed
+    // the work, its reply, the commit it started from and the one Botbench made after it, and the times. What a task's
+    // checks found may now also change for a version of the work such a round made, and only for that one.
+    name: "note rounds",
+    sql: `
+ALTER TABLE task_notes ADD COLUMN for_round INTEGER NOT NULL DEFAULT 0 CHECK (for_round IN (0, 1));
+ALTER TABLE task_notes ADD COLUMN round_from TEXT;
+CREATE TRIGGER task_notes_round_from BEFORE INSERT ON task_notes WHEN (NEW.for_round = 1) <> (NEW.round_from IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'a note sent for a round names the commit the round starts from, and only such a note does'); END;
+DROP TRIGGER task_notes_words_fixed;
+CREATE TRIGGER task_notes_words_fixed BEFORE UPDATE OF id, task_id, text, sent_at, for_round, round_from ON task_notes
+BEGIN SELECT RAISE(ABORT, 'what a note says, its task and when it was sent cannot be changed'); END;
+CREATE TABLE note_rounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  note_id INTEGER NOT NULL UNIQUE REFERENCES task_notes (id),
+  after_reviews INTEGER NOT NULL CHECK (after_reviews >= 0),
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'failed', 'stopped')),
+  changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+  reply TEXT NOT NULL,
+  problem TEXT,
+  from_commit TEXT NOT NULL,
+  head_commit TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  CHECK ((outcome = 'finished') = (problem IS NULL)),
+  CHECK (changed = 0 OR head_commit IS NOT NULL)
+);
+CREATE INDEX note_rounds_task ON note_rounds (task_id, id);
+CREATE TRIGGER note_rounds_of_a_round_note BEFORE INSERT ON note_rounds
+WHEN NOT EXISTS (SELECT 1 FROM task_notes WHERE id = NEW.note_id AND task_id = NEW.task_id AND for_round = 1)
+BEGIN SELECT RAISE(ABORT, 'a note round belongs to a note of the same task sent for a round'); END;
+CREATE TRIGGER note_rounds_no_update BEFORE UPDATE ON note_rounds
+BEGIN SELECT RAISE(ABORT, 'note rounds are append-only'); END;
+CREATE TRIGGER note_rounds_no_delete BEFORE DELETE ON note_rounds
+BEGIN SELECT RAISE(ABORT, 'note rounds are append-only'); END;
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM note_rounds WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+`,
+  },
 ];
