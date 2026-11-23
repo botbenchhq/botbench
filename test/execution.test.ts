@@ -88,6 +88,7 @@ test("in the container kind the launch settings differ in one thing: allowUnsand
   assert.throws(() => claudeArgs({ confinement: place, allowEdits: true, container: true }), /only through Botbench's permission check/);
 });
 
+const CLEAN = ["env", "-i", "HOME=/tmp", `PATH=${CONTAINER_PATH}`];
 const C: TaskContainer = { name: "botbench-studio-task-7", workdir: "/Users/o/.botbench/worktrees/run-3/task-7", docker: "/usr/local/bin/docker" };
 
 /** The words a real sh makes of a command line. */
@@ -101,15 +102,18 @@ test("an allowed command is rewritten into docker exec … sh -c '<command>', an
   const commands = ["npm test", "echo 'it''s' \"$HOME\" `id` $(whoami)", "printf '%s\\n' a b\ncat <<'EOF'\nline 'one'\nEOF", "a=1; b='x'\"'\"'y'; echo \\$a", "'", "\\'\\\\", "ends with newline\n"];
   for (const command of commands) {
     const line = containerCommand(C, command);
-    assert.deepEqual(shellWords(line), [C.docker, "exec", "--workdir", C.workdir, C.name, "sh", "-c", command], JSON.stringify(command));
+    assert.deepEqual(shellWords(line), [C.docker, "exec", "--workdir", C.workdir, C.name, ...CLEAN, "sh", "-c", command], JSON.stringify(command));
   }
-  assert.equal(containerCommand(C, "npm test"), "'/usr/local/bin/docker' exec --workdir '/Users/o/.botbench/worktrees/run-3/task-7' 'botbench-studio-task-7' sh -c 'npm test'");
+  assert.equal(containerCommand(C, "npm test"), `'/usr/local/bin/docker' 'exec' '--workdir' '/Users/o/.botbench/worktrees/run-3/task-7' 'botbench-studio-task-7' 'env' '-i' 'HOME=/tmp' 'PATH=${CONTAINER_PATH}' 'sh' '-c' 'npm test'`);
   // What the inner sh then runs is the original: the same output as running it directly.
   const original = "printf '%s|' \"a b\" 'c'\"'\"'d'\necho done";
   const inner = shellWords(containerCommand(C, original)).at(-1)!;
   assert.equal(spawnSync("/bin/sh", ["-c", inner], { encoding: "utf8" }).stdout, spawnSync("/bin/sh", ["-c", original], { encoding: "utf8" }).stdout);
-  // Setup and check commands go as argv, with no shell on this Mac between.
-  assert.deepEqual(containerExecArgv(C, "npm ci && npm test"), [C.docker, "exec", "--workdir", C.workdir, C.name, "sh", "-c", "npm ci && npm test"]);
+  // Setup and check commands go as argv, with no shell on this Mac between; both start from an empty environment
+  // (`env -i`), so neither this Mac's variables nor the image's own ENV lines reach the command.
+  assert.deepEqual(containerExecArgv(C, "npm ci && npm test"), [C.docker, "exec", "--workdir", C.workdir, C.name, ...CLEAN, "sh", "-c", "npm ci && npm test"]);
+  const env = spawnSync("/usr/bin/env", ["-i", ...CLEAN.slice(2), "/bin/sh", "-c", "env"], { encoding: "utf8", env: { ...process.env, FROM_THE_IMAGE: "1" } });
+  assert.deepEqual(env.stdout.split("\n").filter((line) => line !== "" && !line.startsWith("PWD=") && !line.startsWith("SHLVL=") && !line.startsWith("_=")).sort(), ["HOME=/tmp", `PATH=${CONTAINER_PATH}`], "env -i leaves only HOME and PATH");
 });
 
 test("the rewritten input keeps the description, time limit and background run, sets the sandbox aside for this exact call only, and drops the agent's own fields", () => {
@@ -232,9 +236,16 @@ test("starting a task's container is refused, before anything runs and with no f
 test("a started container is held to what was asked, from its own record and from inside: anything else is refused", () => {
   const mount = "/Users/o/.botbench/worktrees/run-3/task-7";
   // The shape `docker inspect` gives (Docker 28, OrbStack), with only the fields read here.
-  const good = [{ HostConfig: { NetworkMode: "none", CapDrop: ["ALL"], CapAdd: null, SecurityOpt: ["no-new-privileges"], Privileged: false, IpcMode: "private", CgroupnsMode: "private", PidsLimit: 1024 }, Mounts: [{ Type: "bind", Source: mount, Destination: mount, RW: true }] }];
-  assert.equal(hardeningProblem(good, mount), null);
-  const changed = (host: Record<string, unknown>, mounts?: unknown[]) => [{ HostConfig: { ...good[0]!.HostConfig, ...host }, Mounts: mounts ?? good[0]!.Mounts }];
+  const good = [{ Config: { Image: "node:24", User: "501:20" }, HostConfig: { NetworkMode: "none", CapDrop: ["ALL"], CapAdd: null, SecurityOpt: ["no-new-privileges"], Privileged: false, IpcMode: "private", CgroupnsMode: "private", PidsLimit: 1024, Memory: 4294967296, NanoCpus: 2000000000 }, Mounts: [{ Type: "bind", Source: mount, Destination: mount, RW: true }] }];
+  const asked = { image: "node:24", uid: 501, gid: 20 };
+  assert.equal(hardeningProblem(good, mount, asked), null);
+  // Before a container is used again: its image, user and limits are the ones asked for.
+  assert.match(hardeningProblem([{ ...good[0], Config: { Image: "alpine:3", User: "501:20" } }], mount, asked)!, /image "alpine:3", not node:24/);
+  assert.match(hardeningProblem([{ ...good[0], Config: { Image: "node:24", User: "" } }], mount, asked)!, /runs as "", not your user and group 501:20/);
+  const changed = (host: Record<string, unknown>, mounts?: unknown[]) => [{ ...good[0], HostConfig: { ...good[0]!.HostConfig, ...host }, Mounts: mounts ?? good[0]!.Mounts }];
+  assert.match(hardeningProblem(changed({ Memory: 0 }), mount)!, /memory limit is 0, not 4g/);
+  assert.match(hardeningProblem(changed({ NanoCpus: 0 }), mount)!, /CPU limit is 0, not 2 CPUs/);
+  assert.match(hardeningProblem(changed({}, [{ ...good[0]!.Mounts[0], Source: `/elsewhere${mount}` }]), mount)!, /not the task's copy/, "the source is the copy itself, not a path ending like it");
   assert.match(hardeningProblem(changed({ NetworkMode: "bridge" }), mount)!, /network is "bridge", not none/);
   assert.match(hardeningProblem(changed({ CapDrop: [] }), mount)!, /not every capability/);
   assert.match(hardeningProblem(changed({ CapAdd: ["NET_ADMIN"] }), mount)!, /capabilities back/);
@@ -242,7 +253,7 @@ test("a started container is held to what was asked, from its own record and fro
   assert.match(hardeningProblem(changed({ Privileged: true }), mount)!, /privileged/);
   assert.match(hardeningProblem(changed({ IpcMode: "host" }), mount)!, /IPC/);
   assert.match(hardeningProblem(changed({ CgroupnsMode: "host" }), mount)!, /cgroup/);
-  assert.match(hardeningProblem(changed({ PidsLimit: 0 }), mount)!, /no limit on processes/);
+  assert.match(hardeningProblem(changed({ PidsLimit: 0 }), mount)!, /process limit is 0, not 1024/);
   assert.match(hardeningProblem(changed({}, [...good[0]!.Mounts, { Type: "bind", Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock", RW: true }]), mount)!, /2 mounts, not exactly one/);
   assert.match(hardeningProblem(changed({}, [{ ...good[0]!.Mounts[0], RW: false }]), mount)!, /not the task's copy, read-write/);
   assert.match(hardeningProblem([], mount)!, /no record/);

@@ -65,6 +65,8 @@ export const LABEL_MOUNT = "botbench.mount";
 /** The PATH a container's commands get: the usual system folders and nothing of this Mac's. */
 export const CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 export const CONTAINER_LIMITS = { pids: 1024, memory: "4g", cpus: "2" } as const;
+/** `--memory 4g` as Docker records it. */
+const MEMORY_BYTES = 4 * 1024 ** 3;
 
 /** A word for a POSIX shell, in single quotes: nothing in it is read by the shell. */
 export const shellQuote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
@@ -131,11 +133,17 @@ export function containerRunArgs(o: { name: string; workbench: string; taskId: n
   ];
 }
 
+/**
+ * What every command runs under in the container: `env -i` and only HOME and PATH, so neither this Mac's environment
+ * nor the image's own `ENV` lines reach it.
+ */
+const CLEAN_ENV = ["env", "-i", "HOME=/tmp", `PATH=${CONTAINER_PATH}`] as const;
+
 /** How Botbench runs one setup or check command in a task's container: argv, with no shell on this Mac between. */
-export const containerExecArgv = (c: TaskContainer, command: string): string[] => [c.docker, "exec", "--workdir", c.workdir, c.name, "sh", "-c", command];
+export const containerExecArgv = (c: TaskContainer, command: string): string[] => [c.docker, "exec", "--workdir", c.workdir, c.name, ...CLEAN_ENV, "sh", "-c", command];
 
 /** One shell command line that runs `command` in a task's container: what the agent's allowed command becomes. */
-export const containerCommand = (c: TaskContainer, command: string): string => `${shellQuote(c.docker)} exec --workdir ${shellQuote(c.workdir)} ${shellQuote(c.name)} sh -c ${shellQuote(command)}`;
+export const containerCommand = (c: TaskContainer, command: string): string => containerExecArgv(c, command).map(shellQuote).join(" ");
 
 /** The fields of a shell call that are kept when it is rewritten: what it is for, its time limit, and a background run (src/approvals/gate.ts CONFINED_SHELL_FIELDS). */
 const KEPT_SHELL_FIELDS = ["description", "timeout", "run_in_background"] as const;
@@ -246,10 +254,17 @@ export async function dockerProblem(docker: string, limitMs = DOCKER_ANSWER_MS):
  * `dockerSecurityIsHardened`): no network, every capability dropped, no new privileges, private IPC and cgroup
  * namespaces, not privileged, a process limit, and one mount only, the task's copy, read-write at the same path.
  */
-export function hardeningProblem(inspected: unknown, mount: string): string | null {
+export function hardeningProblem(inspected: unknown, mount: string, expected?: { image: string; uid: number; gid: number }): string | null {
   const record = Array.isArray(inspected) ? inspected[0] : inspected;
   if (typeof record !== "object" || record === null) return "Docker gave no record of the container.";
   const host = (record as { HostConfig?: Record<string, unknown> }).HostConfig ?? {};
+  const config = (record as { Config?: Record<string, unknown> }).Config ?? {};
+  if (expected !== undefined) {
+    if (config.Image !== expected.image) return `it runs the image ${JSON.stringify(config.Image ?? null)}, not ${expected.image}.`;
+    if (config.User !== `${expected.uid}:${expected.gid}`) return `it runs as ${JSON.stringify(config.User ?? null)}, not your user and group ${expected.uid}:${expected.gid}.`;
+  }
+  if (host.Memory !== MEMORY_BYTES) return `its memory limit is ${JSON.stringify(host.Memory ?? null)}, not ${CONTAINER_LIMITS.memory}.`;
+  if (host.NanoCpus !== Number(CONTAINER_LIMITS.cpus) * 1e9) return `its CPU limit is ${JSON.stringify(host.NanoCpus ?? null)}, not ${CONTAINER_LIMITS.cpus} CPUs.`;
   const mounts = (record as { Mounts?: unknown }).Mounts;
   const list = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x).toLowerCase()) : []);
   if (host.NetworkMode !== "none") return `its network is ${JSON.stringify(host.NetworkMode ?? null)}, not none.`;
@@ -259,10 +274,10 @@ export function hardeningProblem(inspected: unknown, mount: string): string | nu
   if (host.Privileged !== false) return "it is privileged.";
   if (host.IpcMode !== "private") return `its IPC namespace is ${JSON.stringify(host.IpcMode ?? null)}, not private.`;
   if (host.CgroupnsMode !== "private") return `its cgroup namespace is ${JSON.stringify(host.CgroupnsMode ?? null)}, not private.`;
-  if (!(typeof host.PidsLimit === "number" && host.PidsLimit > 0)) return "it has no limit on processes.";
+  if (host.PidsLimit !== CONTAINER_LIMITS.pids) return `its process limit is ${JSON.stringify(host.PidsLimit ?? null)}, not ${CONTAINER_LIMITS.pids}.`;
   if (!Array.isArray(mounts) || mounts.length !== 1) return `it has ${Array.isArray(mounts) ? mounts.length : "no record of its"} mounts, not exactly one.`;
   const only = mounts[0] as Record<string, unknown>;
-  if (only.Type !== "bind" || only.Destination !== mount || only.RW !== true || typeof only.Source !== "string" || !only.Source.endsWith(mount)) return `its one mount is not the task's copy, read-write, at ${mount}.`;
+  if (only.Type !== "bind" || only.Destination !== mount || only.RW !== true || only.Source !== mount) return `its one mount is not the task's copy, read-write, at ${mount}.`;
   return null;
 }
 
@@ -313,6 +328,9 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
   if (image.code !== 0) return refuse(`The image ${o.image} is not on this Mac, and Botbench never downloads one. Run docker pull ${o.image} yourself, then start the task again. ${NOT_INSTEAD}`);
   const name = containerName(o.workbench, o.taskId);
   const container: TaskContainer = { name, workdir: o.mount, docker };
+  const uid = o.uid ?? process.getuid?.() ?? -1;
+  const gid = o.gid ?? process.getgid?.() ?? -1;
+  if (uid < 0 || gid < 0) return refuse(`Botbench could not read your user and group ids, which the container runs as. ${NOT_INSTEAD}`);
   const proven = async (): Promise<string | null> => {
     const inspected = await runDocker(docker, ["inspect", name], STEP_MS);
     if (inspected.code !== 0) return `Docker could not say what the container got (docker inspect: ${said(inspected)}).`;
@@ -325,7 +343,7 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
     const state = (Array.isArray(record) ? record[0] : record) as { State?: { Running?: unknown }; Config?: { Labels?: Record<string, unknown> } } | undefined;
     if (state?.State?.Running !== true) return "the container is not running.";
     if (state.Config?.Labels?.[LABEL_MOUNT] !== o.mount) return "the container was made for another folder.";
-    const hardened = hardeningProblem(record, o.mount);
+    const hardened = hardeningProblem(record, o.mount, { image: o.image, uid, gid });
     if (hardened !== null) return hardened;
     // Probed, not assumed: from inside, the container has the loopback interface and nothing else to reach anything by.
     const net = await runDocker(docker, ["exec", name, "sh", "-c", "ls /sys/class/net"], STEP_MS);
@@ -341,9 +359,6 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
     if ((await proven()) === null) return { ok: true, container };
     await removeContainer(docker, name);
   }
-  const uid = o.uid ?? process.getuid?.() ?? -1;
-  const gid = o.gid ?? process.getgid?.() ?? -1;
-  if (uid < 0 || gid < 0) return refuse(`Botbench could not read your user and group ids, which the container runs as. ${NOT_INSTEAD}`);
   const started = await runDocker(docker, containerRunArgs({ name, workbench: o.workbench, taskId: o.taskId, image: o.image, mount: o.mount, uid, gid }), START_MS);
   if (started.code !== 0) {
     await removeContainer(docker, name);

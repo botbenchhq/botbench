@@ -121,8 +121,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
       events.announceTask(task);
       containers.taskChanged(task.id);
     } };
-  // Docker is asked only when a repository's commands run in a container.
-  if (Object.values(config.repositories ?? {}).some((settings) => settings.execution?.kind === "container")) void containers.sweep();
+  // Whenever a docker program is on this Mac (the sweep asks nothing otherwise): a repository switched back to the host,
+  // or taken out of the settings, may have left containers of ended tasks.
+  void containers.sweep();
   // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
@@ -182,6 +183,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db, home, peers,
     repoCommands: (repo) => repositoryCommands(config, repo),
     repoHosts: (repo) => repositoryHosts(config, repo),
+    execution: (repo) => repositoryExecution(config, repo),
     remote: (repo) => repositoryDelivery(config, repo).remote,
     onTaskChange: stream.announceTask,
     onPassed: (taskId) => void tasks.reconsider(taskId),
