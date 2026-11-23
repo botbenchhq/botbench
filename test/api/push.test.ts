@@ -13,6 +13,7 @@ import { createWorktree } from "../../src/worktrees.ts";
 import { decrypt, newDevice, startPushEndpoint, type Device, type PushEndpoint } from "../support/push-service.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // Notifications over real HTTP, against a real Botbench server and real SQLite. The push service's endpoint is a real
 // HTTP server this test starts (test/support/push-service.ts): it receives the real encrypted request Botbench sends,
@@ -206,7 +207,7 @@ test("a test notification goes to the one device asked for, and an expired one i
   assert.equal(subscriptions(api), 1);
 });
 
-test("a task built to Ready for review sends one push per device, with the fixed text and the task's screen", async (t) => {
+test("a task built to Ready for review sends one push per device, with the fixed text and the task's screen", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-push-ready-");
   const home = path.join(dir, "home");
   const db = openStore(home);

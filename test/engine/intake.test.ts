@@ -18,6 +18,7 @@ import { ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../support/replay-is
 import { loadPlanRecording, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
 import { reviewReplayDriver } from "../support/replay-review.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // A run started from a GitHub issue, in the engine: real SQLite, a real temporary git repository, the real broker and
 // its socket, and sessions replayed from real CLI runs (planner and builder). The issue is the one captured from the
@@ -85,7 +86,7 @@ const refused = (words: RegExp) => (err: unknown): boolean => {
   return true;
 };
 
-test("a run started from an issue is marked, its planner is given the issue as outside text after the owner's message, and its tasks inherit the mark", async (t) => {
+test("a run started from an issue is marked, its planner is given the issue as outside text after the owner's message, and its tasks inherit the mark", { skip: NO_SANDBOX }, async (t) => {
   const r = await rig(t);
   const issue = fetched(r.db, r.repo);
   const run = await r.runs.start({ repo: r.repo, prompt: "Keep the fix small.", issue: { fetchId: issue.id, allowHosts: false }, mode: "manual" });
@@ -143,7 +144,7 @@ test("the issue as read cannot be changed or taken away, and a run's mark cannot
   assert.throws(() => r.db.prepare("INSERT INTO runs (kind, repo_path, status, base_commit, issue_fetch_id, created_at, updated_at) VALUES ('planned', '/x', 'planning', 'c', ?, 'now', 'now')").run(issue.id), /marked/);
 });
 
-test("a marked run's setup commands and builder get no allowed network hosts unless the owner allowed them for that run; its builder is given the issue as outside text", async (t) => {
+test("a marked run's setup commands and builder get no allowed network hosts unless the owner allowed them for that run; its builder is given the issue as outside text", { skip: NO_SANDBOX }, async (t) => {
   const r = await rig(t);
   const issue = fetched(r.db, r.repo);
   const plan = [{ title: "Fix the cut log", criteria: ["Long lines are printed"] }];
@@ -189,7 +190,7 @@ function agent(r: Rig, mode: RunMode, marked: boolean) {
   return { taskId, ask };
 }
 
-test("a command pre-approved for a marked run, or given standing permission, asks the owner all the same; the card says the run read an issue", async (t) => {
+test("a command pre-approved for a marked run, or given standing permission, asks the owner all the same; the card says the run read an issue", { skip: NO_SANDBOX }, async (t) => {
   const r = await rig(t);
   const plain = agent(r, "manual", false);
   const allowed = await plain.ask("ls -la src", "call-1");
@@ -233,7 +234,7 @@ test("a pull request of a marked run closes the attached issue, once, and nothin
   assert.equal(unfenced.match(closing), null);
 });
 
-test("a round of fixes that starts a new builder session is given the issue again, as outside text, with the task", async (t) => {
+test("a round of fixes that starts a new builder session is given the issue again, as outside text, with the task", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-intake-refine-");
   const home = path.join(dir, "home");
   const db = openStore(home);

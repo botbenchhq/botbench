@@ -9,6 +9,7 @@ import { createTask, moveTask } from "../../src/engine/task.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, botbenchBranches, stalledRepo, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { NO_PROCESS_LIST } from "../support/confined.ts";
 
 // No test in this file starts a driver: tasks that reach Claude Code are in test/live/task.live.test.ts.
 
@@ -311,7 +312,7 @@ test("starting a task answers at once with its id, and each state it reaches is 
   assert.deepEqual(botbenchBranches(repo), []);
 });
 
-test("a repository git cannot read in time is answered as not usable with the reason, a task is not started in it, and no git process is left", { timeout: 30_000 }, async (t) => {
+test("a repository git cannot read in time is answered as not usable with the reason, a task is not started in it, and no git process is left", { skip: NO_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   const { base, headers, dir, home } = await start(t);
   const repo = path.join(dir, "stalled");
   stalledRepo(repo);

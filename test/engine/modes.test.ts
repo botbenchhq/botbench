@@ -14,6 +14,7 @@ import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/
 import { loadPlanRecording, planReplayDriver, THREE_TASKS } from "../support/replay-plan.ts";
 import { reviewReplayDriver } from "../support/replay-review.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // The three modes through the engine, with real SQLite, a real temporary repository, real setup and check commands and
 // the real permission broker. No CLI is started: planners, builders and reviewers are sessions recorded from the real
@@ -68,7 +69,7 @@ async function oneTask(e: Line, mode: RunMode, reviewer = false): Promise<number
   return tasks[0]!.id;
 }
 
-test("semi-autonomous: a builder's command runs confined without asking, the task reaches Ready for review with no approval, and the command is in the log under the mode's rule", async (t) => {
+test("semi-autonomous: a builder's command runs confined without asking, the task reaches Ready for review with no approval, and the command is in the log under the mode's rule", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["ask"]);
   const id = await oneTask(e, "semi");
   const task = getTask(e.db, id)!;
@@ -84,7 +85,7 @@ test("semi-autonomous: a builder's command runs confined without asking, the tas
   assert.equal(task.reason, null);
 });
 
-test("manual: the same command asks the owner, as it always did", async (t) => {
+test("manual: the same command asks the owner, as it always did", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["ask"]);
   const run = createRun(e.db, { repo: e.repo, prompt: "Add a file", baseCommit: e.base, mode: "manual" });
   const stored = storePlan(e.db, run.id, ONE);
@@ -97,7 +98,7 @@ test("manual: the same command asks the owner, as it always did", async (t) => {
   assert.ok(!actionLog(e.db).some((entry) => entry.rule === "mode_allowed"));
 });
 
-test("fully autonomous: building starts without the owner approving the plan, and each task whose checks pass is accepted without the owner, keeping its branch", async (t) => {
+test("fully autonomous: building starts without the owner approving the plan, and each task whose checks pass is accepted without the owner, keeping its branch", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done", "done"]);
   const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "full" });
   assert.equal(run.mode, "full");
@@ -123,7 +124,7 @@ test("fully autonomous: building starts without the owner approving the plan, an
   assert.equal(listApprovals(e.db).length, 0);
 });
 
-test("fully autonomous: a task whose check failed is not accepted, and says why it needs the owner", async (t) => {
+test("fully autonomous: a task whose check failed is not accepted, and says why it needs the owner", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { checks: [cmd("test -f hello.txt"), cmd("false")] });
   const id = await oneTask(e, "full");
   const task = getTask(e.db, id)!;
@@ -133,7 +134,7 @@ test("fully autonomous: a task whose check failed is not accepted, and says why 
   assert.equal(taskDecision(e.db, id), null);
 });
 
-test("fully autonomous: a task whose reviewer raised concerns is not accepted, and says why", async (t) => {
+test("fully autonomous: a task whose reviewer raised concerns is not accepted, and says why", { skip: NO_SANDBOX }, async (t) => {
   // Changed with the refine loop: the builder is given the review once (its replayed round changes nothing), and the
   // loop ends unresolved.
   const e = await line(t, ["done", "done"], { reviewer: true });
@@ -145,7 +146,7 @@ test("fully autonomous: a task whose reviewer raised concerns is not accepted, a
   assert.equal(taskDecision(e.db, id), null);
 });
 
-test("fully autonomous: a dangerous command is refused without asking anyone, the agent is told why, and the task is not accepted", async (t) => {
+test("fully autonomous: a dangerous command is refused without asking anyone, the agent is told why, and the task is not accepted", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["refused"]);
   const id = await oneTask(e, "full");
   const task = getTask(e.db, id)!;
@@ -184,7 +185,7 @@ test("a mode that is none of the three is refused, and a run's mode cannot be ch
   assert.equal(createRun(e.db, { repo: e.repo, prompt: "Another", baseCommit: e.base }).mode, "manual");
 });
 
-test("only a fully autonomous run's task, whose checks passed, can be decided by the mode: the store refuses any other", async (t) => {
+test("only a fully autonomous run's task, whose checks passed, can be decided by the mode: the store refuses any other", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"]);
   const id = await oneTask(e, "semi");
   assert.equal(getTask(e.db, id)!.status, "awaiting_decision");

@@ -14,6 +14,7 @@ import { openStore } from "../../src/store/db.ts";
 import { buildReplayDriver, type BuildReplay } from "../support/replay-build.ts";
 import { reviewReplayDriver, type ReviewReplay, type ReviewSession } from "../support/replay-review.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // The review station (U20, in part): after the checks, a run's reviewer reads the task's diff and its critique is stored
 // on the task. No test here starts a CLI: the builder's turn is replayed from a real Claude Code session
@@ -74,7 +75,7 @@ async function builtTask(e: Line, reviewer?: { agent: string; model: string | nu
   return tasks[0]!.id;
 }
 
-test("R5: after the checks, Codex reads the task's title, criteria and diff, and its critique is stored on the task with its verdict; then the task is Ready for review", async (t) => {
+test("R5: after the checks, Codex reads the task's title, criteria and diff, and its critique is stored on the task with its verdict; then the task is Ready for review", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "review");
   const id = await builtTask(e);
   const task = getTask(e.db, id)!;
@@ -111,7 +112,7 @@ test("R5: after the checks, Codex reads the task's title, criteria and diff, and
   assert.equal(e.reviewer.closed(), 1, "the reviewer's session is closed");
 });
 
-test("a reviewer that fails (here signed out: Codex retried and gave up) is recorded in plain words, and the task still reaches Ready for review", async (t) => {
+test("a reviewer that fails (here signed out: Codex retried and gave up) is recorded in plain words, and the task still reaches Ready for review", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "signed-out");
   const id = await builtTask(e);
   assert.equal(getTask(e.db, id)!.status, "awaiting_decision");
@@ -122,7 +123,7 @@ test("a reviewer that fails (here signed out: Codex retried and gave up) is reco
   assert.match(review.problem!, /^Codex could not review this task: .*401 Unauthorized/);
 });
 
-test("a reviewer that cannot start (the agent reports a problem) is recorded with that problem, and the task still reaches Ready for review", async (t) => {
+test("a reviewer that cannot start (the agent reports a problem) is recorded with that problem, and the task still reaches Ready for review", { skip: NO_SANDBOX }, async (t) => {
   const blocked = reviewReplayDriver("review", { problem: "Codex is signed out. Run `codex login` in a terminal." });
   const e = await line(t, "review", { reviewer: blocked, checks: [] });
   const made = [{ id: await builtTask(e) }];
@@ -134,7 +135,7 @@ test("a reviewer that cannot start (the agent reports a problem) is recorded wit
   assert.equal(review.attemptId, null, "nothing was started");
 });
 
-test("a reviewer still working when its time limit passes is stopped and recorded as out of time, and the task still reaches Ready for review", async (t) => {
+test("a reviewer still working when its time limit passes is stopped and recorded as out of time, and the task still reaches Ready for review", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "hang", { limitMs: 300 });
   const id = await builtTask(e);
   assert.equal(getTask(e.db, id)!.status, "awaiting_decision");
@@ -144,7 +145,7 @@ test("a reviewer still working when its time limit passes is stopped and recorde
   assert.equal(e.reviewer.closed(), 1);
 });
 
-test("a diff longer than the reviewer is sent is cut, and the prompt and the stored review say so", async (t) => {
+test("a diff longer than the reviewer is sent is cut, and the prompt and the stored review say so", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "review", { setup: [cmd(`awk 'BEGIN { for (i = 0; i < 4000; i++) print "line number " i " of a long file" }' > long.txt`)], checks: [] });
   const id = await builtTask(e);
   const prompt = e.reviewer.prompts[0]!;
@@ -155,7 +156,7 @@ test("a diff longer than the reviewer is sent is cut, and the prompt and the sto
   assert.ok(prompt.length < MAX_REVIEW_DIFF + 5_000);
 });
 
-test("a run without a reviewer, and a task started on its own, are not reviewed", async (t) => {
+test("a run without a reviewer, and a task started on its own, are not reviewed", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "review");
   const id = await builtTask(e, null);
   assert.equal(getTask(e.db, id)!.status, "awaiting_decision");
@@ -168,7 +169,7 @@ test("a run without a reviewer, and a task started on its own, are not reviewed"
   assert.equal(e.states.includes("reviewing"), false);
 });
 
-test("a review is append-only: it is never changed, removed or replaced, and a run's reviewer is fixed once it starts", async (t) => {
+test("a review is append-only: it is never changed, removed or replaced, and a run's reviewer is fixed once it starts", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "review");
   const id = await builtTask(e);
   const row = e.db.prepare("SELECT * FROM reviews WHERE task_id = ?").get(id)!;
@@ -179,7 +180,7 @@ test("a review is append-only: it is never changed, removed or replaced, and a r
   assert.equal(taskReview(e.db, id)!.text.startsWith("Verdict: concerns"), true);
 });
 
-test("a run cancelled while its task is being reviewed ends the task as cancelled, with the review recorded as stopped", async (t) => {
+test("a run cancelled while its task is being reviewed ends the task as cancelled, with the review recorded as stopped", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "hang", { checks: [] });
   const run = planned(e);
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -198,7 +199,7 @@ test("a run cancelled while its task is being reviewed ends the task as cancelle
   assert.equal(getRun(e.db, run.id)!.status, "cancelled");
 });
 
-test("a task left being reviewed when Botbench stopped has its review recorded as unfinished at the next start, and is Ready for review with its work kept", async (t) => {
+test("a task left being reviewed when Botbench stopped has its review recorded as unfinished at the next start, and is Ready for review with its work kept", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "hang", { checks: [] });
   const run = planned(e);
   const id = e.runs.approve(run.id, run.planVersion).tasks[0]!.id;

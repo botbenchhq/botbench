@@ -11,6 +11,7 @@ import { MIGRATIONS } from "../../src/store/schema.ts";
 import { createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { checkoutState, git, initRepo, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // No test in this file starts a driver: tasks that reach Claude Code are in test/live/task.live.test.ts.
 
@@ -226,7 +227,7 @@ test("a repository path is checked before it is used: absolute, a git repository
   }
 });
 
-test("on start, a task left being prepared by a Botbench that stopped, before any agent turn, is started again once; a task it had not started is built after it; the checkout is untouched", async (t) => {
+test("on start, a task left being prepared by a Botbench that stopped, before any agent turn, is started again once; a task it had not started is built after it; the checkout is untouched", { skip: NO_SANDBOX }, async (t) => {
   const { db, dir, home } = store(t);
   const repo = path.join(dir, "repo");
   initRepo(repo);

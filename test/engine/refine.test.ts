@@ -14,6 +14,7 @@ import { openStore } from "../../src/store/db.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
 import { reviewReplayDriver, type ReviewReplay, type ReviewSession } from "../support/replay-review.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // The refine loop: after a review with concerns, the builder is given the review, its work is committed and checked
 // again, and the reviewer looks again, until the reviewer is satisfied, the run's cap is reached, the builder changes
@@ -89,7 +90,7 @@ const outcome = (db: DatabaseSync, id: number) => {
   return { outcome: reviewOutcome(record), line: outcomeLine(record) };
 };
 
-test("concerns: the builder is given the review, fixes the work in the same copy with the same permissions, the checks run again on the new commit, and the reviewer, asked again with the builder's reasons, is satisfied", async (t) => {
+test("concerns: the builder is given the review, fixes the work in the same copy with the same permissions, the checks run again on the new commit, and the reviewer, asked again with the builder's reasons, is satisfied", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "second-review"]);
   const { taskId } = approved(e);
   await e.tasks.idle();
@@ -134,7 +135,7 @@ test("concerns: the builder is given the review, fixes the work in the same copy
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM approvals").get()!.n, 0, "nothing was asked of the owner");
 });
 
-test("the cap: once the run's rounds of fixes are used up and the reviewer still has concerns, the loop ends and the task is Ready for review as unresolved", async (t) => {
+test("the cap: once the run's rounds of fixes are used up and the reviewer still has concerns, the loop ends and the task is Ready for review as unresolved", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine", "refine"], ["review", "review", "review"]);
   const { taskId, runId } = approved(e, 1);
   assert.equal(getRun(e.db, runId)!.maxRefineRounds, 1);
@@ -146,7 +147,7 @@ test("the cap: once the run's rounds of fixes are used up and the reviewer still
   assert.deepEqual(outcome(e.db, taskId), { outcome: "unresolved", line: "Codex raised 1 concern, then 1. Claude Code addressed 1. Still disagree after 1 round: needs your judgment." });
 });
 
-test("a run with a cap of 0 is reviewed once and its builder is not asked for fixes", async (t) => {
+test("a run with a cap of 0 is reviewed once and its builder is not asked for fixes", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review"]);
   const { taskId } = approved(e, 0);
   await e.tasks.idle();
@@ -155,7 +156,7 @@ test("a run with a cap of 0 is reviewed once and its builder is not asked for fi
   assert.deepEqual(outcome(e.db, taskId), { outcome: "unresolved", line: "Codex raised 1 concern. Needs your judgment." });
 });
 
-test("a builder that changes nothing in a round ends the loop: no new commit, no second check round, no second review", async (t) => {
+test("a builder that changes nothing in a round ends the loop: no new commit, no second check round, no second review", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done"], ["review", "second-review"]);
   const { taskId } = approved(e);
   await e.tasks.idle();
@@ -169,7 +170,7 @@ test("a builder that changes nothing in a round ends the loop: no new commit, no
   assert.equal(outcome(e.db, taskId).outcome, "unresolved");
 });
 
-test("a reviewer that fails in its second review leaves the task Ready for review with the outcome failed, the fixed work committed and checked", async (t) => {
+test("a reviewer that fails in its second review leaves the task Ready for review with the outcome failed, the fixed work committed and checked", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "signed-out"]);
   const { taskId } = approved(e);
   await e.tasks.idle();
@@ -180,7 +181,7 @@ test("a reviewer that fails in its second review leaves the task Ready for revie
   assert.deepEqual(outcome(e.db, taskId), { outcome: "failed", line: "Codex raised 1 concern. Claude Code addressed 1. Codex's next review did not finish: needs your judgment." });
 });
 
-test("review text that holds a dangerous command reaches the builder only as data inside the review block, and Botbench does nothing because of it", async (t) => {
+test("review text that holds a dangerous command reaches the builder only as data inside the review block, and Botbench does nothing because of it", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done"], ["hostile"]);
   const { taskId } = approved(e);
   await e.tasks.idle();
@@ -199,7 +200,7 @@ test("review text that holds a dangerous command reaches the builder only as dat
   assert.ok(fs.existsSync(e.home), "nothing was deleted");
 });
 
-test("a run cancelled while its builder works on fixes ends the task as cancelled, its round of fixes recorded as stopped and its work committed", async (t) => {
+test("a run cancelled while its builder works on fixes ends the task as cancelled, its round of fixes recorded as stopped and its work committed", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review"], { hold: [1] });
   const { taskId, runId } = approved(e);
   await e.builder.held(1);
@@ -215,7 +216,7 @@ test("a run cancelled while its builder works on fixes ends the task as cancelle
   assert.equal(e.builder.open(), 0, "no session is left open");
 });
 
-test("a restart while the builder works on fixes takes the round up again once, from the same copy, and the loop goes on; a second restart stops it for the owner, who can resume it", async (t) => {
+test("a restart while the builder works on fixes takes the round up again once, from the same copy, and the loop goes on; a second restart stops it for the owner, who can resume it", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine", "refine", "refine"], ["review", "second-review"], { hold: [1, 2], holdAt: "session" });
   const { taskId } = approved(e);
   await e.builder.held(1);
@@ -245,7 +246,7 @@ test("a restart while the builder works on fixes takes the round up again once, 
   assert.equal(outcome(e.db, taskId).outcome, "satisfied");
 });
 
-test("rounds of fixes are append-only, follow a review of the same round, and a run's cap is fixed once it starts", async (t) => {
+test("rounds of fixes are append-only, follow a review of the same round, and a run's cap is fixed once it starts", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "second-review"]);
   const { taskId, runId } = approved(e);
   await e.tasks.idle();
@@ -258,7 +259,7 @@ test("rounds of fixes are append-only, follow a review of the same round, and a 
   assert.throws(() => e.db.prepare("UPDATE reviews SET text = 'x' WHERE task_id = ?").run(taskId), /append-only/);
 });
 
-test("a fully autonomous run whose loop ends unresolved hands the task back to the owner, saying why, and accepts nothing", async (t) => {
+test("a fully autonomous run whose loop ends unresolved hands the task back to the owner, saying why, and accepts nothing", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "review"]);
   const { taskId } = approved(e, 1, "full");
   await e.tasks.idle();
@@ -270,7 +271,7 @@ test("a fully autonomous run whose loop ends unresolved hands the task back to t
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM decisions WHERE task_id = ?").get(taskId)!.n, 0);
 });
 
-test("a fully autonomous run whose loop ends with a failed review hands the task back too", async (t) => {
+test("a fully autonomous run whose loop ends with a failed review hands the task back too", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "signed-out"]);
   const { taskId } = approved(e, 2, "full");
   await e.tasks.idle();
@@ -281,7 +282,7 @@ test("a fully autonomous run whose loop ends with a failed review hands the task
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM decisions WHERE task_id = ?").get(taskId)!.n, 0);
 });
 
-test("a fully autonomous run whose loop ends with the reviewer satisfied, its checks passing on the fixed work, is accepted by the mode", async (t) => {
+test("a fully autonomous run whose loop ends with the reviewer satisfied, its checks passing on the fixed work, is accepted by the mode", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "second-review"]);
   const { taskId } = approved(e, 2, "full");
   await e.tasks.idle();
@@ -290,14 +291,14 @@ test("a fully autonomous run whose loop ends with the reviewer satisfied, its ch
   assert.equal(e.db.prepare("SELECT decided_by FROM decisions WHERE task_id = ?").get(taskId)!.decided_by, "mode");
 });
 
-test("the round of fixes runs on the run's build model, as its build did", async (t) => {
+test("the round of fixes runs on the run's build model, as its build did", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "refine"], ["review", "second-review"]);
   approved(e, 2, "manual", "sonnet");
   await e.tasks.idle();
   assert.deepEqual(e.builder.started.map((options) => options.model), ["sonnet", "sonnet"]);
 });
 
-test("semi-autonomous: a round of fixes runs its confined commands without asking, as the build does (run 3 of the self-review asked for each)", async (t) => {
+test("semi-autonomous: a round of fixes runs its confined commands without asking, as the build does (run 3 of the self-review asked for each)", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "ask"], ["review"]);
   const { taskId } = approved(e, 1, "semi");
   await e.tasks.idle();

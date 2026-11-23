@@ -15,6 +15,7 @@ import { createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
 import { initRepo, tempDir, write } from "../support/repo.ts";
 import { V10_SCHEMA } from "../support/schema-v10.ts";
+import { NO_SANDBOX, NO_SANDBOX_OR_PROCESS_LIST } from "../support/confined.ts";
 
 // The verify station: after a task is built and Botbench has committed the work, the repository's check commands run in
 // the task's worktree, each with a time limit, and each result is evidence on the task. No test here starts a CLI: each
@@ -86,7 +87,7 @@ const alive = (pid: number): boolean => {
   }
 };
 
-test("after the build, each check command runs in the task's worktree and a passing and a failing check are each stored with their output and exit status; the task shows Checking while they run", async (t) => {
+test("after the build, each check command runs in the task's worktree and a passing and a failing check are each stored with their output and exit status; the task shows Checking while they run", { skip: NO_SANDBOX }, async (t) => {
   const failing = "echo two tests failed; echo expected 1 got 2 >&2; exit 2";
   const e = await line(t, ["done"], { setup: [cmd("echo built by setup > built.txt")], checks: [cmd("cat built.txt; pwd"), cmd(failing)] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
@@ -108,7 +109,7 @@ test("after the build, each check command runs in the task's worktree and a pass
   assert.deepEqual(events.slice(-2), ["verifying", "awaiting_decision"]);
 });
 
-test("every check passing marks the task as checks passed", async (t) => {
+test("every check passing marks the task as checks passed", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { checks: [cmd("true"), cmd("echo fine")] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -117,7 +118,7 @@ test("every check passing marks the task as checks passed", async (t) => {
   assert.deepEqual(checks(e.db, task.id).map((row) => row.outcome), ["passed", "passed"]);
 });
 
-test("AE3: a failing check marks the task as checks failed, it still goes on to Ready for review, and the run still reaches its end", async (t) => {
+test("AE3: a failing check marks the task as checks failed, it still goes on to Ready for review, and the run still reaches its end", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done", "done"], { checks: [cmd("echo the suite failed; exit 1")] });
   const run = planned(e);
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -130,7 +131,7 @@ test("AE3: a failing check marks the task as checks failed, it still goes on to 
   assert.equal(getRun(e.db, run.id)!.status, "awaiting_decision");
 });
 
-test("a repository with no check commands: the task says so as 'none', with no check evidence, and is never marked as passed", async (t) => {
+test("a repository with no check commands: the task says so as 'none', with no check evidence, and is never marked as passed", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"]);
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -140,7 +141,7 @@ test("a repository with no check commands: the task says so as 'none', with no c
   assert.ok(!e.taskChanges.includes(`${task.id}:verifying`), "no Checking without checks");
 });
 
-test("a check that passes its time limit is killed with its child processes and recorded as timed out, and the task is checks failed", { timeout: 30_000 }, async (t) => {
+test("a check that passes its time limit is killed with its child processes and recorded as timed out, and the task is checks failed", { skip: NO_SANDBOX_OR_PROCESS_LIST, timeout: 30_000 }, async (t) => {
   // A check may write only inside the task's copy (U27), so the child's number is left there.
   const e = await line(t, ["done"], { checks: [cmd("sh stall.sh child.pid", 1000), cmd("echo after the stalled one")], files: { "README.md": "# Sample\n", "stall.sh": 'sleep 300 &\necho $! > "$1"\nsleep 300\n' } });
   const started = await e.tasks.start(e.repo, "create hello.txt");
@@ -157,7 +158,7 @@ test("a check that passes its time limit is killed with its child processes and 
   assert.deepEqual(execFileSync("ps", ["-axo", "command="], { encoding: "utf8" }).split("\n").filter((l) => l.includes(pids)), []);
 });
 
-test("a check that edits the worktree does not change the committed work; nothing it leaves is committed", async (t) => {
+test("a check that edits the worktree does not change the committed work; nothing it leaves is committed", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { checks: [cmd("echo left by a check > check-output.txt")] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -170,7 +171,7 @@ test("a check that edits the worktree does not change the committed work; nothin
   assert.ok(fs.existsSync(path.join(task.worktreePath!, "check-output.txt")), "it is left, uncommitted, in the copy");
 });
 
-test("cancelling a run while its checks run stops the check and records it as stopped; the task is cancelled with its work kept", { timeout: 30_000 }, async (t) => {
+test("cancelling a run while its checks run stops the check and records it as stopped; the task is cancelled with its work kept", { skip: NO_SANDBOX, timeout: 30_000 }, async (t) => {
   const e = await line(t, ["done", "done"], { checks: [cmd("sleep 30", 60_000)] });
   const run = planned(e);
   const { tasks } = e.runs.approve(run.id, run.planVersion);
@@ -186,7 +187,7 @@ test("cancelling a run while its checks run stops the check and records it as st
   assert.equal(e.driver.started.length, 1);
 });
 
-test("check evidence is append-only like setup evidence: a row cannot be changed, deleted or replaced", async (t) => {
+test("check evidence is append-only like setup evidence: a row cannot be changed, deleted or replaced", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { checks: [cmd("echo ok")] });
   const started = await e.tasks.start(e.repo, "create hello.txt");
   await e.tasks.idle();
@@ -201,7 +202,7 @@ test("check evidence is append-only like setup evidence: a row cannot be changed
   assert.throws(() => e.db.prepare("UPDATE tasks SET checks = NULL WHERE id = ?").run(started.id), /checks/);
 });
 
-test("after a restart, a task left at Checking has its checks run again once, as configured now, without committing what a check left, and its run goes on", async (t) => {
+test("after a restart, a task left at Checking has its checks run again once, as configured now, without committing what a check left, and its run goes on", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-verify-restart-");
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");

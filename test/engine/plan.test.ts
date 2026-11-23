@@ -15,6 +15,7 @@ import { MIGRATIONS } from "../../src/store/schema.ts";
 import { EMPTY_TASK, loadPlanRecording, NO_TASKS, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
 import { V8_SCHEMA } from "../support/schema-v8.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // No test in this file starts a CLI. Where a planner session is needed, turns recorded from a real one are replayed
 // (test/support/replay-plan.ts); a planner on the real Claude Code is in test/live/plan.live.test.ts.
@@ -357,7 +358,7 @@ async function engine(t: T, order: number[], hold?: () => Promise<void>): Promis
   return { ...s, driver, runs, broker, line, changes };
 }
 
-test("a run stores a planning model and a build model: the planner works on the first, the plan's tasks are queued on the second, and a run given only a planning model builds on that one too", async (t) => {
+test("a run stores a planning model and a build model: the planner works on the first, the plan's tasks are queued on the second, and a run given only a planning model builds on that one too", { skip: NO_SANDBOX }, async (t) => {
   const e = await engine(t, [THREE_TASKS, THREE_TASKS, THREE_TASKS]);
   const both = await e.runs.start({ repo: e.repo, prompt: "Add two files", model: "opus", buildModel: "sonnet" });
   assert.deepEqual([both.requestedModel, both.buildModel], ["opus", "sonnet"]);
@@ -462,7 +463,7 @@ test("replayed planner: cancelling while the planner works stops it, the run is 
   assert.deepEqual(runEvents(e.db, run.id).map((r) => r.status), ["planning", "planning", "cancelled"]);
 });
 
-test("replayed planner: requesting changes sends the plan and the feedback to a new planner turn and returns to awaiting approval; a planner that fails then leaves the plan as it was", async (t) => {
+test("replayed planner: requesting changes sends the plan and the feedback to a new planner turn and returns to awaiting approval; a planner that fails then leaves the plan as it was", { skip: NO_SANDBOX }, async (t) => {
   const e = await engine(t, [THREE_TASKS, THREE_TASKS, NO_TASKS, EMPTY_TASK]);
   const run = await e.runs.start({ repo: e.repo, prompt: "Add two files" });
   await e.runs.idle();
@@ -536,7 +537,7 @@ test("the planner's admission to the gate is read-only: an edit in its worktree 
   assert.equal((await hook("Read", { file_path: "README.md" }, "toolu_late")).verdict, "deny");
 });
 
-test("after a restart: a run left planning has its worktree removed and is planned again once, from the start; an approved run's queued tasks are taken up by its build line", async (t) => {
+test("after a restart: a run left planning has its worktree removed and is planned again once, from the start; an approved run's queued tasks are taken up by its build line", { skip: NO_SANDBOX }, async (t) => {
   const e = await engine(t, []);
   const queuedRun = planned(e.db, e.repo, e.base);
   const tasks = approvePlan(e.db, queuedRun.id, queuedRun.planVersion).tasks;

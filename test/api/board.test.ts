@@ -10,6 +10,7 @@ import { transaction } from "../../src/store/db.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { git, initRepo, tempDir, write } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // The runs board (unit 16) over real HTTP, against a real Botbench server, real temporary repositories and real SQLite.
 // No driver is started. Each state is reached the way the other API tests reach it: runs are created and planned by the
@@ -112,7 +113,7 @@ test("with no runs and no tasks the board is three empty groups in order: Needs 
   ]);
 });
 
-test("runs and stand-alone tasks in each state appear in the right group, the ones that need the owner first, each group counted by its items", async (t) => {
+test("runs and stand-alone tasks in each state appear in the right group, the ones that need the owner first, each group counted by its items", { skip: NO_SANDBOX }, async (t) => {
   const api = await start(t);
   const db = api.server.db;
 

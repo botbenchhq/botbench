@@ -11,6 +11,7 @@ import { insertEvidence } from "../../src/engine/stations.ts";
 import { moveTask } from "../../src/engine/task.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { checkoutState, initRepo, tempDir, worktreeCount } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // No test in this file starts a driver: a run that is started for real reaches Claude Code, and is in
 // test/live/plan.live.test.ts. Here runs are put in the store as the engine stores them, and the routes act on them.
@@ -201,7 +202,7 @@ test("a run is read with its plan and listed newest first; an unknown run is 404
   assert.equal((await call(api, "GET", "/api/runs/1e3")).status, 404);
 });
 
-test("a plan edit is validated and stored; approving creates one queued task per plan task; every later change is refused with 409", async (t) => {
+test("a plan edit is validated and stored; approving creates one queued task per plan task; every later change is refused with 409", { skip: NO_SANDBOX }, async (t) => {
   const api = await start(t);
   const run = planned(api);
   const plan = `/api/runs/${run.id}/plan`;
@@ -331,7 +332,7 @@ test("cancel ends a run that waits for approval, once; request-changes needs fee
   assert.match(said, /event: task\ndata: [^\n]*"status":"queued"/);
 });
 
-test("a run that is building is cancelled over HTTP: the setup command at work is stopped, its tasks are cancelled, and the run and each task say so with their evidence", { timeout: 30_000 }, async (t) => {
+test("a run that is building is cancelled over HTTP: the setup command at work is stopped, its tasks are cancelled, and the run and each task say so with their evidence", { skip: NO_SANDBOX, timeout: 30_000 }, async (t) => {
   const api = await start(t, ["sleep 30"]);
   const run = planned(api, THREE.slice(0, 2));
   const approved = await call(api, "POST", `/api/runs/${run.id}/plan/approve`, { planVersion: run.planVersion });
