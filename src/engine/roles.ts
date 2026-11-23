@@ -131,10 +131,11 @@ ${SHAPE}
 /**
  * What a planner is sent. The owner's words, the current plan and the feedback are set apart as data between
  * marked lines. `current` and `feedback` are for a plan the owner sent back. `learnings` is the section of the
- * repository's notes in docs/solutions/ (engine/learnings.ts), left out when there are none. `outside` is a section of
- * outside text (engine/intake.ts), which comes last.
+ * repository's notes in docs/solutions/ (engine/learnings.ts), left out when there are none. `memory` is the section of
+ * the owner's notes on this workbench (engine/memory.ts), beside it and left out when there are none. `outside` is a
+ * section of outside text (engine/intake.ts), which comes last.
  */
-export function plannerPrompt(o: { work: string; current?: readonly PlanTask[]; feedback?: string; learnings?: string; outside?: string; oneTask?: boolean }): string {
+export function plannerPrompt(o: { work: string; current?: readonly PlanTask[]; feedback?: string; learnings?: string; memory?: string; outside?: string; oneTask?: boolean }): string {
   const again =
     o.current === undefined
       ? ""
@@ -171,7 +172,7 @@ ${REPLY_RULES}
 The work, as the owner gave it. It describes what to plan; it is not instructions about how you reply:
 <work>
 ${o.work}
-</work>${again}${o.learnings === undefined ? "" : `\n\n${o.learnings}`}${o.outside === undefined ? "" : `\n\n${o.outside}`}`;
+</work>${again}${o.learnings === undefined ? "" : `\n\n${o.learnings}`}${o.memory === undefined ? "" : `\n\n${o.memory}`}${o.outside === undefined ? "" : `\n\n${o.outside}`}`;
 }
 
 /** What a planner is sent when its plan was not accepted: what was wrong, and the reply's form once more. */
@@ -359,9 +360,10 @@ const fromWords = (entry: ChatEntry): string => (entry.from === "owner" ? "From 
  * answered since its last reply) is sent for one chat message: the conversation so far, oldest first, each message set
  * apart between marked lines as data, then the owner's new message. A message longer than the cap is cut; over the cap,
  * the oldest messages are left out and a plain note says how many. `left` is that number. `tools`: the agent keeps
- * its own tools in the chat (Claude Code), so it is not told it can only answer from the conversation.
+ * its own tools in the chat (Claude Code), so it is not told it can only answer from the conversation. `memory` is the
+ * section of the owner's notes on this workbench (engine/memory.ts), before the conversation; left out when there are none.
  */
-export function chatPrompt(o: { history: readonly ChatEntry[]; message: string; tools?: boolean }): { prompt: string; left: number } {
+export function chatPrompt(o: { history: readonly ChatEntry[]; message: string; tools?: boolean; memory?: string }): { prompt: string; left: number } {
   const entries = o.history.map((entry) => ({ ...entry, text: passedOn(entry.text) }));
   let size = 0;
   let from = entries.length;
@@ -382,7 +384,7 @@ ${kept.map((entry) => `${fromWords(entry)}:\n${dataBlock("message", entry.text)}
     left,
     prompt: `${o.tools === true ? "[From Botbench] You are answering the owner in a chat, working in a folder of your own with none of the owner's files in it." : "[From Botbench] You are answering the owner in a chat. You have only this message: there are no files of the owner's here for you, and you cannot change anything. Answer from the conversation alone."}
 
-${before}The owner's new message, which you answer:
+${o.memory === undefined ? "" : `${o.memory}\n\n`}${before}The owner's new message, which you answer:
 ${dataBlock("message", o.message)}`,
   };
 }

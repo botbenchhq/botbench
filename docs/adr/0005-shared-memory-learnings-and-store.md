@@ -38,6 +38,8 @@ Which kind of knowledge belongs in which layer:
 
 ## The next slice: the workbench memory store
 
+Update, 2026-11-23: the store's first slice is built and recorded in `docs/adr/0006-workbench-memory-store.md`. It takes from the list below the index and topic files, the path allowlist, owner-only atomic writes, the size cap, the write that refuses an edit it has not seen, and forget, and it captures only the owner's own "Remember:" message. Capture after a chat goes quiet, upkeep, search and export are still to come, and are listed in ADR 0006's Deferred section.
+
 The store is what an agent recalls across runs and chats on one workbench: facts, preferences and what was tried. It follows:
 - `OpenMausBot server/memory-store.ts`: one index file and topic files, a path allowlist, owner-only atomic writes, a size cap and a write that refuses to overwrite an edit it has not seen.
 - `OpenMausBot server/memory-upkeep.ts`: capture after a chat goes quiet, and tidying of expired, duplicate, superseded and contradicting notes.
