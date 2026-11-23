@@ -13,6 +13,7 @@ import { LOGIN_TOKEN_FILE, MAX_WAITING_SIGN_INS } from "../../src/api/auth.ts";
 import { PAIRING_CODE_ALPHABET, PAIRING_CODE_LENGTH, PAIRING_LIFETIME_MS, REFUSAL_WORDS } from "../../src/api/pairing.ts";
 import { DB_FILE } from "../../src/store/db.ts";
 import { startServer, type StartOptions } from "../../src/server.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 // Adding a device with a one-time code, through the real server: real HTTP, the real store in a temporary directory,
 // and a short lifetime asked of the server for the expiry, never a changed clock.
@@ -23,7 +24,7 @@ const MAC_CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 
 function tempHome(t: T): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-pairing-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-pairing-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return path.join(dir, "home");
 }
@@ -200,32 +201,41 @@ test("a code dies with the device that made it: signed out, or signed out by Sig
 });
 
 test("wrong codes and wrong tokens share one slow-down: the same failure count, the same doubling delay, reset by a right code", async (t) => {
-  const delay = 100;
+  // 200 ms, so the reset's upper bound below (8 delays) leaves the same 1.6 s for two requests as the token test's does.
+  const delay = 200;
   const { base, token } = await start(t, { signInDelayMs: delay });
   const { code } = await newCode(base, await owner(base, token));
   const slack = 5; // timers may fire a few milliseconds early
-  const timed = async (body: unknown): Promise<{ status: number; ms: number }> => {
+  // Each wait is counted from when the attempt before it was checked, which is before the client has that attempt's
+  // answer: on a loaded machine, delivering the answer can use up much of the next wait, so one request's own time
+  // proves nothing (this test used to fail that way). Load cannot shorten the time from sending attempt n to the answer
+  // of attempt n+1, which holds at least the wait attempt n set, so attempts are timed in pairs. Load only adds to those
+  // times: they fall short only when the wait is removed (the first pair takes about 0), is kept apart for codes and
+  // tokens (about 1 delay where 2 are due), or does not double (the second pair takes about 2 delays where 8 are due).
+  const pair = async (first: unknown, second: unknown): Promise<{ statuses: number[]; ms: number }> => {
     const began = performance.now();
-    const reply = await signIn(base, body);
-    return { status: reply.status, ms: performance.now() - began };
+    const statuses = [(await signIn(base, first)).status, (await signIn(base, second)).status];
+    return { statuses, ms: performance.now() - began };
   };
 
-  const a = await timed({ token: "wrong-1" });
-  const b = await timed({ code: "ZZZZ-ZZZZ" });
-  const c = await timed({ token: "wrong-3" });
-  const d = await timed({ code: "YYYY-YYYY" });
-  assert.deepEqual([a.status, b.status, c.status, d.status], [401, 401, 401, 401]);
-  assert.ok(b.ms >= delay - slack, `a wrong code after a wrong token waited ${b.ms}ms`);
-  assert.ok(c.ms >= 2 * delay - slack, `a wrong token after a wrong code waited ${c.ms}ms`);
-  assert.ok(d.ms >= 4 * delay - slack, `the fourth wrong guess waited ${d.ms}ms`);
+  assert.equal((await signIn(base, { token: "wrong-1" })).status, 401); // one failure: the next guess waits 1 delay
+  // A wrong code after the wrong token waits that 1 delay and sets 2, which the wrong token after it waits: one count.
+  const mixed = await pair({ code: "ZZZZ-ZZZZ" }, { token: "wrong-3" });
+  assert.deepEqual(mixed.statuses, [401, 401]);
+  assert.ok(mixed.ms >= 2 * delay - slack, `from sending a wrong code to the answer of the wrong token after it took ${mixed.ms}ms; the token must wait 2 delays (${2 * delay}ms) after the code is checked`);
 
-  // The right code still signs in after the wait, and clears the count for tokens too.
-  const right = await timed({ code });
-  assert.equal(right.status, 200);
-  assert.ok(right.ms >= 8 * delay - slack, `the right code waited its turn, ${right.ms}ms`);
-  const after = await timed({ token: "wrong-5" });
-  assert.equal(after.status, 401);
-  assert.ok(after.ms < delay, `after a right code a wrong token is answered at once, took ${after.ms}ms`);
+  // The fourth wrong guess waits 4 delays and sets 8, and the right code waits its turn behind them, then signs in.
+  const turn = await pair({ code: "YYYY-YYYY" }, { code });
+  assert.deepEqual(turn.statuses, [401, 200]);
+  assert.ok(turn.ms >= 8 * delay - slack, `from sending the fourth wrong guess to the right code's answer took ${turn.ms}ms; the code must wait 8 delays (${8 * delay}ms) after the guess is checked`);
+
+  // The right code cleared the count, for tokens too: two wrong tokens now cost one delay between them, as at the start.
+  // Had the count stayed at four, the second would wait 16 delays. The upper bound is half that, far from both, so load
+  // cannot push a real reset past it.
+  const reset = await pair({ token: "wrong-5" }, { token: "wrong-6" });
+  assert.deepEqual(reset.statuses, [401, 401]);
+  assert.ok(reset.ms >= delay - slack, `after a right code, a second wrong token still waits one delay: took ${reset.ms}ms`);
+  assert.ok(reset.ms < 8 * delay, `after a right code, two wrong tokens took ${reset.ms}ms: the count was not reset (16 delays, ${16 * delay}ms, is what a count of four costs)`);
 });
 
 test("codes wait in the same bounded line as tokens: once it is full, even a right code is turned away unchecked and stays unused", async (t) => {

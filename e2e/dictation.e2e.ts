@@ -1,28 +1,39 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { checkDesign, expect, signIn, test } from "./helpers.ts";
-import { startBotbench } from "./botbench.ts";
+import { checkDesign, expect, signIn, test as base } from "./helpers.ts";
+import { startBotbench, tempDir } from "./botbench.ts";
 
 // Dictation in the Chat screen's message box, with no model turn. Chrome's own fake microphone plays a real recording
 // of speech (made here with macOS's `say`), MediaRecorder records it as the page would record the owner, and Botbench
 // transcribes it on this Mac with the real engine. Nothing in Botbench is replaced.
 
 const SPOKEN = "Please review the approval card before the build.";
-const audioDir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-dictation-e2e-"));
-const wav = path.join(audioDir, "speech.wav");
-if (process.platform === "darwin") {
-  execFileSync("say", ["-o", path.join(audioDir, "speech.aiff"), SPOKEN]);
-  // A second of quiet after the sentence, so the looping fake microphone has a clean break between repeats.
-  execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y", "-i", path.join(audioDir, "speech.aiff"), "-af", "apad=pad_dur=1", "-ar", "48000", "-ac", "1", wav]);
-}
-test.afterAll(() => fs.rmSync(audioDir, { recursive: true, force: true }));
 
-test.use({
-  permissions: ["microphone"],
-  launchOptions: { args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${wav}`] },
+// The recording is made by a worker fixture, and removed in its teardown. Made at the top of this file, it was made
+// again each time Playwright loaded the file, the first time only to list its tests, and that copy was never removed.
+const test = base.extend<object, { speech: string }>({
+  speech: [
+    async ({}, use) => {
+      const dir = tempDir("botbench-dictation-e2e-");
+      try {
+        const wav = path.join(dir, "speech.wav");
+        if (process.platform === "darwin") {
+          execFileSync("say", ["-o", path.join(dir, "speech.aiff"), SPOKEN]);
+          // A second of quiet after the sentence, so the looping fake microphone has a clean break between repeats.
+          execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y", "-i", path.join(dir, "speech.aiff"), "-af", "apad=pad_dur=1", "-ar", "48000", "-ac", "1", wav]);
+        }
+        await use(wav);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    { scope: "worker" },
+  ],
+  launchOptions: [async ({ speech }, use) => use({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${speech}`] }), { scope: "worker" }],
 });
+
+test.use({ permissions: ["microphone"] });
 
 test("pressing the microphone, then pressing it again, puts the spoken words in the message box, unsent and editable", async ({ page, botbench }) => {
   test.skip(process.platform !== "darwin", "dictation is transcribed by macOS's own speech recognition");

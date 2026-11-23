@@ -2,6 +2,8 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { ApiError, getTask, getTaskDiff, getTranscript, openEventStream, type FileChange, type StoredEvent, type TaskDetail } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ApprovalCard } from "../components/approval-card.tsx";
+import { DraftPeerCard } from "../components/peer-card.tsx";
+import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { DiffLine } from "../components/diff.tsx";
 import { Icon } from "../components/icon.tsx";
 import { agentName, CHECKS_LIMITS, CHECKS_LINE, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_LIMITS, REVIEW_LINE, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
@@ -157,6 +159,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
 
   // This task's requests that wait for an answer, oldest first. One card at a time: the oldest.
   const { pending } = useContext(ApprovalsContext);
+  const peerCards = useContext(PeerCardsContext).cards;
   const waiting = useMemo(() => (pending ?? []).filter((approval) => approval.taskId === id), [pending, id]);
   const asking = waiting[0];
   // The task starts and stops waiting as its requests come and go, so it is read again when they do.
@@ -196,6 +199,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   // The review decision is drawn from ready for review on: it carries the checks' and the review's findings, each said once.
   const decisionShown = task !== null && (task.decision !== null || task.status === "awaiting_decision");
 
+  // An agent's draft to the paired workbench from this task waits on its card here, where its approvals are.
+  const drafts = (peerCards ?? []).filter((card) => card.direction === "out" && card.taskId === id);
+
   return (
     <Frame current={null} banner={connected ? undefined : <StreamBanner />} showing={waiting.map((approval) => approval.id)}>
       <Page>
@@ -224,7 +230,11 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             {task.restartLine !== null && <p data-testid="task-restart">{task.restartLine}</p>}
           </>
         )}
-        {task !== null && task.outsideText && <OutsideText issue={task.issue} what="task" />}
+        {task !== null &&
+          drafts.map((card) => (
+            <DraftPeerCard key={card.messageId} card={card} primary={asking === undefined && task.status === "drafted" && drafts.length === 1} onSignedOut={onSignedOut} />
+          ))}
+        {task !== null && task.outsideText && <OutsideText issue={task.issue} given={task.givenMessage} what="task" />}
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}

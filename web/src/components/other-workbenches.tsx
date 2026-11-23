@@ -34,12 +34,14 @@ export function OtherWorkbenches({ onSignedOut }: { onSignedOut: () => void }) {
     <section data-testid="other-workbenches" aria-labelledby={`${id}-heading`} className="ds-stack ds-gap-sm">
       <h2 id={`${id}-heading`}>Other workbenches</h2>
       {shown.map((view) => (
-        <ul key={view.repo} aria-label={`Other workbenches in ${view.repository}`} className="ds-list">
+        <ul key={view.repo} aria-label={`Other workbenches in ${view.repository}`} data-ds-content-label="" className="ds-list">
           {peerRows(view, now).map((row) => {
             const second = (
               <span className="ds-list__secondary">
                 <span data-ds-content="">{row.workbench}</span>
                 {row.rest}
+                <span data-ds-content="">{row.repository}</span>
+                {row.after}
               </span>
             );
             return (

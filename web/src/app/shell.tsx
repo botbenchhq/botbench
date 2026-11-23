@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { hasSession } from "../api/client.ts";
 import type { Kind } from "./composer.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
+import { PeerCardsProvider } from "./peer-cards.tsx";
+import { ThreadScreen } from "../screens/thread.tsx";
 import { Alert, Frame, Page } from "../components/header.tsx";
 import { BoardScreen } from "../screens/board.tsx";
 import { RunScreen } from "../screens/run.tsx";
@@ -16,7 +18,7 @@ import { useWide } from "./wide.ts";
 
 type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
-type Route = { screen: "turn"; start: Kind | null; proposal?: number } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number; discard: boolean } | { screen: "work" } | { screen: "settings"; section: SettingsSection | null } | { screen: "run"; id: number } | { screen: "chat"; id: number } | { screen: "none"; what: string };
+type Route = { screen: "turn"; start: Kind | null; proposal?: number } | { screen: "redirect"; to: string } | { screen: "trust" } | { screen: "usage" } | { screen: "task"; id: number; discard: boolean } | { screen: "work" } | { screen: "settings"; section: SettingsSection | null } | { screen: "run"; id: number } | { screen: "chat"; id: number } | { screen: "thread"; pairingId: string; contextId: string } | { screen: "none"; what: string };
 
 /** The screen an address names. The part after `#` is the whole address: the server only ever serves the one page. */
 function parseRoute(hash: string): Route {
@@ -41,8 +43,11 @@ function parseRoute(hash: string): Route {
   // Settings at its Agents section: where the home screen sends the owner to connect an agent.
   if (at === "/settings/agents") return { screen: "settings", section: "agents" };
   // The other sections of the two-pane Settings, from 1024px. Permissions and Usage keep their own addresses.
-  const part = /^\/settings\/(appearance|notifications|devices|workbench)$/.exec(at);
+  const part = /^\/settings\/(appearance|notifications|devices|workbench|paired)$/.exec(at);
   if (part) return { screen: "settings", section: part[1] as SettingsSection };
+  // One conversation with the paired workbench, from its card or from Settings → Paired workbench.
+  const thread = /^\/paired\/([0-9a-f-]{36})\/threads\/([0-9a-f-]{36})$/.exec(at);
+  if (thread) return { screen: "thread", pairingId: thread[1]!, contextId: thread[2]! };
   // A chat from the Work list: Chat, with that chat on it.
   const chat = /^\/chats\/([1-9]\d{0,14})$/.exec(at);
   if (chat) return { screen: "chat", id: Number(chat[1]) };
@@ -89,6 +94,7 @@ function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
+  if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   return (
     <Frame current={null}>
@@ -174,9 +180,11 @@ export function Shell() {
     // One provider above every screen: the tray in each screen's header and the card on a task's screen read the same list.
     return (
       <ApprovalsProvider onSignedOut={onSignedOut}>
-        <Beside route={route} wide={wide} onSignedOut={onSignedOut}>
-          {screenFor(route, onSignedOut)}
-        </Beside>
+        <PeerCardsProvider onSignedOut={onSignedOut}>
+          <Beside route={route} wide={wide} onSignedOut={onSignedOut}>
+            {screenFor(route, onSignedOut)}
+          </Beside>
+        </PeerCardsProvider>
       </ApprovalsProvider>
     );
   }

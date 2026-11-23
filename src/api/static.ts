@@ -49,6 +49,11 @@ const CONTENT_SECURITY_POLICY = "default-src 'self'; img-src 'self' data:; objec
  * 'unsafe-inline'. The page is Botbench's own build, read from the client folder, so a script is allowed only as built.
  */
 function policyFor(page: string): string {
+  // CodeQL alert 5 reads this pattern as an HTML filter, which would miss spellings such as `</script >` or `<SCRIPT>`.
+  // It is not one, and the finding is not a real weakness here: the text is never a visitor's, only
+  // Botbench's own built index.html, read from the client folder, and the pattern removes or lets through nothing. It
+  // only picks the inline scripts to hash into the policy. One it does not match gets no hash and the browser refuses
+  // to run it, so a miss fails closed; and a script it does match is one that was built into the page.
   const hashes = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => `'sha256-${createHash("sha256").update(match[1]!).digest("base64")}'`);
   return hashes.length === 0 ? CONTENT_SECURITY_POLICY : `${CONTENT_SECURITY_POLICY}; script-src 'self' ${hashes.join(" ")}`;
 }

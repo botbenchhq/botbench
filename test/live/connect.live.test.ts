@@ -9,6 +9,7 @@ import { createConnect } from "../../src/drivers/connect.ts";
 import type { DriverProbe } from "../../src/drivers/contract.ts";
 import { runCli } from "../../src/drivers/launch.ts";
 import { codexSignIn } from "../../src/drivers/sign-in.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 // The real sign-in of each CLI that has a definition, started the way Botbench starts it, each with a new, empty
 // configuration directory: the owner's own sign-in is never read, changed or signed out. No model turn runs, and no
@@ -18,7 +19,7 @@ import { codexSignIn } from "../../src/drivers/sign-in.ts";
 const START_LIMIT = 30_000;
 
 function emptyDir(t: TestContext, prefix: string): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), prefix))));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

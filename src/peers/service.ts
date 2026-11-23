@@ -7,11 +7,12 @@ import type { Config } from "../config.ts";
 import { checkRepository, TaskError } from "../engine/task.ts";
 import { workbenchName } from "../workbench.ts";
 import { joinHostPort } from "./address.ts";
-import { newId, settingsNoticeBody, type EnvelopeKind, type SignedEnvelope } from "./envelope.ts";
+import { isMessageKind, newId, settingsNoticeBody, type EnvelopeKind, type MessageKind, type SignedEnvelope } from "./envelope.ts";
 import { fingerprintOf, WORKBENCH_KEY_FILE, workbenchKey, type WorkbenchKey } from "./key.ts";
 import { createPeerHandler, createPeerServer } from "./listener.ts";
 import { logPeer } from "./log.ts";
-import { receiveEnvelope, toSigned, writeOutgoing } from "./messages.ts";
+import { repositoryWord, answerCard, dismissCard, dontSendDraft, frictionRecord, kindSettings, ownerSend, pairingMessages, sendDraft, setKind, stillAllowed, stopSending, waitingCards, type CardView, type KindSettings, type MessageView, type PairingRecord, type SentMessage } from "./conversation.ts";
+import { receiveEnvelope, ROUND_TRIPS, toSigned, writeOutgoing } from "./messages.ts";
 import { inviteText, proveRequest, readInvite, readPairAnswer, type Invite } from "./pair-wire.ts";
 import {
   closeExpiredInvites,
@@ -29,6 +30,11 @@ import {
   type Pairing,
   type PairingState,
 } from "./pairings.ts";
+import { transaction } from "../store/db.ts";
+const atomicIn = (db: DatabaseSync) => <T>(fn: () => T): T => (db.isTransaction ? fn() : transaction(db, fn));
+import type { GivenMessage } from "../engine/task.ts";
+import { decideIncomingCard, seeCard } from "./cards.ts";
+import { PeerError } from "./errors.ts";
 import { pairingScope } from "./scope.ts";
 import { postToPeer, type PeerRoute } from "./transport.ts";
 
@@ -55,16 +61,11 @@ import { postToPeer, type PeerRoute } from "./transport.ts";
  * ended, from what the store holds, so a restart of either side loses nothing.
  */
 
-export class PeerError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+export { PeerError } from "./errors.ts";
 
-/** How long an outgoing confirmation or notice is retried before Botbench stops trying (decision 7). */
-export const DELIVERY_WINDOW_MS = 24 * 3600_000;
+/** How long an outgoing message is retried before Botbench stops trying (decision 7). */
+export { DELIVERY_WINDOW_MS } from "./conversation.ts";
+import { DELIVERY_WINDOW_MS } from "./conversation.ts";
 const FIRST_RETRY_MS = 1000;
 export const MAX_RETRY_MS = 15_000;
 /** Pasted invites held at once, waiting for the owner's confirm. */
@@ -108,6 +109,25 @@ export interface PeerLink {
   refusePairing(id: string): PairingView;
   endPairing(id: string): PairingView;
   overview(): { listening: string | null; fingerprint: string | null; pairings: PairingView[]; invites: { id: string; repository: string; expiresAt: string }[] };
+  /** The owner's own question or answer, sent as they press Send. */
+  send(input: { pairingId: unknown; kind: unknown; text: unknown; parentId?: unknown }): SentMessage;
+  /** Answer it yourself, on a peer's card. */
+  answerCard(pairingId: unknown, messageId: unknown, text: unknown): SentMessage;
+  dismissCard(pairingId: unknown, messageId: unknown): void;
+  /** Send or Don't send, on an agent's draft card. */
+  sendDraft(pairingId: unknown, messageId: unknown, edited: unknown): SentMessage;
+  dontSendDraft(pairingId: unknown, messageId: unknown): void;
+  cards(): CardView[];
+  messages(pairingId: unknown): MessageView[];
+  kinds(pairingId: unknown): KindSettings;
+  setKind(input: { pairingId: unknown; direction: unknown; kind: unknown; allowed: unknown }): KindSettings;
+  friction(): PairingRecord[];
+  /** A signed-in device drew a card for the first time (the friction record's "shown"). Throws 404 when there is no such card. */
+  seeCard(pairingId: unknown, direction: unknown, messageId: unknown): void;
+  /** Give it to Claude Code, first step: check the card and the copy, and say what the task is given. */
+  prepareGive(pairingId: unknown, messageId: unknown, repo: unknown, allowHosts: unknown): Promise<{ repo: string; prompt: string; given: GivenMessage }>;
+  /** Give it to Claude Code, last step, in the write that stores the task: the card is decided, naming it. Throws (409) when it was decided meanwhile. */
+  markGiven(pairingId: unknown, messageId: unknown, taskId: number): void;
 }
 
 export interface PeerLinkOptions {
@@ -118,6 +138,12 @@ export interface PeerLinkOptions {
   inviteLifeMs?: number;
   /** The longest wait between two tries of an outgoing confirmation or notice. */
   maxRetryMs?: number;
+  /**
+   * Called when anything the owner's peer screens show may have changed: a card, a message or its state, a pairing or
+   * a setting, whoever changed it (the peer, an agent's draft, the owner, a retry). Carries nothing; the screens read
+   * their routes again.
+   */
+  onChange?: () => void;
 }
 
 interface Join {
@@ -136,6 +162,8 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
   const listen = config.peers?.listen;
   const lifeMs = o.inviteLifeMs ?? INVITE_LIFE_MS;
   const maxRetryMs = o.maxRetryMs ?? MAX_RETRY_MS;
+  const roundTrips = config.peers?.roundTripsPerThread ?? ROUND_TRIPS;
+  const atomic = atomicIn(db);
   let server: http.Server | null = null;
   let bound: string | null = null;
   let key: WorkbenchKey | null = null;
@@ -149,6 +177,32 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
   const expiries = new Set<NodeJS.Timeout>();
   let passing = false;
   let closed = false;
+
+  /**
+   * One cheap reading of everything the peer screens show, compared at each tick: the newest message and card, how many cards are decided, how many sends were stopped and pairings ended, and each pairing's
+   * confirmations. When it moves, `onChange` is told.
+   */
+  let seenVersion = "";
+  const changed = (): void => {
+    if (o.onChange === undefined) return;
+    try {
+      const row = db
+        .prepare(
+          `SELECT (SELECT max(id) FROM peer_messages) AS m, (SELECT max(id) FROM peer_cards) AS c, (SELECT count(*) FROM peer_cards WHERE decided_at IS NOT NULL) AS d,
+                  (SELECT count(*) FROM peer_send_outcomes) AS s, (SELECT count(*) FROM peer_pairing_ends) AS e, (SELECT count(*) FROM peer_kind_settings) AS k,
+                  (SELECT group_concat(id || coalesce(owner_confirmed_at, '') || coalesce(peer_confirmed_at, ''), ',') FROM peer_pairings) AS p,
+                  (SELECT count(*) FROM peer_invites WHERE state = 'open') AS i`,
+        )
+        .get();
+      const version = JSON.stringify(row);
+      if (version === seenVersion) return;
+      seenVersion = version;
+    } catch (err) {
+      console.error(`Reading what changed for the paired workbench failed: ${words(err)}`);
+      return;
+    }
+    o.onChange();
+  };
 
   const track = <T>(p: Promise<T>): Promise<T> => {
     inFlight.add(p);
@@ -228,8 +282,9 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
   const pending = (): { rowId: number; signed: SignedEnvelope }[] =>
     db
       .prepare(
-        `SELECT m.* FROM peer_messages m WHERE m.direction = 'out' AND m.kind IN ('pair_confirmation', 'settings_notice') AND m.stored_at > ?
+        `SELECT m.* FROM peer_messages m WHERE m.direction = 'out' AND m.kind IN ('pair_confirmation', 'settings_notice', 'question', 'answer') AND m.stored_at > ?
            AND NOT EXISTS (SELECT 1 FROM peer_messages r WHERE r.pairing_id = m.pairing_id AND r.direction = 'in' AND r.parent_id = m.message_id AND r.kind IN ('acknowledgement', 'refusal'))
+           AND NOT EXISTS (SELECT 1 FROM peer_send_outcomes s WHERE s.pairing_id = m.pairing_id AND s.message_id = m.message_id)
            AND NOT EXISTS (SELECT 1 FROM peer_pairing_ends e WHERE e.pairing_id = m.pairing_id)
          ORDER BY m.id`,
       )
@@ -251,6 +306,10 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
     const e = received.envelope;
     if (e.kind === "refusal" && e.body === "pairing_ended") {
       logPeer(db, { rule: "peer_pairing", command: "ended by the peer's refusal", detail: `${p.peerName}'s workbench refused the ${sent.envelope.kind.replace("_", " ")} because it ended the pairing ${p.id}; the refusal is signed with its key, so the pairing has ended here too.`, byPeer: p });
+    } else if (e.kind === "refusal" && isMessageKind(sent.envelope.kind)) {
+      logPeer(db, { rule: "peer_message", command: `${sent.envelope.kind} not taken by the peer`, detail: `${p.peerName}'s workbench did not take the ${sent.envelope.kind} (message ${sent.envelope.messageId}), with the reason ${e.body}. It is not sent again.`, byPeer: p });
+    } else if (isMessageKind(sent.envelope.kind)) {
+      logPeer(db, { rule: "peer_message", command: `${sent.envelope.kind} delivered`, detail: `${p.peerName}'s workbench acknowledged the ${sent.envelope.kind} (message ${sent.envelope.messageId}): it is a card for its owner.`, byPeer: p });
     } else if (e.kind === "refusal") {
       logPeer(db, { rule: "peer_protocol", command: "refused by the peer", detail: `${p.peerName}'s workbench refused the ${sent.envelope.kind.replace("_", " ")} with the reason ${e.body}.`, byPeer: p });
     } else if (sent.envelope.kind === "pair_confirmation") {
@@ -262,6 +321,11 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
   const attempt = async (rowId: number, signed: SignedEnvelope): Promise<void> => {
     const p = getPairing(db, signed.envelope.pairingId);
     if (p === null || p.endedAt !== null) return;
+    // Every attempt, the first and each retry, checks both settings again (decision 11): switched off, it is not sent.
+    if (!stillAllowed(db, signed)) {
+      retries.delete(rowId);
+      return;
+    }
     let answered = false;
     try {
       const reply = await postToPeer(p.peerAddress, routeOf(signed.envelope.kind), signed, abort.signal);
@@ -282,6 +346,7 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
     passing = true;
     try {
       sendSettings();
+      expireUndelivered();
       for (const { rowId, signed } of pending()) {
         if (closed) break;
         if ((retries.get(rowId)?.next ?? 0) > Date.now()) continue;
@@ -294,8 +359,22 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
     }
   };
   function kick(): void {
+    changed();
     if (!closed && bound !== null) void track(pass());
   }
+
+  /** A question or an answer tried for 24 hours and never answered: it reads "Not delivered", and is tried no more. */
+  const expireUndelivered = (): void => {
+    const due = db
+      .prepare(
+        `SELECT m.pairing_id, m.message_id, m.kind FROM peer_messages m WHERE m.direction = 'out' AND m.kind IN ('question', 'answer') AND m.stored_at <= ?
+           AND NOT EXISTS (SELECT 1 FROM peer_messages r WHERE r.pairing_id = m.pairing_id AND r.direction = 'in' AND r.parent_id = m.message_id AND r.kind IN ('acknowledgement', 'refusal'))
+           AND NOT EXISTS (SELECT 1 FROM peer_send_outcomes s WHERE s.pairing_id = m.pairing_id AND s.message_id = m.message_id)
+           AND NOT EXISTS (SELECT 1 FROM peer_pairing_ends e WHERE e.pairing_id = m.pairing_id)`,
+      )
+      .all(new Date(Date.now() - DELIVERY_WINDOW_MS).toISOString());
+    for (const row of due) stopSending(db, getPairing(db, String(row.pairing_id))!, String(row.message_id), String(row.kind) as MessageKind, "not_delivered");
+  };
 
   /** End notice: sent once, not waited for, and never retried (decision 4). */
   const sendOnce = (p: Pairing, notice: SignedEnvelope): void => {
@@ -372,6 +451,7 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
       const handler = createPeerHandler({
         db,
         key: keyIfMade,
+        roundTrips,
         onStored: (_p, kind) => {
           // The joiner holds the inviter's confirmation now: the pairing is in force, and its settings go to the peer.
           if (kind === "pair_confirmation") kick();
@@ -390,7 +470,10 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
       sweep();
       const sweeper = setInterval(sweep, SWEEP_MS);
       sweeper.unref();
-      const ticker = setInterval(() => void track(pass()), 1000);
+      const ticker = setInterval(() => {
+        changed();
+        void track(pass());
+      }, 1000);
       ticker.unref();
       abort.signal.addEventListener("abort", () => {
         clearInterval(sweeper);
@@ -502,6 +585,70 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
 
     endPairing(id) {
       return end(pairingOf(id), "owner_ended");
+    },
+
+    send(input) {
+      const sent = ownerSend(db, ownKey(), input, { roundTrips });
+      kick();
+      return sent;
+    },
+    answerCard(pairingId, messageId, text) {
+      const sent = answerCard(db, ownKey(), pairingId, messageId, text, { roundTrips });
+      kick();
+      return sent;
+    },
+    dismissCard(pairingId, messageId) {
+      dismissCard(db, pairingId, messageId);
+      changed();
+    },
+    sendDraft(pairingId, messageId, edited) {
+      const sent = sendDraft(db, ownKey(), pairingId, messageId, edited, { roundTrips });
+      kick();
+      return sent;
+    },
+    dontSendDraft(pairingId, messageId) {
+      dontSendDraft(db, pairingId, messageId);
+      changed();
+    },
+    cards: () => waitingCards(db),
+    messages: (pairingId) => pairingMessages(db, pairingId),
+    kinds: (pairingId) => kindSettings(db, pairingOf(String(pairingId)).id),
+    setKind(input) {
+      const settings = setKind(db, ownKey(), input);
+      kick();
+      return settings;
+    },
+    friction: () => frictionRecord(db),
+    seeCard(pairingId, direction, messageId) {
+      if (typeof pairingId !== "string" || (direction !== "in" && direction !== "out") || typeof messageId !== "string" || !seeCard(db, pairingId, direction, messageId)) throw new PeerError(404, "There is no card by that id.");
+    },
+    async prepareGive(pairingId, messageId, repoInput, allowHosts) {
+      const p = pairingOf(String(pairingId));
+      if (pairingState(p) === "ended") throw new PeerError(409, `The pairing with ${p.peerName} has ended.`);
+      if (typeof allowHosts !== "boolean") throw new PeerError(400, "Say whether the task's commands may reach this repository's network hosts (allowHosts, true or false). They reach none unless you tick them.");
+      const card = typeof messageId === "string" ? db.prepare("SELECT c.kind, m.body FROM peer_cards c JOIN peer_messages m ON m.pairing_id = c.pairing_id AND m.message_id = c.message_id AND m.direction = 'in' WHERE c.pairing_id = ? AND c.direction = 'in' AND c.message_id = ? AND c.decided_at IS NULL").get(p.id, messageId) : undefined;
+      if (card === undefined) throw new PeerError(404, `There is no card from ${p.peerName} waiting by that id: it was decided already, or never shown.`);
+      const repo = await checkRepository(repoInput).catch((err: unknown) => {
+        throw err instanceof TaskError ? new PeerError(err.status, err.message) : err;
+      });
+      const scope = await pairingScope(config, repo);
+      if ("problem" in scope) throw new PeerError(400, scope.problem);
+      if (scope.repository !== p.repository) throw new PeerError(400, `This pairing is on ${p.repository}, and the copy you chose is of ${scope.repository}. Choose your copy of ${p.repository}.`);
+      const about = repositoryWord(p.repository);
+      const question = card.kind === "question";
+      // voice: not on screen until unit 4 shows tasks given a message; the task's title is its first line.
+      const prompt = `${question ? `Answer ${p.peerName}'s question about ${about}.` : `Work on ${p.peerName}'s answer about ${about}.`}\n\nThe ${question ? "question" : "answer"} is below, as outside text from ${p.peerName}'s workbench. Read this repository as you need to. Nothing is sent to ${p.peerName}'s workbench unless the owner sends it.`;
+      return { repo, prompt, given: { pairingId: p.id, messageId: String(messageId), peerName: p.peerName, peerFingerprint: p.peerFingerprint, allowHosts } };
+    },
+    markGiven(pairingId, messageId, taskId) {
+      const p = pairingOf(String(pairingId));
+      if (pairingState(p) === "ended") throw new PeerError(409, `The pairing with ${p.peerName} has ended.`);
+      const waiting = db.prepare("SELECT 1 FROM peer_cards WHERE pairing_id = ? AND direction = 'in' AND message_id = ? AND decided_at IS NULL").get(p.id, String(messageId));
+      if (waiting === undefined) throw new PeerError(409, `That card from ${p.peerName} was decided already; nothing more was started.`);
+      atomic(() => {
+        decideIncomingCard(db, p.id, String(messageId), "given_to_agent");
+        logPeer(db, { rule: "peer_message", command: "given to Claude Code", detail: `You gave the message ${String(messageId)} from ${p.peerName}'s workbench to Claude Code as task ${taskId}. The task is marked as having read outside text: no command is allowed in advance or always, it cannot be fully autonomous, and its commands reach no network host unless you ticked them.` });
+      });
     },
 
     overview() {

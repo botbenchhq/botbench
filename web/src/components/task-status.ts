@@ -14,6 +14,7 @@ const STATUS_WORD: Record<TaskStatus, string> = {
   failed: "Failed",
   cancelled: "Cancelled",
   waiting_for_limit: "Usage limit",
+  drafted: "Drafted a message",
 };
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -62,6 +63,7 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
   failed: LOOKS.failed,
   cancelled: LOOKS.cancelled,
   waiting_for_limit: LOOKS.usageLimit,
+  drafted: LOOKS.drafted,
 };
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming"> & Partial<Pick<TaskSummary, "waitingFor">>): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : behind(task) ? LOOKS.queued : STATUS_LOOK[task.status]);
 
@@ -112,6 +114,8 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       return `Cancelled. ${task.reason ?? "Its run was cancelled."}`;
     case "waiting_for_limit":
       return waitingWords(task.retryAt ?? null, now);
+    case "drafted":
+      return `Drafted a message. ${task.reason ?? "Claude Code changed no file and drafted a message for another workbench."}`;
   }
 }
 

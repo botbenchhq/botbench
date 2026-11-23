@@ -478,7 +478,7 @@ test("Discard is refused, with nothing removed, for a task that can still be dec
   await refused(discardTask(s.db, { taskId: ready.id }), 409, /ready for review/i);
   assert.equal(fs.existsSync(ready.worktreePath!), true);
   const queued = createTask(s.db, { repo: s.repo, prompt: "never started" });
-  await refused(discardTask(s.db, { taskId: queued.id }), 409, /only a task that failed, was stopped or was cancelled/i);
+  await refused(discardTask(s.db, { taskId: queued.id }), 409, /only a task that failed, was stopped, was cancelled or drafted a message/i);
   await refused(discardTask(s.db, { taskId: 999 }), 404, /no such task/i);
   const decided = await readyTask(s, { name: "two" });
   await decideTask(s.db, { taskId: decided.id, decision: "accept" });

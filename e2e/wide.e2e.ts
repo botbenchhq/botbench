@@ -8,6 +8,7 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
 import { checkDesign, expect, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
+import { escapeRegExp } from "../test/support/regexp.ts";
 
 // The column of chats and work beside a wide screen, and the two-pane Settings, at 1280×800; and the same screens at
 // 390×844, where neither is drawn. No model turn: before Botbench starts, runs and tasks are put in its real store
@@ -128,7 +129,7 @@ test.describe("at 1280×800", () => {
     const last = rows(page).last();
     const lastHref = (await last.getAttribute("href"))!;
     await last.click();
-    await expect(page).toHaveURL(new RegExp(`${lastHref.replace(/[/#]/g, "\\$&")}$`));
+    await expect(page).toHaveURL(new RegExp(`${escapeRegExp(lastHref)}$`));
     await expect(page.getByRole("heading", { level: 1, name: /Tidy module number/ })).toBeVisible();
     await expect(last).toHaveAttribute("aria-current", "true");
     await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(1);
@@ -163,7 +164,7 @@ test.describe("at 1280×800", () => {
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     const sections = page.getByTestId("settings-sections").getByRole("link");
     const shown = page.getByTestId("settings-section");
-    await expect(sections).toHaveText(["Agents", "Appearance", "Notifications", "Signed-in devices", "This workbench", "Permissions", "Usage"]);
+    await expect(sections).toHaveText(["Agents", "Appearance", "Notifications", "Signed-in devices", "This workbench", "Paired workbench", "Permissions", "Usage"]);
     await expect(sections.nth(0)).toHaveAttribute("aria-current", "true");
     await expect(page.locator('[data-testid="settings-sections"] [aria-current]')).toHaveCount(1);
     await expect(page.getByRole("region", { name: "Agents" })).toBeVisible();
@@ -204,7 +205,7 @@ test.describe("at 1280×800", () => {
     await expect(page).toHaveURL(/#\/trust$/);
     await expect(shown.getByRole("heading", { name: "Always allowed" })).toBeVisible();
     await expect(shown.getByRole("heading", { name: "Activity" })).toBeVisible();
-    await expect(sections.nth(5)).toHaveAttribute("aria-current", "true");
+    await expect(sections.nth(6)).toHaveAttribute("aria-current", "true");
     await checkDesign(page, "settings, wide, Permissions");
 
     await sections.filter({ hasText: "Usage" }).click();
@@ -219,7 +220,7 @@ test.describe("at 1280×800", () => {
     // Opened directly, Permissions is a section of Settings too.
     await page.goto(`${botbench.base}/#/trust`);
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-    await expect(sections.nth(5)).toHaveAttribute("aria-current", "true");
+    await expect(sections.nth(6)).toHaveAttribute("aria-current", "true");
   });
 });
 
@@ -242,7 +243,7 @@ test.describe("at 390×844", () => {
     await expect(page.getByTestId("settings-panes")).toHaveCount(0);
     await expect(page.getByTestId("settings-links").getByRole("link")).toHaveText([/^Permissions/, /^Usage/]);
     // Every group, one under the other, in the order it always had.
-    await expect(page.locator("main .ds-settings-row__heading")).toHaveText(["Agents", "Runs", "Web", "Watched issues", "Where commands run", "Workbench", "Memory", "Appearance", "Notifications", "Signed-in devices"]);
+    await expect(page.locator("main .ds-settings-row__heading")).toHaveText(["Agents", "Runs", "Web", "Watched issues", "Where commands run", "Workbench", "Memory", "Paired workbench", "Version", "Appearance", "Notifications", "Signed-in devices"]);
     await checkDesign(page, "settings, phone, one column");
 
     await page.getByTestId("settings-links").getByRole("link", { name: /^Permissions/ }).click();

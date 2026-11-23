@@ -110,3 +110,13 @@ Context: `docs/product/peers-concept.md` (rules that must hold), findings 5, 6 a
 - A peer's message, once given to an agent, can persuade it as an issue can. The B14 limits apply, and so does every card.
 - Clock skew between Macs matters only for display and the 15-minute invite. Ordering uses the per-pairing sequence numbers.
 - Each later kind, a second Mac, more than two peers, a relay or A2A needs its own tests, and the last two each need a new decision record and threat review.
+
+## As built
+
+This note changes no decision above; it records what the build added where the record left room.
+
+- **Refusal reason codes.** A refusal's body is one of Botbench's fixed codes: `pairing_ended` (decision 4), and `not_confirmed`, `wrong_repository`, `message_conflict`, `wrong_shape`, `wrong_parent`, `sequence_reused`, `kind_switched_off`, `thread_full`, `too_many_messages`, `too_many_cards` and `kind_not_taken` (a kind sent on a route that is not its own: each kind has one route of the four). Until the third unit, `kind_not_taken` also answered every question and answer; since then they are taken on `message`.
+- **The listener's own refusals** of a caller it will not answer with a signed refusal (no pairing, a wrong key or HMAC, an unusable invite): one body, `not_taken`; and `too_many`, `too_large`, `unreadable` and `try_again` for the request itself, and `already_paired` only to a caller whose HMAC checked (second unit).
+- **Action-log rules** besides the record's `peer_kind_refused`, `peer_send_attempt` and `peer_send_over_limit`: `peer_message_conflict`, `peer_invite`, `peer_pairing`, `peer_protocol`, `peer_refused`, `peer_message` and `peer_settings`.
+- **Who asked** (decision 10) is `peer` for every row of work given a peer's message, `agent` only for the rows of an agent's own drafting in work no peer's message started, and `owner` for every other row.
+- **The screens** (fourth unit). Settings → Paired workbench holds invite, paste, the fingerprints, the per-kind choices, the owner's own question, the conversations and End pairing; the cards stand on the task's screen (a draft, with Send, Don't send and Edit, the owner's edit the third unit's route already took), under Work → Needs you and in the header's tray; each conversation has a view of its own. The friction record's "shown" is when a signed-in device first drew a card (`peer_cards.seen_at`), and from the server's making of it only for a card decided before any device drew it. A task whose builder changed no file and drafted a message ends as Drafted a message (`drafted`), not Failed. No decision above changed.

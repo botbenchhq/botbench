@@ -240,7 +240,7 @@ test("an expired invite is swept with its secret erased and its row in the log, 
   assert.deepEqual(refused.body, NOT_TAKEN);
 });
 
-test("in force, a question or an answer gets a signed refusal for now, an envelope on another kind's route too, and nothing is stored", async (t) => {
+test("in force, an envelope on another kind's route gets a signed refusal and nothing is stored; a question on the message route is a card and nothing else", async (t) => {
   const a = await alice(t);
   const b = bob(t);
   const i = await invite(a);
@@ -249,7 +249,8 @@ test("in force, a question or an answer gets a signed refusal for now, an envelo
   assert.equal((await owner(a, "POST", `/api/peers/pairings/${pairingId}/confirm`, {})).status, 200);
   const base = { pairingId, recipientKey: inviterKey, repository: i.invite.repository };
   const sends = [
-    ["message", sign(b.key, { ...base, kind: "question", contextId: newId(), body: "Which port?" })],
+    ["settings", sign(b.key, { ...base, kind: "question", contextId: newId(), body: "Which port?" })],
+    ["end", sign(b.key, { ...base, kind: "answer", contextId: newId(), parentId: newId(), body: "4790" })],
     ["message", sign(b.key, { ...base, kind: "end_notice" })],
     ["end", sign(b.key, { ...base, kind: "settings_notice", body: "question:on,answer:on" })],
     ["settings", sign(b.key, { ...base, kind: "pair_confirmation" })],
@@ -263,6 +264,13 @@ test("in force, a question or an answer gets a signed refusal for now, an envelo
   }
   assert.equal(rows(a, "SELECT 1 FROM peer_messages WHERE direction = 'in'").length, 0);
   assert.equal(rows(a, "SELECT 1 FROM peer_pairing_ends").length, 0);
+  // On its own route a question is stored and acknowledged, and becomes one card for the owner: no task, run or attempt.
+  const question = sign(b.key, { ...base, kind: "question", contextId: newId(), body: "Which port?" });
+  const taken = await post(`${a.peer}/peer/message`, question);
+  assert.equal(taken.status, 200);
+  assert.equal(taken.body.response.envelope.kind, "acknowledgement");
+  assert.deepEqual(rows(a, "SELECT direction, kind, decided_at FROM peer_cards").map((r) => ({ ...r })), [{ direction: "in", kind: "question", decided_at: null }]);
+  assert.equal(rows(a, "SELECT 1 FROM tasks").length + rows(a, "SELECT 1 FROM attempts").length, 0);
 });
 
 test("after End pairing, a later message for the pairing gets a refusal naming the end, signed with this side's key", async (t) => {

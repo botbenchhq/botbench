@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { after } from "node:test";
 
 // Real temporary git repositories for the task tests, made with the real git.
 
@@ -18,9 +19,31 @@ export function write(dir: string, file: string, content: string): void {
   fs.writeFileSync(path.join(dir, file), content);
 }
 
-/** A temporary directory by its real path, which is what git and Claude Code report. */
+// Every temporary folder a test makes is removed when its test file ends, whatever happened in it. A test's own
+// `t.after` hooks run first in, first out, so a fixture that removes its folder in the hook it adds first removes it
+// before the server or engine added after it has closed, and that closing can write into the folder again (a
+// `home/worktrees` made anew); and a test whose setup throws before it adds its hook leaves the folder with nothing to
+// remove it. The file's own `after` hook runs after every test and every one of their hooks, so it catches both.
+// node's test runner starts each test file with NODE_TEST_CONTEXT set (or runs it in-process under --test); outside
+// it, as in a capture script or a Playwright worker, nothing is registered and the caller removes what it makes.
+const UNDER_TEST_RUNNER = process.env.NODE_TEST_CONTEXT !== undefined || process.execArgv.includes("--test");
+const madeHere = new Set<string>();
+if (UNDER_TEST_RUNNER) {
+  // Registered as this module loads, so on the file's root: registered from inside a test, it would run when that test ends.
+  after(() => {
+    for (const dir of madeHere) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  });
+}
+
+/** Have `dir`, a temporary folder a test made, removed when the test file ends (see above). Returns `dir`. */
+export function removedAtEnd(dir: string): string {
+  if (UNDER_TEST_RUNNER) madeHere.add(dir);
+  return dir;
+}
+
+/** A temporary directory by its real path, which is what git and Claude Code report. Removed when the test file ends at the latest. */
 export function tempDir(prefix: string): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return removedAtEnd(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix))));
 }
 
 /** Commit everything in `dir` as the owner, whose identity is given here so nothing is needed from this machine's config. */

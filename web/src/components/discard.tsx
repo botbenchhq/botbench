@@ -5,7 +5,7 @@ import { Leftovers } from "./decision.tsx";
 import { Alert } from "./header.tsx";
 
 /** How a task ended without being ready for review, in the words of its state. */
-const ENDED: Partial<Record<TaskDetail["status"], string>> = { failed: "failed", interrupted: "was stopped", cancelled: "was cancelled" };
+const ENDED: Partial<Record<TaskDetail["status"], string>> = { failed: "failed", interrupted: "was stopped", cancelled: "was cancelled", drafted: "drafted a message and changed no file" };
 
 /**
  * What a task that failed, was stopped or was cancelled left behind, and Discard, which removes it after asking: its

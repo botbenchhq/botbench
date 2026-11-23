@@ -8,7 +8,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { SANDBOX_EXEC } from "../../src/confinement.ts";
 import { makeReviewFolder, neutralizeMentions, proxyEnv, removeLeftoverReviewFolders, toolsProfile, wholeCliProfile } from "../../src/drivers/cli-sandbox.ts";
-import { tempDir } from "../support/repo.ts";
+import { tempDir, removedAtEnd } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
 
 // Real sandbox-exec, real files; no CLI of a vendor is started here.
@@ -32,7 +32,10 @@ test("the whole-CLI profile denies reading every listed place but the CLI's own 
   assert.equal(sh(`echo x > ${review}/a && cat ${review}/a`).stdout, "x\n", "the review folder is readable and writable");
   assert.notEqual(sh(`echo x > ${outside}/b`).status, 0);
   assert.equal(fs.existsSync(path.join(outside, "b")), false, "nothing is written outside the allowed places");
-  assert.equal(sh(`echo x > ${os.tmpdir()}/botbench-cli-sandbox-probe-$$ && echo ok`).stdout.trim(), "ok", "the temporary folder stays writable");
+  // Named by this process, not the shell's `$$`, so the test knows the file and removes it.
+  const probe = path.join(os.tmpdir(), `botbench-cli-sandbox-probe-${process.pid}`);
+  t.after(() => fs.rmSync(probe, { force: true }));
+  assert.equal(sh(`echo x > ${probe} && echo ok`).stdout.trim(), "ok", "the temporary folder stays writable");
   assert.match(profile, /\(deny lsopen\)/);
   assert.doesNotMatch(profile, /deny network/, "the CLI must reach its own provider");
 });
@@ -82,7 +85,7 @@ test("CRITICAL: under the profile of a CLI with its own tools, a command cannot 
   for (const d of [folder, own, temp]) fs.mkdirSync(d, { recursive: true });
   // Another program's socket and file in the temporary folder, as Chrome's SingletonSocket or another sandbox's proxy
   // socket are on this Mac: a command that reached the socket could ask that program to act outside the sandbox.
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-other-app-")));
+  const other = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-other-app-"))));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   fs.writeFileSync(path.join(other, "state.txt"), "OTHER\n");
   let received = "";

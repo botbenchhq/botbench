@@ -14,6 +14,7 @@ import { openStore, now } from "../../src/store/db.ts";
 import { usageReport } from "../../src/usage.ts";
 import { chatReplayDriver, type ChatReplay, type ChatSession, type ConstructedSession } from "../support/replay-chat.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { escapeRegExp } from "../support/regexp.ts";
 
 // Chat with Codex, Grok and Antigravity, one at a time or several at once, on real SQLite, each agent replaying a
 // session captured from its real CLI (test/support/replay-chat.ts). No Claude Code turn is started here.
@@ -110,7 +111,7 @@ test("with a repository attached, Codex, Grok and Antigravity read it and its gi
   const real = fs.realpathSync(repo);
   for (const agent of [agents.codex, agents.grok, agents.antigravity]) {
     assert.deepEqual(agent.started[0]!.chatTools, { readable: [real, path.join(real, ".git")] });
-    assert.match(agent.prompts[0]!, new RegExp(`The owner attached the repository at ${real.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: you can read it there, and you cannot change it`));
+    assert.match(agent.prompts[0]!, new RegExp(`The owner attached the repository at ${escapeRegExp(real)}: you can read it there, and you cannot change it`));
   }
   await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "claude-code", model: undefined }], repository: repo }), /Claude Code works on a repository as a task/);
   await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }], repository: path.join(repo, "missing") }), TurnError);
@@ -228,7 +229,7 @@ test("compare: the one agent asked is sent the question and each labelled answer
   const sent = agents.codex.prompts[1]!;
   assert.match(sent, /^\[From Botbench, not from the owner\]/);
   assert.match(sent, /The question:\n<message>\nName one more primary colour/);
-  for (const from of ["Codex (gpt-6-luna)", "Grok (grok-4.7-build-fast)", "Antigravity (gemini-3.8-flash-low)"]) assert.match(sent, new RegExp(`The answer from ${from.replace(/[()]/g, "\\$&")}:\n<answer>\nBlue`));
+  for (const from of ["Codex (gpt-6-luna)", "Grok (grok-4.7-build-fast)", "Antigravity (gemini-3.8-flash-low)"]) assert.match(sent, new RegExp(`The answer from ${escapeRegExp(from)}:\n<answer>\nBlue`));
   assert.match(text(db, compared!.attemptId), /All three name \*\*blue\*\*/);
   const info = chat.info(compared!.attemptId)!;
   assert.equal(info.round?.kind, "compare");

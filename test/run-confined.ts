@@ -18,7 +18,7 @@ import { NO_SANDBOX } from "./support/confined.ts";
  * How many tests the runner skips inside the sandbox. A test that newly takes its `skip` from test/support/confined.ts
  * makes this run fail until this number is changed with it.
  */
-const EXPECTED_SKIPPED = 155;
+const EXPECTED_SKIPPED = 157;
 
 const REPO = fs.realpathSync(path.resolve(import.meta.dirname, ".."));
 
@@ -32,6 +32,13 @@ if (unconfinable !== null) stop(unconfinable);
 if (NO_SANDBOX) stop(`the tests cannot be put in a sandbox from here: ${NO_SANDBOX.replace(/ Run npm test.*$/, "")} Run it from a terminal outside any sandbox.`);
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-confined-")));
+// Stopped from the terminal, the `finally` below never runs: the folder goes here instead.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.once(signal, () => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    process.exit(128 + os.constants.signals[signal]);
+  });
+}
 let exitCode: number | null = null;
 let output = "";
 try {
