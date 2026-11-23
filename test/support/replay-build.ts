@@ -21,8 +21,8 @@ import { loadPlanRecording } from "./replay-plan.ts";
  *           `git push origin HEAD`, Botbench refused it without asking anyone, and the CLI ended its turn.
  *   "refine" the refine turn of test/recordings/refine-round.json: sent Botbench's refine prompt with a real Codex
  *           review, the real CLI read calc.py, changed `a - b` to `a + b` with its Edit tool and replied in the asked form.
- * A test may also bring a turn of its own from a fixture under test/fixtures (`FixtureTurn`), whose `about` says
- * which recording its events come from and what was taken out of them.
+ * A test may also bring a turn of its own from a fixture under test/fixtures (`FixtureTurn`), recorded from a real CLI
+ * session by a capture script, whose `about` says how.
  * What is real: every event after the prompt is one the real CLI produced, in its order, and each recorded tool call is
  * put to the real permission gate as the CLI's pre-tool hook put it.
  * What is not: the CLI produced those events for the prompts in the recordings, and the replay plays them after
@@ -34,7 +34,7 @@ import { loadPlanRecording } from "./replay-plan.ts";
  */
 
 export type BuildTurn = "done" | "ask" | "refused" | "refine";
-/** A turn a test brings from a fixture of its own (under test/fixtures), played as the named ones are. Its `about` says where its events came from. */
+/** A turn a test brings from a fixture of its own (under test/fixtures), played as the named ones are, up to its first end of turn. Its `about` says how it was recorded. */
 export interface FixtureTurn {
   about: string;
   events: DriverEvent[];

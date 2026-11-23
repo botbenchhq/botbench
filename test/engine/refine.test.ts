@@ -84,7 +84,10 @@ async function until(what: string, done: () => boolean): Promise<void> {
   }
 }
 
-/** A resumed Claude Code turn that ended with no reply and no change, derived from a recorded resumed session (its `about` says how). */
+/**
+ * A real resumed Claude Code turn that ended with no reply and no change, as the driver before the fix of #111 stored it
+ * (test/support/capture-empty-resumed.ts; its `about` says how it was recorded). The replay plays it up to its first end of turn.
+ */
 const EMPTY: FixtureTurn = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "fixtures", "empty-resumed-turn", "turn.json"), "utf8"));
 const notes = (db: DatabaseSync, id: number): string[] => db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND detail IS NOT NULL ORDER BY id").all(id).map((row) => String(row.detail));
 

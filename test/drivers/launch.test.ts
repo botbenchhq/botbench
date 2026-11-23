@@ -218,6 +218,19 @@ test("output lines recorded from Claude Code 2.1.322 become normalized events", 
   assert.deepEqual(parseClaudeLine(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"session_id":"${session}"}`), []);
 });
 
+test("a resumed session's result for the CLI's own notice of a background command does not end the turn; the prompt's result does (#111)", () => {
+  // Every line the real CLI printed in a resumed attempt (test/support/capture-empty-resumed.ts): first its own notice that
+  // a background command did not finish before the previous session ended, answered with a result of no turns, then the prompt's turn.
+  const fixture = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "fixtures", "empty-resumed-turn", "turn.json"), "utf8")) as { raw: { line: unknown }[] };
+  const events = fixture.raw.flatMap((r) => parseClaudeLine(JSON.stringify(r.line)));
+  const ends = events.flatMap((e, i) => (e.type === "turn_ended" ? [i] : []));
+  assert.equal(ends.length, 1, JSON.stringify(events.map((e) => e.type)));
+  assert.equal(ends[0], events.length - 1, "the turn ends at the prompt's result, the last line");
+  assert.deepEqual(events.filter((e) => e.type === "text"), [{ type: "text", text: "done" }]);
+  // Its usage is still counted, as any turn's.
+  assert.equal(events.filter((e) => e.type === "usage").length, 2);
+});
+
 test("an attempt that may edit gets edits inside its working directory allowed, and loads no settings files at all", () => {
   const args = claudeArgs({ confinement: CONFINED, model: "haiku", allowEdits: true });
   const valueOf = (flag: string): string | undefined => {

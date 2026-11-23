@@ -479,6 +479,12 @@ export function parseClaudeLine(line: string): DriverEvent[] {
         });
       }
       const terminal = str(parsed.terminal_reason);
+      // A turn the CLI started itself, not for the message it was sent, ends with a result that names its origin (seen on
+      // 2.1.322: a resumed session whose last process exited with a background command running first answers its own
+      // notice of that, `"origin":{"kind":"task-notification"}`, `num_turns` 0, and only then reads the prompt). It does
+      // not end the turn Botbench is waiting on (#111); the prompt's own result, which names no origin, does.
+      const origin = isObject(parsed.origin) ? str(parsed.origin.kind) : null;
+      if (origin !== null && origin !== "human") return events;
       if (parsed.is_error !== true && parsed.subtype === "success") {
         events.push({ type: "turn_ended", reason: "completed", detail: null });
       } else if (terminal?.startsWith("aborted")) {

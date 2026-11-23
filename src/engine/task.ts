@@ -674,6 +674,8 @@ export function createTasks(options: TasksOptions): Tasks {
    * completed with no reply and no change is not taken as an answer: Botbench notes it on the task and runs the round
    * once more in a new session, with the whole task (detect, log and retry fresh, as issue #111 cites paperclip's claude-local adapter doing).
    * That new session's round is recorded however it ends; one with no reply and no change is a round with no answer.
+   * The empty rounds of #111 had one cause, which the driver now handles (the CLI's own result for a background command
+   * left from the earlier session, `parseClaudeLine`); the retry stays for an empty resumed round of any other cause.
    */
   /** How the note on a round's one retry in a new session ends; the round's retry is found by it. */
   const FRESH_RETRY = "the round runs once more in a new session";
