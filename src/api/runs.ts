@@ -13,6 +13,7 @@ import { issueHostsFor, runIssue } from "../engine/intake.ts";
 import { repositoryHosts } from "../config.ts";
 import { issueLink } from "./issues.ts";
 import { claimOf } from "../engine/claims.ts";
+import { checkSource, ownerMessages, sourceLabel } from "../engine/run-source.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -56,6 +57,8 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
     issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
     // Whether the run told other workbenches it started on its issue, and what became of that (engine/claims.ts).
     claim: claimOf(db, id),
+    // The finished task or the chat the owner made this run from ("Make this a run"), with its line; null for any other run.
+    source: run.source === null ? null : { ...run.source, label: sourceLabel(run.source) },
     // The stricter modes the owner may move the run to now (none for a manual or finished run), and each change made.
     modeChoices: stricterModes(mode, status), modeChanges: modeChanges(db, id),
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
@@ -78,7 +81,7 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
 }
 
 // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
-const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full", "delivery"?: "branch" | "pull_request", "issue"?: null | { "fetchId": number, "allowHosts": boolean }, "oneTask"?: boolean }';
+const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full", "delivery"?: "branch" | "pull_request", "issue"?: null | { "fetchId": number, "allowHosts": boolean }, "oneTask"?: boolean, "source"?: null | { "task": number } | { "chat": number } }';
 
 /**
  * The run routes: start one, list them, describe one, the owner's decisions at the plan gate (edit, approve,
@@ -90,14 +93,22 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
   const method = req.method;
   // An id is 1 to 15 digits with no leading zero, so it is always a number SQLite stores exactly.
   const one = /^\/api\/runs\/([1-9]\d{0,14})(\/plan|\/plan\/approve|\/plan\/request-changes|\/cancel|\/mode)?$/.exec(pathname);
+  const source = /^\/api\/run-sources\/(task|chat)\/([1-9]\d{0,14})$/.exec(pathname);
   try {
+    if (method === "GET" && source) {
+      // What the composer opens on for "Make this a run": the source as Botbench has it, checked, and for a chat the
+      // owner's own messages in it, which may be picked as the note. It only reads: nothing is stored until Send.
+      const checked = checkSource(ctx.db, { kind: source[1] as "task" | "chat", id: Number(source[2]) }, null);
+      json(res, 200, { ...checked, ...(checked.kind === "chat" ? { messages: ownerMessages(ctx.db, checked.id) } : {}) });
+      return true;
+    }
     if (method === "POST" && pathname === "/api/runs") {
       const body = await readJsonBody(req);
       if (!isObject(body) || typeof body.repo !== "string") throw new RunError(400, EXPECTED);
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
       const builder = builderChoice(body);
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, builder, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver });
+      const run = await ctx.runs.start({ repo: body.repo, builder, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver, source: body.source });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });

@@ -2183,4 +2183,23 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // "Make this a run" (src/engine/run-source.ts): a run the owner made from a finished task or from a chat names it,
+    // `source_task_id` or `source_chat_id` (a chat by its id, its first attempt), at most one of the two. NULL in both is a
+    // run started any other way, as every run before this was. Set when the run is stored and never changed after. Such
+    // a run carries only the owner's words and Botbench's own records, so it never reads outside text: the store
+    // refuses a source together with an issue or the outside-text mark.
+    name: "run source",
+    sql: `
+ALTER TABLE runs ADD COLUMN source_task_id INTEGER REFERENCES tasks (id);
+ALTER TABLE runs ADD COLUMN source_chat_id INTEGER REFERENCES chat_attempts (attempt_id);
+CREATE INDEX runs_source_task ON runs (source_task_id) WHERE source_task_id IS NOT NULL;
+CREATE TRIGGER runs_source_one BEFORE INSERT ON runs WHEN NEW.source_task_id IS NOT NULL AND NEW.source_chat_id IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a run has at most one source: a task or a chat'); END;
+CREATE TRIGGER runs_source_own_words BEFORE INSERT ON runs WHEN (NEW.source_task_id IS NOT NULL OR NEW.source_chat_id IS NOT NULL) AND (NEW.outside_text <> 0 OR NEW.issue_fetch_id IS NOT NULL OR NEW.kind <> 'planned')
+BEGIN SELECT RAISE(ABORT, 'a run made from a task or a chat is a planned run that carries only the owner''s words, never outside text'); END;
+CREATE TRIGGER runs_source_fixed BEFORE UPDATE OF source_task_id, source_chat_id ON runs WHEN NEW.source_task_id IS NOT OLD.source_task_id OR NEW.source_chat_id IS NOT OLD.source_chat_id
+BEGIN SELECT RAISE(ABORT, 'a run''s source is set when it starts and never changed'); END;
+`,
+  },
 ];
