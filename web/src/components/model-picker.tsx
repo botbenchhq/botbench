@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Option } from "./option.tsx";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { defaultFirst, modelsShown } from "../app/chat.ts";
 import { ApiError, getModels as askModels, timedOut, type ModelList, type StoredEvent } from "../api/client.ts";
 
 /** One request for the model list at a time, shared by every picker on the screen; a failed one is asked again next time. */
@@ -126,31 +126,62 @@ export function choiceName(state: ModelChoiceState): string {
   return choice.model === null ? "Claude Code's default" : modelName(list, choice.model);
 }
 
+/** One model of an agent's list: a native radio in a plain row, its name, an optional tag (default) and the exact id under it. */
+export function ModelRadio({ group, id, value, checked, onChange, name, tag = null, description = null }: { group: string; id: string; value: string; checked: boolean; onChange: () => void; name: string; tag?: string | null; description?: string | null }) {
+  return (
+    <div className="ds-radio">
+      <input className="ds-radio__input" type="radio" id={id} name={group} value={value} checked={checked} onChange={onChange} aria-describedby={description ? `${id}-description` : undefined} />
+      <label className="ds-radio__label" htmlFor={id}>
+        {name}
+        {tag !== null && (
+          <>
+            {" "}
+            <span className="ds-tag">{tag}</span>
+          </>
+        )}
+      </label>
+      {description && (
+        <p className="ds-radio__description" id={`${id}-description`}>
+          {description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A model's exact id under its name, when the agent gives it a name of its own. */
+export const idUnder = (model: { id: string; label?: string }): string | null => (model.label === undefined || model.label === model.id ? null : model.id);
+
 /**
- * The driver's models as one choice (the design system's option picker): the CLI's own default, each model it lists,
- * and last Other…, which reveals a field for any other name. `legend` is hidden when the view's title says the same.
+ * Claude Code's models as a plain list: its own default first (named by the model it is, tagged default), four more,
+ * the rest behind More models…, and last Other…, which shows a field for any other name. `about` is a line over the
+ * list (the agent's version and sign-in state); `legend` is hidden when the view's title says the same.
  */
-export function ModelOptions({ state, id = "model", legend = "Model", hideLegend = false }: { state: ModelChoiceState; id?: string; legend?: string; hideLegend?: boolean }) {
+export function ModelOptions({ state, id = "model", legend = "Model", hideLegend = false, about = null }: { state: ModelChoiceState; id?: string; legend?: string; hideLegend?: boolean; about?: string | null }) {
   const { list, problem, choice } = state;
   const ready = list !== null || problem !== null;
   const value = choice === null ? CONFIGURED : choice.other ? OTHER : (choice.model ?? "");
   const cliDefault = list?.cliDefault ?? null;
+  const first = defaultFirst("Claude Code", cliDefault, list?.models ?? [], value);
   const pick = (next: string): void => state.choose(next === OTHER ? { model: "", other: true } : { model: next === "" ? null : next, other: false });
   return (
-    <fieldset className="ds-option-picker" aria-describedby={`${id}-source`} data-testid={`${id}-options`}>
-      <legend className={hideLegend ? "ds-option-picker__legend ds-visually-hidden" : "ds-option-picker__legend"}>{legend}</legend>
-      <p id={`${id}-source`} data-testid={`${id}-source`} role="status" className="ds-option-picker__hint">
+    <fieldset className="ds-radio__group" aria-describedby={`${id}-source`} data-testid={`${id}-options`}>
+      <legend className={hideLegend ? "ds-radio__legend ds-visually-hidden" : "ds-radio__legend"}>{legend}</legend>
+      {about !== null && (
+        <p data-testid={`${id}-about`} className="ds-radio__description">
+          {about}
+        </p>
+      )}
+      <p id={`${id}-source`} data-testid={`${id}-source`} role="status" className="ds-radio__description">
         {choice?.other === true && ready ? `${sourceWords(state)} Claude Code itself decides whether a name you type is a model.` : sourceWords(state)}
       </p>
       {ready && (
         <>
-          {choice === null && <Option group={id} id={`${id}-configured`} value={CONFIGURED} checked onChange={() => {}} name="Model from Botbench's configuration" />}
-          <Option group={id} id={`${id}-default`} value="" checked={value === ""} onChange={() => pick("")} name="Claude Code's default" description={cliDefault} />
-          {(list?.models ?? []).map((model, at) => (
-            <Option key={model.id} group={id} id={`${id}-${at}`} value={model.id} checked={value === model.id} onChange={() => pick(model.id)} name={model.label ?? model.id} description={model.label === undefined || model.label === model.id ? null : model.id} />
-          ))}
-          <Option group={id} id={`${id}-other`} value={OTHER} checked={value === OTHER} onChange={() => pick(OTHER)} name="Other…" />
-          <div className="ds-option-picker__reveal">
+          {choice === null && <ModelRadio group={id} id={`${id}-configured`} value={CONFIGURED} checked onChange={() => {}} name="Model from Botbench's configuration" />}
+          <ModelRadio group={id} id={`${id}-default`} value="" checked={value === ""} onChange={() => pick("")} name={first.label} tag={cliDefault === null ? null : "default"} />
+          <MoreModels models={first.models} chosen={first.models.find((m) => m.id === value) ?? null} option={(model, at) => <ModelRadio key={model.id} group={id} id={`${id}-${at}`} value={model.id} checked={value === model.id} onChange={() => pick(model.id)} name={model.label ?? model.id} description={idUnder(model)} />} />
+          <ModelRadio group={id} id={`${id}-other`} value={OTHER} checked={value === OTHER} onChange={() => pick(OTHER)} name="Other…" />
+          {value === OTHER && (
             <div className="ds-field">
               <label htmlFor={`${id}-name`} className="ds-field__label">
                 {id === "model" ? "Model name" : `${legend} name`}
@@ -168,10 +199,33 @@ export function ModelOptions({ state, id = "model", legend = "Model", hideLegend
                 className="ds-field__control"
               />
             </div>
-          </div>
+          )}
         </>
       )}
     </fieldset>
+  );
+}
+
+/**
+ * An agent's models after its default: the first four, then the rest inside More models… (the design system's
+ * disclosure; the option picker has no pattern of its own for a longer list), opened when the choice is among them.
+ */
+export function MoreModels<T>({ models, chosen, option }: { models: readonly T[]; chosen: T | null; option: (model: T, at: number) => ReactNode }) {
+  const { first, rest, restHoldsChoice } = modelsShown(models, chosen);
+  const [open, setOpen] = useState(restHoldsChoice);
+  useEffect(() => {
+    if (restHoldsChoice) setOpen(true);
+  }, [restHoldsChoice]);
+  return (
+    <>
+      {first.map((model, at) => option(model, at))}
+      {rest.length > 0 && (
+        <details className="ds-disclosure" open={open} onToggle={(e) => setOpen(e.currentTarget.open)} data-testid="more-models">
+          <summary className="ds-disclosure__summary">More models…</summary>
+          <div className="ds-disclosure__content">{rest.map((model, at) => option(model, first.length + at))}</div>
+        </details>
+      )}
+    </>
   );
 }
 

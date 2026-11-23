@@ -38,7 +38,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
     const bar = page.locator(".ds-composer__bar");
     await expect(bar.locator("> *").first()).toHaveAccessibleName("Add context");
     await expect(bar.locator(".ds-composer__chip")).toHaveCount(1);
-    await expect(bar.locator(".ds-composer__chip")).toHaveAccessibleName(/^Model: .+ Claude Code$/);
+    await expect(bar.locator(".ds-composer__chip")).toHaveAccessibleName(/^Agent and model: .+ Claude Code$/);
     await expect(bar.locator(".ds-composer__chip")).not.toContainText("Reading the models");
     await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
     await checkDesign(page, "composer, empty");

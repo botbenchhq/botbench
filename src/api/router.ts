@@ -27,6 +27,7 @@ import type { Peers } from "../engine/peers.ts";
 import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
 import type { Chat } from "./chat.ts";
+import type { AgentChecks } from "./agents.ts";
 
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
@@ -36,6 +37,8 @@ export interface RouteContext {
   /** The agents that can review a run's tasks, by name. */
   reviewers: Partial<Record<string, Driver>>;
   turns: Turns;
+  /** The agents' last checks, kept for a short time. */
+  agentChecks: AgentChecks;
   /** Chat with any agent, or several at once. */
   chat: Chat;
   tasks: Tasks;

@@ -24,7 +24,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   // When all is well the header says nothing about the agent.
   await expect(page.getByTestId("driver-state")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add context" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Model: / })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Agent and model: / })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByTestId("stream-banner")).toHaveCount(0);
   await checkDesign(page, "turn, empty");
@@ -239,7 +239,7 @@ test("the chat box names the agent in its placeholder and for assistive technolo
   await expect(page.getByText("Prompt", { exact: true })).toHaveCount(0);
 
   // The model is one chip under the box, showing the current choice; the list and its helper line are behind it, in the sheet.
-  const chip = page.getByRole("button", { name: /^Model: / });
+  const chip = page.getByRole("button", { name: /^Agent and model: / });
   await expect(chip).toHaveAttribute("aria-haspopup", "dialog");
   await expect(page.getByText("The list is what Claude Code reports on this Mac.")).toBeHidden();
   // Nothing has arrived, so there is nothing to jump to: the block is in the page, hidden.

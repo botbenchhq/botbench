@@ -8,6 +8,7 @@ import { json, requestUrl, route } from "./api/router.ts";
 import { createEventStream } from "./api/stream.ts";
 import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
+import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
 import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, ROOT, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver } from "./drivers/claude-code.ts";
@@ -138,13 +139,19 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
       push.runChanged(run);
     } });
   const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: stream.announceRun, onTaskChange: stream.announceTask });
+  // Each agent Botbench drives, listed in this order, checked by its own program and kept for a short time.
+  const agentChecks = createAgentChecks([driver, ...Object.values(reviewers)]);
   // Each agent whose CLI has a sign-in Botbench can run: Claude Code, and Codex among the reviewers.
   const connect = createConnect({
     agents: ([driver, ...Object.values(reviewers)] as Driver[]).flatMap((d) => {
       const signIn = options.signIns?.find((s) => s.driver === d.name) ?? d.signIn;
       return signIn === undefined ? [] : [{ signIn, probe: () => d.probe() }];
     }),
-    onChange: stream.announceAgent,
+    onChange: (agent, state) => {
+      // A sign-in or sign-out changes what the agents' checks would find: the next read checks again.
+      agentChecks.forget();
+      stream.announceAgent(agent, state);
+    },
   });
   const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
   const dictation = createDictation({ home, ...dictationOptions });
@@ -153,7 +160,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const deliveries = createDeliveries({ db, config, github, onTaskChange: stream.announceTask });
   // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
   const peers = createPeers({ db, config, github });
-  const ctx = { db, config, driver, reviewers, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
