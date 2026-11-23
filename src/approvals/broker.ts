@@ -173,6 +173,8 @@ export type LogRule =
   | "sandboxed"
   /** One of the CLI's own bookkeeping tools (its to-do list, loading a tool) ran without asking, in any mode. */
   | "bookkeeping"
+  /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it (src/peers/messages.ts). */
+  | "peer_message_conflict"
   /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
   | "issue_claim"
   /** The owner answered an agent's question; `detail` holds the answer as given. */
