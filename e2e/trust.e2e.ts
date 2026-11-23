@@ -51,16 +51,107 @@ test("Permissions starts empty in words, with nothing to tap and nothing in the 
   // Permissions is a screen of its own, reached from Settings, with a link back. With nothing granted and nothing logged it says so in words.
   await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
   await openFromSettings(page, "Permissions");
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Activity"]);
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Check a command", "Activity"]);
   await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
   await expect(nav(page).locator('[aria-current="page"]')).toHaveCount(0);
   await expect(page.getByTestId("grants-none")).toHaveText("Nothing is always allowed. After you have allowed the same command once, its request offers Always allow.");
   await expect(page.getByTestId("log-none")).toHaveText("Nothing has been asked, allowed or run yet.");
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
   await expect(page.getByTestId("action-log")).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveCount(0);
+  // The one control is the command check's, which changes nothing; with no repository known its picker says so.
+  await expect(page.getByRole("button")).toHaveText(["Check"]);
+  await expect(page.getByTestId("check-repository")).toBeDisabled();
+  await expect(page.getByTestId("check-repository")).toHaveText("No repository yet");
   await expect(page.getByTestId("approval-tray")).toBeEmpty();
   await checkDesign(page, "trust, empty");
+});
+
+test("Check a command answers for each mode in words, the rule behind each named, and changes nothing, at a phone's width and a desktop's, light and dark", async ({ page }) => {
+  // A repository named in the settings file, which offers `npm test` as an allowed command for each task.
+  const dir = tempDir("botbench-e2e-check-");
+  const repo = path.join(dir, "sample-repo");
+  initRepo(repo, { "README.md": "# Sample\n" });
+  const botbench = await startBotbench({ home: path.join(dir, "home"), settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [repo]: { preapproved: ["npm test"] } } } });
+  try {
+    const foreign = watchRequests(page, botbench);
+    await signIn(page, botbench);
+    await openFromSettings(page, "Permissions");
+    const picker = page.getByTestId("check-repository");
+    await expect(picker).toBeEnabled();
+    await expect(picker).toHaveValue(fs.realpathSync(repo));
+    const box = page.getByTestId("check-command");
+    const result = page.getByTestId("check-result");
+    const run = async (command: string): Promise<void> => {
+      await box.fill(command);
+      await page.getByRole("button", { name: "Check", exact: true }).click();
+      await expect(result).toBeVisible();
+    };
+
+    await run("git push");
+    await expect(result.getByRole("listitem")).toHaveText([
+      "ManualAsks you. On the always-ask list: it sends commits to another computer. Rule: git-push",
+      "Semi-autonomousAsks you. On the always-ask list: it sends commits to another computer. Rule: git-push",
+      "Fully autonomousRefused: a fully autonomous run asks you nothing, so what would ask is not run. On the always-ask list: it sends commits to another computer. Rule: git-push",
+    ]);
+    expect(await primaries(page), "the check is no primary action").toEqual([]);
+    await checkDesign(page, "trust, a command that asks, dark");
+
+    // A new command clears the old answer until it is checked.
+    await box.fill("npm test");
+    await expect(result).toHaveCount(0);
+    await page.getByRole("button", { name: "Check", exact: true }).click();
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: this repository's settings offer npm test as an allowed command for each task\.$/));
+
+    // A command of two lines is checked as it would run, line break and all: its second line is on the always-ask list.
+    await run("true\ngit push");
+    await expect(box).toHaveValue("true\ngit push");
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Rule: git-push$/));
+
+    // An empty command is refused in words, with no answer.
+    await box.fill("");
+    await page.getByRole("button", { name: "Check", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText("Give a command to check.");
+    await expect(result).toHaveCount(0);
+    // The reason is about the command it was given: typing another clears it, and the box is no longer marked.
+    await box.fill("ls");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(box).not.toHaveAttribute("aria-invalid", "true");
+
+    // Light, at a phone's width and a desktop's.
+    await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await run("git push");
+    await checkDesign(page, "trust, a command that asks, light");
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(result).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px`).toBe(true);
+      await checkDesign(page, `trust, a command that asks, light, ${width}px`);
+    }
+    await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "dark"));
+    // Loaded again at a phone's width, then widened, as the light pass does.
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await run("ls src");
+    await expect(result.getByRole("listitem")).toHaveText(Array(3).fill(/Runs without asking: it runs kept in the task's copy, and the safety rules do not name it\.$/));
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(result).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px, dark`).toBe(true);
+      await checkDesign(page, `trust, a command that runs, dark, ${width}px`);
+    }
+
+    // Nothing was asked, logged or granted.
+    expect(await (await page.request.get(`${botbench.base}/api/approvals`)).json()).toEqual({ approvals: [] });
+    expect(await (await page.request.get(`${botbench.base}/api/action-log`)).json()).toEqual({ entries: [] });
+    expect(await (await page.request.get(`${botbench.base}/api/grants`)).json()).toMatchObject({ grants: [] });
+    expect(foreign, "requests to anything but Botbench").toEqual([]);
+  } finally {
+    expect((await botbench.stop()).leftover).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("LIVE: a card for a command allowed before offers standing permission with its scope, as a secondary step that must be confirmed; granted, the command runs with no card; Trust lists the grant and the log, and Take back, once confirmed, removes it; a card for `git push` never offers", async ({ page, botbench, repo }) => {
@@ -213,7 +304,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   ]);
   // Ten entries are one page: nothing older, so no control for it.
   await expect(page.getByRole("button", { name: "Show older activity" })).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveText(["Take back"]);
+  await expect(page.getByRole("button")).toHaveText(["Take back", "Check"]);
   expect(await primaries(page), "Trust has no primary action").toEqual([]);
   await checkDesign(page, "trust, with a standing permission and the log");
   await copyShot(page, "permissions");

@@ -21,14 +21,15 @@ import { MAX_PEER_BYTES, PEER_ROUTES, peerPath, type PeerRoute } from "./transpo
  * pairings or invites exist. Requests are bounded per caller address, and pair requests also per invite, so the pair
  * route cannot be used to guess at invites (the HMAC already makes that infeasible).
  *
- * In this unit the listener takes only what pairing and ending need: the pair request; on `message` the pair
- * confirmation, an acknowledgement and a refusal; on `settings` the settings notice; on `end` the end notice. A
- * question or an answer gets a signed refusal (`kind_not_taken`): nothing can show one to the owner yet.
+ * What each route takes: `pair` the pair request; `message` a question, an answer, the pair confirmation, an
+ * acknowledgement and a refusal; `settings` the settings notice; `end` the end notice. A kind on another kind's route
+ * gets a signed refusal (`kind_not_taken`). A question or an answer the store takes becomes a card for the owner, in
+ * the same write (src/peers/messages.ts), and nothing else: the listener never starts, wakes or answers an agent.
  */
 
 /** What each route takes, by kind. One route per kind. */
 const ROUTE_KINDS: Record<Exclude<PeerRoute, "pair">, readonly EnvelopeKind[]> = {
-  message: ["pair_confirmation", "acknowledgement", "refusal"],
+  message: ["question", "answer", "pair_confirmation", "acknowledgement", "refusal"],
   settings: ["settings_notice"],
   end: ["end_notice"],
 };
@@ -71,6 +72,8 @@ export interface PeerListenerOptions {
   key: () => WorkbenchKey | null;
   /** A peer's envelope was stored: what follows from it (a settings notice after a confirmation) is the caller's. */
   onStored?: (pairing: Pairing, kind: EnvelopeKind) => void;
+  /** `peers.roundTripsPerThread`: 3 when absent. */
+  roundTrips?: number;
   now?: () => number;
 }
 
@@ -135,6 +138,27 @@ export function createPeerHandler(o: PeerListenerOptions): http.RequestListener 
     logPeer(o.db, { rule: "peer_refused", command: what, detail: `Refused ${count === 1 ? "a request" : `${count} requests`} from ${from} since the last entry; the last was: ${what}.`, ...(who.pairing === undefined ? {} : { byPeer: who.pairing }) });
   };
 
+  /**
+   * A message of a kind this owner switched off for the peer: one row naming the peer and the kind, at most one a
+   * minute per pairing and kind (with how many since), so a peer that keeps sending cannot fill the log.
+   */
+  const kindRefusedSince = new Map<string, { last: number; count: number }>();
+  const noteKindRefused = (p: Pairing, kind: string): void => {
+    const key = `${p.id} ${kind}`;
+    let entry = kindRefusedSince.get(key);
+    if (entry === undefined) {
+      if (kindRefusedSince.size >= MAX_COUNTED) kindRefusedSince.clear();
+      entry = { last: 0, count: 0 };
+      kindRefusedSince.set(key, entry);
+    }
+    entry.count += 1;
+    if (now() - entry.last < 60_000) return;
+    const count = entry.count;
+    entry.last = now();
+    entry.count = 0;
+    logPeer(o.db, { rule: "peer_kind_refused", command: `${kind} not taken`, detail: `${p.peerName}'s workbench sent ${count === 1 ? `a ${kind}` : `${count} messages of the kind ${kind}`}, which you switched off for it. ${count === 1 ? "It was" : "They were"} refused with a signed reply: no card, and nothing of ${count === 1 ? "its" : "their"} text kept.`, byPeer: p });
+  };
+
   const pair = (body: unknown, source: string): { status: number; body: unknown } => {
     const request = asPairRequest(body);
     const key = o.key();
@@ -191,14 +215,17 @@ export function createPeerHandler(o: PeerListenerOptions): http.RequestListener 
       noteRefused({ source }, `a ${route} request that is not a signed envelope`);
       return { status: 403, body: NOT_TAKEN };
     }
-    const received: Received = receiveEnvelope(o.db, key, wire, { kinds: ROUTE_KINDS[route] });
+    const received: Received = receiveEnvelope(o.db, key, wire, { kinds: ROUTE_KINDS[route], ...(o.roundTrips === undefined ? {} : { roundTrips: o.roundTrips }) });
     if (received.outcome === "refused") {
       const p = received.refusal === null ? null : getPairing(o.db, received.refusal.envelope.pairingId);
       if (received.refusal === null || p === null) {
         noteRefused({ source }, `a ${route} request with no pairing here or not signed by its key`);
         return { status: 403, body: NOT_TAKEN };
       }
-      noteRefused({ pairing: p, source }, `a ${String(wire.envelope && (wire.envelope as { kind?: unknown }).kind).slice(0, 40)}, answered with a signed refusal (${received.reason})`);
+      const kind = String(wire.envelope && (wire.envelope as { kind?: unknown }).kind).slice(0, 40);
+      // A kind this owner switched off: no card, no body stored, and its own row naming the peer and the kind (decision 11).
+      if (received.reason === "kind_switched_off") noteKindRefused(p, kind);
+      else noteRefused({ pairing: p, source }, `a ${kind}, answered with a signed refusal (${received.reason})`);
       return { status: 409, body: { response: received.refusal } };
     }
     const p = getPairing(o.db, received.envelope.pairingId)!;
@@ -207,6 +234,7 @@ export function createPeerHandler(o: PeerListenerOptions): http.RequestListener 
       const acked = received.acknowledgement === null ? "" : " Botbench acknowledged it.";
       if (e.kind === "pair_confirmation") logPeer(o.db, { rule: "peer_pairing", command: "confirmed by the peer", detail: `${p.peerName}'s owner confirmed this workbench's fingerprint: the pairing ${p.id} is in force on both sides.${acked}`, byPeer: p });
       else if (e.kind === "end_notice") logPeer(o.db, { rule: "peer_pairing", command: "ended by the peer's notice", detail: `${p.peerName}'s owner ended the pairing ${p.id}. Nothing more is sent to it or taken from it.`, byPeer: p });
+      else if (e.kind === "question" || e.kind === "answer") logPeer(o.db, { rule: "peer_message", command: `${e.kind} received`, detail: `${p.peerName}'s workbench sent ${e.kind === "question" ? "a question" : "an answer"} (message ${e.messageId}, thread ${e.contextId}). It is a card for you, with the Outside text badge, and nothing else: no agent sees it unless you give it to one.${acked}`, byPeer: p });
       else if (e.kind === "refusal" && e.body === "pairing_ended") logPeer(o.db, { rule: "peer_pairing", command: "ended by the peer's refusal", detail: `${p.peerName}'s workbench refused a message because it ended the pairing ${p.id}; the refusal is signed with its key, so the pairing has ended here too.`, byPeer: p });
       else logPeer(o.db, { rule: "peer_protocol", command: `${e.kind.replace("_", " ")} received`, detail: `${p.peerName}'s workbench sent a ${e.kind.replace("_", " ")} on pairing ${p.id}.${acked}`, byPeer: p });
       try {
