@@ -484,3 +484,14 @@ test("when every agent on the list reaches its limit, the task switches once per
   await pause(400);
   assert.equal(claude.starts.length + codex.starts.length, 3, "nothing more is started without the owner");
 });
+
+test("the hand-off migration rebuilds the action log with every trigger it had: append-only, and the rule that a run given a peer's message names that peer", (t) => {
+  const dir = tempDir("bb-hand-schema-");
+  const db = openStore(path.join(dir, "home"));
+  t.after(() => {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const triggers = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'action_log' ORDER BY name").all().map((row) => String(row.name));
+  assert.deepEqual(triggers, ["action_log_no_delete", "action_log_no_update", "action_log_peer_asked"]);
+});
