@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type RunSourceRef, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
-import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
+import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";

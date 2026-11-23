@@ -191,7 +191,7 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
   // A run made from a task or a chat sends the note alone: no spec file and no issue (blocked() has checked the note).
   const source = sourceOf(f);
-  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, source: source.ref };
+  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", source: source.ref };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
