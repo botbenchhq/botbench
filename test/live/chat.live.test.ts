@@ -28,7 +28,7 @@ test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a re
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
   const turns = createTurns({ db, home, driver: claude, broker, onEvent: () => {} });
-  const chat = createChat({ db, home, turns, claude, agents: { codex: new CodexDriver(), grok: new GrokDriver(), antigravity: new AntigravityDriver() }, onEvent: () => {} });
+  const chat = createChat({ db, home, turns, claude, agents: { codex: new CodexDriver(), grok: new GrokDriver(), antigravity: new AntigravityDriver({ dataDir: path.join(os.homedir(), ".botbench") }) }, onEvent: () => {} });
   t.after(async () => {
     await chat.close();
     await turns.close();

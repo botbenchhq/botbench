@@ -119,7 +119,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const driver = options.claudeCode ?? new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
   // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
-  const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
+  const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver({ dataDir: home, ...configured(ANTIGRAVITY) }) };
   let broker: Broker;
   let push: Push;
   try {
@@ -162,7 +162,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const chatClaude = options.chatClaude ?? driver;
   const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
-  const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
+  const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, broker, onEvent: stream.notify });
   // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
   const peers = createPeers({ db, config, github });
   // Checking a task together with another workbench's open pull request, in a temporary copy (engine/combined.ts).

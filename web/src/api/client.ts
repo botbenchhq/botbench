@@ -205,6 +205,8 @@ export interface ConnectState {
   terminalCommand: string;
   /** The agent's own sign-out, as Disconnect runs it. */
   signOutCommand: string;
+  /** The sign-in is one Botbench keeps in its own folder, apart from the agent's in a terminal (Antigravity): Disconnect removes it there. */
+  keptByBotbench: boolean;
   /** The page shows a code after sign-in, to be pasted back here. */
   takesCode: boolean;
   state: "idle" | "starting" | "waiting" | "checking" | "succeeded" | "failed" | "cancelled";

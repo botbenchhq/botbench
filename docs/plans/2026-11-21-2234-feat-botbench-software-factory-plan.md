@@ -72,7 +72,7 @@ These steer choices throughout the build. They are not requirements of this plan
 **Models and subscriptions**
 
 - R7. Each role (planner, implementer, reviewer) is assigned a driver and model, changeable per run. Botbench supports Claude Code, Codex, Gemini CLI and Grok.
-  - Note (2026-11-23): the shipped driver for Gemini is Antigravity (`agy`), used as a reviewer and in chat, with no tools yet (#132).
+  - Note (2026-11-23): the shipped driver for Gemini is Antigravity (`agy`), used as a reviewer and in chat; since #132 with its own tools, through its ACP server (`agy acp`) on Botbench's own Google profile.
 - R8. Drivers use the login the owner already has in each CLI. Botbench never asks for, reads, or stores subscription credentials, and never causes a subscription session to be billed as metered API use.
 - R25. The owner chooses the model for a task, and for each role of a run, in the client. The choices offered are the ones that driver accepts, and the choice made is shown on the task.
 - R26. The owner connects a subscription from the client. Botbench starts that vendor CLI's own sign-in and shows the owner the link or code it gives; the owner signs in with the vendor (with Google or however that vendor does it), and the CLI keeps its own credentials. Botbench never sees, stores or forwards them.
@@ -652,7 +652,7 @@ One end-to-end test per step, run on two installations. P1 to P3 need no new tra
 - With `GEMINI_API_KEY` set in the parent, the child environment does not contain it.
 **Verification:** A real task builds on Gemini CLI in the client.
 
-**Note (2026-11-23):** the shipped driver is Antigravity (`agy`), used as a reviewer and in chat, with no tools yet (#132). It is not an ACP client and cannot build.
+**Note (2026-11-23):** the shipped driver is Antigravity (`agy`), used as a reviewer and in chat; since #132 with its own tools, through its ACP server (`agy acp`) on Botbench's own Google profile. It is not an ACP client and cannot build.
 
 ### U19. Grok driver
 

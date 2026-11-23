@@ -221,6 +221,8 @@ export function roleProblem(role: string, agent: string, can: DriverCapabilities
   const name = agentName(agent);
   if (role === IMPLEMENTER && !(can.permissionRequests && can.edits)) return `${name} cannot be the builder: in Botbench it cannot ask you for permission or edit files under Botbench's rules. It can review.`;
   if (role === PLANNER && !can.permissionRequests) return `${name} cannot be the planner: in Botbench it cannot ask you before it runs a command. It can review.`;
+  // A planner's session is resumed for each round of the plan; an agent of one turn per session cannot be one.
+  if (role === PLANNER && !can.resume) return `${name} cannot be the planner: in Botbench it answers one message per session, and a plan takes more. It can review.`;
   if (role === REVIEWER && !can.interrupt) return `${name} cannot review: Botbench could not stop it.`;
   return null;
 }
