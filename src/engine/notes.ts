@@ -124,6 +124,7 @@ export const NOTE_REFUSED: Record<Exclude<TaskStatus, "building">, string> = {
   reviewing: "Claude Code has finished this task and it is being reviewed, so a note can no longer reach it.",
   awaiting_decision: "Claude Code has finished this task and it is ready for review, so a note can no longer reach it.",
   failed: "This task failed, so a note can no longer reach Claude Code.",
+  waiting_for_limit: "This task is waiting for Claude Code's usage limit to reset, so a note cannot reach it now. You can send one once Claude Code is working on it again.",
   interrupted: "This task is stopped, so a note cannot reach Claude Code. Resume it first, if it offers Resume.",
   cancelled: "This task was cancelled, so a note can no longer reach Claude Code.",
   accepted: "This task was accepted, so a note can no longer reach Claude Code.",

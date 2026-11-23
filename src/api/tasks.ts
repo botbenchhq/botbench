@@ -5,7 +5,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
-import { repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
+import { repositoryClaims, repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
 import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
@@ -44,6 +44,8 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
     // What the checks found: "passed", "failed" (one failed or ran out of time), "none" (no checks are set up), or null before.
     checks,
+    // For a task waiting for its builder's usage limit: when Botbench tries again, as stored. Null for every other task.
+    retryAt: status === "waiting_for_limit" ? task.retryAt : null,
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,
@@ -298,7 +300,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const given = url.searchParams.getAll("path");
       if (given.length !== 1 || given[0]!.includes("\0") || !path.isAbsolute(given[0]!)) throw new TaskError(400, 'Give one "path": the full path of a repository, starting with /.');
       // What the owner's config offers for this repository. It grants nothing: a task gets only what its own start request lists.
-      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [], hasChecks: (repositorySettings(ctx.config, given[0]!).checks ?? []).length > 0 });
+      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [], hasChecks: (repositorySettings(ctx.config, given[0]!).checks ?? []).length > 0, claimIssues: repositoryClaims(ctx.config, given[0]!) });
     } else if (method === "GET" && one) {
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");
@@ -309,7 +311,11 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
       const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note });
       ctx.stream.announceTask(decided.task);
-      if (decided.run !== null) ctx.stream.announceRun(decided.run);
+      if (decided.run !== null) {
+        ctx.stream.announceRun(decided.run);
+        // A run the decision ended may release its issue claim (engine/claims.ts).
+        ctx.claims.runChanged(decided.run);
+      }
       json(res, 200, await detail(ctx, decided.task));
     } else if (method === "POST" && discard) {
       const body = await readJsonBody(req);

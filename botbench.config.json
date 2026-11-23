@@ -10,6 +10,6 @@
     "implementer": { "driver": "claude-code" },
     "reviewer": { "driver": "claude-code" }
   },
-  "autonomy": { "offerStandingAfter": 3, "mode": "manual", "maxRefineRounds": 2, "silenceLimitSeconds": 600 },
+  "autonomy": { "offerStandingAfter": 3, "mode": "manual", "maxRefineRounds": 2, "silenceLimitSeconds": 600, "usageLimitWaitSeconds": 1800 },
   "protectedPaths": ["test/recordings/"]
 }

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stations } from "../web/src/components/run-status.ts";
+import { runSentence, stations } from "../web/src/components/run-status.ts";
 import type { RunTask, TaskStatus } from "../web/src/api/client.ts";
 
 // A run's three stations, from the run's state and its tasks' and nothing else (the design system's run timeline).
 
-const task = (status: TaskStatus): RunTask => ({ id: 1, status, title: "t", reason: null, attemptId: null, branch: null, checks: null, waitingOnApproval: false, evidence: [], commandLists: [], decision: null, pullRequest: { choice: "branch", state: "none", number: null, url: null, adopted: false, prState: null, pushed: false, repository: null, base: null, remote: null, branch: null, problem: null, at: null }, leftovers: null, resumeNote: null });
+const task = (status: TaskStatus): RunTask => ({ id: 1, status, title: "t", reason: null, attemptId: null, branch: null, checks: null, retryAt: null, waitingOnApproval: false, evidence: [], commandLists: [], decision: null, pullRequest: { choice: "branch", state: "none", number: null, url: null, adopted: false, prState: null, pushed: false, repository: null, base: null, remote: null, branch: null, problem: null, at: null }, leftovers: null, resumeNote: null });
 const run = (status: Parameters<typeof stations>[0]["status"], tasks: RunTask[] = [], more: { attemptId?: number | null; waitingOnApproval?: boolean } = {}) =>
   stations({ status, tasks, attemptId: more.attemptId === undefined ? 1 : more.attemptId, waitingOnApproval: more.waitingOnApproval ?? false });
 const flat = (shown: ReturnType<typeof stations>) => shown && { at: shown.current, stations: shown.stations.map((s) => `${s.name}: ${s.state}: ${s.words}`) };
@@ -25,6 +25,14 @@ test("building: Build counts the tasks that finished, and Decide waits once a ta
     stations: ["Plan: done: Done", "Build: running: Working · 1 of 3 tasks finished", "Decide: waiting: 1 task ready for review"],
   });
   assert.deepEqual(flat(run("running", [task("building")], { waitingOnApproval: true }))?.stations.slice(1), ["Build: waiting: Needs input · 0 of 1 task finished", "Decide: not-started: Not started"]);
+});
+
+test("building: a task waiting for a usage limit is not counted as finished, and the run says it waits for it in plain words", () => {
+  assert.deepEqual(flat(run("running", [task("awaiting_decision"), task("waiting_for_limit"), task("queued")]))?.stations[1], "Build: running: Working · 1 of 3 tasks finished");
+  assert.equal(
+    runSentence({ status: "running", reason: null, waitingOnApproval: false, tasks: [task("awaiting_decision"), task("waiting_for_limit"), task("queued")], attemptId: 1, mode: "manual" }),
+    "Waiting for a usage limit to reset. Botbench tries the task again by itself, and the tasks after it wait. 1 of 3 tasks finished.",
+  );
 });
 
 test("every task ended: Decide waits for the tasks ready for review, and a run with none built says Build failed, never Done", () => {

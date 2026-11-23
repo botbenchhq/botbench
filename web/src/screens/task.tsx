@@ -14,10 +14,11 @@ import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { TaskNote } from "../components/task-note.tsx";
-import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
+import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
+import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
@@ -267,7 +268,21 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
                 )}
                 {/* The model is named above when it is not the one asked for; the transcript adds no row of its own for it. */}
-                <Transcript events={shown} working={working} modelName={nameOf} modelDiffers={() => null} />
+                <Transcript
+                  events={shown}
+                  working={working}
+                  modelName={nameOf}
+                  modelDiffers={() => null}
+                  after={
+                    task.status === "waiting_for_limit" && (
+                      <li data-testid="usage-limit-wait" className="ds-message">
+                        <p role="status" className="ds-message__body">
+                          {waitingWords(task.retryAt)}
+                        </p>
+                      </li>
+                    )
+                  }
+                />
               </section>
             ) : (
               attemptId === null && (
@@ -297,6 +312,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
             )}
+            {task.checks !== null && task.checks !== "none" && <CheckTogether taskId={task.id} repo={task.repo} ready={task.status === "awaiting_decision"} onSignedOut={onSignedOut} />}
 
             {task.reviewer !== null && (task.review !== null || task.status === "reviewing") && (
               <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">

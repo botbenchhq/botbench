@@ -27,6 +27,12 @@ export interface DriverCapabilities {
   confinedCommands?: boolean;
   /** False when the CLI is started with no tools at all and sees only what it is sent. Left out: it has tools. */
   tools?: boolean;
+  /**
+   * The CLI cannot ask Botbench before it acts, and in a chat it gets its own tools inside a sandbox Botbench draws
+   * around it (`chatTools`): it reads, changes and runs commands in the chat's folder, and reads an attached repository
+   * without changing it. Left out: in a chat it answers from the conversation alone, in a new empty folder.
+   */
+  chatTools?: boolean;
 }
 
 /** How the CLI is billed, taken from the CLI's own account of its login. */
@@ -111,6 +117,17 @@ export interface StartAttemptOptions {
    * with `respondToRequest`. Without it, everything the CLI would ask is denied.
    */
   gate?: { socketPath: string; secret: string };
+  /**
+   * A chat turn of a CLI with the `chatTools` capability: `cwd` is the chat's folder, which it may read, change and run
+   * commands in, and `readable` the places it may read and never change (an attached repository and its git folder).
+   * Its commands reach no network. Not with `readOnly`, `allowEdits` or `gate`.
+   */
+  chatTools?: { readable: readonly string[] };
+  /**
+   * The agent's own web search, which its provider runs on its own servers (Codex, Grok), as the owner's setting "Web
+   * access in chat" allows it. It never gives the agent's commands a network. Off when left out.
+   */
+  webSearch?: boolean;
 }
 
 /** One CLI process working on one attempt. */

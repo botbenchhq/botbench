@@ -3,9 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
-import { createBroker, type Broker } from "../../src/approvals/broker.ts";
+import { actionLog, createBroker, type Broker } from "../../src/approvals/broker.ts";
 import { CODEX_CAPABILITIES } from "../../src/drivers/codex.ts";
 import { RESTART_STOPPED } from "../../src/engine/recover.ts";
+import { setChatWebAccess } from "../../src/approvals/web-access.ts";
+import { parseIssueView } from "../../src/github.ts";
+import { capIssue, storeIssue } from "../../src/engine/intake.ts";
 import { taskReview } from "../../src/engine/review.ts";
 import { MAX_REVIEW_DIFF, parseVerdict, PLANNER, IMPLEMENTER, REVIEWER, reviewerPrompt, roleProblem, sameModelProblem, type PlanTask } from "../../src/engine/roles.ts";
 import { createRun, createRuns, getRun, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
@@ -13,6 +16,7 @@ import type { StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, type Tasks } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
 import { buildReplayDriver, type BuildReplay } from "../support/replay-build.ts";
+import { ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../support/replay-issue.ts";
 import { reviewReplayDriver, type ReviewReplay, type ReviewSession } from "../support/replay-review.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
@@ -76,6 +80,38 @@ async function builtTask(e: Line, reviewer?: { agent: string; model: string | nu
   return tasks[0]!.id;
 }
 
+test("CRITICAL: a reviewer that cannot ask gets no web search in a run started from a GitHub issue, whatever Web access says, and on Off or Ask in any run; only Allow turns it on for a run that read no outside text", { skip: NO_SANDBOX }, async (t) => {
+  const e = await line(t, "review");
+  const view = parseIssueView(loadIssueCapture().outputs.issue.result.stdout, ISSUE_REPO, ISSUE_NUMBER);
+  const issue = storeIssue(e.db, fs.realpathSync(e.repo), capIssue(view, "github.com/cli/cli"));
+  const fromIssue = storePlan(e.db, createRun(e.db, { repo: e.repo, baseCommit: e.base, issue: { fetchId: issue.id, allowHosts: false }, mode: "manual", reviewer: { agent: "codex", model: "gpt-6-luna" } }).id, ONE);
+  e.runs.approve(fromIssue.id, fromIssue.planVersion);
+  await e.tasks.idle();
+  assert.equal(e.reviewer.started.length, 1);
+  assert.notEqual(e.reviewer.started[0]!.webSearch, true, "a run from an issue always asks, and a reviewer cannot ask: no search");
+  assert.doesNotMatch(e.reviewer.prompts[0]!, /your own web search/);
+  for (const setting of ["off", "ask"] as const) {
+    setChatWebAccess(e.db, setting);
+    await builtTask(e);
+    assert.notEqual(e.reviewer.started.at(-1)!.webSearch, true, setting);
+  }
+});
+
+test("CRITICAL: every command a reviewer that cannot ask runs is in the append-only action log under its task, once, as run in its own sandbox without asking", { skip: NO_SANDBOX }, async (t) => {
+  // Constructed lines in the form `codex exec --json` 0.171.0 prints, then the recorded review's own lines: no Codex ran.
+  const review = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "..", "recordings", "codex-review.json"), "utf8")).sessions.review.lines as string[];
+  const ran = [
+    '{"type":"item.started","item":{"id":"item_9","type":"command_execution","command":"/bin/zsh -lc \'git diff --stat\'","aggregated_output":"","exit_code":null,"status":"in_progress"}}',
+    '{"type":"item.completed","item":{"id":"item_9","type":"command_execution","command":"/bin/zsh -lc \'git diff --stat\'","aggregated_output":" hello.txt | 1 +","exit_code":0,"status":"completed"}}',
+  ];
+  const e = await line(t, "review", { reviewer: reviewReplayDriver({ lines: [review[0]!, ...ran, ...review.slice(1)] }) });
+  const id = await builtTask(e);
+  const task = getTask(e.db, id)!;
+  const logged = actionLog(e.db, id).filter((entry) => entry.rule === "sandboxed");
+  assert.deepEqual(logged.map((entry) => [entry.tool, entry.command, entry.cwd]), [["shell", "/bin/zsh -lc 'git diff --stat'", task.worktreePath]]);
+  assert.match(logged[0]!.detail ?? "", /Codex cannot ask you, so it ran this without asking, kept by its own sandbox to the task's copy, read-only/);
+});
+
 test("R5: after the checks, Codex reads the task's title, criteria and diff, and its critique is stored on the task with its verdict; then the task is Ready for review", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, "review");
   const id = await builtTask(e);
@@ -95,6 +131,8 @@ test("R5: after the checks, Codex reads the task's title, criteria and diff, and
   assert.deepEqual(started.confinement.allowedHosts, []);
   assert.ok(started.confinement.gitDir, "the repository's git folder is named, to be read and never written");
   assert.equal(started.model, "gpt-6-luna");
+  // Its own web search, which OpenAI runs, as "Web access in chat" allows it (Allow until the owner changes it).
+  assert.equal(started.webSearch, true);
 
   const prompt = e.reviewer.prompts[0]!;
   assert.match(prompt, /Add a greeting file/);

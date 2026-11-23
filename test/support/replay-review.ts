@@ -28,6 +28,13 @@ import type { DriverEvent, TurnEndReason } from "../../src/drivers/events.ts";
  */
 
 export type ReviewSession = "review" | "signed-out" | "second-review" | "hostile" | "checked-review" | "hang";
+/**
+ * Lines a test wrote in the form `codex exec --json` prints, for what no capture holds (a command the reviewer ran). They
+ * go through the same reader; the test that uses them says they are constructed, and no test may read them as what Codex did.
+ */
+export interface ConstructedReview {
+  lines: readonly string[];
+}
 
 interface Recording {
   cli: string;
@@ -53,16 +60,16 @@ const now = (): string => new Date().toISOString();
  * A Codex reviewer whose every attempt plays `session`; given a list, its `n`th attempt plays the `n`th (the last for
  * any after). With `problem`, the probe says Codex cannot be used and nothing starts.
  */
-export function reviewReplayDriver(sessions: ReviewSession | readonly ReviewSession[], o: { problem?: string } = {}): ReviewReplay {
+export function reviewReplayDriver(sessions: ReviewSession | ConstructedReview | readonly ReviewSession[], o: { problem?: string } = {}): ReviewReplay {
   const recording = recorded();
-  const script = typeof sessions === "string" ? [sessions] : sessions;
+  const script: readonly (ReviewSession | ConstructedReview)[] = typeof sessions === "string" || !Array.isArray(sessions) ? [sessions as ReviewSession | ConstructedReview] : sessions;
   const started: StartAttemptOptions[] = [];
   const prompts: string[] = [];
   let closed = 0;
   const probe = (): Promise<DriverProbe> =>
     Promise.resolve({ installed: true, version: "0.171.0", supported: true, signedIn: o.problem === undefined, billing: "subscription", problem: o.problem ?? null });
 
-  const open = (db: DatabaseSync, attemptId: number, session: ReviewSession): DriverSession => {
+  const open = (db: DatabaseSync, attemptId: number, session: ReviewSession | ConstructedReview): DriverSession => {
     const listeners = new Set<(event: DriverEvent) => void>();
     let stop: (() => void) | null = null;
     let playing: Promise<TurnEndReason> | null = null;
@@ -75,7 +82,7 @@ export function reviewReplayDriver(sessions: ReviewSession | readonly ReviewSess
       prompts.push(prompt);
       record({ type: "user_prompt", text: prompt });
       const stopped = new Promise<"stopped">((resolve) => (stop = () => resolve("stopped")));
-      const lines = session === "hang" ? recording.review.lines.slice(0, 2) : recording[session].lines;
+      const lines = typeof session === "object" ? session.lines : session === "hang" ? recording.review.lines.slice(0, 2) : recording[session].lines;
       for (const event of lines.flatMap(parseCodexLine)) {
         if ((await Promise.race([stopped, new Promise((resolve) => setImmediate(resolve))])) === "stopped") break;
         if (event.type === "turn_ended") {

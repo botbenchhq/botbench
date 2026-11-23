@@ -20,6 +20,13 @@ test("the reviewer must say what it checked, even with no finding: the verdict l
   }
 });
 
+test("a reviewer with tools is told the path of the task's copy, that it changes none of the task's files, and whether it may search the web", () => {
+  const prompt = reviewerPrompt({ task, files: ["calc.py"], diff: "x", cut: null, copy: "/data/worktrees/run-1/task-1", webSearch: true });
+  assert.match(prompt, /The task's copy of the repository, at the task's branch, is the folder \/data\/worktrees\/run-1\/task-1; it may be your working folder or beside it\./);
+  assert.match(prompt, /you cannot create, change or delete any file of the task's, and your commands reach no network, though you may use your own web search\./);
+  assert.doesNotMatch(reviewerPrompt({ task, files: ["calc.py"], diff: "x", cut: null, copy: "/c" }), /web search/);
+});
+
 test("a reviewer with tools keeps being told where its read-only copy is", () => {
   const prompt = reviewerPrompt({ task, files: ["calc.py"], diff: "x", cut: { shown: 1, total: 2 } });
   assert.match(prompt, /You may read files and run read-only commands there/);
