@@ -3,7 +3,7 @@ import type http from "node:http";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { DriverUnavailableError, type Driver } from "../drivers/contract.ts";
 import { IMPLEMENTER, PLANNER, REVIEWER, roleProblem } from "../engine/roles.ts";
-import { chatScopeWords } from "./chat.ts";
+import { chatScopeWords, readsChatRepository } from "./chat.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { eventsAfter, parseEventId } from "./stream.ts";
 import { TurnError } from "./turns.ts";
@@ -76,7 +76,7 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       const fresh = url.searchParams.get("fresh") === "1";
       const check = fresh ? { ...(await ctx.agentChecks.fresh()), checking: false } : await ctx.agentChecks.read();
       const byName = new Map([ctx.driver, ...Object.values(ctx.reviewers)].filter((d): d is Driver => d !== undefined).map((d) => [d.name, d]));
-      const agents = check.agents.map((a) => ({ ...a, roles: agentRoles(ctx, byName.get(a.agent)!), chat: chatScopeWords(byName.get(a.agent)!) }));
+      const agents = check.agents.map((a) => ({ ...a, roles: agentRoles(ctx, byName.get(a.agent)!), chat: chatScopeWords(byName.get(a.agent)!), readsRepository: readsChatRepository(byName.get(a.agent)!) }));
       // With the cap on rounds of fixes a run started now gets, which New run shows beside Review.
       json(res, 200, { agents, checkedAt: check.checkedAt, checking: check.checking, maxRefineRounds: maxRefineRounds(ctx.config) });
     } else if (method === "GET" && /^\/api\/agents\/[a-z-]{1,40}\/models$/.test(pathname)) {

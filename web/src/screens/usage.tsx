@@ -110,6 +110,18 @@ function RunTable({ runs }: { runs: UsageReport["runs"] }) {
 }
 
 export function UsageScreen({ onSignedOut }: { onSignedOut: () => void }) {
+  return (
+    <Frame current={null} back={{ href: "#/settings", label: "Settings" }}>
+      <Page>
+        <PageHeader title="Usage" />
+        <Usage onSignedOut={onSignedOut} />
+      </Page>
+    </Frame>
+  );
+}
+
+/** What the Usage screen holds below its title: on its own screen, and as the Usage section of the two-pane Settings. */
+export function Usage({ onSignedOut }: { onSignedOut: () => void }) {
   const [report, setReport] = useState<UsageReport | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const modelName = useModelNames(onSignedOut);
@@ -130,9 +142,7 @@ export function UsageScreen({ onSignedOut }: { onSignedOut: () => void }) {
   }, [onSignedOut]);
 
   return (
-    <Frame current={null} back={{ href: "#/settings", label: "Settings" }}>
-      <Page>
-        <PageHeader title="Usage" />
+    <>
         {failed !== null && (
           <Alert tone="error" role="alert">
             {failed}
@@ -190,7 +200,6 @@ export function UsageScreen({ onSignedOut }: { onSignedOut: () => void }) {
             </section>
           </div>
         )}
-      </Page>
-    </Frame>
+    </>
   );
 }

@@ -117,6 +117,13 @@ export function nothingToReviewMessage(run: { id: number }): PushMessage {
 export function usageLimitMessage(task: { id: number }): PushMessage {
   return { title: "A task is waiting for a usage limit", path: `/#/tasks/${task.id}` };
 }
+/**
+ * A watched repository's issue was proposed as a run (engine/watch.ts): Work, where it can be started or dismissed. Only
+ * this fixed sentence: never the issue's title, text, author or label, which people outside the project wrote.
+ */
+export function issueReadyMessage(): PushMessage {
+  return { title: "An issue is ready to start", path: "/#/work" };
+}
 /** The notification each state a task reaches sends; the others send none. A task the owner's own cancel ended sends none. */
 const TASK_MESSAGES: Partial<Record<string, (task: { id: number }) => PushMessage>> = { awaiting_decision: readyMessage, failed: failedMessage, interrupted: stoppedMessage, waiting_for_limit: usageLimitMessage };
 export function testMessage(): PushMessage {
@@ -159,6 +166,11 @@ export interface Push {
   taskChanged(task: { id: number; status: string }): void;
   /** The engine's listener: a planned run that is done with no task accepted or rejected notifies every device once. */
   runChanged(run: { id: number; status: string }): void;
+  /**
+   * The issue watch's listener: an issue newly proposed as a run notifies every device once. The watch calls it once per
+   * issue, when the issue's row is first written to the seen table, so a poll that sees it again sends none.
+   */
+  issueProposed(): void;
   /** Resolves when every message in flight has been sent or has failed. */
   idle(): Promise<void>;
 }
@@ -293,9 +305,17 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
     }
   };
 
+  const issueProposed = (): void => {
+    try {
+      sendAll(issueReadyMessage());
+    } catch (err) {
+      console.error(`A notification for a proposed issue could not be started: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const idle = async (): Promise<void> => {
     while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
   };
 
-  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, idle };
+  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, issueProposed, idle };
 }

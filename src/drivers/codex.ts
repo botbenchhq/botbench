@@ -56,6 +56,9 @@ export const CODEX = "codex";
 /**
  * Codex here does one turn: it cannot resume, cannot put a permission request to the owner, and never edits a task's
  * copy. In a chat it has its own tools, kept by its own sandbox to the chat's folder. It can be stopped.
+ * `codex app-server` does send approval requests, but on 0.171.0 a command the client accepts runs outside Codex's
+ * sandbox, so routing them to Botbench's broker would unconfine every allowed command; it is not used
+ * (docs/security/codex-app-server-check.md).
  */
 export const CODEX_CAPABILITIES: DriverCapabilities = { resume: false, interrupt: true, permissionRequests: false, edits: false, chatTools: true };
 

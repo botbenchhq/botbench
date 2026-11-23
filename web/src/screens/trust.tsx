@@ -49,6 +49,18 @@ const directoryWords = (cwd: string): string => (cwd === "." ? "The top folder o
  * that takes it back, and the action log, newest first.
  */
 export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
+  return (
+    <Frame current={null} back={{ href: "#/settings", label: "Settings" }}>
+      <Page>
+        <PageHeader title="Permissions" />
+        <Permissions onSignedOut={onSignedOut} />
+      </Page>
+    </Frame>
+  );
+}
+
+/** What the Permissions screen holds below its title: on its own screen, and as the Permissions section of the two-pane Settings. */
+export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
   const [grants, setGrants] = useState<StandingGrant[] | null>(null);
   const [offerAfter, setOfferAfter] = useState<number | null>(null);
   const [log, setLog] = useState<{ entries: LogEntry[]; older: boolean } | null>(null);
@@ -111,9 +123,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
   };
 
   return (
-    <Frame current={null} back={{ href: "#/settings", label: "Settings" }}>
-      <Page>
-        <PageHeader title="Permissions" />
+    <>
         {problem !== null && (
           <Alert tone="error" role="alert">
             {problem}
@@ -212,7 +222,6 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
             </div>
           )}
         </section>
-      </Page>
-    </Frame>
+    </>
   );
 }

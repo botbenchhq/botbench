@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
+import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
@@ -144,7 +144,7 @@ const inRepository = (repo: RepoPick): repo is { kind: "known" | "other"; path: 
  * a chat prompt; with a repository it starts a task or plans a run, and opens its screen. `start` comes from New task
  * and New run, which arrive with that kind chosen.
  */
-export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSignedOut: () => void }) {
+export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kind | null; proposal?: number | null; onSignedOut: () => void }) {
   const [driver, setDriver] = useState<DriverState | null>(null);
   const [driverFailed, setDriverFailed] = useState(false);
   const [conversation, setConversation] = useState<number[]>(loadConversation);
@@ -167,7 +167,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
 
   // What the composer holds, starting from what this device remembers.
   const [remembered] = useState(() => readRemembered(loadComposer()));
-  const arrived = useMemo(() => arrive(remembered, start), [remembered, start]);
+  // Come from Start on a proposed issue, the repository is the issue's: the repository view is not opened for it.
+  const arrived = useMemo(() => (proposal === null ? arrive(remembered, start) : { ...arrive(remembered, start), opens: null }), [remembered, start, proposal]);
   const [repo, setRepo] = useState<RepoPick>(arrived.repo);
   const [otherPath, setOtherPath] = useState(remembered.repo.kind === "other" ? remembered.repo.path : "");
   const [kind, setKind] = useState<Kind>(arrived.kind);
@@ -189,8 +190,15 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const review = useReviewChoice(onSignedOut, remembered.review, runWanted);
   const known = useKnownRepositories(onSignedOut);
   const repository = useRepository(inRepository(repo) ? repo.path.trim() : "", onSignedOut);
+  /** A repository the chat lets its agents read, never change. Not remembered: each is chosen for the chat at hand. */
+  const [readPick, setReadPick] = useState<ReadPick>({ kind: "none" });
+  const [readOther, setReadOther] = useState("");
+  const readPath = repo.kind === "none" && readPick.kind !== "none" ? readPick.path.trim() : "";
+  const reading = useRepository(readPath, onSignedOut);
+  /** The issue proposed on Work that Start was chosen on, once read: its repository and number. */
+  const [preset, setPreset] = useState<{ repo: string; number: number } | null>(null);
   // Only a run can start from an issue, and only in a usable repository whose remote is on GitHub.
-  const issue = useIssueChoice(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", runWanted, onSignedOut);
+  const issue = useIssueChoice(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", runWanted, onSignedOut, preset);
   // What other workbenches have in flight on the repository's remote: warnings only, never a reason Send waits.
   const peers = usePeersOf(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", onSignedOut);
 
@@ -241,6 +249,37 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   useEffect(() => {
     if (arrived.opens !== null) openSheet(arrived.opens);
   }, [arrived.opens]);
+
+  // Coming from Start on an issue proposed on Work: a run in the issue's repository, the issue looked up and attached in
+  // the From an issue row (components/issue-choice.tsx), which opens once it is offered. Nothing is sent until Send.
+  useEffect(() => {
+    if (proposal === null) return;
+    let live = true;
+    getProposal(proposal).then(
+      (found) => {
+        if (!live) return;
+        setOtherPath(found.repoPath);
+        setRepo({ kind: "other", path: found.repoPath });
+        setKind("run");
+        setPreset({ repo: found.repoPath, number: found.number });
+      },
+      (err: unknown) => {
+        if (!live) return;
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setError(err instanceof ApiError ? err.message : "The proposed issue could not be read: Botbench could not be reached.");
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [proposal, onSignedOut]);
+  const issueOffered = issue.source.state === "offered";
+  const presetOpened = useRef(false);
+  useEffect(() => {
+    if (preset === null || !issueOffered || presetOpened.current) return;
+    presetOpened.current = true;
+    openSheet("issue");
+  }, [preset, issueOffered]);
 
   /** Dictation: offered only when the Mac can transcribe and this browser can record. */
   const [canDictate, setCanDictate] = useState(false);
@@ -415,7 +454,14 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     commandTyped: repository.listed !== null && repository.adding.trim() !== "",
     hasChecks: repository.listed?.hasChecks ?? null,
     issue: kind === "run" ? issue.attached : null,
+    read: { pick: readPick, status: reading.status },
+    agentsChecking: agents.offer.checking,
+    // Claude Code is never given a repository in a chat; another agent reads one as the server said (src/api/chat.ts).
+    ...(targets.ok ? { asked: targets.targets.map((t) => ({ name: agentName(t.agent), reads: t.agent === CLAUDE ? false : (offered?.find((o) => o.agent === t.agent)?.readsRepository ?? null) })) } : {}),
   };
+  /** The agents that read a repository attached to a chat, by name, as their last check said. */
+  const readers = (offered ?? []).filter((o) => o.readsRepository === true).map((o) => o.name);
+  const readAttached = repo.kind === "none" && readPick.kind !== "none";
   const chatting = !inRepository(repo);
   const peerWarnings = chatting ? [] : issueWarnings(peers, { attached: kind === "run" ? (issue.attached?.number ?? null) : null, message: prompt });
   // A run may take over another workbench's claim on its issue once the claim is old (Peers P3); only those still offered are sent.
@@ -428,12 +474,12 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const showStop = chatting && running;
 
   /** Send a chat message to the agents asked, or, with `compare`, ask one to compare a round's answers. */
-  const sendChat = (text: string, to: readonly ChatTarget[], compare?: number): void => {
+  const sendChat = (text: string, to: readonly ChatTarget[], compare?: number, repository?: string): void => {
     setError(null);
     setStarting(true);
     // Whoever sends wants to see the answer: the transcript follows again.
     jumpToLatest();
-    const started = sendChatMessage({ prompt: text, conversation: conversationRef.current, agents: to, ...(compare === undefined ? {} : { compare }) });
+    const started = sendChatMessage({ prompt: text, conversation: conversationRef.current, agents: to, ...(compare === undefined ? {} : { compare }), ...(repository === undefined ? {} : { repository }) });
     const turns = started.then((replies) => replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
     startRef.current = turns;
     started.then(
@@ -489,7 +535,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, takeOver });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
-    if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets) : undefined;
+    if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets, undefined, action.repository) : undefined;
     if (action.do === "task") return startWork("task", () => startTask(action.repo, action.prompt, action.model, action.preapproved).then(({ taskId }) => `#/tasks/${taskId}`));
     const { do: _, ...run } = action;
     startWork("run", () => startRun(run).then(({ runId }) => `#/runs/${runId}`));
@@ -539,6 +585,8 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     setConversation([]);
     saveConversation([]);
     setActive([]);
+    // A new chat reads no repository until one is chosen for it.
+    setReadPick({ kind: "none" });
     setError(null);
     jumpToLatest();
     promptRef.current?.focus();
@@ -571,6 +619,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const chip = chatting ? chatChip(agents, models) : chipWords(chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }), "Claude Code");
   const values: Record<Row, string> = {
     repository: repoName(repo, known),
+    read: readName(readPick, known),
     kind: kind === "task" ? "One task" : "Plan a run",
     spec: specPath.trim() === "" ? "None" : (specPath.trim().split("/").at(-1) ?? specPath.trim()),
     mode: kind === "task" ? "Manual" : (MODES.find((m) => m.mode === mode)?.name ?? "Reading"),
@@ -749,6 +798,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
               {sendWords(askedCount).line}
             </p>
           )}
+          {!showStop && readAttached && (
+            <p data-testid="read-line" className="ds-composer__reason">
+              {`For the chat to read: ${readName(readPick, known)}. ${READ_ABOUT}`}
+            </p>
+          )}
           {peerWarnings.map((line) => (
             <p key={line} data-testid="peer-warning" className="ds-composer__reason">
               {line}
@@ -821,6 +875,17 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
               setRepo({ kind: "other", path });
             },
             repository,
+            read: {
+              pick: readPick,
+              choose: setReadPick,
+              otherPath: readOther,
+              setOtherPath: (path) => {
+                setReadOther(path);
+                setReadPick({ kind: "other", path });
+              },
+              check: reading,
+              readers,
+            },
             kind,
             setKind,
             specPath,

@@ -1717,6 +1717,81 @@ CREATE TABLE device_pairing (
 `,
   },
   {
+    // The seen table of the issue watch (src/engine/watch.ts, ADR 0008): one row per issue a watched repository's poll
+    // has seen, by its GitHub repository (host/owner/name, compared without case, as GitHub compares them) and number,
+    // written the first time it is seen, so that an
+    // issue already here is never proposed again, after a restart too. `state` is `proposed` until the owner dismisses
+    // it, and a dismissed one stays dismissed: the row is never deleted, its key and when it was first seen never
+    // change, and it leaves `proposed` once. `repo_path` is the watched repository on this Mac it was seen for; `title`
+    // and `author` are outside text as gh listed them when first seen, shown as plain text only. `author_relation` is how
+    // GitHub said the author relates to the repository (author_association) when the issue was first seen, or null when
+    // that read failed.
+    name: "watched_issues",
+    sql: `
+CREATE TABLE watched_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository TEXT NOT NULL COLLATE NOCASE,
+  number INTEGER NOT NULL CHECK (number BETWEEN 1 AND 2147483647),
+  repo_path TEXT NOT NULL,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  author TEXT,
+  author_relation TEXT CHECK (author_relation IS NULL OR author_relation IN ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE')),
+  state TEXT NOT NULL CHECK (state IN ('proposed', 'dismissed')),
+  first_seen_at TEXT NOT NULL,
+  dismissed_at TEXT,
+  UNIQUE (repository, number),
+  CHECK ((state = 'dismissed') = (dismissed_at IS NOT NULL))
+);
+CREATE TRIGGER watched_issues_first_proposed BEFORE INSERT ON watched_issues WHEN NEW.state <> 'proposed'
+BEGIN SELECT RAISE(ABORT, 'a watched issue is first written as proposed'); END;
+CREATE TRIGGER watched_issues_fixed BEFORE UPDATE OF id, repository, number, repo_path, url, title, author, author_relation, first_seen_at ON watched_issues
+BEGIN SELECT RAISE(ABORT, 'a watched issue is kept as it was first seen'); END;
+CREATE TRIGGER watched_issues_dismissed_once BEFORE UPDATE OF state, dismissed_at ON watched_issues WHEN OLD.state <> 'proposed' OR NEW.state <> 'dismissed'
+BEGIN SELECT RAISE(ABORT, 'a watched issue is dismissed once, and never proposed again'); END;
+CREATE TRIGGER watched_issues_no_delete BEFORE DELETE ON watched_issues
+BEGIN SELECT RAISE(ABORT, 'watched issues are never deleted'); END;
+`,
+  },
+  {
+    // `check_fixes`: one row per round of fixes for a failing check that ended (engine/check-fix.ts), kept apart from the
+    // rounds of fixes a review asks for (`refinements`): the round of check evidence it was sent, how many rounds of
+    // fixes for a review the task had then, the builder's attempt, how its turn ended, whether it changed the work, its
+    // reply, the commit it started from and the one Botbench made after it, and the times. Rows are only ever added.
+    // What a task's checks found may now also change for a version of the work such a round made.
+    name: "check fix rounds",
+    sql: `
+CREATE TABLE check_fixes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  round INTEGER NOT NULL CHECK (round >= 1),
+  check_round INTEGER NOT NULL CHECK (check_round >= 1),
+  after_fixes INTEGER NOT NULL CHECK (after_fixes >= 0),
+  attempt_id INTEGER REFERENCES attempts (id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('finished', 'failed', 'stopped')),
+  changed INTEGER NOT NULL CHECK (changed IN (0, 1)),
+  reply TEXT NOT NULL,
+  problem TEXT,
+  from_commit TEXT NOT NULL,
+  head_commit TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  UNIQUE (task_id, round),
+  UNIQUE (task_id, check_round),
+  CHECK ((outcome = 'finished') = (problem IS NULL))
+);
+CREATE TRIGGER check_fixes_no_update BEFORE UPDATE ON check_fixes
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes for a failing check are append-only'); END;
+CREATE TRIGGER check_fixes_no_delete BEFORE DELETE ON check_fixes
+BEGIN SELECT RAISE(ABORT, 'rounds of fixes for a failing check are append-only'); END;
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
+`,
+  },
+  {
     // A question an agent puts to the owner (src/approvals/question.ts) is an approval of its own kind: `question` holds
     // the one question as its card shows it (JSON: its text, header and two to four choices), and `answer` the owner's
     // own text, at most 2000 characters, once. A question belongs to a task or a run's planner, never to a chat; it ends

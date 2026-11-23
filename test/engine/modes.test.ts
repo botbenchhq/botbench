@@ -47,7 +47,8 @@ async function line(t: T, script: readonly BuildTurn[], o: { checks?: StationCom
   const reviewers = o.reviewer ? { codex: reviewReplayDriver("review") } : {};
   const checks = o.checks ?? [cmd("test -f hello.txt")];
   const repoCommands = () => ({ setup: [cmd(o.setup ?? "printf 'hi\\n' > hello.txt")], checks });
-  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", reviewers, repoCommands, ...(o.protectedPaths ? { protectedPaths: () => o.protectedPaths! } : {}), onEvent: () => {}, onTaskChange: () => {} });
+  // A failing check here is about the mode's accept; rounds of fixes for it are tested in check-fix.test.ts.
+  const tasks = createTasks({ db, home, driver: builder, broker, model: "haiku", checkFixRounds: 0, reviewers, repoCommands, ...(o.protectedPaths ? { protectedPaths: () => o.protectedPaths! } : {}), onEvent: () => {}, onTaskChange: () => {} });
   // The planner is a replayed real planner session that gave a plan of three tasks (or the turns the test names).
   const planner = planReplayDriver(loadPlanRecording(), o.planner ?? [THREE_TASKS]);
   const runs = createRuns({ db, home, driver: planner, broker, model: "haiku", implementerModel: "haiku", reviewers, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
@@ -252,7 +253,7 @@ test("fully autonomous: a harmless refused command no longer blocks the accept; 
   assert.equal(decision.reasons, "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src) was not on the always-ask list and would not have reached outside the task's copy.");
 });
 
-test("fully autonomous: beside a harmless refusal, an unconfined one still blocks the accept and is the one named", { skip: NO_SANDBOX }, async (t) => {
+test("fully autonomous: beside a harmless refusal, an unconfined one still blocks the accept and is the one counted; the harmless one is named apart", { skip: NO_SANDBOX }, async (t) => {
   const e = await line(t, ["done"], { hold: [0] });
   const id = await heldTask(e, [
     { command: "ls src", input: { command: "ls src" } },
@@ -261,7 +262,7 @@ test("fully autonomous: beside a harmless refusal, an unconfined one still block
   const task = getTask(e.db, id)!;
   assert.equal(task.status, "awaiting_decision");
   assert.deepEqual(actionLog(e.db, id).filter((entry) => entry.rule === "mode_refused").map((entry) => entry.refusal), ["read_only", "unconfined"]);
-  assert.equal(task.reason, "It needs your review: Botbench refused something an agent asked to do during this task (npm test).");
+  assert.equal(task.reason, "It needs your review: Botbench refused something an agent asked to do during this task (npm test). Botbench also refused, without that keeping it from being accepted: ls src.");
   assert.equal(taskDecision(e.db, id), null);
 });
 

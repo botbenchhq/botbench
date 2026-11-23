@@ -29,6 +29,8 @@ const test = base.extend<{ dir: string; botbench: Botbench; repos: { failing: st
       home: path.join(dir, "home"),
       settings: {
         drivers: { "claude-code": { model: "haiku" } },
+        // The failing check stays failing: this is the station's screen, not the rounds of fixes for a failing check.
+        autonomy: { maxCheckFixRounds: 0 },
         repositories: {
           [repos.failing]: { checks: ["sh check.sh hi", { command: "sh check.sh goodbye", timeoutSeconds: 60 }] },
           [repos.passing]: { checks: ["sh check.sh hi"] },
