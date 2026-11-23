@@ -214,10 +214,14 @@ ${tools ? "You are read-only: you cannot create, change or delete any file, and 
 
 Reply in exactly this form, and keep it short:
 Verdict: looks right
+Checked:
+- what you examined, such as a file, a function or a criterion, and how
+- another thing you examined
+Not checked: what you did not examine, or "nothing left out"
 Findings:
 - path/to/file:line: what is wrong or worth checking
 
-Write "Verdict: concerns" instead when anything should be fixed or checked before the work is accepted. Give one line per finding, with the file and line where you can; write "- none" when there is no finding. Write nothing before the verdict line.
+Write "Verdict: concerns" instead when anything should be fixed or checked before the work is accepted. Always write the "Checked:" heading with two to five lines naming what you examined, then the one line "Not checked:", even when there is no finding. Give one line per finding, with the file and line where you can; write "- none" when there is no finding. Write nothing before the verdict line.
 
 The task:
 <task>

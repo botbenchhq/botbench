@@ -155,6 +155,10 @@ export interface Review {
   outcome: "reviewed" | "failed" | "timed_out" | "stopped";
   verdict: "looks_right" | "concerns" | null;
   text: string;
+  /** The lines under the review's "Checked:" heading: what the reviewer says it examined. Empty when it gave no account. */
+  checked: string[];
+  /** The plain note on a finished review that gave no account of what it checked; null otherwise. */
+  accountNote: string | null;
   /** Why there is no review, in words; null when there is one. */
   problem: string | null;
   diffChars: number;
@@ -204,8 +208,8 @@ export interface Refinement {
   endedAt: string;
 }
 
-/** What the refine loop came to: nothing reviewed, the reviewer satisfied, the models still disagree, or a step did not finish. */
-export type ReviewOutcome = "none" | "satisfied" | "unresolved" | "failed";
+/** What the refine loop came to: nothing reviewed, the reviewer satisfied, it looks right with no account of what was checked, the models still disagree, or a step did not finish. */
+export type ReviewOutcome = "none" | "satisfied" | "unaccounted" | "unresolved" | "failed";
 
 /** The models the driver offers and where the list came from. `default` null means the CLI's own default. */
 export interface ModelList {

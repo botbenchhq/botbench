@@ -8,8 +8,8 @@ import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
 import { repositorySettings } from "../config.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
-import { loopRecord, outcomeLine, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
-import { reviewAssignment, taskReview, taskReviews } from "../engine/review.ts";
+import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
+import { reviewAssignment, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
@@ -55,7 +55,7 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     resumeNote: resumeNote(db, task),
     // The mode of its run (manual for a task started on its own), which says who decides on it.
     mode: runModeOf(db, task.runId),
-    // What the refine loop came to, for the decision point: "none", "satisfied", "unresolved" or "failed", and how many
+    // What the refine loop came to, for the decision point: "none", "satisfied", "unaccounted", "unresolved" or "failed", and how many
     // reviews and rounds of fixes there were. Read from the records; once the task is ready for review it is final.
     ...loopCounts(db, task.id),
     createdAt, updatedAt,
@@ -75,10 +75,13 @@ function loopCounts(db: DatabaseSync, taskId: number): { reviewOutcome: string; 
  */
 export function reviewOf(db: DatabaseSync, taskId: number): Record<string, unknown> {
   const assigned = reviewAssignment(db, taskId);
-  const found = taskReview(db, taskId);
-  const review = found === null ? null : (({ taskId: _, ...rest }) => rest)(found);
-  // Each review and round of fixes, in order; the builder's reply is its own words, read only for its two headings.
-  const reviews = taskReviews(db, taskId).map(({ taskId: _, ...rest }) => rest);
+  // Each review and round of fixes, in order. A review's text is read only for the lines under its "Checked:" heading
+  // (`checked`), and a finished review with none carries the plain note; the builder's reply only for its two headings.
+  const reviews = taskReviews(db, taskId).map(({ taskId: _, ...rest }) => {
+    const checked = rest.outcome === "reviewed" ? parseChecked(rest.text) : [];
+    return { ...rest, checked, accountNote: rest.outcome === "reviewed" && checked.length === 0 ? `${NO_ACCOUNT}.` : null };
+  });
+  const review = reviews.at(-1) ?? null;
   const refinements = taskRefinements(db, taskId).map(({ taskId: _, ...rest }) => {
     const parsed = parseRefineReply(rest.reply);
     return { ...rest, addressed: parsed?.addressed ?? null, notAddressed: parsed?.notAddressed ?? null };

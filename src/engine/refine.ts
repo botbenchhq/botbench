@@ -10,7 +10,8 @@ import { agentName } from "./roles.ts";
  * says it looks right, the run's cap on rounds of fixes is reached, the builder changed nothing in a round, or a review
  * or a round of fixes did not finish; the task is then Ready for review. What either model wrote is data: it is passed
  * to the other model between marked lines and shown to the owner as text. Botbench reads only the verdict line, to
- * decide whether to ask for fixes, and the reply's headings, to count; neither can make Botbench do anything else.
+ * decide whether to ask for fixes, the review's "Checked:" lines, without which a looks-right verdict is not satisfied,
+ * and the reply's headings, to count; none can make Botbench do anything else.
  */
 
 /** The rounds of fixes a run allows when the settings name none. */
@@ -18,8 +19,12 @@ export const DEFAULT_MAX_REFINE_ROUNDS = 2;
 /** The most rounds of fixes the settings may allow: each round is one builder turn and one review more. */
 export const MAX_REFINE_ROUNDS = 5;
 
-/** What the loop did with a task's reviews, for the decision point: nothing reviewed, the reviewer satisfied, the models still disagreeing, or a review or round of fixes that did not finish. */
-export type ReviewOutcome = "none" | "satisfied" | "unresolved" | "failed";
+/**
+ * What the loop did with a task's reviews, for the decision point: nothing reviewed, the reviewer satisfied, the reviewer
+ * saying it looks right without saying what it checked, the models still disagreeing, or a review or round of fixes that
+ * did not finish.
+ */
+export type ReviewOutcome = "none" | "satisfied" | "unaccounted" | "unresolved" | "failed";
 
 /** A review as the loop reads it. */
 export interface LoopReview {
@@ -64,7 +69,19 @@ export function parseFindings(text: string): string[] {
   return at === -1 ? [] : bulletsAfter(lines, at);
 }
 
-const ADDRESSED = /^addressed\s*:$/i;
+/**
+ * What a review says it examined: the lines under its first "Checked:" heading (and any words on that line), without
+ * "- none". Empty when the review gives no such account; such a review cannot satisfy the loop.
+ */
+export function parseChecked(text: string): string[] {
+  const lines = text.split("\n");
+  const at = lines.findIndex((line) => /^checked\s*:/i.test(plain(line)));
+  if (at === -1) return [];
+  const inline = plain(lines[at]!).replace(/^checked\s*:/i, "").trim();
+  return [...(inline === "" || isNone(inline) ? [] : [inline]), ...bulletsAfter(lines, at)];
+}
+
+const ADDRESSED =/^addressed\s*:$/i;
 const NOT_ADDRESSED = /^not addressed,? and why\s*:$/i;
 
 /** The builder's reply read for its closing form: what it addressed and what it did not, with why. Null when the reply does not end in that form. */
@@ -98,8 +115,13 @@ export function reviewOutcome(r: LoopRecord): ReviewOutcome {
   if (last.outcome !== "reviewed") return "failed";
   const fix = fixAfterLastReview(r);
   if (fix !== null && fix.outcome !== "finished") return "failed";
-  return loopVerdict(last) === "looks_right" && fix === null ? "satisfied" : "unresolved";
+  if (loopVerdict(last) !== "looks_right" || fix !== null) return "unresolved";
+  // A verdict alone is not enough: the review must say what it examined.
+  return parseChecked(last.text).length > 0 ? "satisfied" : "unaccounted";
 }
+
+/** The plain note on a review that does not say what it examined. */
+export const NO_ACCOUNT = "The reviewer gave no account of what it checked";
 
 /** "1 round", "2 rounds". */
 export const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -113,6 +135,8 @@ export function outcomeLine(r: LoopRecord): string {
   const first = r.reviews[0]!;
   if (first.outcome !== "reviewed") return `${reviewer}'s review did not finish: needs your judgment.`;
   if (outcome === "satisfied" && r.refinements.length === 0) return `${reviewer} found nothing to fix.`;
+  const unaccounted = `${reviewer} said it looks right but gave no account of what it checked: needs your judgment.`;
+  if (outcome === "unaccounted" && r.refinements.length === 0) return unaccounted;
   const parts: string[] = [];
   // What each review with concerns raised, in order: the builder's count below is of every round, so this is too.
   const raised = r.reviews.filter((review) => loopVerdict(review) === "concerns").map((review) => parseFindings(review.text).length);
@@ -134,6 +158,7 @@ export function outcomeLine(r: LoopRecord): string {
   const fix = fixAfterLastReview(r);
   if (outcome === "failed") parts.push(last.outcome !== "reviewed" ? `${reviewer}'s next review did not finish: needs your judgment.` : `${builder}'s fixes did not finish: needs your judgment.`);
   else if (outcome === "satisfied") parts.push(`${reviewer} is satisfied.`);
+  else if (outcome === "unaccounted") parts.push(unaccounted);
   else if (r.cap > 0 && r.refinements.length >= r.cap && fix === null) parts.push(`Still disagree after ${count(r.refinements.length, "round", "rounds")}: needs your judgment.`);
   else parts.push("Needs your judgment.");
   return parts.join(" ");

@@ -90,6 +90,8 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   await expect(page.getByTestId("review-problem")).toHaveCount(0);
   await expect(page.getByTestId("review-verdict").first()).toHaveText(/^(Verdict: looks right|Verdict: concerns|No verdict in the asked form)$/);
   await expect(page.getByTestId("review-text").first()).toBeHidden();
+  // Under the verdict, with no tap: what the reviewer says it checked, or the plain note that it did not say.
+  await expect(page.getByTestId("review-checked").or(page.getByTestId("review-no-account")).first()).toBeVisible();
   await checkDesign(page, "task, ready for review, with Codex's review");
   await shot(page, "review-task.png");
   await page.getByTestId("review-detail").first().locator("summary").click();
