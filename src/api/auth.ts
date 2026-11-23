@@ -180,11 +180,21 @@ export function createAuth(options: AuthOptions): Auth {
     const token = typeof fields.token === "string" && fields.code === undefined ? fields.token : undefined;
     const code = typeof fields.code === "string" && fields.token === undefined ? fields.code : undefined;
     if (token === undefined && code === undefined) return json(res, 400, { error: 'expected { "token": "..." } or { "code": "..." }' });
-    const outcome = await attempt<false | Refusal>(code === undefined ? () => sameSecret(token!, options.token) || false : () => pairing.redeem(code));
+    let madeBy: number | undefined;
+    const redeem = (typed: string): true | Refusal => {
+      const result = pairing.redeem(typed);
+      if (typeof result === "string") return result;
+      madeBy = result.madeBy;
+      return true;
+    };
+    const outcome = await attempt<false | Refusal>(code === undefined ? () => sameSecret(token!, options.token) || false : () => redeem(code));
     if (outcome === "busy") return json(res, 429, { error: "too many tries at signing in; wait a moment, then try again" });
     if (outcome === false) return json(res, 401, { error: "wrong token" });
     if (outcome !== true) return json(res, 401, { error: REFUSAL_WORDS[outcome], refused: outcome });
-    const { secret } = sessions.create(deviceLabel(req.headers["user-agent"]));
+    const device = deviceLabel(req.headers["user-agent"]);
+    const { id, secret } = sessions.create(device);
+    // Never the code: which device was added, and which device's code added it.
+    if (madeBy !== undefined) console.log(`A device was added with a one-time code: device ${id} (${device}), from the code made on device ${madeBy}.`);
     json(res, 200, { signedIn: true }, { "set-cookie": sessionCookie(secret, secure) });
   };
 
@@ -196,7 +206,9 @@ export function createAuth(options: AuthOptions): Auth {
     }
     // Add a device: a new one-time code, which cancels the one before it. Shown once, on the device that asked.
     if (req.method === "POST" && pathname === "/api/devices/pairing") {
-      json(res, 200, pairing.create(), { "cache-control": "no-store" });
+      const made = pairing.create(current);
+      console.log(`A one-time code to add a device was made on device ${current} (${sessions.list().find((d) => d.id === current)?.device ?? "unknown"}).`);
+      json(res, 200, made, { "cache-control": "no-store" });
       return true;
     }
     if (req.method === "POST" && pathname === "/api/devices/sign-out-others") {

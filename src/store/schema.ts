@@ -1702,11 +1702,13 @@ CREATE TABLE hidden_rows (
     // Adding a device with a one-time code (src/api/pairing.ts): at most one pairing, the one Settings made last. It holds
     // the SHA-256 of the code, never the code. `used_at` is set by the one sign-in it opened, so a second try is told the
     // code was used; `replaced_hash` is the code this one cancelled, so that code is told it was replaced. The row goes
-    // once it has expired.
+    // once it has expired, and with the session that made it: signing that device out deletes its pairing, so a code
+    // made by a session the owner has since ended (a stolen one, say) no longer signs in.
     name: "device_pairing",
     sql: `
 CREATE TABLE device_pairing (
   id INTEGER PRIMARY KEY CHECK (id = 1),
+  session_id INTEGER NOT NULL REFERENCES browser_sessions(id) ON DELETE CASCADE,
   code_hash TEXT NOT NULL CHECK (length(code_hash) = 64),
   expires_at TEXT NOT NULL,
   used_at TEXT,

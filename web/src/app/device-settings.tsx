@@ -14,13 +14,19 @@ const when = (ts: string): string => new Date(ts).toLocaleString();
 const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const words = (err: unknown): string => (err instanceof Error && err.message ? err.message : "Botbench could not be reached.");
 
+/** How often the device list is read again while a code is shown, so the device it adds appears at once. */
+const ADDED_POLL_MS = 2000;
+
 /**
  * Add a device: a one-time code for signing in on another device without the login token, as text and as a QR code of
  * the sign-in address with the code in it. Asking again replaces the code shown, and the server cancels the old one.
+ * While the code is shown the device list is read again every few seconds: the device the code adds is listed, and
+ * named, here at once, and the code is taken off the screen.
  */
-function AddDevice({ onSignedOut }: { onSignedOut: () => void }) {
-  const [pairing, setPairing] = useState<{ code: string; expiresAt: string; minutes: number } | null>(null);
+function AddDevice({ onSignedOut, onDevices }: { onSignedOut: () => void; onDevices: (devices: SignedInDevice[]) => void }) {
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: string; minutes: number; newestBefore: number } | null>(null);
   const [expired, setExpired] = useState(false);
+  const [added, setAdded] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const id = useId();
@@ -32,14 +38,30 @@ function AddDevice({ onSignedOut }: { onSignedOut: () => void }) {
     return () => window.clearTimeout(timer);
   }, [pairing]);
 
+  // Watch for the device the code signs in: one newer than every device listed before the code was made.
+  useEffect(() => {
+    if (pairing === null || expired || added !== null) return;
+    const timer = window.setInterval(() => {
+      listDevices().then((devices) => {
+        const fresh = devices.find((d) => d.id > pairing.newestBefore);
+        if (fresh === undefined) return;
+        onDevices(devices);
+        setAdded(fresh.device);
+      }, () => undefined); // a missed read is tried again at the next tick
+    }, ADDED_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [pairing, expired, added, onDevices]);
+
   const ask = (): void => {
     setBusy(true);
     setProblem(null);
-    newPairingCode()
+    listDevices()
+      .then((before) => newPairingCode().then((made) => ({ ...made, newestBefore: Math.max(0, ...before.map((d) => d.id)) })))
       .then(
-        ({ code, expiresAt }) => {
+        ({ code, expiresAt, newestBefore }) => {
           setExpired(false);
-          setPairing({ code: groupCode(code), expiresAt, minutes: Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60_000)) });
+          setAdded(null);
+          setPairing({ code: groupCode(code), expiresAt, newestBefore, minutes: Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60_000)) });
         },
         (err: unknown) => {
           if (err instanceof ApiError && err.status === 401) return onSignedOut();
@@ -49,7 +71,7 @@ function AddDevice({ onSignedOut }: { onSignedOut: () => void }) {
       .finally(() => setBusy(false));
   };
 
-  const shown = pairing !== null && !expired ? pairing : null;
+  const shown = pairing !== null && !expired && added === null ? pairing : null;
   return (
     <>
       <div className="ds-settings-row" data-testid="add-device">
@@ -70,7 +92,12 @@ function AddDevice({ onSignedOut }: { onSignedOut: () => void }) {
           {problem}
         </Alert>
       )}
-      {pairing !== null && expired && (
+      {added !== null && (
+        <Alert tone="note" role="status" testId="device-added">
+          {`${added} was added with the code and is signed in. If you did not add it, sign it out above.`}
+        </Alert>
+      )}
+      {pairing !== null && expired && added === null && (
         <Alert tone="warning" role="alert">
           The code has expired and can no longer be used. Make a new code to add a device.
         </Alert>
@@ -184,7 +211,7 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
           </div>
         </div>
       ))}
-      <AddDevice onSignedOut={onSignedOut} />
+      <AddDevice onSignedOut={onSignedOut} onDevices={setDevices} />
       {others > 0 && (
         <div className="ds-settings-row">
           <div className="ds-settings-row__text">

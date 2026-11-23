@@ -56,10 +56,13 @@ function same(stored: unknown, presented: Buffer): boolean {
 }
 
 export interface Pairing {
-  /** Make a new code, cancelling the one before it. The code is returned once, here, and kept nowhere. */
-  create(): { code: string; expiresAt: string };
-  /** Use a code: true when it signs in, which it does once; otherwise why not. */
-  redeem(code: string): true | Refusal;
+  /**
+   * Make a new code on the signed-in device `madeBy`, cancelling the one before it. The code is returned once, here, and
+   * kept nowhere. It is tied to that device's session: signing the device out deletes the pairing (`ON DELETE CASCADE`).
+   */
+  create(madeBy: number): { code: string; expiresAt: string };
+  /** Use a code: the id of the session that made it when it signs in, which it does once; otherwise why not. */
+  redeem(code: string): { madeBy: number } | Refusal;
 }
 
 export function createPairing(db: DatabaseSync, lifetimeMs: number = PAIRING_LIFETIME_MS): Pairing {
@@ -67,13 +70,14 @@ export function createPairing(db: DatabaseSync, lifetimeMs: number = PAIRING_LIF
   const dropExpired = (now: number): void => void db.prepare("DELETE FROM device_pairing WHERE expires_at <= ?").run(iso(now));
   dropExpired(Date.now());
 
-  const create = (): { code: string; expiresAt: string } => {
+  const create = (madeBy: number): { code: string; expiresAt: string } => {
     const now = Date.now();
     dropExpired(now);
     const code = generatePairingCode();
     const expiresAt = iso(now + lifetimeMs);
     const previous = db.prepare("SELECT code_hash FROM device_pairing WHERE id = 1").get();
-    db.prepare("INSERT OR REPLACE INTO device_pairing (id, code_hash, expires_at, used_at, replaced_hash) VALUES (1, ?, ?, NULL, ?)").run(
+    db.prepare("INSERT OR REPLACE INTO device_pairing (id, session_id, code_hash, expires_at, used_at, replaced_hash) VALUES (1, ?, ?, ?, NULL, ?)").run(
+      madeBy,
       digest(code).toString("hex"),
       expiresAt,
       previous === undefined ? null : String(previous.code_hash),
@@ -81,9 +85,9 @@ export function createPairing(db: DatabaseSync, lifetimeMs: number = PAIRING_LIF
     return { code, expiresAt };
   };
 
-  const redeem = (code: string): true | Refusal => {
+  const redeem = (code: string): { madeBy: number } | Refusal => {
     const presented = digest(code);
-    const row = db.prepare("SELECT code_hash, expires_at, used_at, replaced_hash FROM device_pairing WHERE id = 1").get();
+    const row = db.prepare("SELECT session_id, code_hash, expires_at, used_at, replaced_hash FROM device_pairing WHERE id = 1").get();
     if (row === undefined) return "wrong";
     const current = same(row.code_hash, presented);
     const replaced = same(row.replaced_hash, presented);
@@ -97,7 +101,7 @@ export function createPairing(db: DatabaseSync, lifetimeMs: number = PAIRING_LIF
     if (row.used_at !== null) return "used";
     // Single use even if two sign-ins were ever checked at once: only the first sets `used_at`.
     const taken = db.prepare("UPDATE device_pairing SET used_at = ? WHERE id = 1 AND used_at IS NULL AND code_hash = ?").run(iso(now), presented.toString("hex"));
-    return taken.changes === 1 ? true : "used";
+    return taken.changes === 1 ? { madeBy: Number(row.session_id) } : "used";
   };
 
   return { create, redeem };

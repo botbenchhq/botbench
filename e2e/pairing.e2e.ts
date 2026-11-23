@@ -12,7 +12,10 @@ async function codeShown(page: Page): Promise<string> {
   return found![1]!;
 }
 
-/** What Chrome's own QR reader finds in the QR code as drawn on the screen, from a screenshot of its pixels. */
+/**
+ * What Chrome's own QR reader finds in the QR code as drawn on the screen, from a screenshot of its pixels. The reader
+ * now and then finds nothing in a good screenshot (about one run in ten), so callers read it again until it agrees.
+ */
 async function readQr(page: Page): Promise<string[]> {
   // Centred, so the fixed tab bar at the foot of the screen does not cover part of it in the screenshot.
   const qr = page.getByTestId("pairing-qr");
@@ -45,13 +48,13 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await expect(pairing).toContainText(botbench.base);
   // The QR code holds the sign-in address with the code in it, after `#`.
   await pairing.getByTestId("pairing-qr").scrollIntoViewIfNeeded();
-  expect(await readQr(page)).toEqual([`${botbench.base}/#code=${first}`]);
+  await expect.poll(() => readQr(page), { message: "the QR code reads as the sign-in address" }).toEqual([`${botbench.base}/#code=${first}`]);
 
   // Asking again replaces the code shown, and the QR code with it.
   await devices.getByRole("button", { name: "Make a new code" }).click();
   await expect(page.getByTestId("pairing-code")).not.toContainText(first);
   const code = await codeShown(page);
-  expect(await readQr(page)).toEqual([`${botbench.base}/#code=${code}`]);
+  await expect.poll(() => readQr(page), { message: "the QR code reads as the sign-in address" }).toEqual([`${botbench.base}/#code=${code}`]);
   await checkDesign(page, "settings, add a device");
   await checkWords(page, "settings, add a device");
 
@@ -93,9 +96,12 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await checkDesign(third, "sign-in, a used code");
   await checkWords(third, "sign-in, a used code");
 
-  // The first browser's Settings lists the new device.
-  await page.reload();
+  // The first browser's Settings lists and names the new device without a reload, and takes the used code off the screen.
   await expect(page.getByTestId("devices").getByTestId("device")).toHaveCount(2);
+  await expect(page.getByTestId("device-added")).toHaveText(/^Note\S.* was added with the code and is signed in\. If you did not add it, sign it out above\.$/);
+  await expect(page.getByTestId("pairing")).toHaveCount(0);
+  await checkDesign(page, "settings, a device added");
+  await checkWords(page, "settings, a device added");
 
   // Opened again on the device that is now signed in, the address with the code goes to Chat.
   await phone.goto(`${botbench.base}/#code=${code}`);

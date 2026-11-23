@@ -168,6 +168,37 @@ test("a new code cancels the one before it, which is then refused; a code never 
   }
 });
 
+test("a code dies with the device that made it: signed out, or signed out by Sign out everywhere else, its code no longer signs in", async (t) => {
+  const { base, home, token } = await start(t);
+  const mac = await owner(base, token);
+  const devices = async (): Promise<{ id: number; device: string; current: boolean }[]> =>
+    ((await (await fetch(`${base}/api/devices`, { headers: { cookie: mac } })).json()) as { devices: { id: number; device: string; current: boolean }[] }).devices;
+
+  // A stolen session makes a code; the owner then signs that session out.
+  const stolen = cookieOf((await signIn(base, { token }, IPHONE_SAFARI)).setCookie);
+  const { code } = await newCode(base, stolen);
+  const thief = (await devices()).find((d) => !d.current)!;
+  assert.equal((await fetch(`${base}/api/devices/${thief.id}/sign-out`, { method: "POST", headers: { ...JSON_TYPE, cookie: mac }, body: "{}" })).status, 200);
+  assert.deepEqual(pairingRows(home), [], "its pairing went with it");
+  const late = await signIn(base, { code });
+  assert.equal(late.status, 401);
+  assert.equal(late.body.refused, "wrong");
+  assert.equal(late.setCookie, null);
+
+  // The same through Sign out everywhere else.
+  const another = cookieOf((await signIn(base, { token }, IPHONE_SAFARI)).setCookie);
+  const second = await newCode(base, another);
+  assert.equal((await fetch(`${base}/api/devices/sign-out-others`, { method: "POST", headers: { ...JSON_TYPE, cookie: mac }, body: "{}" })).status, 200);
+  assert.deepEqual(pairingRows(home), []);
+  assert.equal((await signIn(base, { code: second.code })).setCookie, null);
+  assert.deepEqual((await devices()).map((d) => d.current), [true], "only the owner's own device is signed in");
+
+  // The owner's own code is not touched by signing the others out.
+  const mine = await newCode(base, mac);
+  assert.equal((await fetch(`${base}/api/devices/sign-out-others`, { method: "POST", headers: { ...JSON_TYPE, cookie: mac }, body: "{}" })).status, 200);
+  assert.equal((await signIn(base, { code: mine.code })).status, 200);
+});
+
 test("wrong codes and wrong tokens share one slow-down: the same failure count, the same doubling delay, reset by a right code", async (t) => {
   const delay = 100;
   const { base, token } = await start(t, { signInDelayMs: delay });
@@ -265,4 +296,8 @@ test("only the code's SHA-256 is stored, and the code is in no table, no store f
   }
   for (const plain of [code, replaced, code.toLowerCase()]) assert.ok(!output.includes(plain), "the code is in nothing the process wrote");
   assert.ok(!output.includes("ZZZZ-ZZZZ"), "nor is a wrong code");
+  // What happened is in the log, in words, without the code: each code made, and the device it added.
+  assert.equal(output.match(/A one-time code to add a device was made on device \d+ \(Mac · Chrome\)\./g)?.length, 2, output);
+  assert.match(output, /A device was added with a one-time code: device \d+ \(Mac · Chrome\), from the code made on device \d+\./);
+  assert.equal(output.match(/was added with a one-time code/g)?.length, 1, "only the sign-in that worked");
 });

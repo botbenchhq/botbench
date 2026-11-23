@@ -158,7 +158,7 @@ test("the usage_limit_wait migration gives each task a stored time to try again,
   assert.throws(() => moveTask(db, 1, "verifying") && moveTask(db, 1, "waiting_for_limit", { retryAt: at }), /cannot move to waiting_for_limit/);
 });
 
-test("the device_pairing migration adds the device pairing table, which holds at most one pairing and only 64-character hashes", (t) => {
+test("the device_pairing migration adds the device pairing table, which holds at most one pairing, only 64-character hashes, and goes with the session that made it", (t) => {
   const home = tempDir(t);
   const old = new DatabaseSync(path.join(home, DB_FILE));
   migrate(old, MIGRATIONS.slice(0, MIGRATIONS.findIndex((m) => m.name === "device_pairing")));
@@ -166,12 +166,17 @@ test("the device_pairing migration adds the device pairing table, which holds at
   const db = openStore(home);
   t.after(() => db.close());
   assert.equal(schemaVersion(db), CURRENT);
-  assert.deepEqual(columnNames(db, "device_pairing"), ["id", "code_hash", "expires_at", "used_at", "replaced_hash"]);
+  assert.deepEqual(columnNames(db, "device_pairing"), ["id", "session_id", "code_hash", "expires_at", "used_at", "replaced_hash"]);
   const hash = "a".repeat(64);
-  db.prepare("INSERT INTO device_pairing (id, code_hash, expires_at) VALUES (1, ?, 'then')").run(hash);
-  assert.throws(() => db.prepare("INSERT INTO device_pairing (id, code_hash, expires_at) VALUES (2, ?, 'then')").run(hash), /CHECK constraint/);
-  assert.throws(() => db.prepare("INSERT OR REPLACE INTO device_pairing (id, code_hash, expires_at) VALUES (1, 'ABCDEFGH', 'then')").run(), /CHECK constraint/);
+  const session = Number(db.prepare("INSERT INTO browser_sessions (secret_hash, device, created_at, last_used_at, expires_at) VALUES (?, 'Mac', 'then', 'then', 'then')").run("b".repeat(64)).lastInsertRowid);
+  assert.throws(() => db.prepare("INSERT INTO device_pairing (id, session_id, code_hash, expires_at) VALUES (1, 999, ?, 'then')").run(hash), /FOREIGN KEY constraint/);
+  db.prepare("INSERT INTO device_pairing (id, session_id, code_hash, expires_at) VALUES (1, ?, ?, 'then')").run(session, hash);
+  assert.throws(() => db.prepare("INSERT INTO device_pairing (id, session_id, code_hash, expires_at) VALUES (2, ?, ?, 'then')").run(session, hash), /CHECK constraint/);
+  assert.throws(() => db.prepare("INSERT OR REPLACE INTO device_pairing (id, session_id, code_hash, expires_at) VALUES (1, ?, 'ABCDEFGH', 'then')").run(session), /CHECK constraint/);
   assert.throws(() => db.prepare("UPDATE device_pairing SET replaced_hash = 'ABCDEFGH'").run(), /CHECK constraint/);
+  // Ending the session that made the pairing deletes it.
+  db.prepare("DELETE FROM browser_sessions WHERE id = ?").run(session);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM device_pairing").get()!.n, 0);
 });
 
 test("a migration that fails part-way leaves the schema and its version untouched", (t) => {
