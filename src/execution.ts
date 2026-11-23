@@ -128,8 +128,9 @@ export function containerRunArgs(o: { name: string; workbench: string; taskId: n
     "--workdir", o.mount,
     "--env", "HOME=/tmp",
     "--env", `PATH=${CONTAINER_PATH}`,
-    "--entrypoint", "sleep",
-    o.image, "infinity",
+    // `env -i` execs `sleep`: the container's first process has HOME and PATH only, not the image's own ENV lines.
+    "--entrypoint", "env",
+    o.image, "-i", "HOME=/tmp", `PATH=${CONTAINER_PATH}`, "sleep", "infinity",
   ];
 }
 
@@ -254,13 +255,15 @@ export async function dockerProblem(docker: string, limitMs = DOCKER_ANSWER_MS):
  * `dockerSecurityIsHardened`): no network, every capability dropped, no new privileges, private IPC and cgroup
  * namespaces, not privileged, a process limit, and one mount only, the task's copy, read-write at the same path.
  */
-export function hardeningProblem(inspected: unknown, mount: string, expected?: { image: string; uid: number; gid: number }): string | null {
+export function hardeningProblem(inspected: unknown, mount: string, expected?: { image: string; imageId: string; uid: number; gid: number }): string | null {
   const record = Array.isArray(inspected) ? inspected[0] : inspected;
   if (typeof record !== "object" || record === null) return "Docker gave no record of the container.";
   const host = (record as { HostConfig?: Record<string, unknown> }).HostConfig ?? {};
   const config = (record as { Config?: Record<string, unknown> }).Config ?? {};
   if (expected !== undefined) {
     if (config.Image !== expected.image) return `it runs the image ${JSON.stringify(config.Image ?? null)}, not ${expected.image}.`;
+    // By the image's id, not only its name: a name moved to another image since the container started does not count.
+    if ((record as { Image?: unknown }).Image !== expected.imageId) return `it was started from another image than ${expected.image} is now (${String((record as { Image?: unknown }).Image ?? "none")}, not ${expected.imageId}).`;
     if (config.User !== `${expected.uid}:${expected.gid}`) return `it runs as ${JSON.stringify(config.User ?? null)}, not your user and group ${expected.uid}:${expected.gid}.`;
   }
   if (host.Memory !== MEMORY_BYTES) return `its memory limit is ${JSON.stringify(host.Memory ?? null)}, not ${CONTAINER_LIMITS.memory}.`;
@@ -343,7 +346,7 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
     const state = (Array.isArray(record) ? record[0] : record) as { State?: { Running?: unknown }; Config?: { Labels?: Record<string, unknown> } } | undefined;
     if (state?.State?.Running !== true) return "the container is not running.";
     if (state.Config?.Labels?.[LABEL_MOUNT] !== o.mount) return "the container was made for another folder.";
-    const hardened = hardeningProblem(record, o.mount, { image: o.image, uid, gid });
+    const hardened = hardeningProblem(record, o.mount, { image: o.image, imageId: image.stdout.trim(), uid, gid });
     if (hardened !== null) return hardened;
     // Probed, not assumed: from inside, the container has the loopback interface and nothing else to reach anything by.
     const net = await runDocker(docker, ["exec", name, "sh", "-c", "ls /sys/class/net"], STEP_MS);
@@ -351,22 +354,32 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
     if (!onlyLoopback(net.stdout)) return `the container has network interfaces besides loopback (${net.stdout.trim().replace(/\s+/g, ", ")}).`;
     return null;
   };
+  // What the container of this name records as mounted, or null when there is none.
+  const mountedNow = async (): Promise<string | null> => {
+    const r = await runDocker(docker, ["inspect", "--format", `{{index .Config.Labels "${LABEL_MOUNT}"}}`, name], STEP_MS);
+    return r.code === 0 ? r.stdout.trim() : null;
+  };
+  // Removed only when the container of this name is this task's (its mount label is this copy): one another process
+  // made under the same name meanwhile is left alone.
+  const removeOurs = async (): Promise<void> => {
+    if ((await mountedNow()) === o.mount) await removeContainer(docker, name);
+  };
   // A container left running from before (a restart) is used again only when it is still exactly what was asked for.
   // One made for another folder (another Botbench with the same workbench name) is not this task's: it is left alone.
-  const existing = await runDocker(docker, ["inspect", "--format", `{{index .Config.Labels "${LABEL_MOUNT}"}}`, name], STEP_MS);
-  if (existing.code === 0) {
-    if (existing.stdout.trim() !== o.mount) return refuse(`A container named ${name} already exists for another folder (${existing.stdout.trim() || "none recorded"}), and Botbench does not remove what is not this task's. Remove it with docker rm -f ${name} if it is not in use, then start the task again. ${NOT_INSTEAD}`);
+  const existing = await mountedNow();
+  if (existing !== null) {
+    if (existing !== o.mount) return refuse(`A container named ${name} already exists for another folder (${existing || "none recorded"}), and Botbench does not remove what is not this task's. Remove it with docker rm -f ${name} if it is not in use, then start the task again. ${NOT_INSTEAD}`);
     if ((await proven()) === null) return { ok: true, container };
-    await removeContainer(docker, name);
+    await removeOurs();
   }
   const started = await runDocker(docker, containerRunArgs({ name, workbench: o.workbench, taskId: o.taskId, image: o.image, mount: o.mount, uid, gid }), START_MS);
   if (started.code !== 0) {
-    await removeContainer(docker, name);
+    await removeOurs();
     return refuse(`Docker did not start this task's container (docker run: ${said(started)}). ${NOT_INSTEAD}`);
   }
   const problem = await proven();
   if (problem !== null) {
-    await removeContainer(docker, name);
+    await removeOurs();
     return refuse(`Botbench removed this task's container again and did not start the task: ${problem} ${NOT_INSTEAD}`);
   }
   return { ok: true, container };

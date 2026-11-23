@@ -163,7 +163,8 @@ test("docker run: detached, never pulling, named and labelled, hardened, no netw
   assert.deepEqual(pairs("--mount"), [`type=bind,source=${mount},target=${mount}`], "exactly one mount");
   assert.deepEqual(pairs("--workdir"), [mount]);
   assert.deepEqual(pairs("--env"), ["HOME=/tmp", `PATH=${CONTAINER_PATH}`], "an environment built from scratch");
-  assert.deepEqual(args.slice(-4), ["--entrypoint", "sleep", "node:24", "infinity"]);
+  // The first process is `sleep infinity`, exec'd by `env -i`, so not even the image's ENV lines are on it.
+  assert.deepEqual(args.slice(-8), ["--entrypoint", "env", "node:24", "-i", "HOME=/tmp", `PATH=${CONTAINER_PATH}`, "sleep", "infinity"]);
   for (const flag of ["-v", "--volume", "--privileged", "--cap-add", "--env-file", "-e", "--pull=always", "--network=host", "--pid", "--userns"]) assert.equal(args.includes(flag), false, flag);
   assert.equal(args.some((a) => /docker\.sock|\.ssh|\.claude|\.codex|Library/.test(a)), false, "no socket, key or sign-in folder");
 });
@@ -236,8 +237,10 @@ test("starting a task's container is refused, before anything runs and with no f
 test("a started container is held to what was asked, from its own record and from inside: anything else is refused", () => {
   const mount = "/Users/o/.botbench/worktrees/run-3/task-7";
   // The shape `docker inspect` gives (Docker 28, OrbStack), with only the fields read here.
-  const good = [{ Config: { Image: "node:24", User: "501:20" }, HostConfig: { NetworkMode: "none", CapDrop: ["ALL"], CapAdd: null, SecurityOpt: ["no-new-privileges"], Privileged: false, IpcMode: "private", CgroupnsMode: "private", PidsLimit: 1024, Memory: 4294967296, NanoCpus: 2000000000 }, Mounts: [{ Type: "bind", Source: mount, Destination: mount, RW: true }] }];
-  const asked = { image: "node:24", uid: 501, gid: 20 };
+  const good = [{ Image: "sha256:aaa", Config: { Image: "node:24", User: "501:20" }, HostConfig: { NetworkMode: "none", CapDrop: ["ALL"], CapAdd: null, SecurityOpt: ["no-new-privileges"], Privileged: false, IpcMode: "private", CgroupnsMode: "private", PidsLimit: 1024, Memory: 4294967296, NanoCpus: 2000000000 }, Mounts: [{ Type: "bind", Source: mount, Destination: mount, RW: true }] }];
+  const asked = { image: "node:24", imageId: "sha256:aaa", uid: 501, gid: 20 };
+  // The name node:24 now leads to another image than the container was started from: it is not used again.
+  assert.match(hardeningProblem(good, mount, { ...asked, imageId: "sha256:bbb" })!, /started from another image than node:24 is now \(sha256:aaa, not sha256:bbb\)/);
   assert.equal(hardeningProblem(good, mount, asked), null);
   // Before a container is used again: its image, user and limits are the ones asked for.
   assert.match(hardeningProblem([{ ...good[0], Config: { Image: "alpine:3", User: "501:20" } }], mount, asked)!, /image "alpine:3", not node:24/);
