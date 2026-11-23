@@ -250,11 +250,22 @@ const allLive = (segments: readonly Words[]): QuotedWord[][] => segments.map((se
 
 /**
  * The keychain and SSH key tools, when a word may name one as a program. A relative path shown to lie inside the task's
- * worktree (`docs/security`) is the project's own file and is not one; any other path of that name is (`/usr/bin/security`,
- * `~/bin/security`, and `./security` after a `cd` or from a folder outside the worktree).
+ * worktree (`ls docs/security`) is the project's own file and is not one, as long as it stands as an argument; any other
+ * path of that name is (`/usr/bin/security`, `~/bin/security`, `./security` after a `cd` or from a folder outside the
+ * worktree), and so is one in a program's place (`./security`, `env docs/security`), whatever file it is.
  */
 const KEY_TOOLS = new Set(["security", "ssh-add", "ssh-keygen"]);
-const namesKeyTool = (word: string, reading: Reading): boolean => KEY_TOOLS.has(program(word)) && !(word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && insideWorktree(word, reading));
+/** Programs that run the program named by a later word. */
+const RUNS_NEXT = new Set(["env", "exec", "command", "nice", "nohup", "time", "timeout", "xargs", "sudo", "doas", "caffeinate", "arch", "builtin", "then", "do", "else", "!"]);
+const namesKeyTool = (segment: Words, i: number, reading: Reading): boolean => {
+  const word = segment[i]!;
+  if (!KEY_TOOLS.has(program(word))) return false;
+  const projectFile = word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && insideWorktree(word, reading);
+  // In a program's place: the first word that sets no variable, or a word after one that runs the next.
+  const first = segment.findIndex((w) => !ASSIGNS.test(w));
+  const programPlace = i === first || segment.slice(0, i).some((w) => RUNS_NEXT.has(program(w)));
+  return !projectFile || programPlace;
+};
 
 /** The last rule of the floor, which no other matched: the command is not one plain command, and so never runs on a grant. */
 export const NOT_PLAIN = "not-a-plain-command";
@@ -314,7 +325,7 @@ export const FLOOR_RULES: readonly FloorRule[] = [
     // Anything aimed at the shell profiles, SSH and GnuPG folders, keychains, login items, git's and npm's own settings,
     // cloud logins, `/etc`, the home directory as a whole, or Botbench's own records; and the keychain and SSH key tools.
     name: "guarded-place",
-    matches: (r) => r.segments.some((segment) => segment.some((word) => namesKeyTool(word, r) || guardedPlace(word, r))),
+    matches: (r) => r.segments.some((segment) => segment.some((word, i) => namesKeyTool(segment, i, r) || guardedPlace(word, r))),
   },
   {
     // A program, or git's subcommand, that the shell builds from a variable, a substitution, a glob or a brace list, or

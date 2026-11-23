@@ -417,6 +417,10 @@ test("the keychain and key tools ask by their name or a full path, and a project
   for (const command of ["security find-generic-password -s x", "/usr/bin/security dump-keychain", "env security list-keychains", "ls; security unlock-keychain", "~/bin/security x", "ssh-add -l", "/usr/bin/ssh-keygen -t ed25519", "ls docs | xargs security", "cd /usr/bin; ./security dump-keychain", "cd /usr/bin && bin/../security x", "../security x"]) {
     assert.equal(floor(command, at()), "guarded-place", command);
   }
+  // The project's own file of that name, run as the program, is whatever binary it is: it asks.
+  for (const command of ["./security dump-keychain", "docs/security x", "env ./ssh-keygen -t ed25519", "FOO=1 ./security x", "ls; ./security x", "ls | xargs ./security", "if true; then ./ssh-add -l; fi"]) {
+    assert.equal(floor(command, at()), "guarded-place", command);
+  }
   // From a folder outside the worktree, a relative path is not the project's own file.
   assert.equal(floor("./security dump-keychain", at("/usr/bin")), "guarded-place");
   for (const command of ["ls docs/security", "cat docs/security/threat-model.md", "ls docs/security 2>/dev/null", "./tools/ssh-keygen-check.sh"]) {

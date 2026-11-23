@@ -253,6 +253,27 @@ test("a Read under the CLI's saved-output folder runs without asking only inside
   }
 });
 
+test("a session's saved-output folder, or its session folder, that is a link to another session's is not its own: a Read there asks", async (t) => {
+  const r = await rig(t);
+  for (const linked of ["tool-results", "session"] as const) {
+    const a = agent(r, "semi");
+    const own = toolResultsFolder({ cwd: a.top, session: SESSION, configDir: r.config })!;
+    const other = toolResultsFolder({ cwd: a.top, session: OTHER_SESSION, configDir: r.config })!;
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(other, "toolu_02.txt"), "someone else's");
+    if (linked === "tool-results") {
+      fs.mkdirSync(path.dirname(own), { recursive: true });
+      fs.symlinkSync(other, own);
+    } else {
+      fs.symlinkSync(path.dirname(other), path.dirname(own));
+    }
+    const asked = await a.ask("Read", { file_path: path.join(own, "toolu_02.txt") }, `linked-${linked}`);
+    assert.equal(asked.heard.verdict, "ask", linked);
+    assert.ok(asked.answer.approvalId !== null, `${linked}: asks`);
+    fs.rmSync(path.dirname(path.dirname(own)), { recursive: true, force: true });
+  }
+});
+
 test("without a session reported yet, or for an agent whose CLI keeps no such folder, a Read there asks", async (t) => {
   const r = await rig(t);
   const a = agent(r, "semi");

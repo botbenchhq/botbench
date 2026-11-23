@@ -260,10 +260,20 @@ function decide(request: GateRequest, grants: readonly Grant[], settings: FloorS
     const inside = target !== null && (target === path.resolve(request.worktree) || insideWorktree(request.worktree, request.cwd, where) !== null);
     if (inside) return { verdict: "allow", rule: "worktree_read" };
     // The CLI's own saved output of this attempt's calls, links followed: nothing of another session's, nothing else of the CLI's folder.
-    if (request.tool === "Read" && request.sessionOutput !== undefined && insideWorktree(request.sessionOutput, request.cwd, where) !== null) return { verdict: "allow", rule: "session_output_read" };
+    if (request.tool === "Read" && request.sessionOutput !== undefined && ownFolder(request.sessionOutput) && insideWorktree(request.sessionOutput, request.cwd, where) !== null) return { verdict: "allow", rule: "session_output_read" };
     return { verdict: "ask", why: "outside_copy" };
   }
   return { verdict: "ask", why: "other_tool" };
+}
+
+/**
+ * Whether the saved-output folder is itself where it says: neither it nor its session folder is a link, which could lead
+ * to another session's output. A folder above them that is a link (a moved configuration folder) is followed as written.
+ */
+function ownFolder(sessionOutput: string): boolean {
+  const folder = path.resolve(sessionOutput);
+  const session = path.dirname(folder);
+  return real(folder) === path.join(real(path.dirname(session)), path.basename(session), path.basename(folder));
 }
 
 /**

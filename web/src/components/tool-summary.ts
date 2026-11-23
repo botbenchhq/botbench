@@ -228,14 +228,34 @@ export function directoryWords(cwd: string): string {
 /** The tools whose request names one file: their card shows that file, not the folder the agent stood in. */
 const FILE_TOOLS = new Set(["Read", "Write", "Edit", "NotebookEdit"]);
 
+/** The path a file tool's request names, from what the card shows of it: a Read's path alone, or the field of its input. */
+function givenPath(tool: string, command: string): string | null {
+  let input: unknown;
+  try {
+    input = JSON.parse(command);
+  } catch {
+    // A Read with nothing but its path is shown as the path itself.
+    return tool === "Read" && command !== "" ? command : null;
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const fields = input as Record<string, unknown>;
+  const found = fields.file_path ?? fields.notebook_path;
+  return typeof found === "string" && found !== "" ? found : null;
+}
+
 /**
  * Where a request is aimed, as its card says it: the file of a file tool, the folder a search looks in, and otherwise the
  * folder the agent stood in. `target` is the server's: relative to the task's copy when inside it, a full path when not.
  */
-export function placeWords(approval: { tool: string; cwd: string; target: string | null }): { term: "File" | "Folder"; words: string } {
+export function placeWords(approval: { tool: string; cwd: string; target: string | null; command: string }): { term: "File" | "Folder"; words: string } {
   const file = FILE_TOOLS.has(approval.tool);
   const { target } = approval;
-  if (target === null) return file ? { term: "File", words: "Not reported" } : { term: "Folder", words: directoryWords(approval.cwd) };
+  if (target === null && file) {
+    // The server could not place it (a relative path from a folder nobody reported): the path as the agent gave it.
+    const given = givenPath(approval.tool, approval.command);
+    return { term: "File", words: given === null ? "Not reported" : `${given} (the folder it starts from was not reported)` };
+  }
+  if (target === null) return { term: "Folder", words: directoryWords(approval.cwd) };
   if (target === ".") return { term: "Folder", words: directoryWords(".") };
   return { term: file ? "File" : "Folder", words: target.startsWith("/") ? `${target} (outside the task's copy)` : `${target} (inside the task's copy)` };
 }
