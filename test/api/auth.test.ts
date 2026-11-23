@@ -15,6 +15,7 @@ import { deviceLabel, SESSION_MAX_AGE_S } from "../../src/api/sessions.ts";
 import { DEFAULT_CONFIG_FILE, loadConfig, type Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { removedAtEnd } from "../support/repo.ts";
+import { fillLine } from "../support/sign-in-line.ts";
 
 type T = { after(fn: () => unknown): void };
 
@@ -217,18 +218,21 @@ test("repeated wrong tokens are slowed down, and a correct sign-in resets the de
 });
 
 test("a flood of guesses is turned away unchecked instead of queueing without end", async (t) => {
-  const { server, token } = await start(t, {}, 2000);
-  assert.equal((await signIn(server.port, "wrong-0")).status, 401); // from here each attempt waits two seconds or more
+  // A long first wait, so that nothing leaves the line while the test looks, however slow the machine.
+  const delay = 30_000;
+  const { server, token } = await start(t, {}, delay);
+  assert.equal((await signIn(server.port, "wrong-0")).status, 401); // from here each attempt waits the delay or more
   // These wait their turn; the test does not wait for them, and closing the server ends them.
   for (let i = 0; i < MAX_WAITING_SIGN_INS; i++) signIn(server.port, `queued-${i}`).catch(() => undefined);
-  await new Promise((resolve) => setTimeout(resolve, 100)); // let them arrive
-  const began = performance.now();
+  // The line is full once a wrong guess is turned away; one sent before that joins it (test/support/sign-in-line.ts).
+  await fillLine(() => signIn(server.port, "over-0").then((reply) => reply.status));
   for (const candidate of ["over-1", "over-2", token]) {
+    const began = performance.now();
     const turnedAway = await signIn(server.port, candidate);
     assert.equal(turnedAway.status, 429, candidate === token ? "even the right token is not checked" : candidate);
     assert.equal(turnedAway.headers["set-cookie"], undefined);
+    assert.ok(performance.now() - began < delay, "turned away at once, not after the wait");
   }
-  assert.ok(performance.now() - began < 1500, "turned away at once, not after the wait");
 });
 
 test("with no extra address configured, Botbench listens on the loopback address only", async (t) => {

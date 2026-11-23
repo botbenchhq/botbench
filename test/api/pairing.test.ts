@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fillLine } from "../support/sign-in-line.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -250,18 +251,22 @@ test("wrong codes and wrong tokens share one slow-down: the same failure count, 
 });
 
 test("codes wait in the same bounded line as tokens: once it is full, even a right code is turned away unchecked and stays unused", async (t) => {
-  const { base, token } = await start(t, { signInDelayMs: 2000 });
+  // A long first wait, so that nothing leaves the line while the test looks, however slow the machine.
+  const delay = 30_000;
+  const { base, token } = await start(t, { signInDelayMs: delay });
   const { code } = await newCode(base, await owner(base, token));
-  assert.equal((await signIn(base, { code: "WRONG-ONE" })).status, 401); // from here each attempt waits two seconds or more
+  assert.equal((await signIn(base, { code: "WRONG-ONE" })).status, 401); // from here each attempt waits the delay or more
   for (let i = 0; i < MAX_WAITING_SIGN_INS; i++) signIn(base, i % 2 === 0 ? { code: `QUEUED${i}` } : { token: `queued-${i}` }).catch(() => undefined);
-  await new Promise((resolve) => setTimeout(resolve, 100)); // let them arrive
-  const began = performance.now();
-  for (const body of [{ code: "OVER-ONE" }, { token }, { code }]) {
+  // The line is full once a wrong guess is turned away. One that arrives before it is full joins the line instead, and
+  // waits there: the test does not wait for it, and the next guess is sent.
+  await fillLine(() => signIn(base, { code: "OVER-ONE" }).then((reply) => reply.status));
+  for (const body of [{ code: "OVER-TWO" }, { token }, { code }]) {
+    const began = performance.now();
     const turnedAway = await signIn(base, body);
     assert.equal(turnedAway.status, 429, JSON.stringify(body));
     assert.equal(turnedAway.setCookie, null);
+    assert.ok(performance.now() - began < delay, "turned away at once, not after the wait");
   }
-  assert.ok(performance.now() - began < 1500, "turned away at once, not after the wait");
 });
 
 test("only the code's SHA-256 is stored, and the code is in no table, no store file and no line the process writes", async (t) => {

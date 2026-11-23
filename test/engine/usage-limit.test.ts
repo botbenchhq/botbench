@@ -39,8 +39,15 @@ async function until(ready: () => boolean, what: string, ms = 10_000): Promise<v
 const limited = (file: string, resetsAt: string | null): string => `read go; echo ${file} > ${file}.txt; echo limit${resetsAt === null ? "" : ` ${resetsAt}`}; exit 1`;
 /** A builder that writes a file and finishes. */
 const finishes = (file: string): string => `read go; echo ${file} > ${file}.txt; echo done`;
-/** A time `ms` from now, as the agent gives a reset time. */
-const inMs = (ms: number): string => new Date(Date.now() + ms).toISOString();
+/**
+ * A reset time `ms` after the moment the agent reports the limit, worked out by the agent's process as it reports it, as
+ * a real agent's is. A time fixed by the test before the task starts can already have passed on a loaded machine by the
+ * time the agent reports it, and Botbench then rightly waits the configured wait instead (seen failing that way).
+ */
+const later = (ms: number): string => `$('${process.execPath}' -e 'console.log(new Date(Date.now() + ${ms}).toISOString())')`;
+/** The reset time a waiting task's agent reported with its limit, as it printed it. */
+const reportedReset = (db: DatabaseSync, taskId: number): string =>
+  String(JSON.parse(String(db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'rate_limit' ORDER BY id DESC LIMIT 1").get(getTask(db, taskId)!.attemptId!)!.payload)).resetsAt);
 
 interface Engine {
   driver: ProcessDriver;
@@ -122,12 +129,12 @@ test("the time to try again is the agent's reset time when it gives one in the f
 
 test("a builder's turn that ends on a usage limit waits, its work committed, until the reset time the agent gave; then the same session is resumed once, with the task's own model, and the task goes on to Ready for review without using up a restart", WITHIN, async (t) => {
   const e = await line(t, { waitMs: 60 * 60_000 });
-  const resetsAt = inMs(1500);
-  const engine = await e.open([limited("one", resetsAt), finishes("two")]);
+  const engine = await e.open([limited("one", later(1500)), finishes("two")]);
   const started = await engine.tasks.start(e.repo, "Add two files", "haiku");
 
   await until(() => getTask(e.db, started.id)!.status === "waiting_for_limit", "the task waits for the limit");
   const waiting = getTask(e.db, started.id)!;
+  const resetsAt = reportedReset(e.db, started.id);
   assert.equal(waiting.retryAt, resetsAt, "the agent's own reset time");
   assert.equal(waiting.restarts, 0);
   // Its work up to the limit is committed, as for any stop.
@@ -135,10 +142,12 @@ test("a builder's turn that ends on a usage limit waits, its work committed, unt
   assert.equal(waiting.headCommit, git(e.repo, "rev-parse", waiting.branch!).trim());
   const firstAttempt = waiting.attemptId!;
   assert.equal(e.db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'turn_ended'").get(firstAttempt)!.payload, JSON.stringify({ type: "turn_ended", reason: "error", detail: "The process ended with code 1.", usageLimit: { resetsAt } }));
-  // Nothing more is started before the time.
-  await pause(300);
-  assert.equal(getTask(e.db, started.id)!.status, "waiting_for_limit");
-  assert.equal(engine.driver.starts.length, 1);
+  // Nothing more is started before the time: looked at again shortly before it, however much of the wait is left.
+  await pause(Math.max(0, Math.min(300, Date.parse(resetsAt) - Date.now() - 200)));
+  if (Date.now() < Date.parse(resetsAt) - 50) {
+    assert.equal(getTask(e.db, started.id)!.status, "waiting_for_limit");
+    assert.equal(engine.driver.starts.length, 1);
+  }
 
   await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the resumed task is ready for review");
   const done = getTask(e.db, started.id)!;
@@ -216,10 +225,10 @@ test("a restart during the turn that resumed after the wait gives the task no se
 
 test("a restart while a task waits keeps the wait: after it the task is still waiting with the same time, and the session is resumed at that time", WITHIN, async (t) => {
   const e = await line(t, { waitMs: 60 * 60_000 });
-  const resetsAt = inMs(2000);
-  const first = await e.open([limited("one", resetsAt)]);
+  const first = await e.open([limited("one", later(2000))]);
   const started = await first.tasks.start(e.repo, "Add two files");
   await until(() => getTask(e.db, started.id)!.status === "waiting_for_limit", "the task waits for the limit");
+  const resetsAt = reportedReset(e.db, started.id);
   const attempt = getTask(e.db, started.id)!.attemptId!;
   await first.close();
 
@@ -242,11 +251,7 @@ test("a task whose time to try again passed while Botbench was stopped is resume
   // The wait the configuration names is an hour: a task that was not woken at once by the start would wait that long
   // (or for ever), so waiting for the resume with a generous ceiling tells the two apart on a machine of any speed.
   const e = await line(t, { waitMs: 60 * 60_000 });
-  // The agent gives a reset time 0.8 seconds after it reports the limit, worked out as it reports it, as a real agent's
-  // is: one fixed before the task started would already have passed on a loaded machine by the time it was reported,
-  // and Botbench would then rightly wait the configured hour instead (seen failing that way).
-  const soon = `$('${process.execPath}' -e 'console.log(new Date(Date.now() + 800).toISOString())')`;
-  const first = await e.open([`read go; echo one > one.txt; echo limit ${soon}; exit 1`]);
+  const first = await e.open([limited("one", later(800))]);
   const started = await first.tasks.start(e.repo, "Add two files");
   await until(() => getTask(e.db, started.id)!.status === "waiting_for_limit", "the task waits for the limit");
   const retryAt = Date.parse(getTask(e.db, started.id)!.retryAt!);
@@ -265,10 +270,10 @@ test("a task whose time to try again passed while Botbench was stopped is resume
 
 test("a run cancelled while a task waits ends that task as cancelled with its work committed; it never resumes, also after a restart, and the run's queued task is cancelled too", WITHIN, async (t) => {
   const e = await line(t, { waitMs: 60 * 60_000 });
-  const resetsAt = inMs(1000);
-  const first = await e.open([limited("one", resetsAt), finishes("two")]);
+  const first = await e.open([limited("one", later(1000)), finishes("two")]);
   const { runId, taskIds } = planned(e, first, "semi", ["one", "two"]);
   await until(() => getTask(e.db, taskIds[0]!)!.status === "waiting_for_limit", "the first task waits for the limit");
+  const resetsAt = reportedReset(e.db, taskIds[0]!);
 
   first.runs.cancel(runId);
   const cancelled = getTask(e.db, taskIds[0]!)!;
@@ -310,8 +315,7 @@ test("while a task waits for a usage limit, Resume and a decision on it are refu
 
 test("the tasks queued behind a waiting task do not start until it has resumed and reached an end, and the run stays at work meanwhile, neither done nor failed", WITHIN, async (t) => {
   const e = await line(t, { waitMs: 60 * 60_000 });
-  const resetsAt = inMs(1500);
-  const engine = await e.open([limited("one", resetsAt), finishes("one-more"), finishes("two")]);
+  const engine = await e.open([limited("one", later(1500)), finishes("one-more"), finishes("two")]);
   const { runId, taskIds } = planned(e, engine, "semi", ["one", "two"]);
   await until(() => getTask(e.db, taskIds[0]!)!.status === "waiting_for_limit", "the first task waits for the limit");
   await engine.tasks.idle();
