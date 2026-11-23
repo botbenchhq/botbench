@@ -117,8 +117,9 @@ export async function hasSession(): Promise<boolean> {
   }
 }
 
-export async function signIn(token: string): Promise<void> {
-  await request("POST", "/api/sign-in", { token });
+/** Sign this device in with the login token, or with a one-time code from Add a device on a signed-in one. */
+export async function signIn(with_: { token: string } | { code: string }): Promise<void> {
+  await request("POST", "/api/sign-in", with_);
 }
 
 export const getDriver = (): Promise<DriverState> => request("GET", "/api/driver");
@@ -1151,3 +1152,5 @@ export interface SignedInDevice {
 export const listDevices = async (): Promise<SignedInDevice[]> => (await request<{ devices: SignedInDevice[] }>("GET", "/api/devices", undefined, 10_000)).devices;
 export const signOutDevice = (id: number): Promise<unknown> => request("POST", `/api/devices/${id}/sign-out`, {}, 10_000);
 export const signOutOtherDevices = (): Promise<unknown> => request("POST", "/api/devices/sign-out-others", {}, 10_000);
+/** A new one-time code for adding a device, which replaces the last one; 8 symbols, and when it stops working. */
+export const newPairingCode = (): Promise<{ code: string; expiresAt: string }> => request("POST", "/api/devices/pairing", {}, 10_000);
