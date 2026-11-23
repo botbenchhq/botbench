@@ -5,6 +5,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { confinementProblem, SANDBOX_EXEC, seatbeltProfile, startHostProxy, unreadablePaths, type Confinement } from "../confinement.ts";
 import { buildChildEnv } from "../drivers/launch.ts";
+import { containerExecArgv, stopLeftovers, type TaskContainer } from "../execution.ts";
 import { now, transaction } from "../store/db.ts";
 
 /*
@@ -33,7 +34,8 @@ import { now, transaction } from "../store/db.ts";
  *   folder, so a project's tests can start servers;
  * - it gets the environment a CLI gets (src/drivers/launch.ts): the allowlisted variables, no provider key, and no
  *   GIT_* variable, so nothing inherited points git at another repository.
- * Where it cannot be confined it is not run, and has failed.
+ * Where it cannot be confined it is not run, and has failed. For a repository whose commands run in a container
+ * (src/execution.ts, ADR 0009), it runs through `docker exec` in the task's container instead (`runInContainer`).
  *
  * A command run for a task is tracked (U15): its row in `command_processes` is written before it starts, gets its
  * process group and start time once it runs, and is closed in the same write that stores its evidence. A row left open
@@ -82,7 +84,7 @@ const killGroup = (pid: number | undefined): void => {
 };
 
 /** A run that never started, with why in its output. */
-function notRun(o: { command: string; limitMs: number }, why: string): CommandRun {
+export function notRun(o: { command: string; limitMs: number }, why: string): CommandRun {
   const at = now();
   return { command: o.command, outcome: "failed", exitCode: null, signal: null, output: `${why}\n`, truncated: false, limitMs: o.limitMs, startedAt: at, endedAt: at, durationMs: 0 };
 }
@@ -94,7 +96,7 @@ const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
  * Run one command in the worktree `cwd`, confined, and resolve with how it went. Never rejects: a command that cannot
  * be started, or cannot be confined, has failed.
  */
-export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; track?: Tracked }): Promise<CommandRun> {
+export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container?: TaskContainer; track?: Tracked }): Promise<CommandRun> {
   const track = o.track;
   if (track === undefined) return runUntracked(o, () => {}, () => {});
   const at = now();
@@ -143,7 +145,25 @@ export function confinedStart(o: { command: string; worktree: string; dataDir: s
   return { argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env };
 }
 
-async function runUntracked(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement }, onTmp: (dir: string) => void, onSpawn: (pgid: number) => void): Promise<CommandRun> {
+/**
+ * A setup or check command of a repository whose commands run in a container (src/execution.ts): `docker exec` in the
+ * task's container, not sandbox-exec, with no shell on this Mac between. The docker program gets Botbench's own
+ * environment, which never reaches the container. When the command has ended, however it ended, whatever it left
+ * running in the container is stopped, as its process group is on this Mac. A task that may reach hosts has no
+ * container (the container reaches no network), so such a command is not run.
+ */
+async function runInContainer(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container: TaskContainer }, onSpawn: (pgid: number) => void): Promise<CommandRun> {
+  if (o.confinement.allowedHosts.length > 0) return notRun(o, "Botbench did not run this command: it runs in a container, which reaches no network, and this task may reach hosts.");
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  try {
+    return await spawnCommand({ ...o, argv: containerExecArgv(o.container, o.command), env, onSpawn });
+  } finally {
+    await stopLeftovers(o.container);
+  }
+}
+
+async function runUntracked(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container?: TaskContainer }, onTmp: (dir: string) => void, onSpawn: (pgid: number) => void): Promise<CommandRun> {
+  if (o.container !== undefined) return runInContainer({ ...o, container: o.container }, onSpawn);
   const problem = confinementProblem();
   if (problem !== null) return notRun(o, `Botbench did not run this command. ${problem}`);
   let tmp: string;

@@ -25,7 +25,9 @@ import { deliverNoteIn, leftBuilding, NOT_DELIVERED, NOTE_REFUSED, NOTE_TOO_LATE
 import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
-import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
+import { commandProblem, insertEvidence, nextRound, notRun, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
+import { HOST_EXECUTION, type Execution, type TaskContainer } from "../execution.ts";
+import { createContainers, type Containers } from "./containers.ts";
 import { LIMIT_CANCELLED, LIMIT_PROMPT, LIMIT_ROUND_NOTE, limitAgainReason, limitNoSessionReason, MAX_TIMER_MS, retryTime, USAGE_LIMIT_WAIT_MS } from "./usage-limit.ts";
 
 /**
@@ -428,6 +430,10 @@ export interface TasksOptions {
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
   repoHosts?: (repo: string) => readonly string[];
+  /** Where a repository's commands run (src/execution.ts): on this Mac when left out. */
+  execution?: (repo: string) => Execution;
+  /** The task containers, for a repository whose commands run in one (engine/containers.ts). Made here when left out. */
+  containers?: Containers;
   /** The paths of a repository that only the owner may accept a change to (engine/scope.ts). None when left out. */
   protectedPaths?: (repo: string) => readonly string[];
   /** The agents that can review a run's tasks, by name. A run whose reviewer is not among them has its tasks' reviews fail, saying so. */
@@ -468,6 +474,26 @@ export function createTasks(options: TasksOptions): Tasks {
   const checkFixCap = options.checkFixRounds ?? DEFAULT_CHECK_FIX_ROUNDS;
   /** What the commands of a task are kept from (U27). A run that read outside text reaches no host unless its owner allowed them (engine/intake.ts). */
   const confinement = (task: Pick<Task, "repo" | "runId">): Confinement => ({ dataDir: home, allowedHosts: allowedHostsFor(db, task.runId, options.repoHosts?.(task.repo) ?? []) });
+  let ownContainers: Containers | null = null;
+  /**
+   * The container a task's commands run in (src/execution.ts), started or found running as it was started; null for a
+   * repository whose commands run on this Mac. Throws, with why in words for the owner, when it cannot be had: the task
+   * then does not go on, and nothing runs on this Mac instead.
+   */
+  const containerFor = async (task: Task): Promise<TaskContainer | null> => {
+    const execution = options.execution?.(task.repo) ?? HOST_EXECUTION;
+    if (execution.kind === "host") return null;
+    if (driver.capabilities.containerCommands !== true) throw new Error(`This repository's commands run in a container, and ${agentName(driver.name)} cannot have its commands run there. Build it with Claude Code, or set the repository's "execution" to "host". Nothing ran on this Mac instead.`);
+    const containers = options.containers ?? (ownContainers ??= createContainers({ db, home, workbench: () => workbenchName(db) }));
+    const started = await containers.start({ taskId: task.id, image: execution.image, mount: fs.realpathSync(task.worktreePath!), allowedHosts: confinement(task).allowedHosts });
+    if (!started.ok) throw new Error(started.why);
+    return started.container;
+  };
+  /** A builder attempt's `container` option: set for a repository whose commands run in one. */
+  const inContainer = async (task: Task): Promise<{ container?: TaskContainer }> => {
+    const container = await containerFor(task);
+    return container === null ? {} : { container };
+  };
   /**
    * A builder's first prompt: the task's own, then the notes in docs/solutions/ of the task's copy when it has any
    * (engine/learnings.ts), then the owner's notes on this workbench when there are any (engine/memory.ts), then, for a
@@ -559,14 +585,30 @@ export function createTasks(options: TasksOptions): Tasks {
    * stops at the first that does not pass; checks all run. `stopped`: a command was stopped (a cancel, or Botbench
    * stopping) and the rest were not run.
    */
-  const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
+  const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal, given?: TaskContainer | null): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
     const round = nextRound(db, task.id, kind);
     // The whole list is known before its first command runs, so a count shown meanwhile is out of all of it.
     if (commands.length > 0) startCommandList(db, task.id, kind, round, commands.length);
     let failed: CommandRun | null = null;
+    // Where the commands run: on this Mac, or in the task's container. One that cannot be had runs none of them, and each says why.
+    let container: TaskContainer | null = given ?? null;
+    if (given === undefined && commands.length > 0) {
+      try {
+        container = await containerFor(task);
+      } catch (err) {
+        for (const [i, command] of commands.entries()) {
+          const run = notRun(command, `Botbench did not run this command. ${words(err)}`);
+          insertEvidence(db, task.id, kind, i + 1, run, round);
+          failed ??= run;
+          if (kind === "setup") break;
+        }
+        options.onTaskChange(getTask(db, task.id)!);
+        return { stopped: false, failed };
+      }
+    }
     for (const [i, command] of commands.entries()) {
       if (signal?.aborted || closed) return { stopped: true, failed };
-      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
+      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), ...(container === null ? {} : { container }), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
       options.onTaskChange(getTask(db, task.id)!);
       if (result.outcome === "stopped") return { stopped: true, failed };
       if (result.outcome !== "passed") {
@@ -645,7 +687,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes for a failing check was being started");
@@ -824,7 +866,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(at.repo);
-      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(at.requestedModel === null ? {} : { model: at.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(at.id, "building", "this task's round of fixes was being started");
@@ -922,7 +964,14 @@ export function createTasks(options: TasksOptions): Tasks {
   const setUpAndDrive = async (task: Task, stop: AbortController): Promise<void> => {
     const id = task.id;
     const setup = options.repoCommands?.(task.repo).setup ?? [];
-    const ran = await runList(task, "setup", setup, stop.signal);
+    // A repository whose commands run in a container has the task's container before its setup, or the task does not go on.
+    let container: TaskContainer | null;
+    try {
+      container = await containerFor(task);
+    } catch (err) {
+      return void moveFrom(id, "building", "failed", { reason: words(err) });
+    }
+    const ran = await runList(task, "setup", setup, stop.signal, container);
     if (ran.failed !== null) return void moveFrom(id, "building", "failed", { reason: commandProblem("setup", ran.failed) });
     if (ran.stopped || stop.signal.aborted) {
       if (cancelled(task)) return finish(task, "cancelled", "The run was cancelled while this task was being prepared. What setup wrote is committed to its branch.");
@@ -935,7 +984,7 @@ export function createTasks(options: TasksOptions): Tasks {
     try {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       // No agent started: the next start takes the task up from its setup.
@@ -1287,7 +1336,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let session: DriverSession;
     try {
       const gitDir = await sharedGitDir(task.repo);
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), resumeCursor, ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       return giveUp(task, `Claude Code could not be started again to resume this task: ${words(err)} Your answer was not applied and nothing was run.`);
@@ -1341,7 +1390,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) throw new Error("Botbench is stopping.");
       const gitDir = await sharedGitDir(task.repo);
       // The model stays the one the task was started with, whatever is configured by now.
-      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
+      session = await driver.startAttempt({ db, cwd: task.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(task), gitDir }, ...(await inContainer(task)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...(task.requestedModel === null ? {} : { model: task.requestedModel }) });
     } catch (err) {
       admission.release();
       if (closed) return leave(task.id, "building", "this task was being taken up again");

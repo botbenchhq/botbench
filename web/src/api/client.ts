@@ -715,6 +715,12 @@ export interface WorkbenchSetting {
   setInFile: boolean;
 }
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
+/** Where one repository of the settings file runs its commands (src/execution.ts). */
+export interface RepositoryExecution {
+  path: string;
+  execution: { kind: "host" } | { kind: "container"; image: string };
+}
+export const getRepositoryExecutions = async (): Promise<RepositoryExecution[]> => (await request<{ repositories: RepositoryExecution[] }>("GET", "/api/settings", undefined, 30_000)).repositories;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
 
 /** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
