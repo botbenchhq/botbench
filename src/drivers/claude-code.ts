@@ -441,10 +441,14 @@ export function permissionAnswer(request: { name: string; input: unknown }, resp
   const words = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
   if (given.decision === "allow") {
     const decision: Resolved = given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : given.web === true ? "web" : given.chat === true ? "chat" : given.bookkeeping === true ? "bookkeeping" : "allowed";
-    if (container === null || request.name !== "Bash") return { answer: { behavior: "allow", updatedInput: request.input }, decision, note: null };
-    const rewritten = containerShellInput(container, request.input);
+    if (container === null) return { answer: { behavior: "allow", updatedInput: request.input }, decision, note: null };
+    // The CLI's sandbox escape is open in the container kind for Botbench's own rewritten call only: any other tool's
+    // call that carries it is refused, whatever tool the CLI may one day give that field to.
+    const escapes = isObject(request.input) && "dangerouslyDisableSandbox" in request.input;
+    if (request.name !== "Bash" && !escapes) return { answer: { behavior: "allow", updatedInput: request.input }, decision, note: null };
+    const rewritten = request.name === "Bash" ? containerShellInput(container, request.input) : null;
     if (rewritten !== null) return { answer: { behavior: "allow", updatedInput: rewritten }, decision, note: null };
-    const why = "This task's commands run in its container, and this call holds no command Botbench could run there.";
+    const why = request.name === "Bash" ? "This task's commands run in its container, and this call holds no command Botbench could run there." : "This task's commands run in its container, and this call asks to run outside Claude Code's sandbox, which only Botbench's own command into the container may.";
     return { answer: { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
   }
   const why = words(given.refused);

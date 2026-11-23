@@ -89,7 +89,7 @@ test("in the container kind the launch settings differ in one thing: allowUnsand
 });
 
 const CLEAN = ["env", "-i", "HOME=/tmp", `PATH=${CONTAINER_PATH}`];
-const C: TaskContainer = { name: "botbench-studio-task-7", workdir: "/Users/o/.botbench/worktrees/run-3/task-7", docker: "/usr/local/bin/docker" };
+const C: TaskContainer = { name: "botbench-studio-0a1b2c3d-task-7", id: "e".repeat(64), workdir: "/Users/o/.botbench/worktrees/run-3/task-7", docker: "/usr/local/bin/docker" };
 
 /** The words a real sh makes of a command line. */
 function shellWords(line: string): string[] {
@@ -99,19 +99,23 @@ function shellWords(line: string): string[] {
 }
 
 test("an allowed command is rewritten into docker exec … sh -c '<command>', and a real sh reads back exactly the original, quotes and newlines included", () => {
-  const commands = ["npm test", "echo 'it''s' \"$HOME\" `id` $(whoami)", "printf '%s\\n' a b\ncat <<'EOF'\nline 'one'\nEOF", "a=1; b='x'\"'\"'y'; echo \\$a", "'", "\\'\\\\", "ends with newline\n"];
+  const commands = ["npm test", "echo 'it''s' \"$HOME\" `id` $(whoami)", "printf '%s\\n' a b\ncat <<'EOF'\nline 'one'\nEOF", "a=1; b='x'\"'\"'y'; echo \\$a", "'", "\\'\\\\", "ends with newline\n", "-c 'touch /tmp/x'", "--help", "-x"];
   for (const command of commands) {
     const line = containerCommand(C, command);
-    assert.deepEqual(shellWords(line), [C.docker, "exec", "--workdir", C.workdir, C.name, ...CLEAN, "sh", "-c", command], JSON.stringify(command));
+    // To the container by its id, and after `--`: a command that starts with "-" is not read as the container sh's options.
+    assert.deepEqual(shellWords(line), [C.docker, "exec", "--workdir", C.workdir, C.id, ...CLEAN, "sh", "-c", "--", command], JSON.stringify(command));
   }
-  assert.equal(containerCommand(C, "npm test"), `'/usr/local/bin/docker' 'exec' '--workdir' '/Users/o/.botbench/worktrees/run-3/task-7' 'botbench-studio-task-7' 'env' '-i' 'HOME=/tmp' 'PATH=${CONTAINER_PATH}' 'sh' '-c' 'npm test'`);
+  assert.equal(containerCommand(C, "npm test"), `'/usr/local/bin/docker' 'exec' '--workdir' '/Users/o/.botbench/worktrees/run-3/task-7' '${C.id}' 'env' '-i' 'HOME=/tmp' 'PATH=${CONTAINER_PATH}' 'sh' '-c' '--' 'npm test'`);
+  // A real sh given `-c -- <command>` runs a command named "-x", as this Mac's shell would, and takes no option from it.
+  const dashed = spawnSync("/bin/sh", ["-c", "--", "-x"], { encoding: "utf8" });
+  assert.equal(dashed.status, 127, dashed.stderr);
   // What the inner sh then runs is the original: the same output as running it directly.
   const original = "printf '%s|' \"a b\" 'c'\"'\"'d'\necho done";
   const inner = shellWords(containerCommand(C, original)).at(-1)!;
   assert.equal(spawnSync("/bin/sh", ["-c", inner], { encoding: "utf8" }).stdout, spawnSync("/bin/sh", ["-c", original], { encoding: "utf8" }).stdout);
   // Setup and check commands go as argv, with no shell on this Mac between; both start from an empty environment
   // (`env -i`), so neither this Mac's variables nor the image's own ENV lines reach the command.
-  assert.deepEqual(containerExecArgv(C, "npm ci && npm test"), [C.docker, "exec", "--workdir", C.workdir, C.name, ...CLEAN, "sh", "-c", "npm ci && npm test"]);
+  assert.deepEqual(containerExecArgv(C, "npm ci && npm test"), [C.docker, "exec", "--workdir", C.workdir, C.id, ...CLEAN, "sh", "-c", "--", "npm ci && npm test"]);
   const env = spawnSync("/usr/bin/env", ["-i", ...CLEAN.slice(2), "/bin/sh", "-c", "env"], { encoding: "utf8", env: { ...process.env, FROM_THE_IMAGE: "1" } });
   assert.deepEqual(env.stdout.split("\n").filter((line) => line !== "" && !line.startsWith("PWD=") && !line.startsWith("SHLVL=") && !line.startsWith("_=")).sort(), ["HOME=/tmp", `PATH=${CONTAINER_PATH}`], "env -i leaves only HOME and PATH");
 });
@@ -140,6 +144,14 @@ test("the permission answer rewrites only an allowed Bash call; a refused or dec
   assert.deepEqual(allowed, { answer: { behavior: "allow", updatedInput: { command: containerCommand(C, "npm test"), dangerouslyDisableSandbox: true } }, decision: "mode", note: null });
   const edit = { name: "Edit", input: { file_path: "a.ts", old_string: "a", new_string: "b" } };
   assert.deepEqual(permissionAnswer(edit, { decision: "allow", files: true }, C).answer, { behavior: "allow", updatedInput: edit.input }, "a file tool runs on this Mac, in the same copy");
+  // The sandbox escape is open in the container kind for Botbench's own rewritten call only: any other tool carrying
+  // it is refused, even when allowed, and on the host kind the CLI ignores it (allowUnsandboxedCommands is false).
+  for (const name of ["Monitor", "PowerShell", "bash", "Skill"]) {
+    const escaped = permissionAnswer({ name, input: { command: "id", dangerouslyDisableSandbox: true } }, { decision: "allow" }, C);
+    assert.equal(escaped.answer.behavior, "deny", name);
+    assert.equal(escaped.decision, "denied", name);
+    assert.match(escaped.note!, /asks to run outside Claude Code's sandbox/);
+  }
   const empty = permissionAnswer({ name: "Bash", input: {} }, { decision: "allow" }, C);
   assert.equal(empty.answer.behavior, "deny");
   assert.equal(empty.decision, "denied");
@@ -149,11 +161,16 @@ test("the permission answer rewrites only an allowed Bash call; a refused or dec
 
 test("docker run: detached, never pulling, named and labelled, hardened, no network, the owner's ids, one bind mount of the copy at the same path as its working folder, HOME and PATH only, sleep infinity", () => {
   const mount = "/Users/o/.botbench/worktrees/run-3/task-7";
-  const args = containerRunArgs({ name: containerName("studio", 7), workbench: "studio", taskId: 7, image: "node:24", mount, uid: 501, gid: 20 });
-  assert.equal(containerName("studio", 7), "botbench-studio-task-7");
+  const name = containerName("studio", "/nonexistent-data/one", 7);
+  const args = containerRunArgs({ name, workbench: "studio", taskId: 7, image: "node:24", mount, uid: 501, gid: 20 });
+  // Named for the workbench, the data folder and the task: two Botbench data folders under one workbench name do not
+  // want the same name for their task 7.
+  assert.match(name, /^botbench-studio-[0-9a-f]{8}-task-7$/);
+  assert.equal(containerName("studio", "/nonexistent-data/one", 7), name);
+  assert.notEqual(containerName("studio", "/nonexistent-data/two", 7), name);
   assert.deepEqual(args.slice(0, 4), ["run", "-d", "--pull", "never"]);
   const pairs = (flag: string): string[] => args.flatMap((a, i) => (a === flag ? [args[i + 1]!] : []));
-  assert.deepEqual(pairs("--name"), ["botbench-studio-task-7"]);
+  assert.deepEqual(pairs("--name"), [name]);
   assert.deepEqual(pairs("--label"), ["botbench.workbench=studio", "botbench.task=7", `botbench.mount=${mount}`]);
   assert.deepEqual(pairs("--cap-drop"), ["ALL"]);
   assert.deepEqual(pairs("--security-opt"), ["no-new-privileges"]);
@@ -233,6 +250,25 @@ test("starting a task's container is refused, before anything runs and with no f
   assert.match(none.ok ? "" : none.why, /no docker program was found on this Mac\. Install Docker, or set this repository's "execution" to "host"\. Nothing ran on this Mac instead\./);
   const down = await startTaskContainer({ ...base, docker: "/usr/bin/false" });
   assert.match(down.ok ? "" : down.why, /^Docker did not answer \(docker info/);
+});
+
+test("a copy reached through a link, or gone, is refused before docker run: what is mounted is the copy's own real path", async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-link-")));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const dataDir = path.join(dir, "data");
+  const elsewhere = path.join(dir, "elsewhere");
+  fs.mkdirSync(path.join(elsewhere, "run-3", "task-7"), { recursive: true });
+  fs.mkdirSync(dataDir);
+  // The data folder's worktrees folder is a link to another place: by name the copy is inside the data folder.
+  fs.symlinkSync(elsewhere, path.join(dataDir, "worktrees"));
+  const mount = path.join(dataDir, "worktrees", "run-3", "task-7");
+  assert.equal(mountProblem(mount, { dataDir, home: "/nonexistent-home/owner", env: {} }), null, "by name alone it looks like a copy");
+  // /bin/echo answers `docker info` and `docker image inspect` with a line, as Docker would: the next step is the mount.
+  const base = { workbench: "studio", taskId: 7, image: "node:24", dataDir, allowedHosts: [] as string[], home: "/nonexistent-home/owner", env: {}, docker: "/bin/echo" };
+  const linked = await startTaskContainer({ ...base, mount });
+  assert.deepEqual(linked, { ok: false, why: `Botbench does not start a container with ${mount} in it: it is not its own real path (a link on the way leads to ${path.join(elsewhere, "run-3", "task-7")}). Nothing ran on this Mac instead.` });
+  const gone = await startTaskContainer({ ...base, mount: path.join(dataDir, "worktrees", "run-3", "task-8") });
+  assert.match(gone.ok ? "" : gone.why, /it is not there\. Nothing ran on this Mac instead\.$/);
 });
 
 test("a started container is held to what was asked, from its own record and from inside: anything else is refused", () => {

@@ -37,8 +37,9 @@ export function createContainers(o: { db: DatabaseSync; home: string; workbench:
   /** Found once: Botbench's own PATH does not change while it runs. */
   const docker = o.docker === undefined ? findDocker() : o.docker;
   /**
-   * The tasks this process started or found a container for, each with its container's name as it was made, so a task
-   * change looks at Docker only for them, and a workbench renamed since still removes the right container.
+   * The tasks this process started or found a container for, each with its container's id, so a task change looks at
+   * Docker only for them, and removes exactly that container (a workbench renamed since, or a container made under the
+   * same name later, does not change which).
    */
   const known = new Map<number, string>();
   let queue: Promise<unknown> = Promise.resolve();
@@ -49,24 +50,24 @@ export function createContainers(o: { db: DatabaseSync; home: string; workbench:
   };
   /** Work nobody waits on: what goes wrong is logged, never thrown. */
   const quietly = (what: string, work: () => Promise<void>): Promise<void> => serial(work).catch((err: unknown) => log(`${what} failed: ${err instanceof Error ? err.message : String(err)}`));
-  const remove = async (taskId: number, name: string): Promise<void> => {
+  const remove = async (taskId: number, id: string): Promise<void> => {
     if (docker === null) return;
-    const failed = await removeContainer(docker, name);
+    const failed = await removeContainer(docker, id);
     if (failed === null) known.delete(taskId);
-    else log(`Removing the container ${name} of task ${taskId} failed (${failed}). Remove it with docker rm -f ${name}.`);
+    else log(`Removing the container ${id.slice(0, 12)} of task ${taskId} failed (${failed}). Remove it with docker rm -f ${id.slice(0, 12)}.`);
   };
 
   return {
     start: (s) =>
       serial(async () => {
         const started = await startTaskContainer({ workbench: o.workbench(), taskId: s.taskId, image: s.image, mount: s.mount, dataDir: o.home, allowedHosts: s.allowedHosts, ...(docker === null ? {} : { docker }) });
-        if (started.ok) known.set(s.taskId, started.container.name);
+        if (started.ok) known.set(s.taskId, started.container.id);
         return started;
       }),
     taskChanged: (taskId) => {
-      const name = known.get(taskId);
-      if (name === undefined || taskLive(o.db, taskId)) return;
-      void quietly(`Removing the container of task ${taskId}`, () => remove(taskId, name));
+      const id = known.get(taskId);
+      if (id === undefined || taskLive(o.db, taskId)) return;
+      void quietly(`Removing the container of task ${taskId}`, () => remove(taskId, id));
     },
     sweep: () =>
       quietly("Removing containers left by tasks that ended", async () => {
@@ -76,8 +77,8 @@ export function createContainers(o: { db: DatabaseSync; home: string; workbench:
         if (found === null) return;
         for (const c of found) {
           if (!mountedFrom(c.mount, o.home)) continue;
-          if (c.taskId !== null && taskLive(o.db, c.taskId)) known.set(c.taskId, c.name);
-          else await remove(c.taskId ?? 0, c.name);
+          if (c.taskId !== null && taskLive(o.db, c.taskId)) known.set(c.taskId, c.id);
+          else await remove(c.taskId ?? 0, c.id);
         }
       }),
     idle: () => serial(async () => {}),

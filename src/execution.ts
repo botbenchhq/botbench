@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -47,15 +48,28 @@ export function executionProblem(value: unknown, allowedHosts: unknown): string 
   return null;
 }
 
-/** Where one task's commands run in a container: its name, the folder they start in (the task's copy) and the docker program. */
+/**
+ * Where one task's commands run in a container: its name, its id, the folder they start in (the task's copy) and the
+ * docker program. Commands go to it by its id, the one Botbench proved after the start, never by its name: a container
+ * made under the same name later (after this one was removed) is not this one.
+ */
 export interface TaskContainer {
   name: string;
+  id: string;
   workdir: string;
   docker: string;
 }
 
-/** The name of a task's container: botbench-<workbench>-task-<id>. A workbench name is already one Docker accepts. */
-export const containerName = (workbench: string, taskId: number): string => `botbench-${workbench}-task-${taskId}`;
+/**
+ * The name of a task's container: botbench-<workbench>-<data>-task-<id>, where <data> is the first 8 hex digits of the
+ * SHA-256 of the data folder's real path. Task ids are counted per data folder, and an owner may run more than one
+ * Botbench under the same workbench name (a second data folder for trying a change): without <data> their task 7s would
+ * want the same name, and the second could not start. A workbench name is already one Docker accepts.
+ */
+export const containerName = (workbench: string, dataDir: string, taskId: number): string => `botbench-${workbench}-${dataDigest(dataDir)}-task-${taskId}`;
+const dataDigest = (dataDir: string): string => createHash("sha256").update(bothPaths(dataDir).at(-1)!).digest("hex").slice(0, 8);
+/** What Docker gives as a container's id. */
+const CONTAINER_ID = /^[0-9a-f]{64}$/;
 
 export const LABEL_WORKBENCH = "botbench.workbench";
 export const LABEL_TASK = "botbench.task";
@@ -140,8 +154,12 @@ export function containerRunArgs(o: { name: string; workbench: string; taskId: n
  */
 const CLEAN_ENV = ["env", "-i", "HOME=/tmp", `PATH=${CONTAINER_PATH}`] as const;
 
-/** How Botbench runs one setup or check command in a task's container: argv, with no shell on this Mac between. */
-export const containerExecArgv = (c: TaskContainer, command: string): string[] => [c.docker, "exec", "--workdir", c.workdir, c.name, ...CLEAN_ENV, "sh", "-c", command];
+/**
+ * How Botbench runs one setup or check command in a task's container: argv, with no shell on this Mac between, to the
+ * container by its id. `--` before the command: one that starts with "-" is a command, as it is on this Mac, never
+ * options of the container's sh.
+ */
+export const containerExecArgv = (c: TaskContainer, command: string): string[] => [c.docker, "exec", "--workdir", c.workdir, c.id, ...CLEAN_ENV, "sh", "-c", "--", command];
 
 /** One shell command line that runs `command` in a task's container: what the agent's allowed command becomes. */
 export const containerCommand = (c: TaskContainer, command: string): string => containerExecArgv(c, command).map(shellQuote).join(" ");
@@ -329,34 +347,46 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
   if (down !== null) return refuse(down);
   const image = await runDocker(docker, ["image", "inspect", "--format", "{{.Id}}", o.image], STEP_MS);
   if (image.code !== 0) return refuse(`The image ${o.image} is not on this Mac, and Botbench never downloads one. Run docker pull ${o.image} yourself, then start the task again. ${NOT_INSTEAD}`);
-  const name = containerName(o.workbench, o.taskId);
-  const container: TaskContainer = { name, workdir: o.mount, docker };
+  // The copy at its own real path, as Docker would resolve it: a link on the way to it would mount what it points at.
+  let real: string | null = null;
+  try {
+    real = fs.realpathSync(o.mount);
+  } catch {
+    // Gone: refused below.
+  }
+  if (real !== o.mount) return refuse(`Botbench does not start a container with ${o.mount} in it: ${real === null ? "it is not there." : `it is not its own real path (a link on the way leads to ${real}).`} ${NOT_INSTEAD}`);
+  const name = containerName(o.workbench, o.dataDir, o.taskId);
   const uid = o.uid ?? process.getuid?.() ?? -1;
   const gid = o.gid ?? process.getgid?.() ?? -1;
   if (uid < 0 || gid < 0) return refuse(`Botbench could not read your user and group ids, which the container runs as. ${NOT_INSTEAD}`);
-  const proven = async (): Promise<string | null> => {
-    const inspected = await runDocker(docker, ["inspect", name], STEP_MS);
-    if (inspected.code !== 0) return `Docker could not say what the container got (docker inspect: ${said(inspected)}).`;
+  // The container of this name held to what was asked: its id, or why not.
+  const proven = async (): Promise<{ id: string } | { problem: string }> => {
+    const inspected = await runDocker(docker, ["inspect", "--type", "container", name], STEP_MS);
+    const no = (problem: string) => ({ problem });
+    if (inspected.code !== 0) return no(`Docker could not say what the container got (docker inspect: ${said(inspected)}).`);
     let record: unknown;
     try {
       record = JSON.parse(inspected.stdout);
     } catch {
-      return "Docker's record of the container could not be read.";
+      return no("Docker's record of the container could not be read.");
     }
-    const state = (Array.isArray(record) ? record[0] : record) as { State?: { Running?: unknown }; Config?: { Labels?: Record<string, unknown> } } | undefined;
-    if (state?.State?.Running !== true) return "the container is not running.";
-    if (state.Config?.Labels?.[LABEL_MOUNT] !== o.mount) return "the container was made for another folder.";
+    const state = (Array.isArray(record) ? record[0] : record) as { Id?: unknown; State?: { Running?: unknown }; Config?: { Labels?: Record<string, unknown> } } | undefined;
+    const id = typeof state?.Id === "string" && CONTAINER_ID.test(state.Id) ? state.Id : null;
+    if (id === null) return no("Docker gave the container no id.");
+    if (state?.State?.Running !== true) return no("the container is not running.");
+    if (state.Config?.Labels?.[LABEL_MOUNT] !== o.mount) return no("the container was made for another folder.");
     const hardened = hardeningProblem(record, o.mount, { image: o.image, imageId: image.stdout.trim(), uid, gid });
-    if (hardened !== null) return hardened;
+    if (hardened !== null) return no(hardened);
     // Probed, not assumed: from inside, the container has the loopback interface and nothing else to reach anything by.
-    const net = await runDocker(docker, ["exec", name, "sh", "-c", "ls /sys/class/net"], STEP_MS);
-    if (net.code !== 0) return `Botbench could not look at the container's network from inside (${said(net)}).`;
-    if (!onlyLoopback(net.stdout)) return `the container has network interfaces besides loopback (${net.stdout.trim().replace(/\s+/g, ", ")}).`;
-    return null;
+    const net = await runDocker(docker, ["exec", id, "sh", "-c", "ls /sys/class/net"], STEP_MS);
+    if (net.code !== 0) return no(`Botbench could not look at the container's network from inside (${said(net)}).`);
+    if (!onlyLoopback(net.stdout)) return no(`the container has network interfaces besides loopback (${net.stdout.trim().replace(/\s+/g, ", ")}).`);
+    return { id };
   };
+  const ready = (id: string): ContainerStart => ({ ok: true, container: { name, id, workdir: o.mount, docker } });
   // The id of the container of this name and what it records as mounted, or null when there is none.
   const foundNow = async (): Promise<{ id: string; mount: string } | null> => {
-    const r = await runDocker(docker, ["inspect", "--format", `{{.Id}}\t{{index .Config.Labels "${LABEL_MOUNT}"}}`, name], STEP_MS);
+    const r = await runDocker(docker, ["inspect", "--type", "container", "--format", `{{.Id}}\t{{index .Config.Labels "${LABEL_MOUNT}"}}`, name], STEP_MS);
     if (r.code !== 0) return null;
     const [id = "", mount = ""] = r.stdout.trim().split("\t");
     return { id, mount };
@@ -365,14 +395,15 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
   // found, not by name: one another process made under the same name meanwhile is left alone.
   const removeOurs = async (): Promise<void> => {
     const found = await foundNow();
-    if (found !== null && found.mount === o.mount && /^[0-9a-f]{12,64}$/.test(found.id)) await removeContainer(docker, found.id);
+    if (found !== null && found.mount === o.mount && CONTAINER_ID.test(found.id)) await removeContainer(docker, found.id);
   };
   // A container left running from before (a restart) is used again only when it is still exactly what was asked for.
   // One made for another folder (another Botbench with the same workbench name) is not this task's: it is left alone.
   const existing = (await foundNow())?.mount ?? null;
   if (existing !== null) {
     if (existing !== o.mount) return refuse(`A container named ${name} already exists for another folder (${existing || "none recorded"}), and Botbench does not remove what is not this task's. Remove it with docker rm -f ${name} if it is not in use, then start the task again. ${NOT_INSTEAD}`);
-    if ((await proven()) === null) return { ok: true, container };
+    const again = await proven();
+    if ("id" in again) return ready(again.id);
     await removeOurs();
   }
   const started = await runDocker(docker, containerRunArgs({ name, workbench: o.workbench, taskId: o.taskId, image: o.image, mount: o.mount, uid, gid }), START_MS);
@@ -380,12 +411,12 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
     await removeOurs();
     return refuse(`Docker did not start this task's container (docker run: ${said(started)}). ${NOT_INSTEAD}`);
   }
-  const problem = await proven();
-  if (problem !== null) {
+  const checked = await proven();
+  if ("problem" in checked) {
     await removeOurs();
-    return refuse(`Botbench removed this task's container again and did not start the task: ${problem} ${NOT_INSTEAD}`);
+    return refuse(`Botbench removed this task's container again and did not start the task: ${checked.problem} ${NOT_INSTEAD}`);
   }
-  return { ok: true, container };
+  return ready(checked.id);
 }
 
 /** Remove a container, whatever state it is in. Resolves with what Docker said when it could not. */
@@ -398,20 +429,20 @@ export async function removeContainer(docker: string, name: string): Promise<str
  * After a setup or check command in a container has ended, whatever it left running there goes with it, as on this
  * Mac its process group does: every process of the container's user but the container's own first one.
  */
-export const stopLeftovers = (c: TaskContainer): Promise<DockerResult> => runDocker(c.docker, ["exec", c.name, "sh", "-c", "kill -9 -1 2>/dev/null; true"], STEP_MS);
+export const stopLeftovers = (c: TaskContainer): Promise<DockerResult> => runDocker(c.docker, ["exec", c.id, "sh", "-c", "kill -9 -1 2>/dev/null; true"], STEP_MS);
 
 /**
  * The containers carrying Botbench's workbench label, whatever workbench name it holds (a workbench may have been renamed
  * since): each one's name, task id and what was mounted. Which are this Botbench's is decided by the mount, which lies in
  * its own data folder (`mountedFrom`). Null when Docker could not list them.
  */
-export async function labelledContainers(docker: string): Promise<{ name: string; taskId: number | null; mount: string }[] | null> {
-  const r = await runDocker(docker, ["ps", "-a", "--filter", `label=${LABEL_WORKBENCH}`, "--format", `{{.Names}}\t{{.Label "${LABEL_TASK}"}}\t{{.Label "${LABEL_MOUNT}"}}`], DOCKER_ANSWER_MS);
+export async function labelledContainers(docker: string): Promise<{ id: string; name: string; taskId: number | null; mount: string }[] | null> {
+  const r = await runDocker(docker, ["ps", "-a", "--no-trunc", "--filter", `label=${LABEL_WORKBENCH}`, "--format", `{{.ID}}\t{{.Names}}\t{{.Label "${LABEL_TASK}"}}\t{{.Label "${LABEL_MOUNT}"}}`], DOCKER_ANSWER_MS);
   if (r.code !== 0) return null;
   return r.stdout.split("\n").filter((line) => line.trim() !== "").map((line) => {
-    const [name = "", task = "", mount = ""] = line.split("\t");
-    return { name, taskId: /^[1-9]\d{0,14}$/.test(task) ? Number(task) : null, mount };
-  });
+    const [id = "", name = "", task = "", mount = ""] = line.split("\t");
+    return { id, name, taskId: /^[1-9]\d{0,14}$/.test(task) ? Number(task) : null, mount };
+  }).filter((c) => CONTAINER_ID.test(c.id));
 }
 
 /** Whether `mount`, as a container's label records it, lies in `dataDir`: only such a container is this Botbench's to remove. */
