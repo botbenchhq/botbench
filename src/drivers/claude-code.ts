@@ -752,7 +752,8 @@ class ClaudeCodeSession implements DriverSession {
         const how = spawnError ? spawnError.message : signal ? `was killed by ${signal}` : `exited with code ${code}`;
         const message = sandboxRefusal(this.stderrTail) ?? `Claude Code ${how} while it was working.`;
         this.record({ type: "error", message, raw: this.stderrTail.trim() === "" ? null : shorten(this.stderrTail.trim()) });
-        this.endTurn("error", message, "failed");
+        // An exit after the CLI said the limit was reached, with no result printed, is a turn ended in error on the limit too.
+        this.endTurn("error", message, "failed", limitedEnd({ type: "turn_ended", reason: "error", detail: message }, this.limit).usageLimit);
       }
     }
     // The CLI itself is gone, but something it started may still be in its group.

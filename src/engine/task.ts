@@ -1284,7 +1284,13 @@ export function createTasks(options: TasksOptions): Tasks {
 
   // A task left waiting for a usage limit by the last Botbench keeps its stored time: it is woken then, or at once when
   // that has passed, in its turn after the recovery above.
-  for (const row of db.prepare("SELECT id, retry_at FROM tasks WHERE status = 'waiting_for_limit' ORDER BY id").all()) arm({ id: Number(row.id), retryAt: text(row.retry_at) });
+  // Each is announced again: a Botbench that stopped between storing the wait and announcing it sent no notification,
+  // and the push service records what it sent, so one already sent is not sent twice.
+  for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'waiting_for_limit' ORDER BY id").all()) {
+    const waiting = getTask(db, Number(row.id))!;
+    options.onTaskChange(waiting);
+    arm(waiting);
+  }
 
   // An answer stored for a parked approval re-drives its task, in its turn like any other work.
   broker.onStoredAnswer((approval) => {

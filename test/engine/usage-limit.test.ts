@@ -47,6 +47,8 @@ interface Engine {
   broker: Broker;
   tasks: Tasks;
   runs: Runs;
+  /** Every state this engine announced a task at, in order: what reaches the push service (src/server.ts). */
+  announced: { id: number; status: string }[];
   close(): Promise<void>;
 }
 
@@ -73,11 +75,12 @@ async function line(t: T, o: { waitMs?: number; checks?: StationCommand[] } = {}
     const broker = createBroker({ db, home, onChange: () => {} });
     await broker.listen();
     const driver = processDriver(scripts, { resume: true });
-    const tasks = createTasks({ db, home, driver, broker, repoCommands, usageLimitWaitMs: o.waitMs ?? USAGE_LIMIT_WAIT_MS, onEvent: () => {}, onTaskChange: () => {} });
+    const announced: { id: number; status: string }[] = [];
+    const tasks = createTasks({ db, home, driver, broker, repoCommands, usageLimitWaitMs: o.waitMs ?? USAGE_LIMIT_WAIT_MS, onEvent: () => {}, onTaskChange: (task) => void announced.push({ id: task.id, status: task.status }) });
     const runs = createRuns({ db, home, driver, broker, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
     let closed = false;
     const engine: Engine = {
-      driver, broker, tasks, runs,
+      driver, broker, tasks, runs, announced,
       close: async () => {
         if (closed) return;
         closed = true;
@@ -214,6 +217,8 @@ test("a restart while a task waits keeps the wait: after it the task is still wa
   assert.equal(kept.status, "waiting_for_limit");
   assert.equal(kept.retryAt, resetsAt);
   assert.equal(second.driver.starts.length, 0);
+  // Announced again at the start, so a notification the last Botbench stopped before sending still goes (once: the push service records it).
+  assert.deepEqual(second.announced[0], { id: started.id, status: "waiting_for_limit" });
   await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review");
   assert.deepEqual(second.driver.starts, [{ resumeCursor: `session-${attempt}`, model: null }]);
   assert.ok(attemptStart(e.db, getTask(e.db, started.id)!.attemptId!) >= Date.parse(resetsAt));
