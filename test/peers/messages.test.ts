@@ -270,7 +270,7 @@ test("each draft is logged and counted first, then a card in a manual run, refus
   assert.deepEqual({ title: card!.title, line: card!.line, text: card!.text, note: card!.note, choices: card!.choices }, { title: "Send this to bob?", line: `A question about botbench, from Claude Code in task ${task.id}.`, text: "Which port?", note: "Only this text leaves this Mac, and only to bob's workbench. No files, branches or settings are sent.", choices: ["send", "dont_send"] });
   assert.equal(rows(alice.db, "SELECT 1 FROM peer_messages WHERE direction = 'out' AND kind IN ('question', 'answer')").length, 0);
   // The next prompt says why, in the ADR's words, once.
-  assert.match(await drafts.promptFor(task, false), new RegExp(overLimitSentence(2).replace(/[.:]/g, "\\$&")));
+  assert.ok((await drafts.promptFor(task, false)).includes(overLimitSentence(2)));
   assert.equal(await drafts.promptFor(task, false), "");
   // The owner's own message does not count against the run's cap.
   ownerSend(alice.db, alice.key, { pairingId: id, kind: "question", text: "Mine" });
