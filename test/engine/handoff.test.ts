@@ -13,7 +13,9 @@ import { CARRY_ON, earlierRecord, fallbacksProblem, handoffLine, handoffProblem,
 import { capIssue, storeIssue } from "../../src/engine/intake.ts";
 import { setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
 import { approvePlan, createRun, getRun, storePlan, type Run } from "../../src/engine/run.ts";
+import type { Containers } from "../../src/engine/containers.ts";
 import { createTasks, getTask, TaskError, type Task, type Tasks } from "../../src/engine/task.ts";
+import type { Execution } from "../../src/execution.ts";
 import { parseIssueView } from "../../src/github.ts";
 import { openStore } from "../../src/store/db.ts";
 import { processDriver, type ProcessDriver } from "../support/process-driver.ts";
@@ -64,7 +66,7 @@ interface Line {
  * A store, a repository and the engine over them. `codex`: Codex as a builder, made for the folder outside the copy
  * (the replay of the shape's `turns` when a list is given, `inside` when left out), or null for a Botbench without it.
  */
-async function line(t: T, o: { main: Driver; codex?: readonly ShapeTurn[] | ((outside: string) => Driver) | null; listen?: boolean; usageLimitWaitMs?: number }): Promise<Line> {
+async function line(t: T, o: { main: Driver; codex?: readonly ShapeTurn[] | ((outside: string) => Driver) | null; listen?: boolean; usageLimitWaitMs?: number; execution?: Execution; containers?: Containers }): Promise<Line> {
   // A short name: the broker's socket goes below it, and a socket's path has a length limit.
   const dir = tempDir("bb-hand-");
   const home = path.join(dir, "home");
@@ -76,7 +78,7 @@ async function line(t: T, o: { main: Driver; codex?: readonly ShapeTurn[] | ((ou
   const outside = path.join(dir, "outside");
   const codex = o.codex === null ? null : typeof o.codex === "function" ? o.codex(outside) : codexBuildReplay([o.codex ?? ["inside"]], { outside });
   const announced: { id: number; status: string }[] = [];
-  const tasks = createTasks({ db, home, driver: o.main, builders: codex === null ? {} : { codex }, broker, repoCommands: () => ({ setup: [], checks: [] }), ...(o.usageLimitWaitMs === undefined ? {} : { usageLimitWaitMs: o.usageLimitWaitMs }), onEvent: () => {}, onTaskChange: (task) => void announced.push({ id: task.id, status: task.status }) });
+  const tasks = createTasks({ db, home, driver: o.main, builders: codex === null ? {} : { codex }, broker, repoCommands: () => ({ setup: [], checks: [] }), ...(o.usageLimitWaitMs === undefined ? {} : { usageLimitWaitMs: o.usageLimitWaitMs }), ...(o.execution === undefined ? {} : { execution: () => o.execution! }), ...(o.containers === undefined ? {} : { containers: o.containers }), onEvent: () => {}, onTaskChange: (task) => void announced.push({ id: task.id, status: task.status }) });
   t.after(async () => {
     await tasks.close();
     await broker.close();
@@ -194,11 +196,13 @@ test("AE4: a task building on Claude Code, moved by the owner to another agent (
   await e.tasks.handOff(task.id, "codex");
   await until(() => getTask(e.db, task.id)!.status === "awaiting_decision", "the task is ready for review");
   const done = getTask(e.db, task.id)!;
-  // The same copy and branch, and no other was made.
+  // The same copy and branch, and no other was made for this task. (The plan's second task may be started as soon as
+  // this one is ready for review, with its own copy and branch, so only this task's are counted.)
   assert.equal(done.worktreePath, building.worktreePath);
   assert.equal(done.branch, building.branch);
-  assert.deepEqual(copies(e.repo).map((p) => fs.realpathSync(p)), [fs.realpathSync(building.worktreePath!)]);
-  assert.deepEqual(branches(e.repo), [building.branch]);
+  const mine = (name: string): boolean => name.endsWith(`/task-${task.id}`);
+  assert.deepEqual(copies(e.repo).filter(mine).map((p) => fs.realpathSync(p)), [fs.realpathSync(building.worktreePath!)]);
+  assert.deepEqual(branches(e.repo).filter(mine), [building.branch]);
   // Claude Code's file was committed before Codex started, and Codex's work is on the same branch after it.
   const commits = git(e.repo, "log", "--format=%H", `${e.base}..${done.branch}`).trim().split("\n");
   assert.equal(commits.length, 2);
@@ -275,6 +279,30 @@ test("a move to an agent whose own check says it cannot start (signed out) is re
   assert.deepEqual([still.status, still.attemptId], ["building", attempt], "Claude Code was not stopped");
   assert.deepEqual(taskHandoffs(e.db, task.id), []);
   assert.deepEqual(e.tasks.moveOffer(task.id).now, true, "it can still be moved once Codex is signed in");
+});
+
+test("for a repository whose commands run in a container, Codex (which cannot have its commands run there) is never offered and a move to it is refused before anything is stopped; nothing runs on this Mac instead", WITHIN, async (t) => {
+  // Claude Code here can have its commands run in the container; the container is the test's, and Docker is not used.
+  const claude = processDriver([writesAndWaits("one")], { resume: true });
+  const inContainer: Driver = { ...claude, capabilities: { ...claude.capabilities, containerCommands: true } };
+  const started: number[] = [];
+  const containers: Containers = {
+    start: async (o) => (started.push(o.taskId), { ok: true, container: { name: `test-task-${o.taskId}`, id: "0", workdir: "/work", docker: "docker" } }),
+    taskChanged: () => {},
+    sweep: async () => {},
+    idle: async () => {},
+  };
+  const e = await line(t, { main: inContainer, execution: { kind: "container", image: "node:22" }, containers });
+  const { task } = planned(e);
+  await until(() => saidIn(e.db, task.id, "started"), "Claude Code is at work");
+  const attempt = getTask(e.db, task.id)!.attemptId;
+  assert.deepEqual(e.tasks.moveOffer(task.id), { agents: [], now: true }, "Codex is not offered");
+  await assert.rejects(e.tasks.handOff(task.id, "codex"), (err: unknown) => err instanceof TaskError && err.status === 409 && /run in a container, and Codex cannot have its commands run there/.test(err.message));
+  await pause(200);
+  const still = getTask(e.db, task.id)!;
+  assert.deepEqual([still.status, still.attemptId], ["building", attempt], "Claude Code was not stopped");
+  assert.deepEqual(taskHandoffs(e.db, task.id), []);
+  assert.deepEqual([...new Set(started)], [task.id]);
 });
 
 test("a move is refused while the builder is not at work on the task, and for a task that is not being built", WITHIN, async (t) => {

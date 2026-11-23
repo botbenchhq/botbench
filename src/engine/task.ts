@@ -1328,8 +1328,13 @@ export function createTasks(options: TasksOptions): Tasks {
   /** The moves the owner asked for while a builder's turn ran, by task: each is made once that turn has ended. */
   const moving = new Map<number, { to: string; model: string | null }>();
 
-  /** Why a builder cannot build a task of its run now, for a hand-off: exactly what starting the task on that agent would be refused for. */
-  const cannotBuildFor = (task: Task) => (agent: string): string | null => builderProblem(agent === driver.name ? null : agent, runModeOf(db, task.runId));
+  /**
+   * Why a builder cannot build a task of its run now, for a hand-off: exactly what starting the task on that agent would
+   * be refused for, including an agent that cannot have its commands run in the task's container
+   * (src/engine/containers.ts): the move is then refused before anything is stopped, and nothing runs on this Mac instead.
+   */
+  const cannotBuildFor = (task: Task) => (agent: string): string | null =>
+    builderProblem(agent === driver.name ? null : agent, runModeOf(db, task.runId)) ?? builderContainerProblem(options.execution?.(task.repo) ?? HOST_EXECUTION, driverFor(agent));
 
   /**
    * The agent a task switches to on its builder's usage limit, or why none can take it (engine/handoff.ts, `nextAgent`).
