@@ -32,13 +32,13 @@ Competitors already have each of these in code.
 
 **The gap.** The source shows permissions bypassed for the agent in OpenAgents (its adapters), Paperclip (its Claude Code adapter, by default; Codex when configured), OpenMausBot (full access by default, safety floor off by default), Letta Code (when it launches Claude Code or Codex), Agensh, and the bridge's Codex kit. The projects with real isolation by default (QM, Agensh) do not drive your own CLIs at all: QM runs its own agent loop, and Agensh uses API gateways only.
 
-**What Botbench has.** Claude Code and Codex send every permission request through the broker; commands are confined by default; a floor of dangerous actions always asks or is refused; broker failure means deny. Grok cannot ask before using a tool, so it runs with its own approvals off inside a sandbox around its whole process, and Antigravity reviews with no tools. As far as the source shows, no project studied combines a floor that is on by default with driving the owner's own CLI.
+**What Botbench has.** Claude Code, the one agent that plans and builds today, sends every permission request through the broker; commands are confined by default; a floor of dangerous actions always asks or is refused; broker failure means deny. The reviewers cannot ask before using a tool, so each is held another way: Codex by its own sandbox profile with approvals set to never, Grok by a sandbox around its whole process, and Antigravity by having no tools. A floor that is on by default, combined with driving the owner's own CLI, is not demonstrated in the projects and source reviewed.
 
 **The honest limit.** Botbench's confinement is the macOS sandbox, not a container, and the agent process itself is outside it. Until #72, the claim is "safe by default", not "isolated".
 
 ### 3. Proof that two people's work fits together
 
-**The gap.** No project checks one owner's change against another owner's open change before either merges. Agensh comes nearest with a CI gate and a broken-main state machine, inside one operator's swarm. Four rate Absent on verification (OpenAgents, Agor, Letta Code, OpenHands). Most of the rest end "done" with the agent's message, a person's acceptance, or a model's reading.
+**The gap.** Checking one owner's change against another owner's open change before either merges is not demonstrated in the projects and source reviewed. Agensh comes nearest with a CI gate and a broken-main state machine, inside one operator's swarm. Four rate Absent on verification (OpenAgents, Agor, Letta Code, OpenHands). Most of the rest end "done" with the agent's message, a person's acceptance, or a model's reading.
 
 **What Botbench has.** Checks run and kept, a review by another vendor's agent, fix rounds, and "check together" on a merge of both changes.
 
@@ -77,6 +77,6 @@ Ordered by how soon a customer would notice.
 
 The decisive question is whether independently operated agent teams accomplish more together with less human coordination and without giving up control. Read against the source:
 
-- **"Independently operated"** is the part nobody else does. It is Botbench's to prove or lose.
+- **"Independently operated"** is the part not demonstrated in the projects and source reviewed. It is Botbench's to prove or lose, and it is the goal, not a rule against ever running a shared service: which networking model serves it best is still to be validated.
 - **"Without sacrificing control"** is where Botbench leads today.
 - **"More together with less coordination"** is where it trails: no dependencies, no direct messages, no hand-offs. Paperclip and Tutti show what the mechanisms look like on one machine. Building them across two machines is the work.

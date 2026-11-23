@@ -7,7 +7,7 @@ Each path is relative to the repository its column or line names: the Botbench c
 ## Summary
 
 Stronger: Botbench gives each task its own copy and branch, confines the agent's commands in macOS's sandbox, and has a safety floor that no mode loosens; OpenMausBot defaults every bot to its engine's most permissive mode and, on this computer, works in the person's own folder.
-Stronger: Botbench ends in a branch with checks, a review by another vendor's model and an owner decision; no OpenMausBot code was found for checks, a cross-vendor review or a branch hand-back.
+Stronger: Botbench ends in a branch with checks, a review by another vendor's model and an owner decision; no OpenMausBot code was found for checks or a branch hand-back. Corrected 23 November 2026: it does have an optional check of the final answer by another provider's model ("check before done", off by default, three rounds at most), which checks the answer text against the request and runs no tests; see `docs/competitive/projects/openmausbot.md`.
 Weaker: once a Botbench task is building, the owner cannot tell the agent anything except through an approval card; OpenMausBot takes a message into a running turn.
 Weaker: no Botbench code acts on a task that goes quiet or meets its usage limit, so neither resumes without the owner; OpenMausBot ends a silent turn after an activity window and records when a limit resets.
 Weaker: reaching Botbench from a phone means typing a 43-character token; OpenMausBot pairs a phone from a link or QR code.
@@ -86,7 +86,7 @@ Ranked by value to a Botbench user who hands work over from a phone, walks away,
 
 - Whether any OpenMausBot behaviour above works as written: no program, test or phone was run, and its runtime contract says that module is proven on fake engines.
 - The hosted parts OpenMausBot relies on (the relay service, its control plane and push sender, the cloud computers): their server code is not in the repository.
-- That OpenMausBot has no review of a finished change by another model: none was found by searching, which does not prove there is none.
+- That OpenMausBot has no review of a finished change by another model: none was found by searching at the time. A later read of its source (23 November 2026) found one, optional and off by default; see the correction above.
 - What Botbench does when Claude Code calls its own question tool (AskUserQuestion) in a headless turn: no rule names it, and only a live run shows whether the owner gets a card they can answer.
 - How a Botbench task ends today when Claude Code meets its usage limit mid-turn (Stopped or Failed, and with which words): it needs a captured session that hits the limit.
 - Whether writing a second user message to Claude Code 2.1.322's stdin mid-turn works with Botbench's flags (empty settings sources, the pre-tool hook, `--permission-prompts none`): OpenMausBot names 2.1.282 as its floor, under different flags.

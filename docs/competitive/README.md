@@ -50,13 +50,13 @@ Local clones are kept read-only in a `reference/` folder beside the Botbench che
 
 ### Three things the review did not expect
 
-- **"Open Agent Bridge" is not an established project.** Two unrelated repositories carry the name. The one matching the review's description (`munboon/open-agent-bridge`) showed no stars in GitHub's search on 23 November 2026 and has one author; the other (`kevinArgueta96/open-agent-bridge`) showed seven. Both are covered in one file. Their designs are useful; neither is a competitor customers would name. The owner should confirm which was meant.
+- **"Open Agent Bridge" is not an established project.** Two unrelated repositories carry the name. The one matching the review's description (`munboon/open-agent-bridge`) showed no stars in GitHub's search on 23 November 2026 and has one author; the other (`kevinArgueta96/open-agent-bridge`) showed seven. Both are covered in one file. Their designs are useful; neither is an established market competitor. The owner confirmed on 23 November 2026 that `munboon/open-agent-bridge` was the one meant; both stay as references.
 - **Daytona is no longer open.** Its public repository says development moved to a private codebase in June 2026. It is out of consideration as a backend.
 - **Tutti's collaboration half is closed.** The open repository is a single-user desktop workspace. Shared rooms, working with other people's agents and VM-backed environments have no implementing code in it.
 
 ## Headline findings
 
-1. **None of the projects lets separately owned installations work together.** Where several people collaborate, they share one server that one operator runs (OpenAgents, Paperclip, QM, Agor, Agenta, the bridge), or the capability is in a closed service (Tutti, Letta Code). Botbench's model, where each developer keeps their own machine and the shared medium is the repository, is not offered by any of them today. Tutti's closed product and Agent Mesh's roadmap point that way. A shared server is also the reason their setup is short, so this is a difference to prove with an experiment, not an advantage to assume.
+1. **Separately owned installations working together is not demonstrated in the projects and source reviewed.** Where several people collaborate, they share one server that one operator runs (OpenAgents, Paperclip, QM, Agor, Agenta, the bridge), or the capability is in a closed service (Tutti, Letta Code). Botbench's model, where each developer keeps their own machine and the shared medium is the repository, did not appear in them; Tutti's closed product and Agent Mesh's roadmap point that way, and projects outside this review may already do it. A shared server is also the reason their setup is short, so this is a difference to prove with an experiment, not an advantage to assume, and not a claim that Botbench is the only one.
 2. **Running the agent with its permissions bypassed is the norm.** OpenAgents, Paperclip's Claude Code adapter (by default), OpenMausBot (full access by default), Letta Code when it launches Claude Code or Codex, Agensh and the bridge's Codex kit all do it in source, and Docker's documentation says `sbx run claude` does too. Botbench's broker, safety floor and confined commands by default are a real difference today.
 3. **Almost nobody proves the work.** Most treat "done" as the agent's statement or a model's reading of it. The exceptions gate on something real: Agensh on CI, Paperclip on review policy, Tutti on the user's acceptance. None checks two owners' changes together before either merges, which Botbench does.
 4. **Botbench is behind on four things customers feel first:** time from install to first result, task dependencies, the number of agents supported, and platforms (macOS only). The matrix adds two they would meet later: memory scoping and identity for anyone but the owner.
@@ -71,8 +71,8 @@ Local clones are kept read-only in a `reference/` folder beside the Botbench che
 
 ## Corrections this audit found in Botbench's own documents
 
-Not changed here; each is a small follow-up.
+The first two were corrected on 23 November 2026; the third turned out not to be an error.
 
 - `docs/reviews/design-vs-openmausbot.md` says OpenMausBot has no review of finished work. It now has an optional check of the final answer by another provider's model, off by default.
 - `docs/product/peers-concept.md` describes A2A as a standard for hand-offs; the specification does not use the term. The same file says Agor could not be found; it is `preset-io/agor`.
-- `README.md` says Codex, Grok and Antigravity "cannot plan or build"; the code on `main` appears to let Codex build since #147.
+- `README.md` says Codex, Grok and Antigravity "cannot plan or build". An earlier version of this file called that out of date; it is correct. On `main`, Codex's driver declares that it cannot edit or ask for permission (`src/drivers/codex.ts`), and the merged change titled "Make Codex a builder" (#147) recorded the check of `codex app-server` and changed no behaviour. Codex as a builder is still open (#70, pull request #162).

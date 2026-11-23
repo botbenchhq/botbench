@@ -28,10 +28,10 @@ Can two developers install the product, pair their machines, delegate a change t
 - A transport between two machines. For a two-person trial, a private network that can share one machine with another account would do; a relay is a later question.
 
 ## Protocol
-Agent2Agent (A2A) is a real, maintained standard for messages, task states and handoffs between independent agents (`a2aproject` on GitHub). Treat it as a possible interoperability boundary, not a prerequisite for a first prototype: Botbench already controls the agent sessions and can broker and store peer messages itself.
+Agent2Agent (A2A) is a real, maintained standard for messages, tasks and their states between independent agents (the specification does not define a hand-off; see `docs/competitive/projects/a2a.md`) (`a2aproject` on GitHub). Treat it as a possible interoperability boundary, not a prerequisite for a first prototype: Botbench already controls the agent sessions and can broker and store peer messages itself.
 
 ## Not verified
-The note that raised this named three related projects (agent-talk, Tower, Agor). A GitHub search on 2026-11-22 did not find them under those names, so their existence and scope are unconfirmed. Agent-to-agent messaging alone should be assumed not to be a moat either way.
+The note that raised this named three related projects (agent-talk, Tower, Agor). A GitHub search on 2026-11-22 did not find them under those names. Corrected 23 November 2026: Agor is `preset-io/agor`, a team server for coding agents under the Business Source License, read in `docs/competitive/projects/agor.md`; the other two remain unconfirmed. Agent-to-agent messaging alone should be assumed not to be a moat either way.
 
 ## Naming
 The note called the product "Botbench". The repository and the product are named Botbench; no rename has been decided.
