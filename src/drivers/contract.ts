@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Confinement } from "../confinement.ts";
+import type { TaskContainer } from "../execution.ts";
 import type { DriverEvent, TurnEndReason } from "./events.ts";
 import type { SignInDefinition } from "./sign-in.ts";
 
@@ -25,6 +26,12 @@ export interface DriverCapabilities {
    * (approvals/gate.ts). Left out, they are not known to.
    */
   confinedCommands?: boolean;
+  /**
+   * Every shell command the CLI asks to run reaches Botbench's permission answer, which can change the command that
+   * runs: so an attempt can be given a task's `container` and each allowed command runs in it (src/execution.ts). Left
+   * out: a repository whose commands run in a container cannot be built with this agent.
+   */
+  containerCommands?: boolean;
   /** False when the CLI is started with no tools at all and sees only what it is sent. Left out: it has tools. */
   tools?: boolean;
   /**
@@ -105,6 +112,12 @@ export interface StartAttemptOptions {
    * secret places, every host but `allowedHosts`, and writes to `gitDir`. Required: no attempt runs unconfined.
    */
   confinement: Confinement;
+  /**
+   * The task's container, for a repository whose commands run in one (src/execution.ts): each shell command the
+   * attempt is allowed is run there, rewritten in the permission answer, never as it was asked on this Mac. Only for a
+   * driver with `containerCommands`, and only with `gate`. On this Mac, as `confinement` says, when left out.
+   */
+  container?: TaskContainer;
   /** Model name or alias as the CLI takes it. The CLI's default when left out. */
   model?: string;
   /** Continue the session an earlier attempt recorded. */

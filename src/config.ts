@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { FLOOR_RULES, type FloorEntry } from "./approvals/floor.ts";
 import { entryProblem, realRepo } from "./approvals/grants.ts";
 import { HOST_RULE, hostProblem } from "./confinement.ts";
+import { executionProblem, HOST_EXECUTION, type Execution } from "./execution.ts";
 import { splitPlain } from "./approvals/shell.ts";
 import { MODEL_NAME_RULE, modelNameProblem, type DriverCapabilities } from "./drivers/contract.ts";
 import { ANTIGRAVITY, ANTIGRAVITY_CAPABILITIES } from "./drivers/antigravity.ts";
@@ -127,6 +128,13 @@ export interface RepositoryConfig {
    * should be able to apply this one: the label is what makes an issue a proposal. Not watched when absent.
    */
   watch?: WatchConfig;
+  /**
+   * Where this repository's commands run (src/execution.ts, ADR 0009): `{ "kind": "host" }`, on this Mac, kept away
+   * from the owner's sign-ins and the network, or `{ "kind": "container", "image": "node:24" }`, in one Docker container
+   * per task of an image already on this Mac, with the task's copy as its one mount and no network. "host" when absent.
+   * A container is refused with "allowedHosts", and nothing ever falls back to the host.
+   */
+  execution?: Execution;
 }
 /** What a repository's watch is set to. */
 export interface WatchConfig {
@@ -322,6 +330,11 @@ function validate(c: Json, where: string): Config {
           if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue, set to open pull requests, first pushes a claim that tells other workbenches you started on it.`);
           continue;
         }
+        if (setting === "execution") {
+          const problem = executionProblem(list, value.allowedHosts);
+          if (problem !== null) fail(`repository "${repo}": ${problem}`);
+          continue;
+        }
         if (setting === "watch") {
           const problem = watchProblem(list);
           if (problem !== null) fail(`repository "${repo}": ${problem}`);
@@ -370,7 +383,7 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "execution", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
 
 /** What is wrong with a repository's "watch", as a sentence that names the setting, or null. */
 function watchProblem(watch: unknown): string | null {
@@ -441,6 +454,11 @@ export function repositoryCommands(config: Config, repo: string): { setup: Stati
 /** The host names a repository's commands may reach; none when its settings name none. */
 export function repositoryHosts(config: Config, repo: string): string[] {
   return [...(repositorySettings(config, repo).allowedHosts ?? [])];
+}
+
+/** Where a repository's commands run: its settings' "execution", or on this Mac when they name none. */
+export function repositoryExecution(config: Config, repo: string): Execution {
+  return repositorySettings(config, repo).execution ?? HOST_EXECUTION;
 }
 
 /** Where an accepted task of a repository is pushed for a pull request: the remote, and the base branch when the settings name one. */

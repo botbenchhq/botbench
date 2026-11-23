@@ -427,6 +427,9 @@ export class CodexDriver implements Driver {
    * repository read-only. Commands reach no network either way.
    */
   async startAttempt(options: StartAttemptOptions): Promise<DriverSession> {
+    // Codex runs its own commands: none of them could be put in a task's container (src/execution.ts), so a task whose
+    // commands must run in one is never started here, where they would run on this Mac.
+    if (options.container !== undefined) throw new Error("This repository's commands run in a container, and Codex cannot have its commands run there. Build it with Claude Code, or set the repository's \"execution\" to \"host\". Nothing ran on this Mac instead.");
     if (options.allowEdits === true && options.gate !== undefined && options.readOnly !== true && options.chatTools === undefined) return this.startBuild(options);
     const chat = options.chatTools;
     if (chat !== undefined && (options.readOnly === true || options.allowEdits === true || options.gate !== undefined)) throw new Error("A chat with Codex's own tools is kept by its sandbox alone: it cannot also be read-only, edit under Botbench's rules or ask you.");

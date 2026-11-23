@@ -264,6 +264,7 @@ Your settings go in `botbench.local.json` in the `botbench` folder (git ignores 
 - `checks` run after the work is committed; the task shows "Checks passed" or "Checks failed". Each has a 10-minute limit unless you give `timeoutSeconds`.
 - `preapproved` are commands a task may run without asking. They are offered when you start a task or run, and you confirm or edit them there.
 - `allowedHosts` are the only host names the repository's commands may reach. Without it, no network.
+- `execution` says where the repository's commands run: `{ "kind": "host" }` (the default) on your Mac, kept away from your sign-ins and the network, or `{ "kind": "container", "image": "node:24" }` in one Docker container per task, from an image already on your Mac (Botbench never pulls one), holding only the task's copy and no network. Claude Code stays on your Mac; each command it runs, and the setup and check commands, go into the container. When Docker or the image is not there the task does not start; nothing runs on your Mac instead. A container cannot be combined with `allowedHosts`. See [ADR 0009](docs/adr/0009-container-execution.md).
 
 The defaults are in [`botbench.config.json`](botbench.config.json). Every setting, including models per agent and your own additions to the always-ask list, is described in [`src/config.ts`](src/config.ts).
 
