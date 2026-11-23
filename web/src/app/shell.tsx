@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { hasSession } from "../api/client.ts";
 import { parseRoute, type Route } from "./route.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
+import { PeerCardsProvider } from "./peer-cards.tsx";
+import { ThreadScreen } from "../screens/thread.tsx";
 import { Alert, Frame, Page } from "../components/header.tsx";
 import { BoardScreen } from "../screens/board.tsx";
 import { RunScreen } from "../screens/run.tsx";
@@ -44,6 +46,7 @@ function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
+  if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   return (
     <Frame current={null}>
@@ -128,9 +131,11 @@ export function Shell() {
     // One provider above every screen: the tray in each screen's header and the card on a task's screen read the same list.
     return (
       <ApprovalsProvider onSignedOut={onSignedOut}>
-        <Beside route={route} wide={wide} onSignedOut={onSignedOut}>
-          {screenFor(route, onSignedOut, wide)}
-        </Beside>
+        <PeerCardsProvider onSignedOut={onSignedOut}>
+          <Beside route={route} wide={wide} onSignedOut={onSignedOut}>
+            {screenFor(route, onSignedOut, wide)}
+          </Beside>
+        </PeerCardsProvider>
       </ApprovalsProvider>
     );
   }

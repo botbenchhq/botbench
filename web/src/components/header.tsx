@@ -2,6 +2,7 @@ import { useContext, type ReactNode } from "react";
 import { ApprovalTray } from "./approval-card.tsx";
 import { trayShows } from "./approval-tray.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
+import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { Mark } from "../brand/mark.tsx";
 import { Icon, type IconName } from "./icon.tsx";
 
@@ -28,7 +29,10 @@ export type ScreenName = "turn" | "work";
 export function Frame({ current, banner, fill = false, back, actions, showing = [], children }: { current: ScreenName | null; banner?: ReactNode; fill?: boolean; back?: { href: string; label: string }; actions?: ReactNode; showing?: readonly number[]; children: ReactNode }) {
   // The tray takes a row of the header only while it has something to say. Its live region stays in the page either way.
   const { pending, problem } = useContext(ApprovalsContext);
-  const tray = trayShows({ pending, showing, problem });
+  const peerCards = useContext(PeerCardsContext).cards?.length ?? 0;
+  const approvals = trayShows({ pending, showing, problem });
+  // With no approval to show, the paired workbench's cards that wait take the tray's row, linking to Work's Needs you.
+  const tray = approvals === "nothing" && peerCards > 0 ? "tray" : approvals;
   return (
     <div className={fill ? "ds-app-shell h-screen" : "ds-app-shell"}>
       <header className="ds-app-header ds-app-header--sticky">
@@ -54,7 +58,7 @@ export function Frame({ current, banner, fill = false, back, actions, showing = 
           )}
         </div>
         <div className={tray === "tray" ? "ds-app-header__tray" : undefined}>
-          <ApprovalTray here={tray === "here"} />
+          <ApprovalTray here={approvals === "here"} peerCards={approvals === "nothing" ? peerCards : 0} />
         </div>
       </header>
       {banner}

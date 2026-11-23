@@ -8,7 +8,7 @@ import { sourceInAddress } from "./run-source.ts";
  */
 
 /** A section of the two-pane Settings, from 1024px (screens/settings.tsx). */
-export type SettingsSection = "agents" | "appearance" | "notifications" | "devices" | "workbench" | "permissions" | "usage";
+export type SettingsSection = "agents" | "appearance" | "notifications" | "devices" | "workbench" | "paired" | "permissions" | "usage";
 
 export type Route =
   | { screen: "turn"; start: Kind | null; proposal?: number; from?: RunSourceRef }
@@ -20,6 +20,7 @@ export type Route =
   | { screen: "settings"; section: SettingsSection | null }
   | { screen: "run"; id: number }
   | { screen: "chat"; id: number }
+  | { screen: "thread"; pairingId: string; contextId: string }
   | { screen: "none"; what: string };
 
 /** The screen an address names. */
@@ -48,8 +49,11 @@ export function parseRoute(hash: string): Route {
   // Settings at its Agents section: where the home screen sends the owner to connect an agent.
   if (at === "/settings/agents") return { screen: "settings", section: "agents" };
   // The other sections of the two-pane Settings, from 1024px. Permissions and Usage keep their own addresses.
-  const part = /^\/settings\/(appearance|notifications|devices|workbench)$/.exec(at);
+  const part = /^\/settings\/(appearance|notifications|devices|workbench|paired)$/.exec(at);
   if (part) return { screen: "settings", section: part[1] as SettingsSection };
+  // One conversation with the paired workbench, from its card or from Settings → Paired workbench.
+  const thread = /^\/paired\/([0-9a-f-]{36})\/threads\/([0-9a-f-]{36})$/.exec(at);
+  if (thread) return { screen: "thread", pairingId: thread[1]!, contextId: thread[2]! };
   // A chat from the Work list: Chat, with that chat on it.
   const chat = /^\/chats\/([1-9]\d{0,14})$/.exec(at);
   if (chat) return { screen: "chat", id: Number(chat[1]) };

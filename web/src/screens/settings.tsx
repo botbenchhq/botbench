@@ -8,6 +8,7 @@ import { WatchSettings } from "../app/watch-settings.tsx";
 import { ExecutionSettings } from "../app/execution-settings.tsx";
 import { UpdateSettings } from "../app/update-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
+import { PairedSettings } from "../app/paired-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { Icon } from "../components/icon.tsx";
@@ -29,6 +30,7 @@ const SECTIONS: readonly { section: SettingsSection; name: string; href: string;
   { section: "notifications", name: "Notifications", href: "#/settings/notifications" },
   { section: "devices", name: "Signed-in devices", href: "#/settings/devices" },
   { section: "workbench", name: "This workbench", href: "#/settings/workbench" },
+  { section: "paired", name: "Paired workbench", href: "#/settings/paired" },
   { section: "permissions", name: "Permissions", href: "#/trust", about: "What is always allowed, and what ran" },
   { section: "usage", name: "Usage", href: "#/usage", about: "How much each agent did" },
 ];
@@ -296,6 +298,10 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
   // Opened at its Agents section (#/settings/agents): that section is brought into view and its heading takes the focus,
   // so a screen reader starts there too.
   const agentsHeading = useRef<HTMLHeadingElement>(null);
+  // Opened at Paired workbench below 1024px (a thread's back link, a card's): that group is brought into view.
+  useEffect(() => {
+    if (section === "paired" && !wide) document.querySelector('[data-testid="paired-workbench"]')?.scrollIntoView({ block: "start" });
+  }, [section, wide]);
   useEffect(() => {
     if (section !== "agents") return;
     agentsHeading.current?.scrollIntoView({ block: "start" });
@@ -436,6 +442,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
           <UpdateSettings onSignedOut={onSignedOut} />
         </>
       ),
+      paired: <PairedSettings onSignedOut={onSignedOut} />,
       permissions: <Permissions onSignedOut={onSignedOut} />,
       usage: <Usage onSignedOut={onSignedOut} />,
     };
@@ -501,6 +508,8 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
           <WorkbenchName onSignedOut={onSignedOut} />
 
           <MemorySettings onSignedOut={onSignedOut} />
+
+          <PairedSettings onSignedOut={onSignedOut} />
 
           <UpdateSettings onSignedOut={onSignedOut} />
 

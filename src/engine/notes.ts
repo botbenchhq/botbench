@@ -129,6 +129,7 @@ export const NOTE_REFUSED: Record<Exclude<TaskStatus, "building">, string> = {
   cancelled: "This task was cancelled, so a note can no longer reach Claude Code.",
   accepted: "This task was accepted, so a note can no longer reach Claude Code.",
   rejected: "This task was rejected, so a note can no longer reach Claude Code.",
+  drafted: "Claude Code has finished this task with a message drafted for another workbench, so a note can no longer reach it.",
 };
 
 /** Why a note is refused in the moment between the end of the builder's last turn and the task's move on from building. */

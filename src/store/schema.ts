@@ -2336,6 +2336,19 @@ DROP TABLE owner_settings_before_update;
 `,
   },
   {
+    // Peers P5, fourth unit: the screens. `peer_cards.seen_at` is when a signed-in device first drew the card, as the
+    // client says when it renders it (`POST /api/peers/pairings/:id/cards/:message/seen`). Set once, never before the
+    // card was written and never after it was decided; the friction record measures a card's wait from it, and from
+    // `shown_at` (the server made the card) only for a card decided before any device drew it.
+    name: "peer cards seen",
+    sql: `
+ALTER TABLE peer_cards ADD COLUMN seen_at TEXT;
+CREATE TRIGGER peer_cards_seen_once BEFORE UPDATE OF seen_at ON peer_cards
+WHEN OLD.seen_at IS NOT NULL OR NEW.seen_at IS NULL OR OLD.decided_at IS NOT NULL OR NEW.seen_at < OLD.shown_at
+BEGIN SELECT RAISE(ABORT, 'a card is first drawn once, while it waits, and not before it was made'); END;
+`,
+  },
+  {
     // "Make this a run" (src/engine/run-source.ts): a run the owner made from a finished task or from a chat names it,
     // `source_task_id` or `source_chat_id` (a chat by its id, its first attempt), at most one of the two. NULL in both is a
     // run started any other way, as every run before this was. Set when the run is stored and never changed after. Such
