@@ -16,6 +16,7 @@ import { roleProblem } from "./engine/roles.ts";
 import { BRANCH_PREFIX, remoteNameProblem } from "./worktrees.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 import { workbenchProblem } from "./workbench.ts";
+import { USAGE_LIMIT_WAIT_MS } from "./engine/usage-limit.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_CONFIG_FILE = path.join(ROOT, "botbench.config.json");
@@ -111,6 +112,12 @@ export interface RepositoryConfig {
   baseBranch?: string;
   /** Paths in this repository, added to the top-level "protectedPaths", that only the owner may accept a change to. */
   protectedPaths?: string[];
+  /**
+   * Whether a run started from an issue of this repository, and set to open pull requests, claims the issue on the
+   * remote as it starts (Peers P3, engine/claims.ts): two empty branches other workbenches see, deleted again when the
+   * run ends without a pull request. A run that keeps its work on this Mac pushes nothing either way. Off when absent.
+   */
+  claimIssues?: boolean;
 }
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
@@ -162,15 +169,28 @@ export interface AutonomyConfig {
    * off; 600 (10 minutes) when absent; at most 86,400 (a day).
    */
   silenceLimitSeconds?: number;
+  /**
+   * When a builder's turn ends because its agent's usage limit was reached, Botbench waits and then resumes the same
+   * session once, at the reset time the agent gives (engine/usage-limit.ts). When it gives none, or one that has
+   * passed, Botbench waits this many whole seconds instead. 1800 (30 minutes) when absent; from 1 to 86,400 (a day).
+   */
+  usageLimitWaitSeconds?: number;
 }
 const OFFER_STANDING_AFTER = 3;
 const SILENCE_LIMIT_SECONDS = 600;
 const MAX_SILENCE_LIMIT_SECONDS = 86_400;
-const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "silenceLimitSeconds"] as const;
+const MAX_USAGE_LIMIT_WAIT_SECONDS = 86_400;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "silenceLimitSeconds", "usageLimitWaitSeconds"] as const;
 
 /** How long a builder or planner may send nothing before it is stopped, in milliseconds; 0 when the limit is off. */
 export function silenceLimitMs(config: Config): number {
   return (config.autonomy?.silenceLimitSeconds ?? SILENCE_LIMIT_SECONDS) * 1000;
+}
+
+/** How long Botbench waits after a usage limit when the agent gives no reset time, in milliseconds. */
+export function usageLimitWaitMs(config: Config): number {
+  const seconds = config.autonomy?.usageLimitWaitSeconds;
+  return seconds === undefined ? USAGE_LIMIT_WAIT_MS : seconds * 1000;
 }
 
 /** How many rounds of fixes a run started now allows after a review with concerns. */
@@ -273,6 +293,10 @@ function validate(c: Json, where: string): Config {
           if (typeof list !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(list) || list.includes("..") || list.endsWith("/") || list.startsWith(BRANCH_PREFIX)) fail(`repository "${repo}": "baseBranch" must be a branch name such as "main", and not one of Botbench's own (${BRANCH_PREFIX}…).`);
           continue;
         }
+        if (setting === "claimIssues") {
+          if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue, set to open pull requests, first pushes a claim that tells other workbenches you started on it.`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -308,11 +332,13 @@ function validate(c: Json, where: string): Config {
     if (rounds !== undefined && !(typeof rounds === "number" && Number.isSafeInteger(rounds) && rounds >= 0 && rounds <= MAX_REFINE_ROUNDS)) fail(`"autonomy.maxRefineRounds" must be a whole number from 0 to ${MAX_REFINE_ROUNDS}: how many rounds of fixes the builder may be asked for after a review with concerns.`);
     const silence = autonomy.silenceLimitSeconds;
     if (silence !== undefined && !(typeof silence === "number" && Number.isSafeInteger(silence) && silence >= 0 && silence <= MAX_SILENCE_LIMIT_SECONDS)) fail(`"autonomy.silenceLimitSeconds" must be a whole number of seconds from 0 to ${MAX_SILENCE_LIMIT_SECONDS}: how long a builder or planner may send nothing while it works before Botbench stops it. 0 turns the limit off.`);
+    const wait = autonomy.usageLimitWaitSeconds;
+    if (wait !== undefined && !(typeof wait === "number" && Number.isSafeInteger(wait) && wait >= 1 && wait <= MAX_USAGE_LIMIT_WAIT_SECONDS)) fail(`"autonomy.usageLimitWaitSeconds" must be a whole number of seconds from 1 to ${MAX_USAGE_LIMIT_WAIT_SECONDS}: how long Botbench waits before it tries a builder again once its usage limit was reached, when the agent gives no time it resets.`);
   }
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues"] as const;
 
 const PROTECTED_RULE = 'must be a list of paths inside the repository, such as ["test/recordings/", "package-lock.json"]: relative to its top folder, without "..", "*" or a leading "/".';
 
@@ -365,6 +391,11 @@ export function repositoryHosts(config: Config, repo: string): string[] {
 export function repositoryDelivery(config: Config, repo: string): { remote: string; baseBranch: string | null } {
   const settings = repositorySettings(config, repo);
   return { remote: settings.remote ?? "origin", baseBranch: settings.baseBranch ?? null };
+}
+
+/** Whether a run started from an issue of a repository, set to open pull requests, claims it on its remote. Off unless its settings say true. */
+export function repositoryClaims(config: Config, repo: string): boolean {
+  return repositorySettings(config, repo).claimIssues === true;
 }
 
 /** A repository's settings, found by its real path. The config's keys are compared as written and with their links followed. */

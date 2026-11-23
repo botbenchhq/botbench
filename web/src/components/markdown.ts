@@ -32,7 +32,8 @@ export type Block = { kind: "paragraph"; children: Inline[] } | { kind: "code"; 
 /** How deep bold and italic may nest before further markers are shown as written. */
 const MAX_DEPTH = 8;
 
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+/** `[^]*` (not `.*`): a line separator such as U+2028 after a long marker run must not make the run backtrack length by length. */
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})([^]*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 const BULLET = /^[ \t]*[-*+][ \t]+(\S.*)$/;
 const NUMBERED = /^[ \t]*(\d{1,9})([.)])[ \t]+(\S.*)$/;

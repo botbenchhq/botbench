@@ -174,6 +174,8 @@ test("hostile sizes finish in linear time without throwing: long lines, long wor
     "\\".repeat(n),
     "- a\n".repeat(n / 4),
     "```\n".repeat(n / 4),
+    // A long backtick run, then a line separator the fence pattern's rest must not stop at (review 3).
+    "`".repeat(n) + "\u2028",
     "\n".repeat(n),
   ];
   const started = performance.now();

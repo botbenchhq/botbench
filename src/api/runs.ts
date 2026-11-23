@@ -11,6 +11,7 @@ import { deliveryOf } from "../engine/delivery.ts";
 import { issueHostsFor, runIssue } from "../engine/intake.ts";
 import { repositoryHosts } from "../config.ts";
 import { issueLink } from "./issues.ts";
+import { claimOf } from "../engine/claims.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -24,7 +25,7 @@ function title(db: DatabaseSync, run: Run): string {
 /** Whether something of the run waits for the owner's answer: its planner's request while planning, or a builder's while building. */
 const waiting = (db: DatabaseSync, run: Run): boolean =>
   (run.status === "planning" && runWaitingOnApproval(db, run.id)) || (run.status === "running" && runTasks(db, run.id).some((task) => task.status === "building" && waitingOnApproval(db, task.id)));
-const AT_WORK = new Set(["queued", "building", "verifying", "reviewing"]);
+const AT_WORK = new Set(["queued", "building", "verifying", "reviewing", "waiting_for_limit"]);
 
 /** A run as a list shows it. `readyCount` and `decidedCount`: how many of its tasks are ready for review, and decided. */
 export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
@@ -52,11 +53,14 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
     // The issue the run was started from, and whether it is marked as having read outside text (engine/intake.ts).
     // `issueHosts`: for a marked run whose owner allowed them, the network hosts its commands may reach, as the settings name them now.
     issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
+    // Whether the run told other workbenches it started on its issue, and what became of that (engine/claims.ts).
+    claim: claimOf(db, id),
     plan: plan.map((task) => ({ title: task.title, criteria: task.criteria })),
     // Each task with where it stands and the commands Botbench ran on it; its transcript and diff are on its own route.
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
     tasks: await Promise.all(runTasks(db, id).map(async (task) => ({
       id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch, checks: task.checks,
+      retryAt: task.status === "waiting_for_limit" ? task.retryAt : null,
       waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),
       evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id),
       decision: decisionOf(db, task.id),
@@ -90,7 +94,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
       builderOnly(body);
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask });
+      const run = await ctx.runs.start({ repo: body.repo, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });

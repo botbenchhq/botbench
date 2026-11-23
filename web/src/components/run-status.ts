@@ -27,7 +27,7 @@ export function runLook(run: Pick<RunSummary, "status" | "waitingOnApproval" | "
 }
 
 /** How many of a run's tasks are at an end: built, failed, stopped or cancelled. */
-const finished = (tasks: readonly { status: string }[]): number => tasks.filter((task) => task.status !== "queued" && task.status !== "building").length;
+const finished = (tasks: readonly { status: string }[]): number => tasks.filter((task) => task.status !== "queued" && task.status !== "building" && task.status !== "waiting_for_limit").length;
 
 /** What a list says under a run's title. */
 export function runFacts(run: RunSummary): string {
@@ -54,6 +54,8 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
     case "running":
       // A task that waits for an answer holds up the tasks after it.
       if (run.waitingOnApproval) return `Needs input. Claude Code asked for permission while building a task and is paused until you allow or deny; the tasks after it wait. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
+      // A task that waits for its usage limit holds up the tasks after it, and goes on by itself.
+      if (run.tasks.some((task) => task.status === "waiting_for_limit")) return `Waiting for a usage limit to reset. Botbench tries the task again by itself, and the tasks after it wait. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
       if (run.tasks.some((task) => task.status === "reviewing")) return `In review. The run's reviewer is reading a task's changes. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
       return `Working. Botbench builds the tasks one at a time, in plan order, each by Claude Code in a separate copy of the project. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
     case "awaiting_decision":
@@ -84,7 +86,7 @@ export interface Station {
  */
 export function stations(run: Pick<RunDetail, "status" | "attemptId" | "waitingOnApproval" | "tasks">): { stations: Station[]; current: number | null } | null {
   const notStarted = (name: string): Station => ({ name, state: "not-started", words: "Not started" });
-  const finished = run.tasks.filter((task) => task.status !== "queued" && task.status !== "building" && task.status !== "verifying" && task.status !== "reviewing").length;
+  const finished = run.tasks.filter((task) => task.status !== "queued" && task.status !== "building" && task.status !== "verifying" && task.status !== "reviewing" && task.status !== "waiting_for_limit").length;
   const ready = run.tasks.filter((task) => task.status === "awaiting_decision").length;
   const decided = run.tasks.filter((task) => task.status === "accepted" || task.status === "rejected").length;
   switch (run.status) {

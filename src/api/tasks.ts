@@ -5,7 +5,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
-import { repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
+import { repositoryClaims, repositoryHosts, repositoryProtectedPaths, repositorySettings } from "../config.ts";
 import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
@@ -15,6 +15,7 @@ import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkRepository, getTask, listTasks, resumeNote, TaskError, words, type Task } from "../engine/task.ts";
 import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
 import { deliveryOf } from "../engine/delivery.ts";
+import { MAX_NOTE, replacedOne, undeliveredNote, waitingNote } from "../engine/notes.ts";
 import { commitsFileDiff, describeCommits, describeWork, type FileChange } from "../worktrees.ts";
 import { BodyError, builderOnly, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -43,6 +44,8 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
     // What the checks found: "passed", "failed" (one failed or ran out of time), "none" (no checks are set up), or null before.
     checks,
+    // For a task waiting for its builder's usage limit: when Botbench tries again, as stored. Null for every other task.
+    retryAt: status === "waiting_for_limit" ? task.retryAt : null,
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,
@@ -54,6 +57,9 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     decision: decisionOf(db, task.id),
     pullRequest: deliveryOf(db, task),
     resumeNote: resumeNote(db, task),
+    // The owner's note that waits for its builder (engine/notes.ts), with whether it replaced one that waited before it;
+    // and the latest note when it was not delivered, with why. Neither is in the transcript: only a delivered note is.
+    ...notesOf(db, task.id),
     // The mode of its run (manual for a task started on its own), which says who decides on it.
     mode: runModeOf(db, task.runId),
     // What the refine loop came to, for the decision point: "none", "satisfied", "unaccounted", "unresolved" or "failed", and how many
@@ -61,6 +67,29 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     ...loopCounts(db, task.id),
     createdAt, updatedAt,
   };
+}
+
+function notesOf(db: DatabaseSync, taskId: number): { waitingNote: Record<string, unknown> | null; undeliveredNote: Record<string, unknown> | null } {
+  const waiting = waitingNote(db, taskId);
+  const undelivered = undeliveredNote(db, taskId);
+  return {
+    waitingNote: waiting === null ? null : { id: waiting.id, text: waiting.text, sentAt: waiting.sentAt, replacedOne: replacedOne(db, waiting) },
+    undeliveredNote: undelivered === null ? null : { id: undelivered.id, text: undelivered.text, sentAt: undelivered.sentAt, reason: undelivered.reason },
+  };
+}
+
+/** POST /api/tasks/:id/notes: the owner's note for a building task's builder, `{ "text": "..." }`. Answers with the note as stored. */
+async function sendNote(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext, id: number): Promise<void> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    if (!(err instanceof BodyError)) throw err;
+    throw new TaskError(err.status === 413 ? 413 : 400, err.status === 413 ? `The note is too long: ${MAX_NOTE} characters at most.` : "Botbench could not read the note: it was not sent as JSON.");
+  }
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  if (!isObject(body) || typeof body.text !== "string") throw new TaskError(400, 'expected { "text": "the note" }');
+  json(res, 200, ctx.tasks.sendNote(id, body.text));
 }
 
 function loopCounts(db: DatabaseSync, taskId: number): { reviewOutcome: string; reviewRounds: number; refineRounds: number } {
@@ -247,6 +276,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const discard = /^\/api\/tasks\/([1-9]\d{0,14})\/discard$/.exec(pathname);
   const resume = /^\/api\/tasks\/([1-9]\d{0,14})\/resume$/.exec(pathname);
   const pullRequest = /^\/api\/tasks\/([1-9]\d{0,14})\/pull-request$/.exec(pathname);
+  const note = /^\/api\/tasks\/([1-9]\d{0,14})\/notes$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -270,7 +300,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const given = url.searchParams.getAll("path");
       if (given.length !== 1 || given[0]!.includes("\0") || !path.isAbsolute(given[0]!)) throw new TaskError(400, 'Give one "path": the full path of a repository, starting with /.');
       // What the owner's config offers for this repository. It grants nothing: a task gets only what its own start request lists.
-      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [], hasChecks: (repositorySettings(ctx.config, given[0]!).checks ?? []).length > 0 });
+      json(res, 200, { path: realRepo(given[0]!), preapproved: repositorySettings(ctx.config, given[0]!).preapproved ?? [], hasChecks: (repositorySettings(ctx.config, given[0]!).checks ?? []).length > 0, claimIssues: repositoryClaims(ctx.config, given[0]!) });
     } else if (method === "GET" && one) {
       const task = getTask(ctx.db, Number(one[1]));
       if (!task) throw new TaskError(404, "No such task.");
@@ -281,7 +311,11 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
       const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note });
       ctx.stream.announceTask(decided.task);
-      if (decided.run !== null) ctx.stream.announceRun(decided.run);
+      if (decided.run !== null) {
+        ctx.stream.announceRun(decided.run);
+        // A run the decision ended may release its issue claim (engine/claims.ts).
+        ctx.claims.runChanged(decided.run);
+      }
       json(res, 200, await detail(ctx, decided.task));
     } else if (method === "POST" && discard) {
       const body = await readJsonBody(req);
@@ -302,6 +336,8 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const id = Number(pullRequest[1]);
       ctx.deliveries.deliver(id, { by: "owner", expect: { remote: body.remote, branch: body.branch, address: body.address } });
       json(res, 200, await detail(ctx, getTask(ctx.db, id)!));
+    } else if (method === "POST" && note) {
+      await sendNote(req, res, ctx, Number(note[1]));
     } else {
       return false;
     }

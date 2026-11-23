@@ -16,6 +16,7 @@ import { pushRoutes } from "./push.ts";
 import { connectRoutes } from "./connect.ts";
 import { turnRoutes } from "./routes.ts";
 import { runRoutes } from "./runs.ts";
+import { memoryRoutes } from "./memory.ts";
 import { settingsRoutes } from "./settings.ts";
 import { isShellRequest, serveShell } from "./static.ts";
 import type { EventStream } from "./stream.ts";
@@ -24,6 +25,9 @@ import { voiceRoutes } from "./voice.ts";
 import { issueRoutes } from "./issues.ts";
 import { peersRoutes } from "./peers.ts";
 import type { Peers } from "../engine/peers.ts";
+import type { CheckTogether } from "../engine/combined.ts";
+import { checkTogetherRoutes } from "./check-together.ts";
+import type { Claims } from "../engine/claims.ts";
 import type { GitHub } from "../github.ts";
 import type { Turns } from "./turns.ts";
 import type { Chat } from "./chat.ts";
@@ -32,6 +36,8 @@ import type { AgentChecks } from "./agents.ts";
 /** What a route may use. Later units add to this as they add routes. */
 export interface RouteContext {
   db: DatabaseSync;
+  /** Botbench's data folder, where the workbench memory store keeps its notes (engine/memory.ts). */
+  home: string;
   config: Config;
   driver: Driver;
   /** The agents that can review a run's tasks, by name. */
@@ -59,6 +65,9 @@ export interface RouteContext {
   github: GitHub;
   /** Other workbenches' work on a repository's shared remote, read only. */
   peers: Peers;
+  /** Checking a task together with another workbench's open pull request, and the owner's setting that requires it. */
+  checkTogether: CheckTogether;
+  claims: Claims;
   /** Where the built client is. */
   clientDir: string;
 }
@@ -127,7 +136,7 @@ export function modelChoice(body: Record<string, unknown>): string | null | unde
  * that names none is Claude Code's.
  */
 export function builderOnly(body: Record<string, unknown>): void {
-  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work in a repository. Codex, Grok and Antigravity answer in a chat with no repository, from the conversation alone.");
+  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work on a repository as a task. Codex, Grok and Antigravity answer in a chat.");
 }
 
 /**
@@ -146,10 +155,12 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
     return;
   }
   if (await turnRoutes(req, res, ctx, url)) return;
+  if (await checkTogetherRoutes(req, res, ctx, url)) return;
   if (await taskRoutes(req, res, ctx, url)) return;
   if (await runRoutes(req, res, ctx, url)) return;
   if (await issueRoutes(req, res, ctx, url)) return;
   if (await settingsRoutes(req, res, ctx, url)) return;
+  if (await memoryRoutes(req, res, ctx, url)) return;
   if (await peersRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (boardRoutes(req, res, ctx, url)) return;

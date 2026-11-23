@@ -45,8 +45,11 @@ export type DriverEvent =
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   /** The CLI reported where the login stands against its limit. `limited` means the limit was hit. */
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
-  /** The turn is over. Always the last event of a turn. */
-  | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
+  /**
+   * The turn is over. Always the last event of a turn. `usageLimit` is there when the turn ended in error after the CLI
+   * said, in that turn, that the login's usage limit was reached; `resetsAt` is the time it gave for the reset (ISO), or null.
+   */
+  | { type: "turn_ended"; reason: TurnEndReason; detail: string | null; usageLimit?: { resetsAt: string | null } }
   /** Something went wrong in the driver or the CLI. `raw` holds the offending output, shortened. */
   | { type: "error"; message: string; raw: string | null };
 

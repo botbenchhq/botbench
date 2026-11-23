@@ -111,8 +111,12 @@ export function stoppedMessage(task: { id: number }): PushMessage {
 export function nothingToReviewMessage(run: { id: number }): PushMessage {
   return { title: "A run ended with nothing to review", path: `/#/runs/${run.id}` };
 }
+/** A task began to wait for its builder's usage limit to reset (engine/usage-limit.ts). Sent once per task, like the others. */
+export function usageLimitMessage(task: { id: number }): PushMessage {
+  return { title: "A task is waiting for a usage limit", path: `/#/tasks/${task.id}` };
+}
 /** The notification each state a task reaches sends; the others send none. A task the owner's own cancel ended sends none. */
-const TASK_MESSAGES: Partial<Record<string, (task: { id: number }) => PushMessage>> = { awaiting_decision: readyMessage, failed: failedMessage, interrupted: stoppedMessage };
+const TASK_MESSAGES: Partial<Record<string, (task: { id: number }) => PushMessage>> = { awaiting_decision: readyMessage, failed: failedMessage, interrupted: stoppedMessage, waiting_for_limit: usageLimitMessage };
 export function testMessage(): PushMessage {
   return { title: "Test notification from Botbench", path: "/#/settings" };
 }

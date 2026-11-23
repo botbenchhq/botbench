@@ -1,16 +1,23 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { confinementProblem, unreadablePaths } from "../confinement.ts";
-import { makeReviewFolder, neutralizeMentions, sandboxed, wholeCliProfile } from "./cli-sandbox.ts";
+import { bothPaths, confinementProblem, unreadablePaths } from "../confinement.ts";
+import { limitMentions, makeReviewFolder, neutralizeMentions, proxyEnv, sandboxed, startProviderProxy, toolsProfile } from "./cli-sandbox.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent } from "./events.ts";
 import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
 import { startOneTurn, type LineResult } from "./one-turn.ts";
 
 /*
- * Grok, driven for one thing only: a read-only turn with no tools at all, for a review or a chat message (src/api/chat.ts).
- * Seen on 1.0.92:
+ * Grok, driven one turn at a time with its own tools, for a review or a chat message (src/api/chat.ts). Since Grok
+ * cannot ask Botbench before it uses a tool, Botbench's sandbox around the whole process is the control
+ * (toolsProfile in src/drivers/cli-sandbox.ts): in a chat it reads, changes and runs commands in the chat's folder and
+ * reads an attached repository without changing it; in a review it reads the task's copy without changing it; its
+ * network, and its commands', reaches xAI through Botbench's proxy and nothing else. Its own web search, and xAI's X
+ * search, run on xAI's servers, only when the owner's "Web access in chat" is Allow. What changed from the measured
+ * no-tools set-up below, and what is not yet measured, is in the threat model (B12).
+ *
+ * The no-tools set-up, seen on 1.0.92:
  *   `grok -p - --output-format streaming-json …` reads the prompt from its input and prints one JSON object per line:
  *     {"type":"available_commands","tools":[…],"commands":[…]}   (more than once; `tools` is what its model is offered)
  *     {"type":"thought","data":"…"}  {"type":"text","data":"…"}  (the reply, in pieces)
@@ -41,8 +48,23 @@ import { startOneTurn, type LineResult } from "./one-turn.ts";
 const COMMAND = "grok";
 export const GROK = "grok";
 
-/** Grok here does one read-only turn with no tools: it cannot resume, cannot put a permission request to the owner, and is never let edit. It can be stopped. */
-export const GROK_CAPABILITIES: DriverCapabilities = { resume: false, interrupt: true, permissionRequests: false, edits: false, tools: false };
+/**
+ * Grok here does one turn with its own tools, inside Botbench's sandbox for the whole process: it cannot resume,
+ * cannot put a permission request to the owner, and never edits a task's copy. It can be stopped.
+ */
+export const GROK_CAPABILITIES: DriverCapabilities = { resume: false, interrupt: true, permissionRequests: false, edits: false, chatTools: true };
+
+/** The tools Grok keeps in a chat: commands, files and its own task list, all in the chat's folder or read-only places. */
+export const GROK_CHAT_TOOLS: readonly string[] = ["run_terminal_command", "get_command_or_subagent_output", "kill_command_or_subagent", "read_file", "list_dir", "grep", "search_replace", "write", "todo_write"];
+/** The tools Grok keeps in a review: the same less the two that write files, which the sandbox would refuse anyway. */
+export const GROK_REVIEW_TOOLS: readonly string[] = GROK_CHAT_TOOLS.filter((tool) => tool !== "search_replace" && tool !== "write");
+/** Grok's own web search, which xAI runs. Its `web_fetch` stays off: it would fetch from this Mac, which cannot ask you first. */
+export const GROK_WEB_TOOLS: readonly string[] = ["web_search"];
+/** The names under which Grok reaches its provider, xAI, as its program names them (cli-chat-proxy.grok.com, api.x.ai, auth.x.ai, …). */
+export const GROK_PROVIDER: readonly string[] = ["grok.com", "x.ai"];
+
+/** The tools Grok's model is offered for one turn. */
+export const grokTools = (o: { mode: "chat" | "review"; webSearch?: boolean }): string[] => [...(o.mode === "chat" ? GROK_CHAT_TOOLS : GROK_REVIEW_TOOLS), ...(o.webSearch === true ? GROK_WEB_TOOLS : [])];
 
 /** Every tool Grok 1.0.92 offered its model in a headless run on this Mac, by the names it shows (update_goal only with Botbench's environment), and subagents ("Agent"). */
 export const GROK_TOOLS: readonly string[] = [
@@ -59,14 +81,25 @@ export const GROK_EXTRA_ENV: Record<string, string> = {
   GROK_WORKFLOWS: "0",
   GROK_SUBAGENTS: "0",
   GROK_DISABLE_AUTOUPDATER: "1",
+  // The home folder is unreadable to Grok's commands, and git stops at an unreadable ~/.gitconfig: git in a command
+  // reads no global configuration at all, as for Codex.
+  GIT_CONFIG_GLOBAL: "/dev/null",
 };
 
 /** The environment a review runs in: the allowlist of src/drivers/launch.ts, no provider key, and Grok's extras turned off. */
 export const grokEnv = (parent: NodeJS.ProcessEnv = process.env): Record<string, string> => buildChildEnv(parent, GROK_EXTRA_ENV);
 
-/** The arguments of one review turn, for `grok` itself (the driver starts it under sandbox-exec). */
-export function grokArgs(o: { model?: string }): string[] {
-  const args = ["-p", "-", "--output-format", "streaming-json", "--no-memory", "--no-subagents", "--disable-web-search", "--max-turns", "1", "--disallowed-tools", GROK_TOOLS.join(",")];
+/**
+ * The arguments of one turn, for `grok` itself (the driver starts it under sandbox-exec). Every tool Grok 1.0.92
+ * offers but `grokTools` is removed. `--always-approve` lets the tools kept run: `grok -p` asks no one, and refuses a
+ * tool call that needs approval without it. It holds for this one process only and saves no lasting permission; no
+ * `--allow` rule, which Grok would keep, is ever given. Web search and fetch are off (`--disable-web-search`) unless
+ * web search is asked for, and then fetch stays removed.
+ */
+export function grokArgs(o: { mode: "chat" | "review"; webSearch?: boolean; model?: string }): string[] {
+  const kept = grokTools(o);
+  const removed = GROK_TOOLS.filter((tool) => !kept.includes(tool));
+  const args = ["-p", "-", "--output-format", "streaming-json", "--no-memory", "--no-subagents", "--always-approve", ...(o.webSearch === true ? [] : ["--disable-web-search"]), "--disallowed-tools", removed.join(",")];
   if (o.model !== undefined) {
     const problem = modelNameProblem(o.model);
     if (problem !== null) throw new Error(`The model name cannot be passed to Grok. ${problem}`);
@@ -78,15 +111,27 @@ export function grokArgs(o: { model?: string }): string[] {
 /** Grok's own folder: GROK_HOME when the owner moved it, else ~/.grok. */
 const grokHome = (env: NodeJS.ProcessEnv, home: string): string => (typeof env.GROK_HOME === "string" && path.isAbsolute(env.GROK_HOME) ? env.GROK_HOME : path.join(home, ".grok"));
 
-/** What Grok is sent for `prompt`: every `@` written as `＠` (see above), and a line saying so, so that code is read as written. */
-export const grokInput = (prompt: string): string => (prompt.includes("@") ? `${neutralizeMentions(prompt)}\n\nBotbench wrote each at sign above as ＠ before sending it; read each ＠ as an at sign.` : prompt);
+/**
+ * What Grok is sent for `prompt`: each `@` that could attach a file outside `allowed` written as `＠`
+ * (limitMentions in src/drivers/cli-sandbox.ts), and a line saying so, so that code is read as written. With no
+ * `allowed`, every `@` is.
+ */
+export function grokInput(prompt: string, o?: { cwd: string; allowed: readonly string[] }): string {
+  const limited = o === undefined ? { prompt: neutralizeMentions(prompt), rewritten: prompt.includes("@") ? 1 : 0 } : limitMentions(prompt, o);
+  return limited.rewritten > 0 ? `${limited.prompt}\n\nBotbench wrote some at signs above as ＠ before sending them; read each ＠ as an at sign.` : prompt;
+}
 
-/** The sandbox profile for the whole Grok process of one review in `folder`. */
-export function grokProfile(o: { dataDir: string; folder: string; env?: NodeJS.ProcessEnv }): string {
+/**
+ * The sandbox profile for the whole Grok process of one turn, working in `folder`, reading `readOnly` and never
+ * changing it, and reaching the network only through Botbench's proxy on `proxyPort` (toolsProfile).
+ */
+export function grokProfile(o: { dataDir: string; folder: string; readOnly: readonly string[]; temp: string; proxyPort: number; env?: NodeJS.ProcessEnv }): string {
   const home = os.homedir();
   const env = o.env ?? process.env;
-  const own = grokHome(env, home);
-  return wholeCliProfile({ unreadable: unreadablePaths({ dataDir: o.dataDir, home, env }), readable: [own, o.folder], writable: [own, o.folder] });
+  const unreadable = unreadablePaths({ dataDir: o.dataDir, home, env });
+  // Botbench's data folder is denied once, before the read-only places: a review's copy lies inside it.
+  const data = new Set(bothPaths(o.dataDir));
+  return toolsProfile({ home, unreadable, secrets: unreadable.filter((place) => !data.has(place)), own: [grokHome(env, home)], folder: o.folder, readOnly: o.readOnly, temp: o.temp, proxyPort: o.proxyPort });
 }
 
 /** What `grok models` printed, and how it exited, as a sign-in. Its words on 1.0.92: "You are logged in with grok.com.", "You are not authenticated." */
@@ -113,10 +158,6 @@ const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const shorten = (text: string, max = 500): string => (text.length > max ? `${text.slice(0, max)}…` : text);
 
-/**
- * A reader for one turn of `grok -p … --output-format streaming-json`. The reply comes in pieces and is given as one
- * text when the turn ends. A tool offered to the model, or a tool call, stops the turn.
- */
 /** The tools xAI runs on its own servers, by the variant Grok reports. Nothing else counts, whatever it claims. */
 const BACKEND_VARIANTS: ReadonlySet<string> = new Set(["XSearch"]);
 
@@ -130,9 +171,15 @@ function isBackendSearch(name: string, rawInput: unknown): boolean {
   return !GROK_TOOLS.includes(name);
 }
 
-export function grokReader(): (line: string) => LineResult {
+/**
+ * A reader for one turn of `grok -p … --output-format streaming-json` whose model was given `kept` (none when left
+ * out). The reply comes in pieces and is given as one text when the turn ends. A tool offered or called that is not
+ * kept, and not a search xAI runs on its own servers, stops the turn.
+ */
+export function grokReader(kept: readonly string[] = []): (line: string) => LineResult {
   let reply = "";
   const none: LineResult = { events: [], stop: null };
+  const allowed = new Set(kept);
   return (line) => {
     if (line.trim() === "") return none;
     let parsed: unknown;
@@ -145,7 +192,8 @@ export function grokReader(): (line: string) => LineResult {
     switch (parsed.type) {
       case "available_commands": {
         const tools = Array.isArray(parsed.tools) ? parsed.tools.filter((t): t is string => typeof t === "string") : [];
-        return tools.length === 0 ? none : { events: [], stop: `Stopped: Grok offered its model a tool (${shorten(tools.join(", "), 200)}), and Botbench gives it none here. Update Botbench for this Grok.` };
+        const extra = tools.filter((tool) => !allowed.has(tool));
+        return extra.length === 0 ? none : { events: [], stop: `Stopped: Grok offered its model a tool Botbench did not give it (${shorten(extra.join(", "), 200)}). Update Botbench for this Grok.` };
       }
       case "text":
         reply += str(parsed.data) ?? "";
@@ -153,9 +201,15 @@ export function grokReader(): (line: string) => LineResult {
       case "tool_call": {
         const name = str(parsed.toolName) ?? "unknown";
         const event: DriverEvent = { type: "tool_call", id: str(parsed.toolCallId) ?? "", name, input: parsed.rawInput ?? null };
-        // A search xAI runs on its own servers touches nothing on this Mac: it is recorded and the turn goes on.
-        if (isBackendSearch(name, parsed.rawInput)) return { events: [event], stop: null };
-        return { events: [event], stop: `Stopped: Grok tried to use a tool (${name}), and Botbench gives it none here.` };
+        // What Grok wrote before this call is a text of its own: the reply after its last call then stands alone (a
+        // review's verdict is its first line).
+        const said: DriverEvent[] = reply.trim() === "" ? [] : [{ type: "text", text: reply }];
+        reply = "";
+        // A search xAI runs on its own servers touches nothing on this Mac: it is recorded and the turn goes on. So is a
+        // call while tools are kept: the model is offered only those (checked at `available_commands` above), and a
+        // call names its tool by a title of Grok's ("X search:"), not by the name it was offered under.
+        if (isBackendSearch(name, parsed.rawInput) || allowed.size > 0) return { events: [...said, event], stop: null };
+        return { events: [...said, event], stop: `Stopped: Grok tried to use a tool Botbench did not give it (${name}).` };
       }
       case "tool_call_update": {
         const output = parsed.rawOutput ?? parsed.content ?? null;
@@ -244,29 +298,60 @@ export class GrokDriver implements Driver {
   }
 
   /**
-   * Probe, then make the attempt one review turn runs in, in a new empty folder; the CLI starts with the turn. Only a
-   * read-only attempt with no network for commands can be made: Grok is given no tools at all.
+   * Probe, then make the attempt one turn runs in; the CLI starts with the turn, under sandbox-exec, its network only
+   * through a proxy to xAI started for it. A review (`readOnly`) works in a new empty folder, so nothing of the
+   * repository (its hooks, MCP servers, rules, AGENTS.md) is loaded, and reads the task's copy and git folder without
+   * changing them. A chat (`chatTools`) works in the chat's folder, and reads an attached repository without changing it.
    */
   async startAttempt(options: StartAttemptOptions): Promise<DriverSession> {
-    if (options.readOnly !== true || options.allowEdits === true || options.gate !== undefined) throw new Error("Grok can only review in Botbench: it cannot ask you for permission or edit files under Botbench's rules.");
+    const chat = options.chatTools;
+    if (chat !== undefined && (options.readOnly === true || options.allowEdits === true || options.gate !== undefined)) throw new Error("A chat with Grok's own tools is kept by Botbench's sandbox alone: it cannot also be read-only, edit under Botbench's rules or ask you.");
+    if (chat === undefined && (options.readOnly !== true || options.allowEdits === true || options.gate !== undefined)) throw new Error("Grok can only review or chat in Botbench: it cannot ask you for permission or edit a task's files under Botbench's rules.");
     if (options.resumeCursor !== undefined) throw new Error("Grok cannot resume a session in Botbench.");
-    if (options.confinement.allowedHosts.length > 0) throw new Error("Grok runs no command in Botbench and reaches no network for one, so it cannot be given hosts to reach.");
-    const args = grokArgs(options.model ? { model: options.model } : {});
+    if (options.confinement.allowedHosts.length > 0) throw new Error("Grok's commands reach no network in Botbench, so it cannot be given hosts to reach.");
+    const mode = chat === undefined ? "review" : "chat";
+    const turn = { mode, webSearch: options.webSearch === true } as const;
+    const args = grokArgs({ ...turn, ...(options.model ? { model: options.model } : {}) });
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
-    if (!fs.statSync(options.confinement.dataDir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Botbench's data folder does not exist: ${options.confinement.dataDir}`);
-    const folder = makeReviewFolder(options.confinement.dataDir);
-    const run = sandboxed(grokProfile({ dataDir: options.confinement.dataDir, folder: folder.path }), COMMAND, args);
+    const { dataDir } = options.confinement;
+    if (!fs.statSync(dataDir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Botbench's data folder does not exist: ${dataDir}`);
+    if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
+    const review = chat === undefined ? makeReviewFolder(dataDir) : null;
+    const folder = review?.path ?? fs.realpathSync(options.cwd);
+    const readOnly = chat === undefined ? [options.cwd, ...(options.confinement.gitDir === undefined ? [] : [options.confinement.gitDir])] : [...chat.readable];
+    let proxy: { port: number; close(): Promise<void> };
+    try {
+      proxy = await startProviderProxy(GROK_PROVIDER);
+    } catch (err) {
+      review?.remove();
+      throw new Error(`Botbench could not start the proxy Grok reaches xAI through: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Its own temporary folder: the shared one, where other programs keep files and sockets, is closed to it (toolsProfile).
+    const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-")));
+    const cleanup = (): void => {
+      review?.remove();
+      fs.rmSync(temp, { recursive: true, force: true });
+      void proxy.close();
+    };
+    let run: { command: string; args: string[] };
+    try {
+      run = sandboxed(grokProfile({ dataDir, folder, readOnly, temp, proxyPort: proxy.port }), COMMAND, args);
+    } catch (err) {
+      cleanup();
+      throw err;
+    }
+    const allowed = [folder, ...readOnly];
     return startOneTurn(options.db, GROK, options.model ?? null, {
       agent: "Grok",
       command: run.command,
       args: run.args,
-      cwd: folder.path,
-      extraEnv: GROK_EXTRA_ENV,
+      cwd: folder,
+      extraEnv: { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port), TMPDIR: temp, TMP: temp, TEMP: temp },
       capabilities: GROK_CAPABILITIES,
-      input: grokInput,
-      reader: grokReader,
-      cleanup: folder.remove,
+      input: (prompt) => grokInput(prompt, { cwd: folder, allowed }),
+      reader: () => grokReader(grokTools(turn)),
+      cleanup,
     });
   }
 }

@@ -13,10 +13,12 @@ import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
+import { TaskNote } from "../components/task-note.tsx";
+import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
+import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
@@ -178,7 +180,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   };
   // Between the end of the turn and Botbench's commit the task is still building, but Claude Code is no longer working.
   // While a request waits, its card says so: the transcript is still live, with no line of its own ("").
-  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
+  // Its last message's turn has not ended: with the owner's note sent as the next message, that is the note's.
+  const lastSent = shown.findLastIndex((e) => e.type === "user_prompt");
+  const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
@@ -264,7 +268,21 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
                 )}
                 {/* The model is named above when it is not the one asked for; the transcript adds no row of its own for it. */}
-                <Transcript events={shown} working={working} modelName={nameOf} modelDiffers={() => null} />
+                <Transcript
+                  events={shown}
+                  working={working}
+                  modelName={nameOf}
+                  modelDiffers={() => null}
+                  after={
+                    task.status === "waiting_for_limit" && (
+                      <li data-testid="usage-limit-wait" className="ds-message">
+                        <p role="status" className="ds-message__body">
+                          {waitingWords(task.retryAt)}
+                        </p>
+                      </li>
+                    )
+                  }
+                />
               </section>
             ) : (
               attemptId === null && (
@@ -279,6 +297,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               )
             )}
 
+            <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />
+
             {task.filesProblem !== null && (
               <Alert tone="error" role="alert">
                 {task.filesProblem}
@@ -292,6 +312,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
             )}
+            {task.checks !== null && task.checks !== "none" && <CheckTogether taskId={task.id} repo={task.repo} ready={task.status === "awaiting_decision"} onSignedOut={onSignedOut} />}
 
             {task.reviewer !== null && (task.review !== null || task.status === "reviewing") && (
               <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">

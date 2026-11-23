@@ -3,6 +3,7 @@ import type http from "node:http";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { DriverUnavailableError, type Driver } from "../drivers/contract.ts";
 import { IMPLEMENTER, PLANNER, REVIEWER, roleProblem } from "../engine/roles.ts";
+import { chatScopeWords } from "./chat.ts";
 import { BodyError, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { eventsAfter, parseEventId } from "./stream.ts";
 import { TurnError } from "./turns.ts";
@@ -34,7 +35,7 @@ async function startTurn(req: http.IncomingMessage, res: http.ServerResponse, ct
 /** POST /api/chat: one message, or a request to compare a round's answers, to one agent or several. */
 async function sendChat(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {
   const body = await readJsonBody(req);
-  const shape = 'expected { "prompt": "...", "conversation": [ids of the earlier replies], "agents": [{ "agent": "codex", "model"?: string | null }], "compare"?: round id }';
+  const shape = 'expected { "prompt": "...", "conversation": [ids of the earlier replies], "agents": [{ "agent": "codex", "model"?: string | null }], "compare"?: round id, "repository"?: "/full/path" }';
   if (!isObject(body) || !Array.isArray(body.conversation) || !Array.isArray(body.agents)) return json(res, 400, { error: shape });
   const compare = body.compare;
   if (compare !== undefined && !(typeof compare === "number" && Number.isSafeInteger(compare) && compare > 0)) return json(res, 400, { error: '"compare" must be the id of the answers to compare' });
@@ -44,7 +45,9 @@ async function sendChat(req: http.IncomingMessage, res: http.ServerResponse, ctx
     if (!isObject(a) || typeof a.agent !== "string") throw new BodyError(400, shape);
     return { agent: a.agent, model: modelChoice(a) };
   });
-  json(res, 200, { replies: await ctx.chat.send({ message: typeof body.prompt === "string" ? body.prompt : "", conversation: body.conversation as number[], agents, ...(compare === undefined ? {} : { compare }) }) });
+  const { repository } = body;
+  if (repository !== undefined && typeof repository !== "string") return json(res, 400, { error: '"repository" must be the full path of a repository' });
+  json(res, 200, { replies: await ctx.chat.send({ message: typeof body.prompt === "string" ? body.prompt : "", conversation: body.conversation as number[], agents, ...(compare === undefined ? {} : { compare }), ...(repository === undefined ? {} : { repository }) }) });
 }
 
 /**
@@ -73,7 +76,7 @@ export async function turnRoutes(req: http.IncomingMessage, res: http.ServerResp
       const fresh = url.searchParams.get("fresh") === "1";
       const check = fresh ? { ...(await ctx.agentChecks.fresh()), checking: false } : await ctx.agentChecks.read();
       const byName = new Map([ctx.driver, ...Object.values(ctx.reviewers)].filter((d): d is Driver => d !== undefined).map((d) => [d.name, d]));
-      const agents = check.agents.map((a) => ({ ...a, roles: agentRoles(ctx, byName.get(a.agent)!) }));
+      const agents = check.agents.map((a) => ({ ...a, roles: agentRoles(ctx, byName.get(a.agent)!), chat: chatScopeWords(byName.get(a.agent)!) }));
       // With the cap on rounds of fixes a run started now gets, which New run shows beside Review.
       json(res, 200, { agents, checkedAt: check.checkedAt, checking: check.checking, maxRefineRounds: maxRefineRounds(ctx.config) });
     } else if (method === "GET" && /^\/api\/agents\/[a-z-]{1,40}\/models$/.test(pathname)) {

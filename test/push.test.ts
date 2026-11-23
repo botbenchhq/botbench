@@ -3,8 +3,9 @@ import { createPublicKey, verify } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { approvalMessage, encryptMessage, failedMessage, loadOrCreatePushKeys, nothingToReviewMessage, PUSH_KEYS_FILE, readyMessage, stoppedMessage, testMessage, vapidAuthorization } from "../src/push.ts";
-import { decrypt } from "./support/push-service.ts";
+import { approvalMessage, createPush, encryptMessage, failedMessage, loadOrCreatePushKeys, nothingToReviewMessage, PUSH_KEYS_FILE, readyMessage, stoppedMessage, testMessage, usageLimitMessage, vapidAuthorization } from "../src/push.ts";
+import { openStore } from "../src/store/db.ts";
+import { decrypt, newDevice, startPushEndpoint } from "./support/push-service.ts";
 import { tempDir } from "./support/repo.ts";
 
 // Web Push without a network: the message encryption (RFC 8291 and RFC 8188), the VAPID token (RFC 8292), the fixed
@@ -103,6 +104,34 @@ test("a notification carries only its fixed text and the screen to open: nothing
   }
 });
 
+test("a task that starts waiting for a usage limit sends one notification with its fixed text; resuming, waiting again or stopping does not send it a second time", async (t) => {
+  const home = tempDir("botbench-push-limit-");
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const db = openStore(home);
+  t.after(() => db.close());
+  // A real HTTP endpoint in the place of the push service, and the real store that records what was sent.
+  const endpoint = await startPushEndpoint();
+  t.after(() => endpoint.close());
+  const push = createPush({ db, home, allowHttpEndpoints: true });
+  const phone = newDevice();
+  push.subscribe(phone.subscription(endpoint.url("phone")));
+  const sent = (): { title: string; path: string }[] => endpoint.received.map((r) => JSON.parse(decrypt(r.body, phone.privateKey, phone.auth).toString()) as { title: string; path: string });
+
+  push.taskChanged({ id: 4, status: "waiting_for_limit" });
+  await push.idle();
+  assert.deepEqual(sent(), [{ title: "A task is waiting for a usage limit", path: "/#/tasks/4" }]);
+  assert.deepEqual(usageLimitMessage({ id: 4 }), sent()[0]);
+  // Resumed, then waiting again, then stopped: the wait's notification is not sent again; the stop sends its own.
+  for (const status of ["building", "waiting_for_limit", "building", "interrupted"]) push.taskChanged({ id: 4, status });
+  await push.idle();
+  assert.deepEqual(sent().map((m) => m.title), ["A task is waiting for a usage limit", "A task stopped"]);
+  // Another Botbench over the same store, as after a restart, does not send it again either.
+  const restarted = createPush({ db, home, allowHttpEndpoints: true });
+  restarted.taskChanged({ id: 4, status: "waiting_for_limit" });
+  await restarted.idle();
+  assert.deepEqual(sent().map((m) => m.title), ["A task is waiting for a usage limit", "A task stopped"]);
+});
+
 /** The screens a notification may open, read from the file the browser runs: the service worker, or the page it hands the tap to. */
 function screenPattern(file: string): RegExp {
   const source = fs.readFileSync(path.resolve(import.meta.dirname, "..", file), "utf8");
@@ -112,8 +141,8 @@ function screenPattern(file: string): RegExp {
 }
 
 test("tapping any notification opens its screen: the service worker and the page both accept every path a message names, and nothing else", () => {
-  const paths = [approvalMessage({ taskId: 3, runId: 2 }), approvalMessage({ taskId: null, runId: 2 }), readyMessage({ id: 4 }), failedMessage({ id: 5 }), stoppedMessage({ id: 6 }), nothingToReviewMessage({ id: 7 }), testMessage()].map((m) => m.path);
-  assert.deepEqual(paths, ["/#/tasks/3", "/#/runs/2", "/#/tasks/4", "/#/tasks/5", "/#/tasks/6", "/#/runs/7", "/#/settings"]);
+  const paths = [approvalMessage({ taskId: 3, runId: 2 }), approvalMessage({ taskId: null, runId: 2 }), readyMessage({ id: 4 }), failedMessage({ id: 5 }), stoppedMessage({ id: 6 }), nothingToReviewMessage({ id: 7 }), testMessage(), usageLimitMessage({ id: 8 })].map((m) => m.path);
+  assert.deepEqual(paths, ["/#/tasks/3", "/#/runs/2", "/#/tasks/4", "/#/tasks/5", "/#/tasks/6", "/#/runs/7", "/#/settings", "/#/tasks/8"]);
   for (const file of ["web/public/sw.js", "web/src/app/notifications.ts"]) {
     const screen = screenPattern(file);
     for (const p of paths) assert.ok(screen.test(p), `${file} opens ${p}`);
