@@ -49,14 +49,14 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   // The card says it; the task's own status line is not repeated beside it.
   await expect(page.getByTestId("task-status")).toHaveCount(0);
   // No control beyond the two the card always had.
-  await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny"]);
+  await expect(card.getByRole("button")).toHaveText(["Allow", "Decline"]);
   await expect(page.getByRole("button", { name: /resume|retry|restart/i })).toHaveCount(0);
   await checkDesign(page, "task, with a card from before a restart");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u8-parked-card.png"), fullPage: true });
   expect(git(worktree, "status", "--porcelain"), "nothing ran while Botbench was down or since").toBe("");
 
-  const allow = card.getByRole("button", { name: "Allow once" });
-  await expect(allow).toBeEnabled();
+  const allow = card.getByRole("button", { name: "Allow", exact: true });
+  await expect(card).toHaveAttribute("data-settled", "");
   await allow.click();
   await expect(card).toHaveCount(0);
   await expect(tray).toBeEmpty();
