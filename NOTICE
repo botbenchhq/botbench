@@ -87,6 +87,19 @@ To update the copy, run the design system's sync script again (docs:
 web/vendor/design-system/rules/core.md and the design system's consumer
 guide) and record the new version and commit here.
 
+Approaches learned from (no files copied)
+-----------------------------------------
+
+Botbench's design learned from these projects. No file, function or text of theirs is stored in this repository;
+where an approach was followed, it was written again for Botbench, and the decision records in docs/adr/ say which.
+
+- OpenMausBot (Apache License 2.0): driving each coding tool as a child process over its own headless protocol
+  (docs/adr/0001-own-codebase-driving-vendor-clis.md, docs/reviews/design-vs-openmausbot.md). Nothing from its
+  enterprise/ folder.
+- Paperclip (MIT License): watching a repository's labelled issues, retrying GitHub's limits, and the review of the
+  peers design (docs/adr/0008-watch-issues.md, docs/adr/0004-peers-direct-messages.md).
+- Rakazo (Apache License 2.0): approaches for workbenches that work together (docs/adr/0004-peers-direct-messages.md).
+
 Licence checks
 --------------
 

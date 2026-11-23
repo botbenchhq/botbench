@@ -148,7 +148,7 @@ test("a poll that fails shows its repository's failure in plain words with what 
     await watch.pollNow(b.repo);
     const status = watch.status()[0]!;
     assert.equal(status.state, "failed");
-    assert.equal(status.problem, expected[i]!.problem);
+    assert.equal(status.problem, expected[i]!.problem, `gh said: ${status.said}`);
     if (expected[i]!.said === null) assert.equal(status.said, null);
     else assert.match(status.said!, expected[i]!.said as RegExp);
     assert.equal(status.nextAt, "2026-11-23T10:15:00.000Z", "tried again at the next interval");
