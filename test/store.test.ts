@@ -12,7 +12,6 @@ import { removedAtEnd } from "./support/repo.ts";
 
 function tempDir(t: { after(fn: () => void): void }): string {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 const mode = (file: string): number => fs.statSync(file).mode & 0o777;

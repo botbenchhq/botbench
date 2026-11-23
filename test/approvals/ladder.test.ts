@@ -29,7 +29,6 @@ interface Rig {
 
 async function rig(t: T, offerStandingAfter?: number): Promise<Rig> {
   const dir = tempDir("botbench-ladder-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   fs.mkdirSync(repo);
@@ -680,7 +679,6 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 
 test("a database at schema version 7 gains revocations, the standing log rules and the paging index, and keeps its tasks, approvals, grants and log", (t) => {
   const dir = tempDir("botbench-ladder-v7-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
   const old = new DatabaseSync(path.join(home, DB_FILE));

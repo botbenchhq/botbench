@@ -7,6 +7,7 @@ import { appServerArgs, BUILD_ONLY_DISABLED, launchAppServer, startAppServerSess
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent } from "./events.ts";
 import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
+import { refuseInFastTests } from "./fast-tests.ts";
 import { startOneTurn, type LineResult } from "./one-turn.ts";
 import { codexSignIn, type SignInDefinition } from "./sign-in.ts";
 
@@ -436,6 +437,7 @@ export class CodexDriver implements Driver {
     if (chat === undefined && (options.readOnly !== true || options.allowEdits === true || options.gate !== undefined)) throw new Error("Codex can only review or chat in Botbench: it cannot ask you for permission or edit a task's files under Botbench's rules.");
     if (options.resumeCursor !== undefined) throw new Error("Codex cannot resume a session in Botbench.");
     if (options.confinement.allowedHosts.length > 0) throw new Error("Codex's commands reach no network in Botbench, so it cannot be given hosts to reach.");
+    refuseInFastTests("Codex");
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
@@ -459,6 +461,7 @@ export class CodexDriver implements Driver {
    */
   private async startBuild(options: StartAttemptOptions): Promise<DriverSession> {
     if (options.resumeCursor !== undefined) throw new Error("Codex cannot resume a session in Botbench.");
+    refuseInFastTests("Codex");
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (this.found.buildProblem !== undefined) throw new Error(`Codex cannot build: ${this.found.buildProblem}`);

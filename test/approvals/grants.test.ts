@@ -182,7 +182,6 @@ interface Rig {
 
 async function rig(t: T): Promise<Rig> {
   const dir = tempDir("botbench-grants-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const worktree = path.join(dir, "worktree");
   const repo = path.join(dir, "repo");
@@ -515,7 +514,6 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 
 test("a database at schema version 6 gains the grants table and the pre-approved log rule, and keeps its tasks, approvals and log", (t) => {
   const dir = tempDir("botbench-grants-v6-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
   const old = new DatabaseSync(path.join(home, DB_FILE));

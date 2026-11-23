@@ -26,7 +26,6 @@ const CONFIG: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code
 
 function scratch(t: T, prefix: string): string {
   const dir = tempDir(prefix);
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 

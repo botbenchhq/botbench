@@ -66,7 +66,6 @@ interface Place {
 /** A repository as GitHub's, at 0.1.0 tagged v0.1.0, and an installation cloned from it on main. */
 function place(t: T, files: Record<string, string> = {}): Place {
   const dir = tempDir("botbench-update-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const remote = path.join(dir, "github");
   smallRepo(remote, "0.1.0");
   for (const [file, content] of Object.entries(files)) write(remote, file, content);
@@ -196,7 +195,6 @@ test("the build check starts this checkout's own server on an empty data folder,
 
 test("work under way is a task queued, building, checking or reviewed, a run being planned, or a reply being written", (t) => {
   const dir = tempDir("botbench-busy-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const repo = path.join(dir, "repo");
@@ -242,7 +240,6 @@ test("an update waits while work is under way, touching nothing, and goes ahead 
 
 test("the new version's migrations run on a copy of the owner's data, and one that fails only on real data is caught", async (t) => {
   const dir = tempDir("botbench-migrate-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   setDefaultMode(db, "semi");

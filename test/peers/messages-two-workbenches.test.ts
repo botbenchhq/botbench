@@ -20,7 +20,6 @@ const stateOf = async (w: Workbench, id: string, messageId: string): Promise<str
 
 test("two workbenches ask and answer over their listeners, behind both owners, with retries, settings, the thread's cap, the outside-text task and the end", { timeout: 300_000 }, async (t) => {
   const dir = tempDir("botbench-messages-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { aliceRepo, bobRepo } = sharedRepository(dir);
   const alice = await workbench(t, dir, "alice", aliceRepo);
   const bob = await workbench(t, dir, "bob", bobRepo);
@@ -160,7 +159,6 @@ test("two workbenches ask and answer over their listeners, behind both owners, w
 
 test("an agent's draft on one workbench is a card for its owner, sent only on Send, and a card for the other owner", { timeout: 200_000, skip: NO_PEER_DRAFT_RECORDING }, async (t) => {
   const dir = tempDir("botbench-draft-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { aliceRepo, bobRepo } = sharedRepository(dir);
   const alice = await workbench(t, dir, "alice", aliceRepo);
   const bob = await workbench(t, dir, "bob", bobRepo);

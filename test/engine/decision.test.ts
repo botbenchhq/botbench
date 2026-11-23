@@ -199,7 +199,6 @@ test("decisions are append-only, a decision needs a task that is ready for revie
 
 test("the database before decisions is migrated forward and keeps its action log", (t) => {
   const dir = tempDir("botbench-decision-migrate-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = new DatabaseSync(path.join(dir, "old.sqlite"));
   t.after(() => db.close());
   const before = MIGRATIONS.findIndex((m) => m.name === "decisions");
@@ -504,7 +503,6 @@ test("Discard is refused, with nothing removed, for a task that can still be dec
 
 test("the action log before discards is migrated forward: its rows are kept, a discard needs a task, and the log stays append-only", (t) => {
   const dir = tempDir("botbench-discard-migrate-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = new DatabaseSync(path.join(dir, "old.sqlite"));
   t.after(() => db.close());
   const before = MIGRATIONS.findIndex((m) => m.name === "discards");

@@ -17,8 +17,8 @@ type T = { after(fn: () => unknown): void };
 const JSON_TYPE = { "content-type": "application/json" };
 
 async function start(t: T, dir = tempDir("botbench-tasks-api-"), settings: Partial<Config> = {}): Promise<{ server: BotbenchServer; dir: string; home: string; base: string; headers: Record<string, string> }> {
-  // `dir` holds the Botbench home and the test's repositories; removing it removes their worktrees with them.
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // `dir` holds the Botbench home and the test's repositories, and is removed with their worktrees when the file ends
+  // (tempDir), after the server has closed.
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...settings };
   const server = await startServer({ config, home, signInDelayMs: 1 });

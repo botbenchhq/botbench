@@ -6,6 +6,7 @@ import { limitMentions, makeReviewFolder, neutralizeMentions, proxyEnv, sandboxe
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent } from "./events.ts";
 import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
+import { refuseInFastTests } from "./fast-tests.ts";
 import { startOneTurn, type LineResult } from "./one-turn.ts";
 
 /*
@@ -312,6 +313,7 @@ export class GrokDriver implements Driver {
     const mode = chat === undefined ? "review" : "chat";
     const turn = { mode, webSearch: options.webSearch === true } as const;
     const args = grokArgs({ ...turn, ...(options.model ? { model: options.model } : {}) });
+    refuseInFastTests("Grok");
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
     const { dataDir } = options.confinement;

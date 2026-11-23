@@ -69,7 +69,6 @@ test("a second read within the window answers from the last check and runs no ag
 
 test("GET /api/agents says when the agents were checked, answers a second time from that check, and ?fresh=1 waits for a new one", async (t) => {
   const dir = tempDir("botbench-agents-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const server = await startServer({ config: { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: {} }, home, signInDelayMs: 1 });
   t.after(() => server.close());

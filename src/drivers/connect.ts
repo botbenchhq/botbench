@@ -1,5 +1,6 @@
 import os from "node:os";
 import type { DriverProbe } from "./contract.ts";
+import { isVendorCommand, refuseInFastTests } from "./fast-tests.ts";
 import { killProcessGroup, launch, runCli, type CliChild } from "./launch.ts";
 import { pastedCode, signInFailure, type SignInDefinition, type SignInKind, type SignInPrompt } from "./sign-in.ts";
 
@@ -142,6 +143,7 @@ export function createConnect(options: ConnectOptions): Connect {
     const agent = agentOf(driver);
     const { signIn } = agent;
     if (signIn.kind === "on-the-mac") throw new ConnectError(409, `${signIn.product} can only be signed in on the Mac itself. Run \`${signIn.terminalCommand}\` in a terminal there.`);
+    if (isVendorCommand(signIn.command)) refuseInFastTests(signIn.product, "sign-in");
     const current = flows.get(driver);
     if ((current !== undefined && active(current.state)) || signingOut.has(driver)) throw new ConnectError(409, `${signIn.product} is already being connected or disconnected. Finish or cancel that first.`);
 
@@ -269,6 +271,7 @@ export function createConnect(options: ConnectOptions): Connect {
         changed(driver, "signed-out");
         return await agent.probe();
       }
+      if (isVendorCommand(signIn.command)) refuseInFastTests(signIn.product, "sign-out");
       const run = await runCli(signIn.command, signIn.signOutArgs, { cwd: os.tmpdir(), extraEnv: { ...signIn.env }, timeoutMs: SIGN_OUT_LIMIT_MS });
       if (!run.started) throw new ConnectError(502, `${signIn.product} could not be started. Check that \`${signIn.command}\` is installed and on the PATH.`);
       if (run.exitCode !== 0) throw new ConnectError(502, signInFailure(run.stdout, run.stderr, []) ?? `${signIn.product} could not sign out.`);
