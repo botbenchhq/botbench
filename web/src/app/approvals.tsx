@@ -44,12 +44,37 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
     );
   }, [onSignedOut]);
 
+  // Counts what this same connection says changed a run or a task, for the column of runs and tasks: one stream a tab
+  // serves both, so a wide screen opens no connection of its own (a browser holds only a few to one address).
+  const [workChanges, setWorkChanges] = useState(0);
   useEffect(() => {
     refresh();
-    return openEventStream(0, { onEvent: () => {}, onConnection: (connected) => connected && refresh(), onSignedOut, onApproval: refresh });
+    const changed = (): void => setWorkChanges((n) => n + 1);
+    return openEventStream(0, {
+      onEvent: () => {},
+      onConnection: (connected) => {
+        if (!connected) return;
+        refresh();
+        changed();
+      },
+      onSignedOut,
+      onApproval: () => {
+        refresh();
+        changed();
+      },
+      onRun: changed,
+      onTask: changed,
+    });
   }, [refresh, onSignedOut]);
 
   const open = useCallback(() => setOpened((n) => n + 1), []);
   const value = useMemo(() => ({ pending, problem, refresh, opened, open }), [pending, problem, refresh, opened, open]);
-  return <ApprovalsContext.Provider value={value}>{children}</ApprovalsContext.Provider>;
+  return (
+    <ApprovalsContext.Provider value={value}>
+      <WorkChangesContext.Provider value={workChanges}>{children}</WorkChangesContext.Provider>
+    </ApprovalsContext.Provider>
+  );
 }
+
+/** How many times live updates said a run or a task changed, or came back up: read the runs and tasks again when it moves. */
+export const WorkChangesContext = createContext(0);

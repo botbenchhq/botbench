@@ -357,7 +357,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
       decorations,
       radii,
       components: document.querySelectorAll('[class*="ds-"]').length,
-      h1: headings.filter((el) => el.tagName === "H1").map((el) => `${getComputedStyle(el).fontSize} ${el.className === "" ? "plain" : String(el.className)}${el.closest(".ds-page-header, .ds-sign-in, .ds-not-found") === null ? " outside a page header" : ""}`),
+      h1: headings.filter((el) => el.tagName === "H1").map((el) => `${getComputedStyle(el).fontSize} ${el.className === "" ? "plain" : String(el.className)}${el.closest(".ds-page-header--compact") === null ? "" : " compact"}${el.closest(".ds-page-header, .ds-sign-in, .ds-not-found") === null ? " outside a page header" : ""}`),
       h2: plain("H2"),
       h3: plain("H3"),
       // An empty style attribute sets nothing: a screenshot that hides the caret leaves one on the focused field.
@@ -370,8 +370,9 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   });
   expect(found.components, `${screen}: the screen is built from the design system's components`).toBeGreaterThan(2);
   // One h1 a view: at the theme's 2xl in the page header, or plain in the sign-in pattern, or the empty state's title in the not-found
-  // pattern, which that component draws at its own size. Plain h2 and h3 are a step smaller each.
-  expect(found.h1, `${screen}: the view's one h1, at the size of a title`).toEqual([expect.stringMatching(new RegExp(`^(${TEXT("2xl")} (plain|ds-page-header__title)|\\d+px ds-empty-state__title)$`))]);
+  // pattern, which that component draws at its own size; at the theme's lg in the compact page header that heads the list pane of
+  // the master-detail pattern (the two-pane Settings). Plain h2 and h3 are a step smaller each.
+  expect(found.h1, `${screen}: the view's one h1, at the size of a title`).toEqual([expect.stringMatching(new RegExp(`^(${TEXT("2xl")} (plain|ds-page-header__title)|${TEXT("lg")} ds-page-header__title compact|\\d+px ds-empty-state__title)$`))]);
   expect(found.h2.filter((size) => size !== TEXT("xl")), `${screen}: plain h2 headings are the theme's xl`).toEqual([]);
   expect(found.h3.filter((size) => size !== TEXT("lg")), `${screen}: plain h3 headings are the theme's lg`).toEqual([]);
   expect(found.offSystem, `${screen}: inline styles`).toEqual([]);
