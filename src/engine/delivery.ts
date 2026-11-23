@@ -231,11 +231,21 @@ export function referenceCredits(texts: readonly string[]): string[] {
   return found;
 }
 
-/** What the task's builder said, text only: the build session's replies and those of each round of fixes, oldest first. */
+/**
+ * What the task's builder said, text only, oldest session first: every session the task was building in (a round of
+ * fixes in a new session moves `task.attemptId` on, so the build session is read from the task's history, where each
+ * such move is recorded as its own "attempt N" piece by `moveTask`), each round of fixes', then the latest.
+ */
 function builderTexts(db: DatabaseSync, task: Task): string[] {
   const sessions = new Set<number>();
-  if (task.attemptId !== null) sessions.add(task.attemptId);
+  for (const row of db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND status = 'building' AND detail IS NOT NULL ORDER BY id").all(task.id)) {
+    for (const piece of String(row.detail).split("; ")) {
+      const m = /^attempt ([1-9]\d{0,15})$/.exec(piece);
+      if (m !== null) sessions.add(Number(m[1]));
+    }
+  }
   for (const row of db.prepare("SELECT attempt_id FROM refinements WHERE task_id = ? AND attempt_id IS NOT NULL ORDER BY round, id").all(task.id)) sessions.add(Number(row.attempt_id));
+  if (task.attemptId !== null) sessions.add(task.attemptId);
   const texts: string[] = [];
   for (const attemptId of sessions) {
     for (const row of db.prepare("SELECT payload FROM events WHERE attempt_id = ? AND type = 'text' ORDER BY id").all(attemptId)) {

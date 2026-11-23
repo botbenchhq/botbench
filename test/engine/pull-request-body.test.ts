@@ -235,6 +235,20 @@ test("the builder's reference credits: under Botbench's heading, fenced, once ea
   assert.doesNotMatch(unfenced(section), /paperclip/i);
 });
 
+test("a round of fixes in a new session keeps the build session's credits, oldest first", async (t) => {
+  const r = await rig(t, { reviewer: true, said: ["Built it: approach from paperclip build/first.ts"] });
+  r.review("concerns", "Verdict: concerns\nFindings:\n- calc.py:1: x");
+  const at = now();
+  const fresh = Number(r.db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', NULL, NULL, 'ended', NULL, ?, ?)").run(at, at).lastInsertRowid);
+  r.db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, 'text', ?)").run(fresh, at, JSON.stringify({ type: "text", text: "Fixed: approach from paperclip fix/second.ts" }));
+  moveTask(r.db, r.task.id, "building", { attemptId: fresh, note: "round 1 of fixes, in a new session" });
+  insertRefinement(r.db, { taskId: r.task.id, round: 1, attemptId: fresh, outcome: "finished", changed: true, reply: "Addressed:\n- x\n\nNot addressed, and why:\n- none", problem: null, fromCommit: getTask(r.db, r.task.id)!.headCommit!, headCommit: getTask(r.db, r.task.id)!.headCommit!, startedAt: at });
+  assert.equal(getTask(r.db, r.task.id)!.attemptId, fresh, "the task now points at the new session");
+  r.review("looks_right", "Verdict: looks right\nChecked:\n- calc.py\nFindings:\n- none");
+  const text = await accepted(r);
+  assert.ok(text.includes("```text\napproach from paperclip build/first.ts\napproach from paperclip fix/second.ts\n```"));
+});
+
 test("no credits from the builder: no Reference credits section", async (t) => {
   const r = await rig(t, { reviewer: false, said: ["I added add(a, b) in calc.py."] });
   assert.doesNotMatch(await accepted(r), /Reference credits/);
