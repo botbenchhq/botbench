@@ -332,7 +332,7 @@ export interface StrictWord {
   redirect: boolean;
 }
 
-/** The only characters an unquoted word may hold, besides `$NAME`, `${NAME}`, and `*` or `?` alone (never `**`). */
+/** The only characters an unquoted word may hold, besides `$NAME` (never `${…}`) and `*` or `?` alone (never `**`). */
 const STRICT_BARE = /[A-Za-z0-9_./:=@%+,-]/;
 /** Words that, at the start of a piece, change how what follows is read or run: the shell's own words, prefixes that run another program, and builtins that change the shell's state. */
 const NOT_A_PROGRAM = new Set([
@@ -347,7 +347,7 @@ const NOT_A_PROGRAM = new Set([
  * verdict. The shape:
  *   - pieces joined by `;`, `&&`, `||`, `|` or a line break; no `&` on its own, no `|&`;
  *   - every word wholly in single quotes, wholly in double quotes with no `$` or backquote (a backslash only as the shell
- *     reads it there), or unquoted and made of letters, digits and `_ . / : = @ % + , -`, `$NAME`, `${NAME}` and `*` or
+ *     reads it there), or unquoted and made of letters, digits and `_ . / : = @ % + , -`, `$NAME` (no `${…}`) and `*` or
  *     `?` (never two `*` together); no word that starts with `=` (zsh's `=program`); quoted and unquoted text never glued
  *     in one word;
  *   - redirections `<`, `>`, `>>` with an optional descriptor digit and an unquoted target, `N>&M`, and `<<`/`<<-` with a
@@ -416,7 +416,8 @@ export function strictShape(command: string): { pieces: StrictWord[][]; joins: s
       while (j < text.length && !ends(j)) {
         const d = text[j]!;
         if (STRICT_BARE.test(d)) j++;
-        else if (d === "$" && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/.test(text.slice(j))) j += /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/.exec(text.slice(j))![0].length;
+        // `$NAME` only: `${NAME}` is cut at its braces by the quoted reading the floor uses, so its path would go unread.
+        else if (d === "$" && /^\$[A-Za-z_][A-Za-z0-9_]*/.test(text.slice(j))) j += /^\$[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(j))![0].length;
         else if ((d === "*" || d === "?") && text[j + 1] !== "*" && text[j - 1] !== "*") j++;
         else return null;
       }
