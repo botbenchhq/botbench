@@ -106,10 +106,10 @@ const LEFT_BEHIND = "These files were left by the checks and are not on the bran
  * `primary` is for the task's own screen, inside its review decision: Accept is the view's one primary action, both
  * buttons are marked critical, and a short note may go with either, stored on the decision and shown in Activity.
  * Otherwise this is a row of a list, whose buttons are plain and where `name` finishes each button's accessible name.
- * While a decision is sent the pressed button is busy and keeps focus, and the other is disabled. Once it is sent,
- * `onSent` is told, and the pressed button stays busy until the screen shows the result in its place.
+ * While a decision is sent the pressed button is busy and keeps focus, and the other is disabled. `onSending` is told
+ * as it is pressed, and the pressed button stays busy until the screen shows the result in its place.
  */
-export function DecisionControls({ taskId, leftovers, primary, name, onDecided, onSent, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; primary: boolean; name?: string; onDecided: () => void; onSent?: () => void; onSignedOut: () => void }) {
+export function DecisionControls({ taskId, leftovers, primary, name, onDecided, onSending, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; primary: boolean; name?: string; onDecided: () => void; onSending?: () => void; onSignedOut: () => void }) {
   const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [branch, setBranch] = useState<"keep" | "discard">("keep");
@@ -122,14 +122,13 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
     if (busy !== null) return;
     setBusy(what);
     setProblem(null);
+    // Told before it is sent: a refresh from elsewhere may show the decision before this request answers.
+    onSending?.();
     // The owner confirmed exactly the files this screen showed; the server refuses, and lists them again, if they changed since.
     const given = note.trim() === "" ? null : note.trim();
     const sent = what === "accept" ? acceptTask(taskId, left, given) : rejectTask(taskId, branch, left, given);
     sent.then(
-      () => {
-        onSent?.();
-        onDecided();
-      },
+      () => onDecided(),
       (err: unknown) => {
         setBusy(null);
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
@@ -249,7 +248,7 @@ export function ReviewDecision({ task, onDecided, onSignedOut, children }: { tas
       {decision === null ? (
         <>
           {children}
-          <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={onDecided} onSent={() => (sent.current = true)} onSignedOut={onSignedOut} />
+          <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={onDecided} onSending={() => (sent.current = true)} onSignedOut={onSignedOut} />
         </>
       ) : (
         <div className="ds-review-decision__result">

@@ -239,8 +239,7 @@ function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approva
   /** The answer being sent, while it is. */
   const [sending, setSending] = useState<"allow" | "decline" | "grant" | null>(null);
   // A card that takes the place of one just answered must be read before it can be answered: a second tap
-  // meant for the first card does nothing. The buttons stay enabled meanwhile (the vendored Approval has no way to
-  // disable both); a press before then is ignored.
+  // meant for the first card does nothing. Its answers are drawn unavailable until then (below).
   const [settled, setSettled] = useState(false);
   useEffect(() => {
     const timer = window.setTimeout(() => setSettled(true), 700);
@@ -267,6 +266,16 @@ function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approva
     if (said.line === null) block.setAttribute("data-ds-content", "");
     else block.removeAttribute("data-ds-content");
   });
+  // Nor can it disable both answers: until the card has settled they are drawn unavailable here, so a press is never
+  // silently dropped. Nothing is sent before then, so the Approval's own disabled props are all still false.
+  useLayoutEffect(() => {
+    if (settled) return;
+    const buttons = [...(card.current?.querySelectorAll(":scope > .ds-approval__actions > button") ?? [])];
+    for (const button of buttons) button.setAttribute("disabled", "");
+    return () => {
+      for (const button of buttons) button.removeAttribute("disabled");
+    };
+  }, [settled]);
 
   const answer = (decision: "allow" | "decline", typed: string): void => {
     // Until the card has settled, and while an answer is sent, a press does nothing.
@@ -311,7 +320,7 @@ function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approva
     ...(on === "run" && approval.taskId !== null ? [{ term: "Task", value: value("approval-task", `Task ${approval.taskId} · ${approval.taskTitle}`, true) }] : []),
   ];
   // In a chat the card is an item of the transcript, beside the composer's Send: Allow has secondary emphasis there, as in a list.
-  // data-settled says when a press counts, for the tests: the Approval's buttons cannot be drawn unavailable until then.
+  // data-settled says when a press counts, for the tests.
 
   return (
     <ApprovalView
