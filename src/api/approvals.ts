@@ -1,6 +1,9 @@
 import type http from "node:http";
+import path from "node:path";
 import { actionLog, actionLogPage, APPROVAL_STATUSES, ApprovalError, listApprovals, MAX_LOG_PAGE, MAX_NOTE, type ApprovalStatus } from "../approvals/broker.ts";
-import { listStanding } from "../approvals/grants.ts";
+import { listStanding, realRepo } from "../approvals/grants.ts";
+import { commandProblem, previewCommand } from "../approvals/preview.ts";
+import { repositorySettings } from "../config.ts";
 import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -31,7 +34,8 @@ function single(url: URL, name: string, shape: RegExp, problem: string): string 
 
 /**
  * The approval routes: the approvals (all, or those with one status), the owner's answer to one, the standing
- * permissions and taking one back, and the action log. Returns false when the request is for none of them.
+ * permissions and taking one back, the check of what a command would get in each mode, and the action log. Returns
+ * false when the request is for none of them.
  * Called only for requests the auth gate let through, which is the only way an approval is ever answered and
  * a standing permission given or taken back.
  */
@@ -65,6 +69,18 @@ export async function approvalRoutes(req: http.IncomingMessage, res: http.Server
       // The body says nothing; it is read so that a write is always a whole JSON request.
       await readJsonBody(req);
       json(res, 200, { revoked: ctx.broker.revokeStanding(Number(revoke[1])) });
+    } else if (method === "GET" && pathname === "/api/permissions/preview") {
+      // What a command would get in each mode in a task of this repository, asked of the gate as a build would ask it.
+      // It reads the settings and the store and writes nothing.
+      const repo = url.searchParams.getAll("path");
+      if (repo.length !== 1 || repo[0]!.includes("\0") || !path.isAbsolute(repo[0]!)) throw new ApprovalError(400, 'Give one "path": the full path of a repository, starting with /.');
+      const given = url.searchParams.getAll("command");
+      if (given.length > 1) throw new ApprovalError(400, "Give one command to check.");
+      const command = given[0] ?? "";
+      const problem = commandProblem(command);
+      if (problem !== null) throw new ApprovalError(400, problem);
+      const preapproved = repositorySettings(ctx.config, repo[0]!).preapproved ?? [];
+      json(res, 200, { repository: realRepo(repo[0]!), command, modes: previewCommand(ctx.db, { settings: ctx.broker.floorSettings, repo: repo[0]!, preapproved, command }) });
     } else if (method === "GET" && pathname === "/api/action-log") {
       const task = single(url, "taskId", ID, '"taskId" must be a task id.');
       const before = single(url, "before", ID, '"before" must be the id of a log entry.');

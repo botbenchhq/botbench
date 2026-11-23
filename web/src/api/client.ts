@@ -1062,6 +1062,20 @@ export const grantStanding = (id: number): Promise<{ approval: Approval; grant: 
 /** The standing permissions in force, and after how many approvals a card offers one. */
 export const listGrants = (): Promise<{ grants: StandingGrant[]; offerStandingAfter: number }> => request("GET", "/api/grants", undefined, 30_000);
 export const revokeGrant = (id: number): Promise<{ revoked: StandingGrant }> => request("POST", `/api/grants/${id}/revoke`, {}, 30_000);
+/** What a command would get in one mode, as the permission check answers it (src/approvals/preview.ts). `words` is the server's own line. */
+export interface ModePreview {
+  mode: RunMode;
+  verdict: "allow" | "ask" | "refuse";
+  rule: string;
+  /** The always-ask rule that names the command, when one does. */
+  floor?: string;
+  /** The listed command or Always allow that lets it run. */
+  grant?: { kind: "preapproved" | "standing"; command: string };
+  words: string;
+}
+/** What `command` would get in Manual, Semi-autonomous and Fully autonomous in a task of the repository at `path`. It changes nothing. */
+export const previewCommand = (path: string, command: string): Promise<{ repository: string; command: string; modes: ModePreview[] }> =>
+  request("GET", `/api/permissions/preview?path=${encodeURIComponent(path)}&command=${encodeURIComponent(command)}`, undefined, 30_000);
 /** One page of the action log, newest first: the entries older than `before`, or the newest. `older` says whether more remain. */
 export const getActionLog = (limit: number, before?: number): Promise<{ entries: LogEntry[]; older: boolean }> =>
   request("GET", `/api/action-log?limit=${limit}${before === undefined ? "" : `&before=${before}`}`, undefined, 30_000);
