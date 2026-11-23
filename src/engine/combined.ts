@@ -10,6 +10,7 @@ import { allowedHostsFor } from "./intake.ts";
 import type { PeerPullRequest, Peers, PeersView } from "./peers.ts";
 import { runCommand, type CommandOutcome, type CommandRun, type StationCommand } from "./stations.ts";
 import { getTask, TaskError, words, type Task } from "./task.ts";
+import type { Execution } from "../execution.ts";
 
 /*
  * Checking a task together with another workbench's open pull request (Peers, step P4). Two changes that each pass
@@ -234,6 +235,8 @@ export interface CheckTogetherOptions {
   peers: Peers;
   repoCommands: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   repoHosts: (repo: string) => readonly string[];
+  /** Where a repository's commands run (src/execution.ts): on this Mac when left out. A container repository's are not run here. */
+  execution?: (repo: string) => Execution;
   /** The remote of the repository that holds the other workbenches' branches (its delivery remote). */
   remote: (repo: string) => string;
   /** Called when a check together of the task has ended and is stored. */
@@ -241,6 +244,10 @@ export interface CheckTogetherOptions {
   /** Called when one passed: its blocker may be cleared, so a fully autonomous run looks at the task again. */
   onPassed?: (taskId: number) => void;
 }
+
+/** Why a check together was not run for a repository whose commands run in a container, in words for the owner. */
+export const CONTAINER_NOT_TOGETHER = "This repository's commands run in a container, and Botbench does not check together in one yet. Nothing ran on this Mac instead.";
+class ContainerRepository extends Error {}
 
 export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
   const { db, home } = o;
@@ -255,6 +262,8 @@ export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
     const base = { taskId: task.id, pullRequest: pr.number, workbench: pr.workbench, peerBranch: pr.branch, taskCommit, startedAt };
     let stored: Stored;
     try {
+      // A repository whose commands run in a container never runs them on this Mac, and the merge has no container of its own.
+      if (o.execution?.(task.repo).kind === "container") throw new ContainerRepository();
       const merge = await prepareCombinedCopy({ repo: task.repo, home, dir, fetchUrl, peerBranch: pr.branch, taskCommit });
       if (!merge.merged) {
         stored = { ...base, peerCommit: merge.peerCommit, outcome: "conflict", conflicts: merge.conflicts, problem: null, endedAt: now(), commands: [] };
@@ -286,7 +295,8 @@ export function createCheckTogether(o: CheckTogetherOptions): CheckTogether {
           : { ...base, peerCommit: merge.peerCommit, outcome: passed ? "passed" : "failed", conflicts: [], problem: null, endedAt: now(), commands: ran };
       }
     } catch (err) {
-      stored = { ...base, peerCommit: null, outcome: "not_run", conflicts: [], problem: `Botbench could not merge pull request #${pr.number} with this task's work: ${redact(words(err)).slice(0, 2000)}`, endedAt: now(), commands: [] };
+      if (err instanceof ContainerRepository) stored = { ...base, peerCommit: null, outcome: "not_run", conflicts: [], problem: CONTAINER_NOT_TOGETHER, endedAt: now(), commands: [] };
+      else stored = { ...base, peerCommit: null, outcome: "not_run", conflicts: [], problem: `Botbench could not merge pull request #${pr.number} with this task's work: ${redact(words(err)).slice(0, 2000)}`, endedAt: now(), commands: [] };
     } finally {
       try {
         removeCombinedCopy(home, dir);

@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { SANDBOX_EXEC } from "../../src/confinement.ts";
 
-// Whether this test run is itself inside a macOS sandbox, as it is when Botbench runs `npm test` as a repository's
+// Whether this computer is a Mac at all: on Linux (the Linux job of .github/workflows/ci.yml) there is no sandbox-exec,
+// and the tests that start it are skipped with that reason; test/run-counted.ts holds how many there are.
+// And whether this test run is itself inside a macOS sandbox, as it is when Botbench runs `npm test` as a repository's
 // check, and when `npm run test:confined` (test/run-confined.ts) runs it the same way. Inside one, macOS lets a process
 // neither start a sandbox of its own nor run `ps`, and the tests that need either are skipped with the reason below.
 // Every such test takes its `skip` from here, and nowhere else; test/run-confined.ts holds how many there are.
@@ -20,6 +22,12 @@ function refusal(command: string, args: string[]): string | null {
   return ran.status !== 0 && REFUSAL.test(said) ? said : null;
 }
 
+/**
+ * Why this computer has no sandbox-exec to start, or null when it is a Mac. A Mac without it is not skipped: Botbench
+ * cannot run there, so its tests run and fail.
+ */
+const sandboxMissing = process.platform === "darwin" ? null : `this computer runs ${process.platform}, and ${SANDBOX_EXEC} is macOS's alone`;
+
 const sandboxRefused = process.platform === "darwin" ? refusal(SANDBOX_EXEC, ["-p", "(version 1)(allow default)", "/usr/bin/true"]) : null;
 const processTableRefused = process.platform === "darwin" ? (refusal("ps", ["-o", "pid=", "-p", String(process.pid)]) ?? refusal("pgrep", ["-P", String(process.ppid)])) : null;
 
@@ -28,7 +36,11 @@ const processTableRefused = process.platform === "darwin" ? (refusal("ps", ["-o"
  * false when this run is not inside a sandbox and the test runs.
  */
 export const NO_SANDBOX: string | false =
-  sandboxRefused === null ? false : `this run is already inside a macOS sandbox, and macOS does not let it start another one (${sandboxRefused}). Run npm test outside a sandbox to test this.`;
+  sandboxMissing !== null
+    ? `${sandboxMissing}, so a test that starts one cannot run here. Run npm test on a Mac to test this.`
+    : sandboxRefused === null
+      ? false
+      : `this run is already inside a macOS sandbox, and macOS does not let it start another one (${sandboxRefused}). Run npm test outside a sandbox to test this.`;
 
 /** Why a test that lists processes with ps or pgrep is skipped here; false when this run may list them and the test runs. */
 export const NO_PROCESS_LIST: string | false =

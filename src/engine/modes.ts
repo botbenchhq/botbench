@@ -94,12 +94,22 @@ export function modeRefusals(db: DatabaseSync, taskId: number): ModeRefusal[] {
     }));
 }
 
+/**
+ * The questions the task's agent asked during a fully autonomous run, which nobody was asked (approvals/question.ts), oldest
+ * first: the agent decided each itself. Read from the log entry that recorded each with what the agent was told.
+ */
+export function unaskedQuestions(db: DatabaseSync, taskId: number): string[] {
+  return db.prepare("SELECT command FROM action_log WHERE task_id = ? AND rule = 'question_unasked' ORDER BY id").all(taskId).map((row) => String(row.command));
+}
+
 export interface AcceptFacts {
   /** What the checks found: "passed" only when at least one ran and every one passed. */
   checks: "passed" | "failed" | "none" | null;
   review: ReviewOutcome;
   /** The requests the mode refused during the task. */
   refusals: readonly ModeRefusal[];
+  /** The questions the agent asked that nobody was asked (`unaskedQuestions`). None when left out. */
+  questions?: readonly string[];
   /** Changed files under a protected path, and changed files the plan did not lead one to expect (engine/scope.ts). None when left out. */
   protectedFiles?: readonly string[];
   unexpectedFiles?: readonly string[];
@@ -122,6 +132,9 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   else if (facts.review === "failed") why.push("The review did not finish.");
   const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
   if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${blocking.join("; ")}).`);
+  // A question is the agent saying it needed the owner's choice: it chose for itself, and the owner sees what it chose.
+  const questions = facts.questions ?? [];
+  if (questions.length > 0) why.push(`Claude Code had ${questions.length === 1 ? "a question" : `${questions.length} questions`} for you and chose the answer itself, as a fully autonomous run puts no questions to you (${questions.map((q) => `"${q}"`).join("; ")}).`);
   if ((facts.protectedFiles?.length ?? 0) > 0) why.push(protectedWords(facts.protectedFiles!));
   if ((facts.unexpectedFiles?.length ?? 0) > 0) why.push(unexpectedWords(facts.unexpectedFiles!));
   // The rest of what was refused is named too, so the task screen lists every refused command whatever the verdict.

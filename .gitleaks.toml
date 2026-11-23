@@ -1,0 +1,48 @@
+# gitleaks (https://github.com/gitleaks/gitleaks): what must never reach GitHub. Run by the gitleaks job of
+# .github/workflows/ci.yml over every commit, and by hand with `gitleaks git .` from the repository's folder.
+#
+# gitleaks' own rules (private keys, cloud, GitHub, AI-provider, Slack, Stripe, ... tokens), and below the known
+# false positives, each with why it is not a secret. A placeholder in docs or tests carries gitleaks' standard
+# `gitleaks:allow` comment on its line instead of an entry here.
+
+title = "Botbench"
+
+[extend]
+useDefault = true
+
+# The copied design system's hashes.json holds the SHA-256 of every file in the copy (NOTICE). Files whose names say
+# "token" (design tokens: tokens.css, botbench.tokens.json, design-tokens.md) make gitleaks' generic-api-key rule read
+# their hash as a key. Allowed only in those two files, and only for a value that is exactly a SHA-256 in hex.
+[[allowlists]]
+description = "SHA-256 hashes of design-token files in the copied design system's hashes.json"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^web/vendor/(?:design-system|groundwork)/hashes\.json$''']
+regexes = ['''^[0-9a-f]{64}$''']
+
+# A macOS home folder path names the account it belongs to. Placeholders used in tests and docs are allowed.
+[[rules]]
+id = "mac-home-path"
+description = "A macOS home folder path (it names the local account): use a placeholder such as /Users/owner"
+regex = '''/Users/([A-Za-z0-9._-]+)/'''
+secretGroup = 1
+keywords = ["/users/"]
+tags = ["personal-data"]
+
+[[rules.allowlists]]
+description = "placeholder account names in tests and docs, and macOS's /Users/Shared, which is no account (the Codex live test and capture write there: outside the task's copy and every place Botbench's profile denies)"
+regexes = ['''^(?:owner|me|you|someone|mira|x|o|name|username|Shared)$''']
+
+# Older commits that hold the owner's own home folder path, from before this rule: a test line in
+# test/drivers/launch.test.ts (since replaced with /Users/owner) and a stray test file, .t/h/.gitconfig, removed again
+# on main. Whether to rewrite that history is the owner's decision (issue #116, Part 2); until then only these commits
+# are allowed, and only for this rule: the path in any new commit fails the scan.
+[[allowlists]]
+description = "the owner's home folder path in commits from before the mac-home-path rule"
+targetRules = ["mac-home-path"]
+commits = [
+  "22f53ef2e04834b73a7d75487abce95faa5cd000",
+  "2ce602e177feb0576e2848ce192959648b90c59d",
+  "e70628695ca3bb7b88ee6a65dbb6fd767216433e",
+  "c4573e47d3167a1ef9bd9c4b186aeb093fdd0605",
+]

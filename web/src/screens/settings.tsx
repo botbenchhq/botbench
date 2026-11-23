@@ -5,6 +5,7 @@ import { chooseAppearance, useAppearance, type Appearance } from "../app/appeara
 import { DeviceSettings } from "../app/device-settings.tsx";
 import { MemorySettings } from "../app/memory-settings.tsx";
 import { WatchSettings } from "../app/watch-settings.tsx";
+import { ExecutionSettings } from "../app/execution-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
@@ -38,7 +39,10 @@ const LINKED = SECTIONS.flatMap(({ href, name, about }) => (about === undefined 
 
 /** What Botbench lets the agent do, in words, from the steps the server reports. */
 function agentSteps(agent: AgentState): string {
-  const can = agent.roles.includes("planner") && agent.roles.includes("builder") ? "Plans and builds tasks." : agent.roles.includes("reviewer") ? "Reviews a run's tasks when you choose it for a run; it cannot plan or build here." : "";
+  const plans = agent.roles.includes("planner");
+  const builds = agent.roles.includes("builder");
+  const reviews = agent.roles.includes("reviewer");
+  const can = plans && builds ? "Plans and builds tasks." : builds && reviews ? "Builds a task or a run's tasks when you choose it under Builder, and reviews a run's tasks when you choose it for a run; it does not plan." : reviews ? "Reviews a run's tasks when you choose it for a run; it cannot plan or build here." : "";
   return can;
 }
 
@@ -427,6 +431,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
           {runsGroup}
           <ChatWebAccess onSignedOut={onSignedOut} />
           <WatchSettings onSignedOut={onSignedOut} />
+          <ExecutionSettings onSignedOut={onSignedOut} />
           <WorkbenchName onSignedOut={onSignedOut} />
           <MemorySettings onSignedOut={onSignedOut} />
         </>
@@ -490,6 +495,8 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
           <ChatWebAccess onSignedOut={onSignedOut} />
 
           <WatchSettings onSignedOut={onSignedOut} />
+
+          <ExecutionSettings onSignedOut={onSignedOut} />
 
           <WorkbenchName onSignedOut={onSignedOut} />
 

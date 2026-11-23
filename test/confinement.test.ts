@@ -42,10 +42,12 @@ test("a denied place reached through a link is denied both where the link is and
 });
 
 test("on this Mac Botbench can confine commands; elsewhere, or without sandbox-exec, it says why it cannot, in plain words", () => {
-  assert.equal(confinementProblem(), null, "macOS with /usr/bin/sandbox-exec");
+  // This computer as it is: a Mac with /usr/bin/sandbox-exec can confine; the Linux CI runner cannot, and says so.
+  if (process.platform === "darwin") assert.equal(confinementProblem(), null, "macOS with /usr/bin/sandbox-exec");
+  else assert.match(confinementProblem() ?? "", new RegExp(`only on macOS, and this computer runs ${process.platform}\\.`));
   const linux = confinementProblem({ platform: "linux" });
   assert.match(linux ?? "", /only on macOS/);
-  const missing = confinementProblem({ sandboxExec: "/usr/bin/no-such-sandbox-exec" });
+  const missing = confinementProblem({ platform: "darwin", sandboxExec: "/usr/bin/no-such-sandbox-exec" });
   assert.match(missing ?? "", /\/usr\/bin\/no-such-sandbox-exec/);
   assert.match(missing ?? "", /not found/);
 });

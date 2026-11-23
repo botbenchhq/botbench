@@ -34,6 +34,9 @@ const RULE_WORDS: Record<LogRule, string> = {
   issue_claim: "Issue claim",
   sandboxed: "Ran without asking: kept by its own sandbox, as Codex and Grok cannot ask",
   memory: "Memory",
+  owner_answered: "You answered Claude Code's question",
+  question_unasked: "Not asked: fully autonomous, Claude Code chose itself",
+  peer_message_conflict: "Refused: another workbench sent a message again with other content",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();

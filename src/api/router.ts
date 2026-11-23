@@ -44,6 +44,8 @@ export interface RouteContext {
   driver: Driver;
   /** The agents that can review a run's tasks, by name. */
   reviewers: Partial<Record<string, Driver>>;
+  /** The agents other than `driver` that can build a task or a run's tasks when they are usable (Codex), by name. */
+  builders: Partial<Record<string, Driver>>;
   turns: Turns;
   /** The agents' last checks, kept for a short time. */
   agentChecks: AgentChecks;
@@ -136,11 +138,13 @@ export function modelChoice(body: Record<string, unknown>): string | null | unde
 }
 
 /**
- * Refuse a task or run asked of an agent other than Claude Code: only Claude Code builds in a repository here. A request
- * that names none is Claude Code's.
+ * The agent a task or run is built by: null for Claude Code (also when the request names none), or "codex". Any other
+ * agent is refused here: Grok and Antigravity answer in a chat. Whether Codex can build now is the engine's to say.
  */
-export function builderOnly(body: Record<string, unknown>): void {
-  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work on a repository as a task. Codex, Grok and Antigravity answer in a chat.");
+export function builderChoice(body: Record<string, unknown>): string | null {
+  if (body.agent === undefined || body.agent === null || body.agent === "claude-code") return null;
+  if (body.agent === "codex") return "codex";
+  throw new BodyError(400, "Only Claude Code and Codex can work on a repository as a task. Grok and Antigravity answer in a chat.");
 }
 
 /**

@@ -14,7 +14,7 @@ import { NO_BROWSER, parseAntigravitySignIn, pastedAntigravityCode, type SignInD
  * a time, with its own tools, for a chat message (src/api/chat.ts) and a review (src/engine/review.ts). Approach from
  * OpenMausBot server/drivers/antigravity-acp.ts: a Google profile of Botbench's own with its own sign-in, no MCP
  * servers, and each session/request_permission answered by Botbench. What it gets, measured on this Mac on 2026-11-23
- * with Antigravity 1.5.14 (threat model, B19):
+ * with Antigravity 1.5.14 (threat model, B21):
  * - The whole process runs under Botbench's sandbox for an agent with tools (agyToolsProfile): it reads and changes
  *   only its working folder (the chat's folder; in a review the task's copy, read-only), reads an attached repository
  *   without changing it, reaches Google only through Botbench's proxy, and uses no Keychain.
@@ -454,6 +454,9 @@ export class AntigravityDriver implements Driver {
     if (chat !== undefined && (options.readOnly === true || options.allowEdits === true)) throw new Error("A chat with Antigravity's own tools cannot also be read-only or edit under a task's rules.");
     if (chat === undefined && (options.readOnly !== true || options.allowEdits === true)) throw new Error("Antigravity can only review or chat in Botbench: it never edits a task's files.");
     if (options.resumeCursor !== undefined) throw new Error("Antigravity cannot resume a session in Botbench.");
+    // Antigravity runs its own commands, in its own process: none could be put in a task's container (src/execution.ts).
+    // A review reads the copy and runs its commands confined on this Mac, as ADR 0009 says of every reviewer.
+    if (options.container !== undefined) throw new Error("Antigravity cannot have its commands run in a task's container. Nothing ran on this Mac instead.");
     if (options.confinement.allowedHosts.length > 0) throw new Error("Antigravity's commands reach no network in Botbench, so it cannot be given hosts to reach.");
     const mode = chat === undefined ? "review" : "chat";
     const kept = agyTools({ mode, webSearch: options.webSearch === true });

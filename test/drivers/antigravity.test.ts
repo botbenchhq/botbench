@@ -128,7 +128,7 @@ test("a provider key in Botbench's environment never reaches Antigravity, nor do
   assert.deepEqual(Object.keys(env).sort(), ["AGY_CLI_DISABLE_AUTO_UPDATE", "HOME", "PATH"]);
 });
 
-test("the program `agy` starts is found through Homebrew's script, which must name exactly one Mach-O program; else none", (t) => {
+test("the program `agy` starts is found through Homebrew's script, which must name exactly one Mach-O program; else none", { skip: process.platform === "darwin" ? false : `this computer runs ${process.platform}, and a Mach-O program is macOS's alone. Run npm test on a Mac to test this.` }, (t) => {
   const dir = fs.realpathSync(tempDir("botbench-agy-bin-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const bin = path.join(dir, "bin");
@@ -323,6 +323,7 @@ test("an attempt that would edit a task's copy, resume, or reach a host is refus
   await assert.rejects(driver.startAttempt({ ...base, readOnly: true, confinement: { dataDir: data, allowedHosts: ["example.com"] } }), /no network/);
   await assert.rejects(driver.startAttempt({ ...base, chatTools: { readable: [] }, readOnly: true }), /cannot also be read-only/);
   await assert.rejects(driver.startAttempt({ ...base, readOnly: true, model: "--dangerously-skip-permissions" }), /model name/);
+  await assert.rejects(driver.startAttempt({ ...base, readOnly: true, container: { name: "c" } as never }), /container/);
 });
 
 test("after a refusal ended Antigravity's answer, Botbench's next message says what was refused and why, as data from Botbench, a few times at most", () => {

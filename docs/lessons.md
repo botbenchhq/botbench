@@ -84,3 +84,9 @@ Pull requests were opened against another feature branch. When the owner merged 
 
 ## 2026-11-22: a design direction was built before the owner's design file existed
 A first UI reference used colours and type the owner then replaced with `DESIGN.md`. Rule going forward: read `DESIGN.md` before any UI work, and ask for it before inventing a direction when none exists.
+
+## 2026-11-23: a competitive claim implied a capability nobody else has
+The first competitive library said "none of the projects" does something and that Botbench "is alone". The owner asked for "not demonstrated in the projects and source reviewed". Rule going forward: a statement about competitors describes the projects and commits that were read, never the market, and Botbench never claims to be the only one.
+
+## 2026-11-23: a document was called wrong from a commit title
+The library said the README was out of date about Codex because a merged commit was titled "Make Codex a builder". The commit changed no behaviour, and the driver's declared capabilities said Codex cannot build. Rule going forward: before saying what Botbench can do, read the capability in the code (`src/drivers/*`, `src/engine/roles.ts`), not a title, a pull request description or an issue.

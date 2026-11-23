@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryExecution, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -32,6 +32,7 @@ import { clearCombinedCopies } from "./worktrees.ts";
 import { createClaims } from "./engine/claims.ts";
 import { chooseWorkbench, workbenchName } from "./workbench.ts";
 import { createTasks } from "./engine/task.ts";
+import { createContainers } from "./engine/containers.ts";
 import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
 import { moveOldHome } from "./store/move-home.ts";
@@ -97,6 +98,8 @@ export interface StartOptions {
   claudeCode?: Driver;
   /** Codex, Grok and Antigravity, for review and chat. The real ones unless a test replays sessions captured from them. */
   reviewers?: { [CODEX]: Driver; [GROK]: Driver; [ANTIGRAVITY]: Driver };
+  /** Codex as a builder. The Codex of `reviewers` unless a test replays a build captured from it. */
+  codexBuilder?: Driver;
   /** The gh the issue watch lists labelled issues with. The owner's own unless a test replays output captured from it. */
   watchGh?: RunGh;
 }
@@ -112,14 +115,26 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // A review folder of a Botbench that stopped mid-review is never used again (src/drivers/cli-sandbox.ts).
   removeLeftoverReviewFolders(home);
   const login = loadOrCreateLoginToken(home);
-  const stream = createEventStream(db, options.heartbeatMs);
+  // The task containers (engine/containers.ts). Each time a task is announced, accepted, rejected, cancelled or
+  // discarded included, a container of a task that is no longer live is removed; at start, every one left over.
+  const containers = createContainers({ db, home, workbench: () => workbenchName(db) });
+  const events = createEventStream(db, options.heartbeatMs);
+  const stream: typeof events = { ...events, announceTask: (task) => {
+      events.announceTask(task);
+      containers.taskChanged(task.id);
+    } };
+  // Whenever a docker program is on this Mac (the sweep asks nothing otherwise): a repository switched back to the host,
+  // or taken out of the settings, may have left containers of ended tasks.
+  void containers.sweep();
   // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
   const driver = options.claudeCode ?? new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
-  // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
+  // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan. Codex also builds a
+  // task or a run's tasks the owner chose it for, when its probe finds it can (src/drivers/codex-app-server.ts).
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
   const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver({ dataDir: home, ...configured(ANTIGRAVITY) }) };
+  const builders: Partial<Record<string, Driver>> = { [CODEX]: options.codexBuilder ?? reviewers[CODEX] };
   let broker: Broker;
   let push: Push;
   try {
@@ -172,11 +187,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db, home, peers,
     repoCommands: (repo) => repositoryCommands(config, repo),
     repoHosts: (repo) => repositoryHosts(config, repo),
+    execution: (repo) => repositoryExecution(config, repo),
     remote: (repo) => repositoryDelivery(config, repo).remote,
     onTaskChange: stream.announceTask,
     onPassed: (taskId) => void tasks.reconsider(taskId),
   });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
+  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), execution: (repo) => repositoryExecution(config, repo), containers, protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
@@ -184,7 +200,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
       push.runChanged(run);
       claims.runChanged(run);
     } });
-  const runs = createRuns({ db, home, driver, broker, ...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), silenceLimitMs: silenceLimitMs(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: (run) => {
+  const runs = createRuns({ db, home, driver, builders, broker,...(plannerModel ? { model: plannerModel } : {}), ...(model ? { implementerModel: model } : {}), reviewers, maxRefineRounds: maxRefineRounds(config), silenceLimitMs: silenceLimitMs(config), line: tasks, repoCommands: (repo) => repositoryCommands(config, repo), defaultMode: () => defaultMode(db, config.autonomy?.mode), onEvent: stream.notify, onRunChange: (run) => {
       stream.announceRun(run);
       claims.runChanged(run);
     }, onTaskChange: stream.announceTask });
@@ -214,7 +230,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // The issue watch (engine/watch.ts): each watched repository's labelled open issues, listed with the owner's gh at its
   // interval and proposed on Work. It reads only; a run starts only when the owner presses Start and submits the composer.
   const watch = startWatch({ db, config, run: options.watchGh ?? runGh, onProposed: () => push.issueProposed(), onChange: stream.announceWatch });
-  const ctx = { db, home, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, home, config, driver, reviewers, builders,agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs, pairingLifetimeMs: options.pairingLifetimeMs });
@@ -250,6 +266,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     await broker.close();
     // A notification in flight may still delete an expired device's row; each has a time limit.
     await push.idle();
+    // A container sweep or removal reads the store; each docker call has a time limit.
+    await containers.idle();
     db.close();
   };
 

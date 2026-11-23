@@ -154,6 +154,8 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
       const recorded = typeof kind === "string" ? turns[kind] : { events: kind.events, hookCwd: new Map<string, string>(), files: undefined };
       const edits = new Set(recorded.events.flatMap((event) => (event.type === "tool_call" && EDIT_TOOLS.has(event.name) ? [event.id] : [])));
       let given: unknown = null;
+      /** The recorded question's text, by tool call, for checking the answer a question is given. */
+      const questionOf = new Map<string, string>();
       for (const event of recorded.events) {
         if (event.type === "user_prompt") continue;
         await new Promise((resolve) => setImmediate(resolve));
@@ -164,11 +166,20 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
         }
         if (event.type === "permission_resolved") {
           const allowed = typeof given === "object" && given !== null && (given as PermissionResponse).decision === "allow";
-          if ((event.decision === "allowed") !== allowed) {
-            const detail = `The recording continues only after this request was ${event.decision}; it has nothing for another answer.`;
+          // An answered question went on after an allow that carried exactly the recorded answer, keyed by the recorded
+          // question's text, and only after that: what follows is what the real CLI did with that answer.
+          const answers = allowed ? (given as PermissionResponse).answers : undefined;
+          const answered = answers !== undefined && Object.keys(answers).length > 0;
+          const expected = event.decision === "answered" ? { [questionOf.get(event.toolCallId) ?? ""]: event.note ?? "" } : null;
+          if ((event.decision === "allowed" || event.decision === "answered") !== allowed || (event.decision === "answered") !== answered || (expected !== null && JSON.stringify(answers) !== JSON.stringify(expected))) {
+            const detail = expected === null ? `The recording continues only after this request was ${event.decision}; it has nothing for another answer.` : `The recording continues only after the answer ${JSON.stringify(expected)}; it was given ${JSON.stringify(answers ?? null)}.`;
             record({ type: "error", message: detail, raw: null });
             return end("error", detail);
           }
+        }
+        if (event.type === "permission_request" && event.name === "AskUserQuestion") {
+          const questions = (event.input as { questions?: { question?: unknown }[] } | null)?.questions;
+          if (Array.isArray(questions) && typeof questions[0]?.question === "string") questionOf.set(event.toolCallId, questions[0].question);
         }
         record(event);
         if (atSession && event.type === "session_started") {
