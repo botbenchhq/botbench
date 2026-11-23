@@ -8,9 +8,10 @@ import { writeFileAtomic } from "../src/store/atomic.ts";
 import { DB_FILE, migrate, now, openStore, schemaVersion, transaction } from "../src/store/db.ts";
 import { MIGRATIONS } from "../src/store/schema.ts";
 import { getTask, moveTask } from "../src/engine/task.ts";
+import { removedAtEnd } from "./support/repo.ts";
 
 function tempDir(t: { after(fn: () => void): void }): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

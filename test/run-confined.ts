@@ -32,6 +32,13 @@ if (unconfinable !== null) stop(unconfinable);
 if (NO_SANDBOX) stop(`the tests cannot be put in a sandbox from here: ${NO_SANDBOX.replace(/ Run npm test.*$/, "")} Run it from a terminal outside any sandbox.`);
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-test-confined-")));
+// Stopped from the terminal, the `finally` below never runs: the folder goes here instead.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.once(signal, () => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    process.exit(128 + os.constants.signals[signal]);
+  });
+}
 let exitCode: number | null = null;
 let output = "";
 try {

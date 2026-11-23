@@ -27,6 +27,7 @@ import {
   type PairRequest,
 } from "../../src/peers/pairings.ts";
 import { decideDraftCard, decideIncomingCard, showDraftCard, showIncomingCard, threadFriction } from "../../src/peers/cards.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 const REPO = "github.com/jon-lange/botbench";
 
@@ -36,7 +37,7 @@ interface Side {
   key: WorkbenchKey;
 }
 function side(t: { after(fn: () => void): void }): Side {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-peers-"));
+  const home = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-peers-")));
   const s: Side = { home, db: openStore(home), key: workbenchKey(home) };
   t.after(() => {
     s.db.close();

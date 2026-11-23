@@ -12,12 +12,13 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
+import { removedAtEnd } from "./support/repo.ts";
 
 const mode = (file: string): number => fs.statSync(file).mode & 0o777;
 
 /** Start the real server on a free port with its data in a temporary directory. */
 async function start(t: { after(fn: () => unknown): void }, overrides: Partial<Config> = {}): Promise<{ server: BotbenchServer; home: string }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-server-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-server-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...overrides };
@@ -97,7 +98,7 @@ test("starting on a port that is taken fails and leaves the first server working
 });
 
 test("npm start's entry point creates the data directory, answers health, and exits on SIGTERM", async (t) => {
-  const home = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-entry-")), "home");
+  const home = path.join(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-entry-"))), "home");
   t.after(() => fs.rmSync(path.dirname(home), { recursive: true, force: true }));
   // Ask the OS for a free port, then hand it to the real process.
   const probe = net.createServer().listen(0, "127.0.0.1");
@@ -126,7 +127,7 @@ test("npm start's entry point creates the data directory, answers health, and ex
 });
 
 test("starting removes review folders a stopped Botbench left in the configured data folder", async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-server-leftovers-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-server-leftovers-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const left = path.join(home, "reviewers", "0b5e-left-by-a-crash");

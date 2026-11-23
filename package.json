@@ -10,13 +10,13 @@
   },
   "scripts": {
     "start": "node src/server.ts",
-    "test": "node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json && node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'",
+    "test": "node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json && node test/no-leftovers.ts node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'",
     "test:confined": "node test/run-confined.ts",
     "test:counted": "node test/run-counted.ts",
-    "test:live": "node --test 'test/live/**/*.live.test.ts'",
+    "test:live": "node test/no-leftovers.ts node --test 'test/live/**/*.live.test.ts'",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck",
-    "e2e": "node e2e/prepare.ts && playwright test --config e2e/playwright.config.ts"
+    "e2e": "node e2e/prepare.ts && node test/no-leftovers.ts playwright test --config e2e/playwright.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",

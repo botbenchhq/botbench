@@ -18,10 +18,11 @@ import {
   type Envelope,
 } from "../../src/peers/envelope.ts";
 import { workbenchKey, type WorkbenchKey } from "../../src/peers/key.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 function keys(t: { after(fn: () => void): void }): { alice: WorkbenchKey; bob: WorkbenchKey } {
   const make = (): WorkbenchKey => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-envelope-"));
+    const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-envelope-")));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     return workbenchKey(dir);
   };

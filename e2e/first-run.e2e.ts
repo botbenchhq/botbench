@@ -85,7 +85,8 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
     await botbench.restart();
     await goneAfter(() => page.reload());
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });

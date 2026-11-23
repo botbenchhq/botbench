@@ -83,11 +83,14 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect(diff).toContainText("+++ b/hello.txt");
   await expect(diff).toContainText("+hi");
   expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
-  // The diff scrolls inside its own block; the page itself never scrolls sideways.
+  // hello.txt is prose: its diff wraps to the screen's width (bb-diff-prose, web/src/index.css) instead of scrolling
+  // inside its block, and the page itself never scrolls sideways. That a code file's long line scrolls inside its block
+  // is checked with a code file, in task-layout.e2e.ts.
+  await expect(page.locator("figure.ds-diff")).toHaveClass(/(^|\s)bb-diff-prose(\s|$)/);
+  expect(await diff.locator(".ds-diff__text").first().evaluate((el) => getComputedStyle(el).whiteSpace), "a prose diff's lines wrap").toBe("pre-wrap");
   const scroller = page.getByTestId("diff-scroll");
-  expect(await scroller.evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto");
-  expect(await scroller.evaluate((el) => el.scrollWidth > el.clientWidth), "a long diff line scrolls inside its block").toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+  expect(await scroller.evaluate((el) => el.scrollWidth - el.clientWidth), "a prose diff does not scroll sideways inside its block").toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "the page does not scroll sideways").toBe(0);
   // Lines are told apart by their sign, not by colour alone.
   expect(await diff.locator('[data-line="added"]').first().textContent()).toMatch(/^\+/);
 
@@ -246,8 +249,9 @@ test("the repository Botbench knows of is offered by name, with its path, and on
     await page.reload();
     await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe the task");
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(dir, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
 
@@ -297,8 +301,9 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(repo, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
 
