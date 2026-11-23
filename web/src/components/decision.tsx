@@ -256,7 +256,7 @@ export function ReviewDecision({ task, onDecided, onSignedOut, children }: { tas
           <StatusBadge look={decision.decision === "accept" ? LOOKS.accepted : LOOKS.rejected}>{decision.decision === "accept" ? (byMode ? "Accepted without you" : "Accepted") : "Rejected"}</StatusBadge>
           {/* The result lines its items up at the start, each as wide as its content; these take the section's width, so a
               long branch, path or merge command wraps or scrolls inside its own field and never widens the page. */}
-          <div className="ds-stack ds-gap-sm self-stretch min-w-0">
+          <div className="ds-stack ds-gap-sm">
             {decision.reasons !== null && <p data-testid="decided-by">{decision.reasons}</p>}
             <DecisionOutcome decision={decision} repo={task.repo} merge={offersMerge(task)} pushed={task.pullRequest.pushed ? task.pullRequest.remote : null} />
           </div>
