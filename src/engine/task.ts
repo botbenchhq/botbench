@@ -681,7 +681,21 @@ export function createTasks(options: TasksOptions): Tasks {
     const headCommit = (await commit(task))?.headCommit ?? null;
     const changed = headCommit !== null && headCommit !== from;
     const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes for a failing check ended with an error${detail === null ? "." : `: ${detail}`}`;
-    insertCheckFix(db, { taskId: task.id, checkRound: open.checkRound, afterFixes: workVersion(db, task.id), attemptId, outcome: end === "completed" ? "finished" : "failed", changed, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
+    const record = (): void => insertCheckFix(db, { taskId: task.id, checkRound: open.checkRound, afterFixes: workVersion(db, task.id), attemptId, outcome: end === "completed" ? "finished" : "failed", changed, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
+    const checks = options.repoCommands?.(task.repo).checks ?? [];
+    if (end === "completed" && changed && checks.length > 0) {
+      // The round and the move to the checks are one write: a stop between them would leave the fixed work committed
+      // at `building` with no round open, which the next start would take for a build and not check.
+      const at = transaction(db, () => {
+        if (getTask(db, task.id)?.status !== "building") return null;
+        record();
+        return moveTaskIn(db, task.id, "verifying", { headCommit: headCommit! });
+      });
+      if (at === null) return;
+      options.onTaskChange(at);
+      return check(at, checks, stopped);
+    }
+    record();
     options.onTaskChange(getTask(db, task.id)!);
     if (headCommit === null) return;
     // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.

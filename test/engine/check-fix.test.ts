@@ -126,7 +126,7 @@ test("a failing check starts a round of fixes in the same copy and session, whos
   assert.deepEqual(fixes(e.db, task.id), ["1:1:finished:changed"]);
   assert.equal(taskCheckFixes(e.db, task.id)[0]!.headCommit, task.headCommit);
   assert.equal(task.checks, "passed");
-  assert.deepEqual(e.states.slice(e.states.indexOf("verifying")), ["verifying", "verifying", "building", "building", "building", "verifying", "verifying", "awaiting_decision"]);
+  assert.deepEqual(e.states.slice(e.states.indexOf("verifying")), ["verifying", "verifying", "building", "building", "verifying", "verifying", "awaiting_decision"]);
   assert.equal(line_(e.db, task.id), "A check failed, and Claude Code fixed it: the checks passed after 1 round of fixes.");
   assert.equal(e.db.prepare("SELECT count(*) AS n FROM approvals").get()!.n, 0, "nothing was asked of the owner");
 });

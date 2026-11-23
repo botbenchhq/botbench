@@ -124,9 +124,11 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${blocking.join("; ")}).`);
   if ((facts.protectedFiles?.length ?? 0) > 0) why.push(protectedWords(facts.protectedFiles!));
   if ((facts.unexpectedFiles?.length ?? 0) > 0) why.push(unexpectedWords(facts.unexpectedFiles!));
+  // The rest of what was refused is named too, so the task screen lists every refused command whatever the verdict.
+  const harmless = facts.refusals.filter((refusal) => !refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
+  if (why.length > 0 && harmless.length > 0) why.push(`Botbench also refused, without that keeping it from being accepted: ${harmless.join("; ")}.`);
   if (why.length > 0) return { accept: false, why: `It needs your review: ${why.join(" ")}` };
   const review = facts.review === "satisfied" ? "the reviewer said it looks right and what it checked" : "this run has no reviewer";
   if (facts.refusals.length === 0) return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };
-  const harmless = facts.refusals.map((refusal) => refusal.command);
   return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and what Botbench refused (${harmless.join("; ")}) was not on the always-ask list and would not have reached outside the task's copy.` };
 }
