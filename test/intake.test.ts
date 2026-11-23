@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ghArgs, parseIssueView, type IssueView } from "../src/github.ts";
+import { ghArgs, parseIssueRelation, parseIssueView, type IssueView } from "../src/github.ts";
 import { capIssue, ISSUE_LIMITS, issueNumberOf, outsideTextPrompt, cutWords } from "../src/engine/intake.ts";
 import { plannerPrompt } from "../src/engine/roles.ts";
 import { ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "./support/replay-issue.ts";
@@ -54,9 +54,36 @@ test("the real gh's answer is read: title, body, author, state, labels and comme
   assert.throws(() => parseIssueView(capture.outputs.issue.result.stdout, repo, 15020), /not about issue #15020/);
   assert.throws(() => parseIssueView(capture.outputs.issue.result.stdout, { host: "github.com", owner: "cli", name: "other" }, ISSUE_NUMBER), /not about issue/);
   assert.throws(() => parseIssueView("not json", repo, ISSUE_NUMBER), /could not be read/);
+  // gh issue view does not say how the issue's author relates to the repository; that is read from gh api (below).
+  assert.equal(issue.authorRelation, null);
 });
 
-const view = (o: Partial<IssueView> = {}): IssueView => ({ number: 7, url: "https://github.com/cli/cli/issues/7", title: "Crash on start", body: "It crashes.", author: "someone", state: "OPEN", labels: ["bug"], comments: [], ...o });
+test("how the author relates to the repository is read with gh api, one exact read-only argument list, the number alone in its place", () => {
+  assert.deepEqual(ghArgs.issueApi(repo, 15019), ["api", "--method=GET", "--hostname=github.com", "repos/cli/cli/issues/15019"]);
+  assert.deepEqual(ghArgs.issueApi({ host: "git.example.com", owner: "o-1", name: "a.b_c" }, 3), ["api", "--method=GET", "--hostname=git.example.com", "repos/o-1/a.b_c/issues/3"]);
+  for (const bad of [0, -1, 1.5, Number.NaN, 2 ** 31]) assert.throws(() => ghArgs.issueApi(repo, bad), /not an issue number/, String(bad));
+});
+
+// The fields of GitHub's REST answer for one issue (GET /repos/{owner}/{repo}/issues/{number}) that are read, in the
+// shape gh api prints it: author_association at the top level, the author under user.login. test/live/issue.live.test.ts
+// reads the real gh's answer for cli/cli#15019 with the same parser.
+const restIssue = (o: Record<string, unknown> = {}): string => JSON.stringify({ number: 15019, html_url: "https://github.com/cli/cli/issues/15019", user: { login: "jeffwall-curlewlabs", type: "User" }, author_association: "NONE", state: "closed", title: "t", body: "b", ...o });
+
+test("gh api's answer gives the author's relation to the repository, for every relation GitHub names; anything else about it is refused or unknown", () => {
+  for (const relation of ["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE"] as const) {
+    assert.equal(parseIssueRelation(restIssue({ author_association: relation }), repo, ISSUE_NUMBER), relation);
+  }
+  // A value GitHub has not documented is not guessed at.
+  assert.equal(parseIssueRelation(restIssue({ author_association: "MAINTAINER" }), repo, ISSUE_NUMBER), null);
+  assert.equal(parseIssueRelation(restIssue({ author_association: undefined }), repo, ISSUE_NUMBER), null);
+  // Only an answer about this very issue is read: not a pull request, not another number or repository.
+  assert.throws(() => parseIssueRelation(restIssue({ pull_request: { url: "x" } }), repo, ISSUE_NUMBER), /is a pull request, not an issue/);
+  assert.throws(() => parseIssueRelation(restIssue({ number: 15020 }), repo, ISSUE_NUMBER), /not about issue #15019/);
+  assert.throws(() => parseIssueRelation(restIssue({ html_url: "https://github.com/cli/other/issues/15019" }), repo, ISSUE_NUMBER), /not about issue #15019/);
+  assert.throws(() => parseIssueRelation("not json", repo, ISSUE_NUMBER), /could not be read/);
+});
+
+const view = (o: Partial<IssueView> = {}): IssueView => ({ number: 7, url: "https://github.com/cli/cli/issues/7", title: "Crash on start", body: "It crashes.", author: "someone", authorRelation: null, state: "OPEN", labels: ["bug"], comments: [], ...o });
 
 test("the text kept of an issue is capped: the body, the number of comments and their total size, each cut said", () => {
   const whole = capIssue(view({ comments: [{ author: "a", body: "me too" }] }), "github.com/cli/cli");

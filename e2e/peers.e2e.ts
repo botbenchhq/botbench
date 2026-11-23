@@ -81,7 +81,7 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
 
   // The task's own branch carries this workbench's name.
   await page.goto(`${botbench.base}/#/tasks/${seeded.taskId}`);
-  await expect(page.getByTestId("branch")).toHaveValue(/^botbench\/alice\/run-\d+\/task-\d+$/);
+  await expect(page.getByTestId("branch")).toHaveText(/^botbench\/alice\/run-\d+\/task-\d+$/);
   await expect(page.getByTestId("peer-overlap")).toHaveCount(0);
 
   // Naming an issue no open pull request closes: no warning, and Send stays enabled.

@@ -2,3 +2,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * bb-diff-prose (web/design-gaps.json): the diff of a prose file (.md, .txt), set on its ds-diff figure. Its lines wrap
+ * inside the body, at any character when a word is longer than the line, so a paragraph reads at phone width. A code
+ * file's diff keeps the design system's own lines, which scroll sideways inside the body. The page never scrolls sideways.
+ */
+.bb-diff-prose .ds-diff__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

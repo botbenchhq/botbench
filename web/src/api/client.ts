@@ -3,6 +3,8 @@
  * origin the page came from and carries the session cookie.
  */
 
+import type { AuthorRelation } from "../../../src/github.ts";
+
 export type TurnEndReason = "completed" | "interrupted" | "error";
 
 /** The normalized events a driver emits; the same union as the server's `DriverEvent`. */
@@ -410,6 +412,8 @@ export interface FileChange {
 }
 
 export interface TaskDetail extends TaskSummary {
+  /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
+  issueHosts: string[];
   /** The files changed from the base commit to Botbench's commit; null until there is a commit, or when they cannot be read. */
   files: FileChange[] | null;
   filesProblem: string | null;
@@ -565,6 +569,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   issue: IssueLink | null;
   /** The owner let this run's commands reach the repository's allowed network hosts all the same. */
   outsideHosts: boolean;
+  /** Those hosts, by name, for a run from an issue whose owner allowed them; empty for any other run. */
+  issueHosts: string[];
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -610,6 +616,8 @@ export interface IssuePreview {
   url: string;
   title: string;
   author: string | null;
+  /** How the author relates to the repository, as GitHub said when the issue was read; null when it did not say. */
+  authorRelation: AuthorRelation | null;
   state: string;
   labels: string[];
   body: string;

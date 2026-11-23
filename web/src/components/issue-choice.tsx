@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, issueSourceOf, lookUpIssue, timedOut, type IssuePreview } from "../api/client.ts";
 import type { AttachedIssue } from "../app/composer.ts";
+import { authorWords, hostsHint } from "../app/run-words.ts";
 
 /*
  * From an issue, in the Add context sheet: the owner names one issue of the chosen repository, Botbench reads it with the
@@ -112,6 +113,7 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
   const { preview, attached, source } = state;
   const shown = preview ?? null;
   const hosts = source.state === "offered" ? source.hosts : [];
+  const written = shown === null ? null : authorWords(shown.author, shown.authorRelation, state.allowHosts ? hosts : []);
   return (
     <div className="ds-stack ds-gap-lg">
       <form
@@ -144,7 +146,7 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
         </div>
       </form>
 
-      {shown !== null && (
+      {shown !== null && written !== null && (
         <section className="ds-card" aria-labelledby="issue-title" data-testid="issue-preview">
           <div className="ds-card__header">
             <h3 className="ds-card__title" id="issue-title" data-ds-content="">
@@ -203,7 +205,10 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
               {shown.cutWords !== null && <p>{shown.cutWords}</p>}
             </div>
           </details>
-          <p data-testid="issue-outside">People outside this project wrote this issue. The planner and the builder are given it as the problem to solve, never as instructions, and every command of the run asks you unless it runs kept away from your sign-ins and the network.</p>
+          <p data-testid="issue-outside">
+            {written.author !== null && <span data-ds-content="">{written.author}</span>}
+            {written.text}
+          </p>
           {hosts.length > 0 && (
             <div className="ds-checkbox">
               <input className="ds-checkbox__input" type="checkbox" id="issue-hosts" checked={state.allowHosts} onChange={(e) => state.setAllowHosts(e.target.checked)} aria-describedby="issue-hosts-about" />
@@ -211,7 +216,7 @@ export function IssueOptions({ state }: { state: IssueChoiceState }) {
                 Allow this repository's network hosts for this run
               </label>
               <p className="ds-checkbox__description" id="issue-hosts-about">
-                Off, its commands reach no network ({hosts.join(", ")} included): a stranger's text and network access together are how your code could be sent away.
+                {hostsHint(hosts, state.allowHosts)}
               </p>
             </div>
           )}

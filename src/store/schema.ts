@@ -1307,4 +1307,13 @@ INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated
 DROP TABLE owner_settings_before_chat;
 `,
   },
+  {
+    // How an issue's author relates to its repository, as GitHub's author_association said when it was read; null when
+    // it did not say, and for an issue read before this. Kept with the rest of the issue as read, never changed (the
+    // table's triggers), and shown to the owner only: a run from the issue is marked as outside text whatever it says.
+    name: "issue_author_relation",
+    sql: `
+ALTER TABLE issue_fetches ADD COLUMN author_relation TEXT CHECK (author_relation IN ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', 'NONE'));
+`,
+  },
 ];

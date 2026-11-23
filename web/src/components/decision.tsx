@@ -4,9 +4,8 @@ import { Alert } from "./header.tsx";
 import { ConfirmAction } from "./confirm.tsx";
 import { Icon } from "./icon.tsx";
 
-/** A value the owner copies as it is: a branch name, a command. A read-only field and a button that copies it. */
-export function CopyField({ label, value, testId, buttonName }: { label: string; value: string; testId: string; buttonName: string }) {
-  const id = useId();
+/** Put `value` on the clipboard, and say in words whether it was. */
+function useCopy(value: string): { copied: string | null; copy: () => void } {
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (): void => {
     // The clipboard is only there on a secure page (HTTPS, or this Mac itself) and may still refuse.
@@ -16,6 +15,44 @@ export function CopyField({ label, value, testId, buttonName }: { label: string;
       () => setCopied("Not copied: this browser refused. Select the text to copy it."),
     );
   };
+  return { copied, copy };
+}
+
+/**
+ * A task's branch: its name as text, whole and wrapping at any width, with the button that copies it beside it (the
+ * design system's copy button). A branch name is somebody's words only in part, so it is marked as content.
+ */
+export function BranchCopy({ branch }: { branch: string }) {
+  const { copied, copy } = useCopy(branch);
+  return (
+    <dl className="ds-key-value">
+      <div className="ds-key-value__item">
+        <dt className="ds-key-value__label">Branch</dt>
+        <dd className="ds-key-value__value ds-key-value__value--mono">
+          <span className="ds-cluster ds-gap-xs">
+            <code data-testid="branch" data-ds-content="">
+              {branch}
+            </code>
+            <span className="ds-copy-button">
+              <button type="button" aria-label="Copy branch name" onClick={copy} className="ds-button ds-button--quiet ds-button--small">
+                <Icon name="copy" className="ds-button__icon" />
+                Copy
+              </button>
+              <span data-testid="branch-copy-state" role="status" className="ds-copy-button__status">
+                {copied}
+              </span>
+            </span>
+          </span>
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+/** A value the owner copies as it is: a command. A read-only field and a button that copies it. */
+export function CopyField({ label, value, testId, buttonName }: { label: string; value: string; testId: string; buttonName: string }) {
+  const id = useId();
+  const { copied, copy } = useCopy(value);
   return (
     <div className="ds-field">
       <label htmlFor={id} className="ds-field__label">
@@ -196,7 +233,7 @@ export function DecisionOutcome({ decision, repo, merge, compact = false, pushed
   return (
     <div className="ds-stack ds-gap-sm">
       {noted}
-      <CopyField label="Branch" value={decision.branchName} testId="branch" buttonName="Copy branch name" />
+      <BranchCopy branch={decision.branchName} />
       {decision.decision === "accept" ? (
         <>
           {merge && (
