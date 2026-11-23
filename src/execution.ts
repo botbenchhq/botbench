@@ -354,19 +354,22 @@ export async function startTaskContainer(o: StartContainerOptions): Promise<Cont
     if (!onlyLoopback(net.stdout)) return `the container has network interfaces besides loopback (${net.stdout.trim().replace(/\s+/g, ", ")}).`;
     return null;
   };
-  // What the container of this name records as mounted, or null when there is none.
-  const mountedNow = async (): Promise<string | null> => {
-    const r = await runDocker(docker, ["inspect", "--format", `{{index .Config.Labels "${LABEL_MOUNT}"}}`, name], STEP_MS);
-    return r.code === 0 ? r.stdout.trim() : null;
+  // The id of the container of this name and what it records as mounted, or null when there is none.
+  const foundNow = async (): Promise<{ id: string; mount: string } | null> => {
+    const r = await runDocker(docker, ["inspect", "--format", `{{.Id}}\t{{index .Config.Labels "${LABEL_MOUNT}"}}`, name], STEP_MS);
+    if (r.code !== 0) return null;
+    const [id = "", mount = ""] = r.stdout.trim().split("\t");
+    return { id, mount };
   };
-  // Removed only when the container of this name is this task's (its mount label is this copy): one another process
-  // made under the same name meanwhile is left alone.
+  // Removed only when the container of this name is this task's (its mount label is this copy), and by the id that look
+  // found, not by name: one another process made under the same name meanwhile is left alone.
   const removeOurs = async (): Promise<void> => {
-    if ((await mountedNow()) === o.mount) await removeContainer(docker, name);
+    const found = await foundNow();
+    if (found !== null && found.mount === o.mount && /^[0-9a-f]{12,64}$/.test(found.id)) await removeContainer(docker, found.id);
   };
   // A container left running from before (a restart) is used again only when it is still exactly what was asked for.
   // One made for another folder (another Botbench with the same workbench name) is not this task's: it is left alone.
-  const existing = await mountedNow();
+  const existing = (await foundNow())?.mount ?? null;
   if (existing !== null) {
     if (existing !== o.mount) return refuse(`A container named ${name} already exists for another folder (${existing || "none recorded"}), and Botbench does not remove what is not this task's. Remove it with docker rm -f ${name} if it is not in use, then start the task again. ${NOT_INSTEAD}`);
     if ((await proven()) === null) return { ok: true, container };
@@ -397,9 +400,13 @@ export async function removeContainer(docker: string, name: string): Promise<str
  */
 export const stopLeftovers = (c: TaskContainer): Promise<DockerResult> => runDocker(c.docker, ["exec", c.name, "sh", "-c", "kill -9 -1 2>/dev/null; true"], STEP_MS);
 
-/** The containers carrying `workbench`'s label: each one's name, task id and what was mounted. Null when Docker could not list them. */
-export async function labelledContainers(docker: string, workbench: string): Promise<{ name: string; taskId: number | null; mount: string }[] | null> {
-  const r = await runDocker(docker, ["ps", "-a", "--filter", `label=${LABEL_WORKBENCH}=${workbench}`, "--format", `{{.Names}}\t{{.Label "${LABEL_TASK}"}}\t{{.Label "${LABEL_MOUNT}"}}`], DOCKER_ANSWER_MS);
+/**
+ * The containers carrying Botbench's workbench label, whatever workbench name it holds (a workbench may have been renamed
+ * since): each one's name, task id and what was mounted. Which are this Botbench's is decided by the mount, which lies in
+ * its own data folder (`mountedFrom`). Null when Docker could not list them.
+ */
+export async function labelledContainers(docker: string): Promise<{ name: string; taskId: number | null; mount: string }[] | null> {
+  const r = await runDocker(docker, ["ps", "-a", "--filter", `label=${LABEL_WORKBENCH}`, "--format", `{{.Names}}\t{{.Label "${LABEL_TASK}"}}\t{{.Label "${LABEL_MOUNT}"}}`], DOCKER_ANSWER_MS);
   if (r.code !== 0) return null;
   return r.stdout.split("\n").filter((line) => line.trim() !== "").map((line) => {
     const [name = "", task = "", mount = ""] = line.split("\t");
