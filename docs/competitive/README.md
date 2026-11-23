@@ -28,7 +28,7 @@ Evidence levels used throughout:
 
 ## The projects
 
-Local clones are in `~/claude-remote/reference/<folder>`, read-only. The commit each file was read at is in its header.
+Local clones are kept read-only in a `reference/` folder beside the Botbench checkout, one folder per project. The commit each file was read at is in its header.
 
 | Project | File | Licence | Role for Botbench |
 |---|---|---|---|

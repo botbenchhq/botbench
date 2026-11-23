@@ -1,6 +1,6 @@
 # Reusable architectural patterns
 
-Each pattern names the problem, who solved it, where the code is, and what it means for Botbench. Paths are inside the project's repository (local clone under `~/claude-remote/reference/`). Source read only; nothing was run. Adapt the approach in Botbench's own terms and credit it in the pull request. Agor is under the Business Source License: take the idea, never the code.
+Each pattern names the problem, who solved it, where the code is, and what it means for Botbench. Paths are inside the project's repository (local clone under `reference/` beside the Botbench checkout). Source read only; nothing was run. Adapt the approach in Botbench's own terms and credit it in the pull request. Agor is under the Business Source License: take the idea, never the code.
 
 Nineteen references from across the library were re-opened and checked against the clones and Botbench's source after the research; all nineteen matched. The rest are as the researchers cited them.
 
