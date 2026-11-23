@@ -5,13 +5,14 @@ import { DriverUnavailableError, type Driver, type DriverSession } from "../driv
 import type { TurnEndReason } from "../drivers/events.ts";
 import { now } from "../store/db.ts";
 import { commitsDiff, describeCommits } from "../worktrees.ts";
-import { agentName, MAX_REVIEW_DIFF, parseVerdict, reviewerPrompt, type PlanTask, type PreviousReview } from "./roles.ts";
+import { agentName, parseVerdict, reviewDiff, reviewerPrompt, sentOfDiff, type PlanTask, type PreviousReview, type ReviewedFile } from "./roles.ts";
 
 /*
  * The review station (U20, in part). Once a task of a run that names a reviewer is built, committed and checked, the
- * reviewer is sent the task's title, its acceptance criteria, the full list of the files it changed (with the request to
- * flag any that does not belong to the task) and its diff, from the commit it started from to the commit
- * Botbench made, cut at MAX_REVIEW_DIFF characters. It works read-only in the task's copy (the driver decides how; for
+ * reviewer is sent the task's title, its acceptance criteria, the full list of the files it changed with the lines each
+ * added and removed (with the request to flag any that does not belong to the task), then its whole diff, from the
+ * commit it started from to the commit Botbench made, in numbered parts (engine/roles.ts, `reviewerPrompt`); only a diff
+ * longer than MAX_REVIEW_PARTS parts is cut, and only then is the review stored with diffCut. It works read-only in the task's copy (the driver decides how; for
  * Codex see src/drivers/codex.ts), with no network, no way to ask the owner anything and a time limit. Its reply is
  * stored on the task as one review of its round, append-only, and is a model's opinion, not a check. A reviewer that
  * cannot start, fails, runs out of time or is stopped leaves a review that says so in plain words. The reply is data: it
@@ -43,9 +44,14 @@ export interface Review {
   text: string;
   /** Why there is no review, in words for the owner; null when there is one. */
   problem: string | null;
-  /** How long the task's diff was, and whether the reviewer was sent only its start. */
+  /** How long the task's diff was, and whether the reviewer was sent only its start (a diff longer than MAX_REVIEW_PARTS parts). */
   diffChars: number;
   diffCut: boolean;
+  /**
+   * How many parts of the diff the reviewer was sent and how many characters they held, read from the prompt its session
+   * was given; null when none was (it never started, the diff was empty) or the review is from before diffs were sent in parts.
+   */
+  diffSent: { parts: number; chars: number } | null;
   /** The commit reviewed; null for a review from before rounds were kept, or one that never read the work. */
   headCommit: string | null;
   startedAt: string;
@@ -62,8 +68,15 @@ export function taskReview(db: DatabaseSync, taskId: number): Review | null {
 
 /** A task's reviews, one per round, in order. */
 export function taskReviews(db: DatabaseSync, taskId: number): Review[] {
-  return db.prepare("SELECT * FROM reviews WHERE task_id = ? ORDER BY round").all(taskId).map(toReview);
+  // Only the end of the reviewer's prompt is read: the sentence after its last part says what it was sent (`sentOfDiff`).
+  return db
+    .prepare("SELECT r.*, (SELECT substr(json_extract(e.payload, '$.text'), -?) FROM events e WHERE e.attempt_id = r.attempt_id AND e.type = 'user_prompt' ORDER BY e.id LIMIT 1) AS prompt_end FROM reviews r WHERE r.task_id = ? ORDER BY r.round")
+    .all(PROMPT_END_CHARS, taskId)
+    .map(toReview);
 }
+
+/** Enough of the end of a reviewer's prompt to hold its last `</diff>` and the sentence after it. */
+const PROMPT_END_CHARS = 2_000;
 
 function toReview(row: Record<string, unknown>): Review {
   return {
@@ -79,6 +92,7 @@ function toReview(row: Record<string, unknown>): Review {
     problem: text(row.problem),
     diffChars: Number(row.diff_chars),
     diffCut: row.diff_cut === 1,
+    diffSent: typeof row.prompt_end === "string" ? sentOfDiff(row.prompt_end) : null,
     headCommit: text(row.head_commit),
     startedAt: String(row.started_at),
     endedAt: String(row.ended_at),
@@ -151,19 +165,19 @@ export async function runReview(o: ReviewOptions): Promise<Review> {
   };
 
   let diff: string;
-  let files: string[];
+  let files: ReviewedFile[];
   try {
     diff = await commitsDiff({ path: o.worktree, baseCommit: o.baseCommit, headCommit: o.headCommit });
-    files = (await describeCommits({ repo: o.worktree, baseCommit: o.baseCommit, headCommit: o.headCommit })).map((file) => file.path);
+    files = await describeCommits({ repo: o.worktree, baseCommit: o.baseCommit, headCommit: o.headCommit });
   } catch (err) {
     problem = `${name} was not started: Botbench could not read the task's changes (${words(err)}).`;
     return store();
   }
   diffChars = diff.length;
-  diffCut = diff.length > MAX_REVIEW_DIFF;
+  diffCut = reviewDiff(diff).cut;
   const tools = o.driver.capabilities.tools !== false;
   const webSearch = tools && o.webSearch === true;
-  const prompt = reviewerPrompt({ task: o.task, files, diff: diffCut ? diff.slice(0, MAX_REVIEW_DIFF) : diff, cut: diffCut ? { shown: MAX_REVIEW_DIFF, total: diff.length } : null, tools, ...(tools ? { copy: o.worktree, webSearch } : {}), ...(o.previous ? { previous: o.previous } : {}) });
+  const prompt = reviewerPrompt({ task: o.task, files, diff, tools,...(tools ? { copy: o.worktree, webSearch } : {}), ...(o.previous ? { previous: o.previous } : {}) });
 
   if (o.signal?.aborted) {
     outcome = "stopped";
