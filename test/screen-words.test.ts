@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { trayShows } from "../web/src/components/approval-tray.ts";
 import { runSentence } from "../web/src/components/run-status.ts";
-import { answeredOther, notMergedLine, offersMerge, statusSentence, taskTitle } from "../web/src/components/task-status.ts";
+import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../web/src/components/task-status.ts";
 import type { PullRequestView, RunDetail, RunTask, TaskSummary } from "../web/src/api/client.ts";
 
 // What the task, run and approval screens say in one line, decided without a browser.
@@ -24,6 +24,22 @@ const accepted = (decidedBy: "owner" | "mode", pullRequest: Pick<PullRequestView
 test("an accepted task whose pull request is open says so, by its number, in either form of Accepted", () => {
   assert.equal(statusSentence(accepted("owner", { state: "opened", number: 12 })), "Accepted. Pull request #12 opened.");
   assert.equal(statusSentence(accepted("mode", { state: "opened", number: 12 })), "Accepted without you, as its run is fully autonomous. Pull request #12 opened.");
+});
+
+test("the task's changed files are marked in words: not expected from the plan, and protected", () => {
+  assert.deepEqual(fileMarks({ expected: true, protected: false }), []);
+  assert.deepEqual(fileMarks({ expected: false, protected: false }), ["Not expected from the plan"]);
+  assert.deepEqual(fileMarks({ expected: true, protected: true }), ["Protected"]);
+  assert.deepEqual(fileMarks({ expected: false, protected: true }), ["Protected", "Not expected from the plan"]);
+  assert.equal(fileMarksLine([{ expected: true, protected: false }]), null);
+  // A manual task that changed a protected file says so on its status line, as a fully autonomous one says why it waits.
+  const held = { ...accepted("owner", { state: "none", number: null }), status: "awaiting_decision" as const, decision: null, reason: "It needs your review: It changed 1 file under a protected path, which only you can accept: test/recordings/a.json." };
+  assert.equal(statusSentence(held), "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it. It needs your review: It changed 1 file under a protected path, which only you can accept: test/recordings/a.json.");
+  assert.equal(fileMarksLine([{ expected: false, protected: false }]), "1 file was not expected from the plan: the task's words, its checks and its tests do not name it.");
+  assert.equal(
+    fileMarksLine([{ expected: true, protected: true }, { expected: false, protected: true }, { expected: false, protected: false }]),
+    "2 files are under a protected path, which only you can accept. 2 files were not expected from the plan: the task's words, its checks and its tests do not name them.",
+  );
 });
 
 test("an accepted task with no pull request open still says the branch was kept", () => {

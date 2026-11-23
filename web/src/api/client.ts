@@ -403,6 +403,10 @@ export interface FileChange {
   added: number;
   removed: number;
   binary: boolean;
+  /** The task's plan, its checks or its tests lead one to expect this file (src/engine/scope.ts). */
+  expected: boolean;
+  /** The file lies under a path only the owner may accept a change to. */
+  protected: boolean;
 }
 
 export interface TaskDetail extends TaskSummary {

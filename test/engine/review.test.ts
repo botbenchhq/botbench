@@ -98,6 +98,7 @@ test("R5: after the checks, Codex reads the task's title, criteria and diff, and
   assert.match(prompt, /Add a greeting file/);
   assert.match(prompt, /- hello\.txt holds the word hi/);
   assert.match(prompt, /\+\+\+ b\/hello\.txt\n@@ -0,0 \+1 @@\n\+hi/, "the real diff from the base commit to the task's branch");
+  assert.match(prompt, /Every file the task's work changed, 1 file:\n<changed-files>\n- hello\.txt\n<\/changed-files>/, "the files read from the real branch");
 
   const review = taskReview(e.db, id)!;
   assert.equal(review.agent, "codex");
@@ -243,7 +244,7 @@ test("the review's verdict is read only from its first line in the asked form", 
   assert.equal(parseVerdict("**Verdict: concerns**\nFindings:\n- a.ts:3: off by one"), "concerns");
   assert.equal(parseVerdict("I think it looks right.\nVerdict: concerns"), null);
   assert.equal(parseVerdict(""), null);
-  const prompt = reviewerPrompt({ task: ONE[0]!, diff: "", cut: null });
+  const prompt = reviewerPrompt({ task: ONE[0]!, files: [], diff: "", cut: null });
   assert.match(prompt, /\(The task changed no file\.\)/);
   assert.match(prompt, /Verdict: looks right\nFindings:/);
 });

@@ -109,6 +109,8 @@ export interface RepositoryConfig {
   remote?: string;
   /** The branch a pull request asks to be merged into; the repository's default branch on GitHub, as `gh` reports it, when absent. */
   baseBranch?: string;
+  /** Paths in this repository, added to the top-level "protectedPaths", that only the owner may accept a change to. */
+  protectedPaths?: string[];
 }
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
@@ -140,6 +142,12 @@ export interface Config {
    * absent, the name kept in the data folder: made once from the host name, changed in Settings (src/workbench.ts).
    */
   workbench?: string;
+  /**
+   * Paths, relative to a repository's top folder, that only the owner may accept a change to, in every repository
+   * Botbench works on: a folder ("test/recordings/") or one file. A task that changed a file under one is held for the
+   * owner in every mode, saying which files (engine/scope.ts). None when absent.
+   */
+  protectedPaths?: string[];
 }
 export interface AutonomyConfig {
   /** After the owner has allowed the same command this many times, its next card offers standing permission. A whole number of at least 1; 3 when absent. */
@@ -200,7 +208,9 @@ function validate(c: Json, where: string): Config {
   const fail = (message: string): never => {
     throw new Error(`${where}: ${message}`);
   };
-  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy, workbench } = c;
+  const { port, listen, publicHosts, drivers, roles, repositories, floor, autonomy, workbench, protectedPaths } = c;
+  const guarded = protectedPaths === undefined ? null : protectedPathsProblem(protectedPaths);
+  if (guarded !== null) fail(`"protectedPaths" ${guarded}`);
   if (workbench !== undefined && workbenchProblem(workbench) !== null) fail(`"workbench" must be a workbench name. ${workbenchProblem(workbench)}`);
   if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) fail(`"port" must be a whole number from 0 to 65535.`);
   if (!Array.isArray(listen) || listen.length === 0 || !listen.every((a) => typeof a === "string" && a !== "")) {
@@ -234,6 +244,11 @@ function validate(c: Json, where: string): Config {
           if (!Array.isArray(list)) return fail(`repository "${repo}": "${setting}" must be a list of host names, such as ["registry.npmjs.org"].`);
           const bad = (list as unknown[]).find((host) => hostProblem(host) !== null);
           if (bad !== undefined) fail(`repository "${repo}": "${setting}" holds ${JSON.stringify(bad)}, which cannot be used. ${HOST_RULE}`);
+          continue;
+        }
+        if (setting === "protectedPaths") {
+          const problem = protectedPathsProblem(list);
+          if (problem !== null) fail(`repository "${repo}": "protectedPaths" ${problem}`);
           continue;
         }
         if (setting === "remote") {
@@ -282,7 +297,27 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths"] as const;
+
+const PROTECTED_RULE = 'must be a list of paths inside the repository, such as ["test/recordings/", "package-lock.json"]: relative to its top folder, without "..", "*" or a leading "/".';
+
+/** What is wrong with a list of protected paths, as the end of a sentence about the setting, or null. */
+function protectedPathsProblem(list: unknown): string | null {
+  if (!Array.isArray(list)) return PROTECTED_RULE;
+  for (const entry of list as unknown[]) {
+    if (typeof entry !== "string") return `holds ${JSON.stringify(entry)}, which is not text. It ${PROTECTED_RULE}`;
+    const parts = entry.replace(/\/+$/, "").split("/");
+    // Globs are not matched: a path with "*" would protect nothing while reading as if it did.
+    const bad = entry.length > 1000 || entry.startsWith("/") || entry.includes("\\") || /[\0-\x1f\x7f*?[\]]/.test(entry) || parts.some((part) => part === "" || part === "." || part === "..");
+    if (bad) return `holds ${JSON.stringify(entry)}, which cannot be used. It ${PROTECTED_RULE}`;
+  }
+  return null;
+}
+
+/** The paths only the owner may accept a change to in a repository: the top-level list and the repository's own. */
+export function repositoryProtectedPaths(config: Config, repo: string): string[] {
+  return [...new Set([...(config.protectedPaths ?? []), ...(repositorySettings(config, repo).protectedPaths ?? [])])];
+}
 
 /** Why a setup or check entry cannot be used, or null. */
 function commandProblem(entry: unknown): string | null {

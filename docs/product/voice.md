@@ -72,6 +72,8 @@ On screen since named workbenches (Peers P1, P2): Settings → Workbench, with W
 
 On screen since the cards say why they ask: on an approval card, "Why it asks" with one line (for example "On the always-ask list: it sends commits to another computer.", "Outside the task's copy.", "In Manual mode every command asks you.", "It could not be shown to run kept away from your sign-ins and the network.", "Botbench could not match it to the request it checked."); "File" in place of "Folder" for a request to read or change a file, with the file's path and "(inside the task's copy)" or "(outside the task's copy)"; and in the transcript "Allowed: the task's own files" with "It ran without asking you: it reads or changes a file inside the task's copy, or reads output Claude Code saved for this task."
 
+On screen since scope checks: on the task, under Changed files, the marks "Protected" and "Not expected from the plan" beside a file, with one line over the list ("1 file is under a protected path, which only you can accept. 2 files were not expected from the plan: the task's words, its checks and its tests do not name them."); and as a reason under "It needs your review:", "It changed 1 file under a protected path, which only you can accept: test/recordings/a.json." or "It changed 2 files not expected from the plan: …".
+
 Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.

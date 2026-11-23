@@ -5,6 +5,7 @@ import { appendLog } from "../approvals/broker.ts";
 import { now, transaction } from "../store/db.ts";
 import { isOwnBranch, notOwnWords } from "../workbench.ts";
 import { branchCheckedOutAt, branchCommit, deleteTaskBranch, forgetMissingWorktree, leftoverFiles, removeWorktree } from "../worktrees.ts";
+import { listed } from "./scope.ts";
 import { getTask, moveTaskIn, settleRunIn, TaskError, words, type Task, type TaskStatus } from "./task.ts";
 
 /*
@@ -70,8 +71,6 @@ export class LeftoversError extends TaskError {
   }
 }
 
-/** Files named in a sentence: the first 20, and how many more. The full list is in the answer and on the decision. */
-const listed = (files: readonly string[]): string => (files.length <= 20 ? files.join(", ") : `${files.slice(0, 20).join(", ")} and ${files.length - 20} more`);
 
 function toDecision(row: Record<string, unknown>): TaskDecision {
   let leftovers: unknown;

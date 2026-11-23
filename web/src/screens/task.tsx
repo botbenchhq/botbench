@@ -12,7 +12,7 @@ import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { answeredOther, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
+import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
@@ -315,6 +315,8 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 {task.files.length === 0 ? (
                   <p data-testid="no-changes">No file was changed, so the branch is still at the commit it started from.</p>
                 ) : (
+                  <>
+                  {fileMarksLine(task.files) !== null && <p data-testid="file-marks">{fileMarksLine(task.files)}</p>}
                   <ul data-testid="changed-files" className="ds-list">
                     {task.files.map((file) => {
                       const expanded = open.includes(file.path);
@@ -323,6 +325,11 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                           <details open={expanded} onToggle={(e) => toggled(file.path, e.currentTarget.open)} className="ds-disclosure ds-disclosure--row">
                             <summary className="ds-disclosure__summary">
                               <code data-ds-content="">{file.path}</code>
+                              {fileMarks(file).map((mark) => (
+                                <span key={mark} className="ds-badge ds-badge--warning">
+                                  {mark}
+                                </span>
+                              ))}
                               <span className="ds-disclosure__meta">
                                 {file.status} <Counts file={file} />
                               </span>
@@ -333,6 +340,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                       );
                     })}
                   </ul>
+                  </>
                 )}
               </section>
             )}

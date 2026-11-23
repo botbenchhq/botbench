@@ -18,6 +18,7 @@ import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRound
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
 import { firstLine } from "../shorten.ts";
+import { protectedWords, taskScope, type FileScope } from "./scope.ts";
 import { commandProblem, nextRound, runCommand, startCommandList, type CommandRun, type EvidenceKind, type StationCommand } from "./stations.ts";
 
 /**
@@ -373,6 +374,8 @@ export interface TasksOptions {
   repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
   /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
   repoHosts?: (repo: string) => readonly string[];
+  /** The paths of a repository that only the owner may accept a change to (engine/scope.ts). None when left out. */
+  protectedPaths?: (repo: string) => readonly string[];
   /** The agents that can review a run's tasks, by name. A run whose reviewer is not among them has its tasks' reviews fail, saying so. */
   reviewers?: Partial<Record<string, Driver>>;
   /** The time a reviewer gets; 10 minutes when left out. */
@@ -564,19 +567,27 @@ export function createTasks(options: TasksOptions): Tasks {
     await handOver(task, "reviewing", {});
   };
 
-  /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now. */
-  const qualifies = (id: number, checks: Task["checks"]): ReturnType<typeof autoAccept> => autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id) });
+  /** Whether a task of a fully autonomous run is accepted by the mode, from what is stored of it now and the marks of its changed files. */
+  const qualifies = (id: number, checks: Task["checks"], scope: readonly FileScope[]): ReturnType<typeof autoAccept> =>
+    autoAccept({ checks, review: reviewOutcome(db, id), refusals: modeRefusals(db, id), protectedFiles: scope.filter((f) => f.protected).map((f) => f.path), unexpectedFiles: scope.filter((f) => !f.expected && !f.protected).map((f) => f.path) });
 
   /**
-   * The task is ready for review. In a fully autonomous run it is accepted by the mode when it qualifies, as the owner's
-   * Accept would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it
-   * waits for the owner with a plain line saying why.
+   * The task is ready for review. First the files it changed, from its start commit to its head commit, are read and
+   * marked (engine/scope.ts). In any mode, one under a protected path makes it wait for the owner with a reason naming
+   * those files. In a fully autonomous run it is otherwise accepted by the mode when it qualifies, as the owner's Accept
+   * would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it waits for
+   * the owner with a plain line saying why.
    */
   const handOver = async (task: Task, from: "building" | "verifying" | "reviewing", change: TaskChange): Promise<void> => {
-    if (runModeOf(db, task.runId) !== "full") return void moveFrom(task.id, from, "awaiting_decision", change);
     // A build that changed nothing never gets here (`verify`); rounds of fixes that undid every change of the build would.
-    const empty = await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).then((work) => work.files.length === 0, () => true);
-    const verdict = empty ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null);
+    // Changes that cannot be read are taken as none, which a fully autonomous run never accepts.
+    const files = await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).then((work) => work.files.map((file) => file.path), () => []);
+    const scope = taskScope(db, task, files, options.protectedPaths?.(task.repo) ?? []);
+    if (runModeOf(db, task.runId) !== "full") {
+      const guarded = scope.filter((f) => f.protected).map((f) => f.path);
+      return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? change : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` });
+    }
+    const verdict = files.length === 0 ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null, scope);
     const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why });
     if (ready === null || !verdict.accept) return;
     try {
@@ -989,12 +1000,18 @@ export function createTasks(options: TasksOptions): Tasks {
     for (const row of db.prepare("SELECT id FROM tasks WHERE status = 'reviewing' ORDER BY id").all()) {
       const id = Number(row.id);
       const assigned = reviewAssignment(db, id);
+      const at = getTask(db, id)!;
+      // Its changed files are marked as `handOver` marks them, so a protected file is named here too.
+      const files = at.worktreePath === null || at.baseCommit === null ? [] : await describeWork({ path: at.worktreePath, baseCommit: at.baseCommit }).then((work) => work.files.map((file) => file.path), () => []);
+      const scope = taskScope(db, at, files, options.protectedPaths?.(at.repo) ?? []);
+      const guarded = scope.filter((f) => f.protected).map((f) => f.path);
       transaction(db, () => {
         storeUnfinishedReview(db, id, assigned?.agent ?? "unknown", assigned?.model ?? null, `Botbench stopped before ${agentName(assigned?.agent ?? "the reviewer")} finished its review.`);
         // A fully autonomous run accepts no task whose review did not finish: it says why it waits for the owner.
         const left = getTask(db, id)!;
-        const verdict = runModeOf(db, left.runId) === "full" ? qualifies(id, left.checks) : null;
-        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish", ...(verdict === null || verdict.accept ? {} : { reason: verdict.why }) });
+        const verdict = runModeOf(db, left.runId) === "full" ? qualifies(id, left.checks, scope) : null;
+        const reason = verdict !== null ? (verdict.accept ? null : verdict.why) : guarded.length > 0 ? `It needs your review: ${protectedWords(guarded)}` : null;
+        moveTaskIn(db, id, "awaiting_decision", { note: "Botbench stopped during the review; the review did not finish", ...(reason === null ? {} : { reason }) });
       });
       options.onTaskChange(getTask(db, id)!);
     }

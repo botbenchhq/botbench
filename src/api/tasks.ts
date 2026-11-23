@@ -5,7 +5,8 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { pendingApprovals, waitingOnApproval } from "../approvals/broker.ts";
 import { realRepo, runGrants, showWords } from "../approvals/grants.ts";
-import { repositorySettings } from "../config.ts";
+import { repositoryProtectedPaths, repositorySettings } from "../config.ts";
+import { taskScope, type FileScope } from "../engine/scope.ts";
 import { getRun, preapprovedList, RunError } from "../engine/run.ts";
 import { runModeOf } from "../engine/modes.ts";
 import { loopRecord, outcomeLine, parseRefineReply, refineCap, reviewOutcome, taskRefinements } from "../engine/refine.ts";
@@ -127,6 +128,17 @@ async function changedFiles(db: DatabaseSync, task: Task, remains: TaskRemains |
   }
 }
 
+/**
+ * The task's changed files, each with its marks (engine/scope.ts): `expected`, when the plan, the checks or the task's
+ * tests lead one to expect it, and `protected`, when it lies under a protected path.
+ */
+async function markedFiles(ctx: RouteContext, task: Task, remains: TaskRemains | null): Promise<{ files: (FileChange & Omit<FileScope, "path">)[] | null; filesProblem: string | null }> {
+  const { files, filesProblem } = await changedFiles(ctx.db, task, remains);
+  if (files === null) return { files, filesProblem };
+  const scope = taskScope(ctx.db, task, files.map((file) => file.path), repositoryProtectedPaths(ctx.config, task.repo));
+  return { files: files.map((file, i) => ({ ...file, expected: scope[i]!.expected, protected: scope[i]!.protected })), filesProblem };
+}
+
 
 /**
  * What a task that failed, was stopped or was cancelled left behind (its copy, its branch, the files in the copy not on
@@ -170,7 +182,7 @@ function earlierAttempts(db: DatabaseSync, task: Task): number {
 async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unknown>> {
   const { db } = ctx;
   const left = await remainsOf(db, task);
-  return { ...summary(db, task), earlierAttempts: earlierAttempts(db, task), ...(await changedFiles(db, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
+  return { ...summary(db, task), earlierAttempts: earlierAttempts(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task) };
 }
 
 async function startTask(req: http.IncomingMessage, res: http.ServerResponse, ctx: RouteContext): Promise<void> {

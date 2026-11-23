@@ -423,6 +423,21 @@ STRIDE for B15:
 
 What it does not cover: a warning is best effort. An issue the owner's message names is matched by its `#number` only; a branch pushed without a pull request says nothing about its issue (P3 makes taking an issue visible); overlapping files are compared by path, and no merge is tried (P4).
 
+### Scope: files changed outside the plan, and protected paths
+
+No new boundary: a control on what a builder already writes inside its task's copy (`src/engine/scope.ts`, `src/engine/task.ts` `handOver`, `src/config.ts`). Before a task is Ready for review, Botbench reads the files its work changed, from the task's start commit to its head commit, with the same git call the task screen uses, and marks each one: protected, when it lies under a path the owner's settings file names (`protectedPaths`, at the top level for every repository and per repository; relative paths only, no `..`, `*` or leading `/`, refused at start otherwise); and not expected, when neither the task's own words (its title and criteria, or the owner's prompt) nor the check commands that ran on it name it or a folder it is in, nor a test of the plan's links to it by name. A protected file holds the task for the owner in every mode, with a reason naming the files, and a fully autonomous run never accepts it; a file not expected also stops a fully autonomous run's accept. The owner's own Accept is not refused by either. The reviewer is given the full list of changed files and asked to flag any that do not belong (`reviewerPrompt`), inside an escaped data block, since file names are the builder's.
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Tampering: a builder edits a protected file (recordings, licences) and a fully autonomous run accepts it | The paths come from the owner's settings, never from the repository's own files or the task's branch, so the builder cannot remove the protection; a protected file is never accepted by a mode | Done (engine-tested in manual, semi-autonomous and fully autonomous) |
+| Elevation of privilege: a builder makes an unrelated file read as expected, to be accepted without the owner | Only words the owner wrote or chose are read: the plan, the prompt and the configured checks. An issue's text, the agents' replies and the contents of changed files are never read for this. A builder that adds a test file only makes test files expected when the plan asks for tests; a test it adds leads to another file only when the plan or the checks name that test | Done (unit-tested); the rule is a heuristic from names, stated in the code |
+| Tampering: a file name closes the reviewer's list and writes instructions | The list is set apart with `dataBlock`, which escapes the tag | Done (unit-tested) |
+| Repudiation | The reason is stored on the task's history with its move to Ready for review, beside the action log's entries | Done |
+| Information disclosure | Nothing new leaves the machine; the file names were already on the task screen and in the reviewer's diff | n/a |
+| Denial of service: a builder changes many files | The reasons name the first 20 and count the rest; marking is a pass over names | Done |
+
+What it does not cover: "expected" is a heuristic. A file the plan names loosely (by a word that is not a path) reads as not expected, which only costs a fully autonomous run its accept; a file named in the plan for another reason reads as expected. Protected paths are folders or exact files: no patterns.
+
 ### Moving an installation from before the rename (Smelt to Botbench)
 
 The product was called Smelt. On start, before anything opens the store, an installation in the old default folder `~/.smelt` is moved to `~/.botbench` (`src/store/move-home.ts`). No new boundary is crossed: the files moved are the owner's own data folder, and git runs only `worktree repair`, against repositories the store already names as task sources, with the same safe options and time limits as every other git call.

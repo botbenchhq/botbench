@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, botbenchHome } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome } from "../src/config.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
 function configFiles(t: { after(fn: () => void): void }, defaults: unknown, local?: unknown): { defaults: string; local: string } {
@@ -28,6 +28,24 @@ test("the shipped defaults load: port 4780, loopback only, every role on a known
   assert.deepEqual(config.listen, ["127.0.0.1"]);
   assert.ok(Object.keys(config.roles).length > 0);
   for (const role of Object.values(config.roles)) assert.ok(role.driver in config.drivers);
+});
+
+test("protected paths: this repository protects test/recordings/; a list at the top and one per repository are merged", (t) => {
+  assert.deepEqual(loadConfig({ defaults: DEFAULT_CONFIG_FILE }).protectedPaths, ["test/recordings/"]);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-config-repo-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const config = loadConfig(configFiles(t, { ...BASE, protectedPaths: ["test/recordings/", "LICENSE"], repositories: { [repo]: { protectedPaths: ["docs/adr/", "LICENSE"] } } }));
+  assert.deepEqual(repositoryProtectedPaths(config, repo), ["test/recordings/", "LICENSE", "docs/adr/"]);
+  assert.deepEqual(repositoryProtectedPaths(config, "/elsewhere"), ["test/recordings/", "LICENSE"]);
+  assert.deepEqual(repositoryProtectedPaths(loadConfig(configFiles(t, BASE)), repo), []);
+});
+
+test("protected paths that are not paths inside the repository are refused, saying what one looks like", (t) => {
+  const rule = /must be a list of paths inside the repository, such as \["test\/recordings\/", "package-lock\.json"\]/;
+  for (const bad of ["test/recordings/", ["/etc/passwd"], ["../outside"], ["a/../b"], ["test/*.json"], [""], ["a//b"], [3], ["a\\b"], ["./a"]]) {
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, protectedPaths: bad })), (err: Error) => /"protectedPaths" /.test(err.message) && rule.test(err.message), JSON.stringify(bad));
+  }
+  assert.throws(() => loadConfig(configFiles(t, { ...BASE, repositories: { "/r": { protectedPaths: ["/abs"] } } })), /repository "\/r": "protectedPaths" holds "\/abs", which cannot be used/);
 });
 
 test("defaults load unchanged when there is no local file", (t) => {
