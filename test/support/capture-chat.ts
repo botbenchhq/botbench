@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { AGY_EXTRA_ENV, agyArgs, agyInput, agyProfile, agyReader, writeReviewAgent } from "../../src/drivers/antigravity.ts";
@@ -62,8 +63,13 @@ async function grok(text: string) {
     // As GrokDriver starts a chat since Grok has its own tools there: its network only through a proxy to xAI.
     const proxy = await startProviderProxy(GROK_PROVIDER);
     try {
-      const s = sandboxed(grokProfile({ dataDir: home, folder: folder.path, readOnly: [], proxyPort: proxy.port }), "grok", grokArgs({ mode: "chat", model: MODELS.grok }));
-      return await run(s.command, s.args, folder.path, { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port) }, grokInput(text, { cwd: folder.path, allowed: [folder.path] }));
+      const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-")));
+      try {
+        const s = sandboxed(grokProfile({ dataDir: home, folder: folder.path, readOnly: [], temp, proxyPort: proxy.port }), "grok", grokArgs({ mode: "chat", model: MODELS.grok }));
+        return await run(s.command, s.args, folder.path, { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port), TMPDIR: temp, TMP: temp, TEMP: temp }, grokInput(text, { cwd: folder.path, allowed: [folder.path] }));
+      } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+      }
     } finally {
       await proxy.close();
     }

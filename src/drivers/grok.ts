@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { confinementProblem, unreadablePaths } from "../confinement.ts";
+import { bothPaths, confinementProblem, unreadablePaths } from "../confinement.ts";
 import { limitMentions, makeReviewFolder, neutralizeMentions, proxyEnv, sandboxed, startProviderProxy, toolsProfile } from "./cli-sandbox.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent } from "./events.ts";
@@ -125,10 +125,13 @@ export function grokInput(prompt: string, o?: { cwd: string; allowed: readonly s
  * The sandbox profile for the whole Grok process of one turn, working in `folder`, reading `readOnly` and never
  * changing it, and reaching the network only through Botbench's proxy on `proxyPort` (toolsProfile).
  */
-export function grokProfile(o: { dataDir: string; folder: string; readOnly: readonly string[]; proxyPort: number; env?: NodeJS.ProcessEnv }): string {
+export function grokProfile(o: { dataDir: string; folder: string; readOnly: readonly string[]; temp: string; proxyPort: number; env?: NodeJS.ProcessEnv }): string {
   const home = os.homedir();
   const env = o.env ?? process.env;
-  return toolsProfile({ home, unreadable: unreadablePaths({ dataDir: o.dataDir, home, env }), own: [grokHome(env, home)], folder: o.folder, readOnly: o.readOnly, proxyPort: o.proxyPort });
+  const unreadable = unreadablePaths({ dataDir: o.dataDir, home, env });
+  // Botbench's data folder is denied once, before the read-only places: a review's copy lies inside it.
+  const data = new Set(bothPaths(o.dataDir));
+  return toolsProfile({ home, unreadable, secrets: unreadable.filter((place) => !data.has(place)), own: [grokHome(env, home)], folder: o.folder, readOnly: o.readOnly, temp: o.temp, proxyPort: o.proxyPort });
 }
 
 /** What `grok models` printed, and how it exited, as a sign-in. Its words on 1.0.92: "You are logged in with grok.com.", "You are not authenticated." */
@@ -198,11 +201,15 @@ export function grokReader(kept: readonly string[] = []): (line: string) => Line
       case "tool_call": {
         const name = str(parsed.toolName) ?? "unknown";
         const event: DriverEvent = { type: "tool_call", id: str(parsed.toolCallId) ?? "", name, input: parsed.rawInput ?? null };
+        // What Grok wrote before this call is a text of its own: the reply after its last call then stands alone (a
+        // review's verdict is its first line).
+        const said: DriverEvent[] = reply.trim() === "" ? [] : [{ type: "text", text: reply }];
+        reply = "";
         // A search xAI runs on its own servers touches nothing on this Mac: it is recorded and the turn goes on. So is a
         // call while tools are kept: the model is offered only those (checked at `available_commands` above), and a
         // call names its tool by a title of Grok's ("X search:"), not by the name it was offered under.
-        if (isBackendSearch(name, parsed.rawInput) || allowed.size > 0) return { events: [event], stop: null };
-        return { events: [event], stop: `Stopped: Grok tried to use a tool Botbench did not give it (${name}).` };
+        if (isBackendSearch(name, parsed.rawInput) || allowed.size > 0) return { events: [...said, event], stop: null };
+        return { events: [...said, event], stop: `Stopped: Grok tried to use a tool Botbench did not give it (${name}).` };
       }
       case "tool_call_update": {
         const output = parsed.rawOutput ?? parsed.content ?? null;
@@ -320,13 +327,16 @@ export class GrokDriver implements Driver {
       review?.remove();
       throw new Error(`Botbench could not start the proxy Grok reaches xAI through: ${err instanceof Error ? err.message : String(err)}`);
     }
+    // Its own temporary folder: the shared one, where other programs keep files and sockets, is closed to it (toolsProfile).
+    const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-")));
     const cleanup = (): void => {
       review?.remove();
+      fs.rmSync(temp, { recursive: true, force: true });
       void proxy.close();
     };
     let run: { command: string; args: string[] };
     try {
-      run = sandboxed(grokProfile({ dataDir, folder, readOnly, proxyPort: proxy.port }), COMMAND, args);
+      run = sandboxed(grokProfile({ dataDir, folder, readOnly, temp, proxyPort: proxy.port }), COMMAND, args);
     } catch (err) {
       cleanup();
       throw err;
@@ -337,7 +347,7 @@ export class GrokDriver implements Driver {
       command: run.command,
       args: run.args,
       cwd: folder,
-      extraEnv: { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port) },
+      extraEnv: { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port), TMPDIR: temp, TMP: temp, TEMP: temp },
       capabilities: GROK_CAPABILITIES,
       input: (prompt) => grokInput(prompt, { cwd: folder, allowed }),
       reader: () => grokReader(grokTools(turn)),

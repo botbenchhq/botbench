@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { makeReviewFolder, proxyEnv, sandboxed, startProviderProxy } from "../../src/drivers/cli-sandbox.ts";
@@ -41,9 +42,10 @@ async function capture(extraEnv: Record<string, string>): Promise<{ lines: strin
   const folder = makeReviewFolder(home);
   // As GrokDriver starts a review since Grok has its own tools there: the task's copy read-only, a proxy to xAI.
   const proxy = await startProviderProxy(GROK_PROVIDER);
-  const run = sandboxed(grokProfile({ dataDir: home, folder: folder.path, readOnly: [worktree.path], proxyPort: proxy.port, env: { ...process.env, ...extraEnv } }), "grok", grokArgs({ mode: "review", model: MODEL }));
-  const { child } = launch(run.command, run.args, { cwd: folder.path, extraEnv: { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port), ...extraEnv } });
-  child.once("close", () => void proxy.close());
+  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-")));
+  const run = sandboxed(grokProfile({ dataDir: home, folder: folder.path, readOnly: [worktree.path], temp, proxyPort: proxy.port, env: { ...process.env, ...extraEnv } }), "grok", grokArgs({ mode: "review", model: MODEL }));
+  const { child } = launch(run.command, run.args, { cwd: folder.path, extraEnv: { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port), TMPDIR: temp, TMP: temp, TEMP: temp, ...extraEnv } });
+  child.once("close", () => (void proxy.close(), fs.rmSync(temp, { recursive: true, force: true })));
   const lines: string[] = [];
   readline.createInterface({ input: child.stdout }).on("line", (line) => lines.push(line));
   child.stderr.resume();

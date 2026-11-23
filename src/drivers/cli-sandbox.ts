@@ -59,14 +59,18 @@ export function wholeCliProfile(o: { unreadable: readonly string[]; readable: re
  * sandbox is the control, so it is drawn tight around the whole process and everything it starts.
  * - Reading: the whole home folder, every place of the shared list in src/confinement.ts and Botbench's data folder are
  *   denied. Opened again: the places it may only read (an attached repository and its git folder, or the task's copy),
- *   then, after the shared list is denied once more so that a repository holding a secret place does not open it, the
- *   CLI's own folders and its working folder. System folders, the CLI's own program and the temporary folder stay
- *   readable, as the CLI needs them to run.
- * - Writing: nothing but the CLI's own folders, its working folder, the temporary folder and the terminal devices; a
- *   read-only place stays unwritable even where it lies inside one of those.
+ *   then, after the shared list (not the data folder, which holds a task's copy) is denied once more so that a
+ *   repository holding a secret place does not open it, the CLI's own folders and its working folder. System folders and the CLI's own program stay readable, as the CLI
+ *   needs them to run.
+ * - Temporary files: a private temporary folder for this one process. The shared one is unreadable and unwritable, and
+ *   its Unix sockets unreachable: other programs keep files and sockets there (Chrome's SingletonSocket opens any address
+ *   it is sent, which would reach past the sandbox). Seen on macOS 27.2: with the shared one open, a command reached a
+ *   socket another program listened on there.
+ * - Writing: nothing but the CLI's own folders, its working folder, its private temporary folder and the terminal
+ *   devices; a read-only place stays unwritable even where it lies inside one of those.
  * - Network: none, but Botbench's proxy on this Mac's loopback address, which opens a tunnel only to the vendor's own
- *   provider (`startProviderProxy`), and Unix sockets in the CLI's own folders, its working folder and the temporary
- *   folder. A command the CLI runs gets the same: its provider, and nothing else, nowhere on this Mac or its network.
+ *   provider (`startProviderProxy`), and Unix sockets in the CLI's own folders, its working folder and its private
+ *   temporary folder. A command the CLI runs gets the same: its provider, and nothing else, nowhere on this Mac or its network.
  * Known limit, stated in the threat model: the CLI must read its own sign-in to work, so a command it runs can read it
  * too, and could send it to the provider that issued it.
  */
@@ -77,10 +81,22 @@ export interface ToolsPlaces {
   home: string;
   /** The shared list of secret places and Botbench's data folder (unreadablePaths in src/confinement.ts). */
   unreadable: readonly string[];
+  /**
+   * The places of `unreadable` denied again after the read-only places are opened: the shared list without Botbench's
+   * data folder, which holds a task's copy (a review reads it). All of `unreadable` when left out.
+   */
+  secrets?: readonly string[];
   /** The CLI's own folders, where it keeps its sign-in, settings and sessions: read and written. */
   own: readonly string[];
   /** The folder it works in: read and written. */
   folder: string;
+  /**
+   * A new, private temporary folder for this one process (TMPDIR points at it): read, written, and the only place outside
+   * its own folders where it may make or reach a Unix socket. The shared temporary folder holds other programs' files and
+   * sockets (on this Mac: Chrome's SingletonSocket, which opens any address it is sent, and other sandboxes' proxy sockets),
+   * so it is neither read, written nor reached.
+   */
+  temp: string;
   /** Places it may read and never change. */
   readOnly: readonly string[];
   /** The port of Botbench's proxy to the provider. */
@@ -104,22 +120,23 @@ export function toolsProfile(o: ToolsPlaces): string {
   const own = bothNames(o.own);
   const folder = bothNames([o.folder]);
   const readOnly = bothNames(o.readOnly);
-  const opened = [...own, ...folder, ...readOnly];
+  const temp = bothNames([o.temp]);
+  const opened = [...own, ...folder, ...readOnly, ...temp];
   const metadata = [...new Set(opened.flatMap(ancestors))].filter((place) => !opened.includes(place));
-  const sockets = [...own, ...folder, ...tempFolders()];
+  const sockets = [...own, ...folder, ...temp];
   const lines = [
     "(version 1)",
     "(allow default)",
-    `(deny file-read* ${subpaths(bothNames([o.home]))} ${subpaths(o.unreadable)})`,
+    `(deny file-read* ${subpaths(bothNames([o.home]))} ${subpaths(tempFolders())} ${subpaths(o.unreadable)})`,
   ];
   if (readOnly.length > 0) lines.push(`(allow file-read* ${subpaths(readOnly)})`);
   lines.push(
-    `(deny file-read* ${subpaths(o.unreadable)})`,
-    `(allow file-read* ${subpaths([...own, ...folder])})`,
+    `(deny file-read* ${subpaths(o.secrets ?? o.unreadable)})`,
+    `(allow file-read* ${subpaths([...own, ...folder, ...temp])})`,
     // The folders above an opened place may be looked at, not listed or read: paths are resolved through them.
     ...(metadata.length > 0 ? [`(allow file-read-metadata ${metadata.map((place) => `(literal ${quoted(place)})`).join(" ")})`] : []),
     "(deny file-write*)",
-    `(allow file-write* ${subpaths([...own, ...folder, ...tempFolders()])} (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
+    `(allow file-write* ${subpaths([...own, ...folder, ...temp])} (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
   );
   if (readOnly.length > 0) lines.push(`(deny file-write* ${subpaths(readOnly)})`);
   lines.push(

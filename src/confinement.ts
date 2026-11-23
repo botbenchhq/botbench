@@ -91,7 +91,7 @@ export interface Confinement {
 }
 
 /** `target` and, when a link leads elsewhere, where it leads, both as full paths. A place that does not exist yet is kept as written. */
-function bothPaths(target: string): string[] {
+export function bothPaths(target: string): string[] {
   const written = path.resolve(target);
   let real = written;
   try {

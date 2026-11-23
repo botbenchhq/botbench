@@ -3,12 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { HOME_SECRETS } from "../../src/confinement.ts";
+import { spawnSync } from "node:child_process";
+import { HOME_SECRETS, SANDBOX_EXEC } from "../../src/confinement.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { GROK_CAPABILITIES, GROK_TOOLS, grokArgs, grokEnv, grokInput, grokProfile, grokReader, grokTools, parseGrokLogin, parseGrokModels, GrokDriver } from "../../src/drivers/grok.ts";
 import { checkVersion } from "../../src/drivers/launch.ts";
 import { openStore } from "../../src/store/db.ts";
 import { tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // Nothing in this file starts `grok`.
 
@@ -79,17 +81,18 @@ test("AE7: the review's environment has no provider key and turns off what Grok 
 /** The rules of a profile whose line starts with `head`, e.g. "(allow file-read*". */
 const rules = (profile: string, head: string): string[] => profile.split("\n").filter((line) => line.startsWith(head));
 
-test("CRITICAL: the profile of a Grok chat: the home folder, every secret place and Botbench's data folder are unreadable but Grok's own folder, the chat's folder and the attached repository; it writes only its own folder, the chat's folder and the temporary folder, never the repository; its only network is Botbench's proxy", () => {
+test("CRITICAL: the profile of a Grok chat: the home folder, every secret place and Botbench's data folder are unreadable but Grok's own folder, the chat's folder and the attached repository; it writes only its own folder, the chat's folder and its private temporary folder, never the repository or the shared temporary folder; its only network is Botbench's proxy", () => {
   const home = os.homedir();
   const data = fs.realpathSync(tempDir("botbench-grok-profile-"));
   const chatFolder = path.join(data, "scratch");
   const repo = path.join(data, "..", "some-repo");
-  const profile = grokProfile({ dataDir: data, folder: chatFolder, readOnly: [repo, `${repo}/.git`], proxyPort: 41234, env: {} });
+  const profile = grokProfile({ dataDir: data, folder: chatFolder, readOnly: [repo, `${repo}/.git`], temp: path.join(data, "..", "grok-temp"), proxyPort: 41234, env: {} });
   const [denyAll, denyAgain] = rules(profile, "(deny file-read*");
   const [openRepo, openOwn] = rules(profile, "(allow file-read*");
   assert.ok(denyAll!.includes(`(subpath "${home}")`), "the whole home folder");
   for (const place of HOME_SECRETS) assert.ok(denyAll!.includes(`"${path.join(home, place)}"`) && denyAgain!.includes(`"${path.join(home, place)}"`), place);
-  assert.ok(denyAll!.includes(`"${data}"`) && denyAgain!.includes(`"${data}"`), "Botbench's data folder");
+  assert.ok(denyAll!.includes(`"${data}"`), "Botbench's data folder");
+  assert.ok(!denyAgain!.includes(`"${data}"`), "denied once, before the read-only places: a review's copy lies inside it (an attached repository may not hold it)");
   assert.ok(openRepo!.includes(`"${path.resolve(repo)}"`));
   assert.ok(openOwn!.includes(`"${path.join(home, ".grok")}"`) && openOwn!.includes(`"${chatFolder}"`));
   assert.ok(profile.indexOf(openRepo!) < profile.indexOf(denyAgain!) && profile.indexOf(denyAgain!) < profile.indexOf(openOwn!), "a repository that holds a secret place does not open it: the list is denied again after it");
@@ -97,13 +100,16 @@ test("CRITICAL: the profile of a Grok chat: the home folder, every secret place 
   const [allowWrite] = rules(profile, "(allow file-write*");
   assert.ok(allowWrite!.includes(`"${path.join(home, ".grok")}"`) && allowWrite!.includes(`"${chatFolder}"`));
   assert.ok(!allowWrite!.includes(`"${home}"`), "not the home folder");
+  assert.ok(allowWrite!.includes(`"${path.resolve(data, "..", "grok-temp")}"`), "its private temporary folder");
+  assert.ok(!allowWrite!.includes(`"${os.tmpdir()}"`) && denyAll!.includes(`"${os.tmpdir()}"`), "not the shared temporary folder, which is unreadable too");
+  for (const line of rules(profile, "(allow network-")) assert.ok(!line.includes(`"${os.tmpdir()}"`), `no socket in the shared temporary folder: ${line}`);
   const [denyWrite] = rules(profile, "(deny file-write* (subpath");
   assert.ok(denyWrite!.includes(`"${path.resolve(repo)}"`), "the repository stays unwritable, even inside a writable place");
   assert.ok(profile.indexOf(denyWrite!) > profile.indexOf(allowWrite!), "a later rule wins: the repository's deny comes after the writable places");
   assert.ok(profile.includes("(deny network*)"));
   assert.deepEqual(rules(profile, "(allow network-outbound (remote ip"), ['(allow network-outbound (remote ip "localhost:41234"))'], "the proxy's port and nothing else");
   assert.ok(profile.includes("(deny lsopen)") && profile.includes("(deny appleevent-send)"));
-  const moved = grokProfile({ dataDir: data, folder: chatFolder, readOnly: [], proxyPort: 41234, env: { GROK_HOME: "/Volumes/elsewhere/grok" } });
+  const moved = grokProfile({ dataDir: data, folder: chatFolder, readOnly: [], temp: "/tmp/t", proxyPort: 41234, env: { GROK_HOME: "/Volumes/elsewhere/grok" } });
   assert.match(moved, /\(allow file-read\* [^\n]*"\/Volumes\/elsewhere\/grok"/);
   fs.rmSync(data, { recursive: true, force: true });
 });
@@ -113,12 +119,30 @@ test("CRITICAL: the profile of a Grok review reads the task's copy and its git f
   const copy = path.join(data, "worktrees", "run-1", "task-1");
   const gitDir = path.join(data, "..", "repo", ".git");
   const folder = path.join(data, "reviewers", "r1");
-  const profile = grokProfile({ dataDir: data, folder, readOnly: [copy, gitDir], proxyPort: 5000, env: {} });
+  const profile = grokProfile({ dataDir: data, folder, readOnly: [copy, gitDir], temp: path.join(data, "..", "t"), proxyPort: 5000, env: {} });
   assert.ok(rules(profile, "(allow file-read*")[0]!.includes(`"${copy}"`));
   const [denyWrite] = rules(profile, "(deny file-write* (subpath");
   assert.ok(denyWrite!.includes(`"${copy}"`) && denyWrite!.includes(`"${path.resolve(gitDir)}"`));
   assert.ok(rules(profile, "(allow file-write*")[0]!.includes(`"${folder}"`) && !rules(profile, "(allow file-write*")[0]!.includes(`"${copy}"`));
   fs.rmSync(data, { recursive: true, force: true });
+});
+
+test("CRITICAL: under the profile of a Grok review, the task's copy, which lies inside Botbench's data folder, is readable and unwritable, and the rest of the data folder stays unreadable", { skip: NO_SANDBOX }, (t) => {
+  const data = fs.realpathSync(tempDir("botbench-grok-review-read-"));
+  t.after(() => fs.rmSync(data, { recursive: true, force: true }));
+  const copy = path.join(data, "worktrees", "run-1", "task-1");
+  const folder = path.join(data, "reviewers", "r1");
+  const temp = path.join(data, "..", `grok-temp-${process.pid}`);
+  for (const d of [copy, folder, temp]) fs.mkdirSync(d, { recursive: true });
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(copy, "calc.py"), "def add(a, b):\n    return a - b\n");
+  fs.writeFileSync(path.join(data, "botbench.db"), "DATA\n");
+  const profile = grokProfile({ dataDir: data, folder, readOnly: [copy], temp, proxyPort: 5000, env: {} });
+  const sh = (script: string) => spawnSync(SANDBOX_EXEC, ["-p", profile, "/bin/sh", "-c", script], { encoding: "utf8", cwd: folder });
+  assert.equal(sh(`cat ${copy}/calc.py`).stdout, "def add(a, b):\n    return a - b\n", "the reviewer reads the task's copy");
+  assert.equal(sh(`ls ${copy}`).stdout, "calc.py\n");
+  assert.notEqual(sh(`echo x >> ${copy}/calc.py`).status, 0, "and cannot change it");
+  assert.notEqual(sh(`cat ${data}/botbench.db`).status, 0, "Botbench's own files stay unreadable");
 });
 
 test("Grok reports what it lacks: no resume, no permission requests, no edits of a task's copy; it has its own tools in a chat and can be stopped", () => {
@@ -240,6 +264,20 @@ const eventsOf = (lines: readonly string[]): { events: DriverEvent[]; stops: str
   const results = read(lines);
   return { events: results.flatMap((r) => r.events), stops: results.flatMap((r) => (r.stop === null ? [] : [r.stop])) };
 };
+
+test("what Grok writes before a tool call is a text of its own, so the reply after the last call stands alone: a review's verdict line is its first line", () => {
+  // Constructed lines in Grok 1.0.92's form: a remark, a command, then the review.
+  const reader = grokReader(grokTools({ mode: "review" }));
+  const events = [
+    '{"type":"text","data":"I will check the copy first."}',
+    '{"type":"tool_call","toolCallId":"c1","toolName":"run_terminal_command","rawInput":{"command":"git diff"}}',
+    '{"type":"tool_call_update","toolCallId":"c1","rawOutput":{"exit_code":0}}',
+    '{"type":"text","data":"Verdict: concerns\\n"}',
+    '{"type":"text","data":"Findings:\\n- calc.py:2: subtracts"}',
+    '{"type":"end","stopReason":"end_turn","sessionId":"s1","usage":{"input_tokens":5,"output_tokens":2}}',
+  ].flatMap((line) => reader(line).events);
+  assert.deepEqual(events.filter((e) => e.type === "text" || e.type === "tool_call").map((e) => e.type === "text" ? e.text : `call ${e.id}`), ["I will check the copy first.", "call c1", "Verdict: concerns\nFindings:\n- calc.py:2: subtracts"]);
+});
 
 test("a review session recorded from Grok 1.0.92 offered no tool, and becomes its session, the whole reply as one text, the usage, and a completed turn, in that order", () => {
   assert.equal(RECORDING.cli, "grok 1.0.92 (b06756fd6256)");
