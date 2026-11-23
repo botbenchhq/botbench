@@ -34,6 +34,8 @@ export interface PeerPullRequest {
    * the remote did not list the branch. What a check together with it is compared with (engine/combined.ts).
    */
   head: string | null;
+  /** Present when `files` may not be every file it changes (github.ts, `filesCapped`). */
+  filesCapped?: true;
 }
 export interface PeerBranch {
   workbench: string;
@@ -64,7 +66,7 @@ export function otherWork(prs: readonly ListedPullRequest[], branches: readonly 
   const heads = new Map(branches.flatMap(({ branch, commit }) => (commit === undefined ? [] : [[branch, commit] as const])));
   const pullRequests = prs.flatMap((pr) => {
     const workbench = pr.state === "OPEN" ? other(pr.headRefName) : null;
-    return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files, head: heads.get(pr.headRefName) ?? null }];
+    return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files, head: heads.get(pr.headRefName) ?? null, ...(pr.filesCapped === true ? { filesCapped: true as const } : {}) }];
   });
   const withPr = new Set(pullRequests.map((pr) => pr.branch));
   const pushed = branches.flatMap(({ branch }) => {
@@ -105,7 +107,7 @@ export function createPeers(o: { db: DatabaseSync; config: Config; github: GitHu
           throw new Error(`The branches on the remote ${remote} could not be read: ${words(err)}`);
         }),
       ]);
-      return { state: "ready", repo, repository: repoName(found.repo), ...otherWork(prs, branches, ownWorkbenches(o.db)), checkedAt, mayBeMore: prs.length >= PR_LIST_LIMIT };
+      return { state: "ready", repo, repository: repoName(found.repo), ...otherWork(prs, branches, ownWorkbenches(o.db)), checkedAt, mayBeMore: prs.capped === true || prs.length >= PR_LIST_LIMIT };
     } catch (err) {
       return unavailable(words(err));
     }

@@ -725,6 +725,8 @@ export interface CheckTogetherView {
   offers: CheckTogetherOffer[];
   /** With the setting on: the overlapping pull requests that still have no passing, current check together. */
   waitingOn: number[];
+  /** With the setting on: why it cannot be met now when no pull request can be named (the list could not be read, or may be cut). */
+  undetermined: string | null;
   viewProblem: string | null;
 }
 export const getCheckTogether = (taskId: number): Promise<CheckTogetherView> => request("GET", `/api/tasks/${taskId}/check-together`, undefined, 90_000);

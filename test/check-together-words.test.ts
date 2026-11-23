@@ -35,6 +35,10 @@ test("the requirement says what it means and what it still waits on", () => {
   assert.match(requirementLine({ required: false, waitingOn: [], offers }), /^Not required on this repository\./);
   assert.match(requirementLine({ required: true, waitingOn: [12], offers }), /Still needed: bob's pull request #12\.$/);
   assert.match(requirementLine({ required: true, waitingOn: [], offers }), /Nothing is waiting on it now\.$/);
+  const blocked = requirementLine({ required: true, waitingOn: [], offers, undetermined: "This repository requires checking together, and Botbench could not read them: gh is not signed in." });
+  assert.match(blocked, /A fully autonomous run waits for you now: .*gh is not signed in\.$/);
+  assert.doesNotMatch(blocked, /Nothing is waiting/);
+  assert.deepEqual(bannedIn(blocked), []);
 });
 
 test("no sentence about checking together uses a word the screens never show, the server's reasons included", () => {

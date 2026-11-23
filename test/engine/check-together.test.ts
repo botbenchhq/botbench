@@ -198,6 +198,9 @@ test("the gate: with the setting on, each overlapping open pull request of anoth
   const many = Array.from({ length: 100 }, (_, i) => `docs/f${i}.md`);
   const capped = checkTogetherGate({ required: true, files, view: view([{ number: 9, files: many, head: C }]), checks: [], taskHead: A });
   assert.deepEqual([capped.ok, (capped as { waitingOn: number[] }).waitingOn], [false, [9]], "a pull request listed with 100 files may change more");
+  const flagged = view([{ number: 9, files: ["docs/x.md"], head: C }]);
+  if (flagged.state === "ready") flagged.pullRequests[0]!.filesCapped = true;
+  assert.deepEqual((checkTogetherGate({ required: true, files, view: flagged, checks: [], taskHead: A }) as { waitingOn: number[] }).waitingOn, [9], "a list of files gh may have cut counts as overlapping");
 });
 
 test("fully autonomous with the setting on: a task whose transcript asks to skip the shared check waits for the owner; a passing check together lets its mode accept it", { skip: NO_SANDBOX }, async (t) => {

@@ -150,13 +150,23 @@ export interface ListedPullRequest {
   /** The numbers of the issues of this same repository it closes, as GitHub reports them. */
   closes: number[];
   files: string[];
+  /**
+   * Present, and true, when `files` may not be every file it changes: gh's own answer held as many files as gh gives,
+   * or a path Botbench could not keep (too long, empty). Counted on gh's answer, before anything was left out.
+   */
+  filesCapped?: true;
 }
+
+/** A list of pull requests; `capped` when gh's answer held as many entries as Botbench asks for, counted before any was left out. */
+export type ListedPullRequests = ListedPullRequest[] & { capped?: boolean };
+/** `list` with `capped` set, not enumerable, so the list still compares and prints as the plain list it is. */
+export const withCapped = (list: ListedPullRequest[], capped: boolean): ListedPullRequests => Object.defineProperty(list, "capped", { value: capped, enumerable: false });
 
 /**
  * The pull requests of `repo` in what `gh pr list --json=...` printed: only those of this same repository (not a
  * fork's), each at the address GitHub gives a pull request of `repo`. Anything else in the answer is left out.
  */
-export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullRequest[] {
+export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullRequests {
   const parsed = parseJson(stdout, "which pull requests are open");
   if (!Array.isArray(parsed)) throw new Error("The gh tool's list of pull requests could not be read.");
   const base = `https://${repo.host}/${repo.owner}/${repo.name}`;
@@ -173,10 +183,13 @@ export function parsePullRequestList(stdout: string, repo: RepoRef): ListedPullR
     const url = `${base}/pull/${number}`;
     if (pr.url.toLowerCase() !== url.toLowerCase()) continue;
     const closes = Array.isArray(pr.closingIssuesReferences) ? pr.closingIssuesReferences.flatMap((i) => (isObject(i) && sameRepo(i.repository) && typeof i.number === "number" && Number.isSafeInteger(i.number) && i.number >= 1 && i.number <= MAX_ISSUE_NUMBER ? [i.number] : [])) : [];
-    const files = Array.isArray(pr.files) ? pr.files.flatMap((f) => (isObject(f) && typeof f.path === "string" && f.path !== "" && f.path.length <= PATH_LIMIT && !f.path.includes("\0") ? [f.path] : [])).slice(0, PR_FILE_LIMIT) : [];
-    found.push({ number, url, title: plain(pr.title, TITLE_LIMIT), state: pr.state, headRefName: pr.headRefName, closes: [...new Set(closes)], files: [...new Set(files)] });
+    const raw = Array.isArray(pr.files) ? pr.files : [];
+    const kept = raw.flatMap((f) => (isObject(f) && typeof f.path === "string" && f.path !== "" && f.path.length <= PATH_LIMIT && !f.path.includes("\0") ? [f.path] : []));
+    const files = kept.slice(0, PR_FILE_LIMIT);
+    const capped = raw.length >= PR_FILE_LIMIT || kept.length < raw.length;
+    found.push({ number, url, title: plain(pr.title, TITLE_LIMIT), state: pr.state, headRefName: pr.headRefName, closes: [...new Set(closes)], files: [...new Set(files)], ...(capped ? { filesCapped: true as const } : {}) });
   }
-  return found;
+  return withCapped(found, parsed.length >= PR_LIST_LIMIT);
 }
 
 /** The largest issue number Botbench asks for: GitHub's numbers are 32-bit. */
@@ -357,7 +370,7 @@ export interface GitHub {
   /** Read one issue, and how its author relates to the repository; nothing is written to it. */
   issue(repo: RepoRef, number: number): Promise<IssueView>;
   /** The repository's open pull requests, read only (engine/peers.ts). */
-  openPullRequests(repo: RepoRef): Promise<ListedPullRequest[]>;
+  openPullRequests(repo: RepoRef): Promise<ListedPullRequests>;
 }
 
 /** The GitHub Botbench uses: the owner's `gh`, run by `run`. */
@@ -380,6 +393,10 @@ export function createGitHub(run: RunGh = runGh, cwd = process.cwd()): GitHub {
       const view = parseIssueView(await ok(ghArgs.issueView(repo, number)), repo, number);
       return { ...view, authorRelation: parseIssueRelation(await ok(ghArgs.issueApi(repo, number)), repo, number) };
     },
-    openPullRequests: async (repo) => parsePullRequestList(await ok(ghArgs.prListOpen(repo)), repo).filter((pr) => pr.state === "OPEN"),
+    openPullRequests: async (repo) => {
+      const listed = parsePullRequestList(await ok(ghArgs.prListOpen(repo)), repo);
+      // Whether gh's answer may have been cut is kept: it was counted before forks and closed ones were left out.
+      return withCapped(listed.filter((pr) => pr.state === "OPEN"), listed.capped === true);
+    },
   };
 }

@@ -41,6 +41,14 @@ test("what the parser leaves out: a fork's pull request, an address on another r
   assert.deepEqual(closes[0]!.closes, [59]);
   assert.equal(read([pr({ title: "a\nb\u0007c" })])[0]!.title, "a b c", "one plain line");
   assert.throws(() => parsePullRequestList("not json", PEERS_REPO), /could not be read/);
+  // What gh's limits may have cut is counted on gh's answer, before forks, bad entries or bad paths are left out.
+  const full = read([...Array.from({ length: 99 }, (_, i) => pr({ number: i + 1, url: `https://github.com/jon-lange/botbench/pull/${i + 1}` })), pr({ isCrossRepository: true })]);
+  assert.deepEqual([full.length, full.capped], [99, true], "100 entries from gh, one a fork's: the list may be cut");
+  assert.equal(read([pr({})]).capped, false);
+  const fileList = (n: number) => Array.from({ length: n }, (_, i) => ({ path: `f${i}` }));
+  assert.equal(read([pr({ files: [...fileList(99), { path: "" }] })])[0]!.filesCapped, true, "100 files from gh, one path not kept");
+  assert.equal(read([pr({ files: [...fileList(98), { path: "f0" }] })])[0]!.filesCapped, undefined, "99 entries, every one kept (one twice): complete");
+  assert.equal(read([pr({ files: [{ path: "x".repeat(600) }] })])[0]!.filesCapped, true, "a path too long to keep");
 });
 
 test("another workbench's work: an open pull request or a pushed branch under a name this installation never had", () => {

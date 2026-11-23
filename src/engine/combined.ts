@@ -169,8 +169,9 @@ export function overlapping(view: PeersView, files: readonly string[]): { pr: Pe
   const ours = new Set(files);
   return view.pullRequests.flatMap((pr) => {
     const both = pr.files.filter((file) => ours.has(file));
-    // gh lists at most PR_FILE_LIMIT files of a pull request: one listed with that many may change more, so it may overlap.
-    return both.length === 0 && !(files.length > 0 && pr.files.length >= PR_FILE_LIMIT) ? [] : [{ pr, files: both }];
+    // A pull request whose list of files may be cut (gh gave as many as it gives, or a path could not be kept) may change one of these.
+    const maybe = files.length > 0 && (pr.filesCapped === true || pr.files.length >= PR_FILE_LIMIT);
+    return both.length === 0 && !maybe ? [] : [{ pr, files: both }];
   });
 }
 
@@ -338,7 +339,7 @@ export async function checkTogetherView(o: { db: DatabaseSync; peers: Peers; che
   const stored = combinedChecks(db, task.id);
   const required = checkTogetherRequired(db, task.repo);
   // A task that is not ready for review and was never checked together has nothing to show: GitHub is not asked.
-  if (task.status !== "awaiting_decision" && stored.length === 0) return { required, running: o.checkTogether.running(task.id), checks: [], offers: [], waitingOn: [], viewProblem: null };
+  if (task.status !== "awaiting_decision" && stored.length === 0) return { required, running: o.checkTogether.running(task.id), checks: [], offers: [], waitingOn: [], undetermined: null, viewProblem: null };
   const view = await o.peers.view(task.repo);
   const taskHead = task.branch === null ? null : await branchCommit(task.repo, task.branch).catch(() => null);
   const checks = stored.map((check) => ({ ...check, freshness: freshness(check, { taskHead, view }) }));
@@ -353,6 +354,8 @@ export async function checkTogetherView(o: { db: DatabaseSync; peers: Peers; che
     offers,
     // Whether the requirement is met now, for a task that is ready for review: which open pull requests still need a passing, current check.
     waitingOn: gate === null || gate.ok ? [] : gate.waitingOn,
+    // Blocked without a pull request to name: the list could not be read, or may be cut. The reason, in words.
+    undetermined: gate === null || gate.ok || gate.waitingOn.length > 0 ? null : gate.why,
     viewProblem: view.state === "ready" ? null : view.problem,
   };
 }

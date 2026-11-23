@@ -39,9 +39,10 @@ export const othersCodeLine = (check: Pick<CombinedCheck, "workbench" | "pullReq
   `Includes another workbench's code: ${check.workbench}'s pull request #${check.pullRequest}, which nobody here reviewed. It ran in the same sandbox as this task's checks.`;
 
 /** What the setting means, and what is still needed under it. */
-export function requirementLine(view: Pick<CheckTogetherView, "required" | "waitingOn" | "offers">): string {
+export function requirementLine(view: Pick<CheckTogetherView, "required" | "waitingOn" | "offers"> & { undetermined?: string | null }): string {
   if (!view.required) return "Not required on this repository. When it is, a fully autonomous run accepts a task only after a passing check together with each open pull request from another workbench that changes the same files.";
   const base = "Required on this repository: a fully autonomous run accepts this task only after a passing check together, at the current commits, with each open pull request from another workbench that changes the same files.";
+  if (view.waitingOn.length === 0 && view.undetermined != null) return `${base} A fully autonomous run waits for you now: ${view.undetermined}`;
   if (view.waitingOn.length === 0) return `${base} Nothing is waiting on it now.`;
   const named = view.waitingOn.map((n) => {
     const offer = view.offers.find((o) => o.number === n);
