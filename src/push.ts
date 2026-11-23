@@ -101,6 +101,17 @@ export function approvalMessage(approval: Pick<Approval, "taskId" | "runId">): P
 export function readyMessage(task: { id: number }): PushMessage {
   return { title: "A task is ready for review", path: `/#/tasks/${task.id}` };
 }
+export function failedMessage(task: { id: number }): PushMessage {
+  return { title: "A task failed", path: `/#/tasks/${task.id}` };
+}
+export function stoppedMessage(task: { id: number }): PushMessage {
+  return { title: "A task stopped", path: `/#/tasks/${task.id}` };
+}
+export function nothingToReviewMessage(run: { id: number }): PushMessage {
+  return { title: "A run ended with nothing to review", path: `/#/runs/${run.id}` };
+}
+/** The notification each state a task reaches sends; the others send none. A task the owner's own cancel ended sends none. */
+const TASK_MESSAGES: Partial<Record<string, (task: { id: number }) => PushMessage>> = { awaiting_decision: readyMessage, failed: failedMessage, interrupted: stoppedMessage };
 export function testMessage(): PushMessage {
   return { title: "Test notification from Botbench", path: "/#/settings" };
 }
@@ -137,8 +148,10 @@ export interface Push {
   sendTest(endpoint: string): Promise<void>;
   /** The broker's listener: a newly pending approval notifies every device once. */
   approvalChanged(approval: Approval): void;
-  /** The engine's listener: a task that has reached Ready for review notifies every device once. */
+  /** The engine's listener: a task that has reached Ready for review, Failed or Stopped notifies every device once. */
   taskChanged(task: { id: number; status: string }): void;
+  /** The engine's listener: a planned run that is done with no task accepted or rejected notifies every device once. */
+  runChanged(run: { id: number; status: string }): void;
   /** Resolves when every message in flight has been sent or has failed. */
   idle(): Promise<void>;
 }
@@ -147,10 +160,12 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
   const { db } = options;
   const keys = loadOrCreatePushKeys(options.home);
   const inFlight = new Set<Promise<unknown>>();
-  // In memory: after a restart, what was already announced is not announced again, and nothing old is either,
-  // because only a change seen by this process sends.
+  // Approvals in memory: after a restart a pending one is parked, and a parked one asks nothing new. A task's or run's
+  // notification is recorded in the store before it is sent, so a restart, or the same state seen again, sends none.
   const approvalsSent = new Set<number>();
-  const tasksSent = new Set<number>();
+  /** Record that `message` is sent for this task or run; false when it already was. Throws when the store cannot record it. */
+  const firstTime = (subject: "task" | "run", id: number, message: PushMessage): boolean =>
+    Number(db.prepare("INSERT INTO push_sent (subject, subject_id, title, sent_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING").run(subject, id, message.title, now()).changes) > 0;
 
   const rows = (): Subscription[] =>
     db
@@ -253,11 +268,21 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
 
   const taskChanged = (task: { id: number; status: string }): void => {
     try {
-      if (task.status !== "awaiting_decision" || tasksSent.has(task.id)) return;
-      tasksSent.add(task.id);
-      sendAll(readyMessage(task));
+      const message = TASK_MESSAGES[task.status]?.(task);
+      if (message !== undefined && firstTime("task", task.id, message)) sendAll(message);
     } catch (err) {
       console.error(`A notification for a task could not be started: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const runChanged = (run: { id: number; status: string }): void => {
+    try {
+      // Done with a task accepted or rejected, the owner has decided what there was; with none, nothing reached them.
+      if (run.status !== "done" || db.prepare("SELECT 1 FROM tasks WHERE run_id = ? AND status IN ('accepted', 'rejected') LIMIT 1").get(run.id) !== undefined) return;
+      const message = nothingToReviewMessage(run);
+      if (firstTime("run", run.id, message)) sendAll(message);
+    } catch (err) {
+      console.error(`A notification for a run could not be started: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -265,5 +290,5 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
     while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
   };
 
-  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, idle };
+  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, idle };
 }
