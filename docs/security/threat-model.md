@@ -488,7 +488,7 @@ STRIDE for the claim:
 | Denial of service | One claim per run at most (unique index); the push and delete have git's network time limit; a failure is a sentence. A false earlier claim can stop this workbench's runs on that issue until the owner takes it over | Accepted, as above |
 | Elevation of privilege: issue text steers the claim | Only the number is used, from the stored fetch or the owner's own message; never a title or body | Done |
 
-What it does not cover: a remote that runs CI on every pushed branch will run it on the empty claim commit. A branch left on the remote (moved, or with a pull request) stays until its owner deletes it. A run whose claim could not be made is not compared with other workbenches' claims.
+What it does not cover: a remote that runs CI on every pushed branch will run it on the empty claim commit. If Botbench stops after the remote took a claim's push but before the step was stored, that branch is not recorded, so neither the run's end nor a restart deletes it. An earlier claim that lands after the last read, in the moment `gh pr create` runs, does not stop that pull request. A branch left on the remote (moved, or with a pull request) stays until its owner deletes it. A run whose claim could not be made is not compared with other workbenches' claims.
 
 ### Scope: files changed outside the plan, and protected paths
 

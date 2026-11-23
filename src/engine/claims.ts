@@ -290,7 +290,15 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
       report(runId, "Reading the claims on its issue again")(err);
       return null;
     }
-    return winner === null ? null : withdraw(run, c, winner, nothing);
+    if (winner === null) return null;
+    const why = await withdraw(run, c, winner, nothing);
+    // The run gave way: what it has not built yet is not built either. A run with nothing left to stop stays as it is.
+    try {
+      o.stopRun?.(runId);
+    } catch (err) {
+      report(runId, "Stopping it after its issue claim gave way")(err);
+    }
+    return why;
   };
 
   return {

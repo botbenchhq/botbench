@@ -421,13 +421,6 @@ export function createDeliveries(options: DeliveryOptions): Deliveries {
       return;
     }
 
-    // The claims on the run's issue are read again before a pull request is opened: an earlier one of another workbench's opens none here.
-    const late = await options.claims?.beforeSend(task.runId, "pull_request", branch);
-    if (late != null) {
-      record(task, { step: "failed", failedStep: "pull_request", detail: late }, `Did not open a pull request: ${late}`);
-      return;
-    }
-
     // The pull request: one already there, in any state, is taken as this task's; otherwise one is opened.
     try {
       const found = await github.findPullRequest(repo, branch);
@@ -437,6 +430,13 @@ export function createDeliveries(options: DeliveryOptions): Deliveries {
         pr = found;
         adopted = true;
       } else {
+        // The claims on the run's issue are read again just before a pull request is opened, after every other read:
+        // an earlier one of another workbench's opens none here.
+        const late = await options.claims?.beforeSend(task.runId, "pull_request", branch);
+        if (late != null) {
+          record(task, { step: "failed", failedStep: "pull_request", detail: late }, `Did not open a pull request: ${late}`);
+          return;
+        }
         const { title, body } = pullRequestText(db, task, repo);
         pr = await github.openPullRequest(repo, { base, head: branch, title, body, cwd: task.repo });
         adopted = false;

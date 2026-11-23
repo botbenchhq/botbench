@@ -445,6 +445,7 @@ test("a claim that lands after the later workbench pushed still stops its pull r
   const why = await bobClaims.beforeSend(bobRun.id, "pull_request", "botbench/bob/run-1/task-1");
   assert.match(why ?? "", /^alice started on issue #82 at 21:05:30 UTC on 2026-11-22, before this workbench did \(21:05:35 UTC on 2026-11-22\), so Botbench opened no pull request: the branch botbench\/bob\/run-1\/task-1 it pushed stays on the remote, withdrawn, and no pull request is opened from it/);
   assert.deepEqual(claimSteps(bob.db, bobRun.id).map((s) => s.step), ["claimed", "withdrawn"]);
+  assert.equal(getRun(bob.db, bobRun.id)!.status, "cancelled", "the run that gave way builds nothing more");
 });
 
 test("taking over another workbench's old claim: the run goes ahead, the holder's branch is untouched, and only an old claim of another workbench on this issue can be taken", async (t) => {
