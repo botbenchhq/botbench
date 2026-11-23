@@ -79,6 +79,16 @@ Every task ends in things you can inspect: a branch, its diff, the output of you
 
 Botbench is built with Botbench where it can be. [Pull request #113](https://github.com/jon-lange/botbench/pull/113) is one it pushed and opened: its description is the task's evidence, from what was asked to the review.
 
+### The acceptance test
+
+[`e2e/northstar.e2e.ts`](e2e/northstar.e2e.ts) is the product's acceptance test, in a real browser. Two Botbench processes, each its own workbench, share one remote. On the first, one issue becomes a fully autonomous run. Its first check fails, the builder fixes it, the reviewer raises a concern, the builder fixes that too, and the task is accepted and opened as a pull request with no person deciding. The second workbench starts on the same issue, sees the first one's claim, and withdraws. Run it on your Mac, from the repository's folder, outside any sandbox:
+
+```sh
+npx playwright test --config e2e/playwright.config.ts e2e/northstar.e2e.ts
+```
+
+It needs Claude Code installed and signed in, since it drives the real one on its cheapest model, and Chrome. gh need not be signed in: its answers are replayed from output captured once from the real gh, and so is the reviewer's. It does not run in GitHub CI.
+
 When two workbenches change the same repository, Botbench can merge your ready task with a teammate's open pull request in a temporary copy and run the repository's own checks on the result, so you learn that two changes do not fit before either is merged. A passing check proves only what the check covers.
 
 ### What changes
