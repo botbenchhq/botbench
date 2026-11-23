@@ -11,7 +11,7 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
-import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
+import { commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
@@ -124,6 +124,15 @@ function toTask(row: Record<string, unknown>): Task {
 export function getTask(db: DatabaseSync, id: number): Task | null {
   const row = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
   return row ? toTask(row) : null;
+}
+
+/**
+ * The files a task's work changed, from its start commit to the commit Botbench recorded as its head, read from the
+ * repository: what its changed files are marked from (engine/scope.ts). None when either commit is missing or cannot be read.
+ */
+async function changedPaths(task: Pick<Task, "repo" | "baseCommit">, headCommit: string | null): Promise<string[]> {
+  if (task.baseCommit === null || headCommit === null) return [];
+  return describeCommits({ repo: task.repo, baseCommit: task.baseCommit, headCommit }).then((files) => files.map((file) => file.path), () => []);
 }
 
 /** The newest tasks, newest first. */
@@ -581,7 +590,9 @@ export function createTasks(options: TasksOptions): Tasks {
   const handOver = async (task: Task, from: "building" | "verifying" | "reviewing", change: TaskChange): Promise<void> => {
     // A build that changed nothing never gets here (`verify`); rounds of fixes that undid every change of the build would.
     // Changes that cannot be read are taken as none, which a fully autonomous run never accepts.
-    const files = await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).then((work) => work.files.map((file) => file.path), () => []);
+    // Read at the commit Botbench recorded, the one the mode's accept requires the branch to hold, never the copy's HEAD.
+    const head = change.headCommit ?? getTask(db, task.id)?.headCommit ?? null;
+    const files = await changedPaths(task, head);
     const scope = taskScope(db, task, files, options.protectedPaths?.(task.repo) ?? []);
     if (runModeOf(db, task.runId) !== "full") {
       const guarded = scope.filter((f) => f.protected).map((f) => f.path);
@@ -1002,7 +1013,7 @@ export function createTasks(options: TasksOptions): Tasks {
       const assigned = reviewAssignment(db, id);
       const at = getTask(db, id)!;
       // Its changed files are marked as `handOver` marks them, so a protected file is named here too.
-      const files = at.worktreePath === null || at.baseCommit === null ? [] : await describeWork({ path: at.worktreePath, baseCommit: at.baseCommit }).then((work) => work.files.map((file) => file.path), () => []);
+      const files = await changedPaths(at, at.headCommit);
       const scope = taskScope(db, at, files, options.protectedPaths?.(at.repo) ?? []);
       const guarded = scope.filter((f) => f.protected).map((f) => f.path);
       transaction(db, () => {
