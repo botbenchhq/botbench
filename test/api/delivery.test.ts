@@ -19,7 +19,8 @@ import { git, initRepo, tempDir, write } from "../support/repo.ts";
 type T = { after(fn: () => unknown): void };
 type Body = Record<string, unknown>;
 const JSON_TYPE = { "content-type": "application/json" };
-const ADDRESS = "https://github.com/botbenchhq/botbench-delivery-fixture.git";
+// jon-lange is the owner the replayed gh recording (test/recordings/gh-delivery.json) was captured under, so it stays.
+const ADDRESS = "https://github.com/jon-lange/botbench-delivery-fixture.git";
 
 interface Api {
   server: BotbenchServer;
@@ -114,7 +115,7 @@ test("Open a pull request on an accepted task that kept its branch: needs a sess
   await decideTask(api.server.db, { taskId: task.id, decision: "accept" });
 
   const shown = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
-  assert.deepEqual(shown.pullRequestTarget, { remote: "origin", address: ADDRESS, repository: "github.com/botbenchhq/botbench-delivery-fixture", branch: shown.branch, base: null });
+  assert.deepEqual(shown.pullRequestTarget, { remote: "origin", address: ADDRESS, repository: "github.com/jon-lange/botbench-delivery-fixture", branch: shown.branch, base: null });
   assert.equal((shown.pullRequest as Body).choice, "branch");
 
   const anonymous = await fetch(`${api.base}/api/tasks/${task.id}/pull-request`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ remote: "origin", branch: shown.branch }) });

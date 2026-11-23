@@ -9,7 +9,7 @@ import { parseTaskBranch } from "../../src/workbench.ts";
 import { remoteTaskBranches } from "../../src/worktrees.ts";
 import { checkRecording } from "../support/recording-check.ts";
 import { initRepo, git, tempDir } from "../support/repo.ts";
-import { PEERS_CAPTURE_FILE, PEERS_OPEN_CAPTURE_FILE, PEERS_REPO, type PeersCapture, type PeersOpenCapture } from "../support/replay-peers.ts";
+import { PEERS_CAPTURE_FILE, PEERS_OPEN_CAPTURE_FILE, type PeersCapture, type PeersOpenCapture } from "../support/replay-peers.ts";
 
 // The one live read of what other workbenches have in flight (Peers P2), against the owner's own repository
 // botbenchhq/botbench, read only: the owner's gh lists the open pull requests with Botbench's exact arguments, and the
@@ -18,13 +18,19 @@ import { PEERS_CAPTURE_FILE, PEERS_OPEN_CAPTURE_FILE, PEERS_REPO, type PeersCapt
 // open list Botbench asks for, and the same list with every state, so the parser is tested on real closing references
 // and files too.
 
+// The repository as it is on GitHub today. The replayed tests keep the one their recordings were captured from
+// (PEERS_REPO, jon-lange/botbench); read live, that old name would be answered through GitHub's redirect, and the parser
+// leaves out every entry whose address is not on the repository it asked for. A capture taken from here is a new
+// recording: the replay's repository and address move to it in the same change.
+const LIVE_REPO: RepoRef = { host: "github.com", owner: "botbenchhq", name: "botbench" };
+
 test("live: the owner's gh lists a repository's open pull requests with Botbench's arguments and fields, and git lists its task branches", { timeout: 120_000 }, async (t) => {
   try {
     execFileSync("gh", ["--version"], { stdio: "ignore" });
   } catch {
     return t.skip("gh is not installed here");
   }
-  const repo: RepoRef = PEERS_REPO;
+  const repo: RepoRef = LIVE_REPO;
   const args = ghArgs.prListOpen(repo);
   const result = await runGh(args, { cwd: process.cwd() });
   assert.equal(result.code, 0, result.stderr);
@@ -98,7 +104,7 @@ test("live: the open pull requests parse, and those from another workbench's tas
   } catch {
     return t.skip("gh is not installed here");
   }
-  const repo: RepoRef = PEERS_REPO;
+  const repo: RepoRef = LIVE_REPO;
   const args = ghArgs.prListOpen(repo, "open");
   const result = await runGh(args, { cwd: process.cwd() });
   assert.equal(result.code, 0, result.stderr);

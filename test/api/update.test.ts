@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
-import { BACKUP_FILE, JOURNAL_FILE, readJournal, UPDATE_DIR } from "../../src/update.ts";
+import { BACKUP_FILE, checkoutVersion, JOURNAL_FILE, readJournal, UPDATE_DIR } from "../../src/update.ts";
 import { decrypt, newDevice, startPushEndpoint } from "../support/push-service.ts";
 import { botbenchRepo, bumpVersion, commitAndTag, notesFor, startReleaseServer, type ReleaseServer } from "../support/releases.ts";
 import { git, tempDir } from "../support/repo.ts";
@@ -21,6 +21,11 @@ type T = { after(fn: () => unknown): void };
 type Body = Record<string, unknown>;
 const JSON_TYPE = { "content-type": "application/json" };
 const NO_SERVICE = "dev.botbench.test-no-such-service";
+// The installation is this checkout's own files, so it runs this checkout's version, whatever release that is by now;
+// the release the tests publish is the next minor one. Neither is written as a number here: a number that names the
+// installed version stops being true at Botbench's next release (0.2.0 did that to "0.1.0").
+const NOW = checkoutVersion(path.resolve(import.meta.dirname, "..", ".."));
+const NEXT = ((major, minor) => `${major}.${Number(minor) + 1}.0`)(...(NOW.split(".") as [string, string]));
 
 interface Place {
   dir: string;
@@ -40,7 +45,7 @@ async function place(t: T): Promise<Place> {
   });
   const remote = path.join(dir, "github");
   const base = botbenchRepo(remote);
-  git(remote, "-c", "user.name=Owner", "-c", "user.email=owner@example.invalid", "tag", "-a", "-m", "v0.1.0", "v0.1.0");
+  git(remote, "-c", "user.name=Owner", "-c", "user.email=owner@example.invalid", "tag", "-a", "-m", `v${NOW}`, `v${NOW}`);
   const install = path.join(dir, "install");
   git(dir, "clone", "--quiet", remote, install);
   return { dir, home: path.join(dir, "home"), remote, install, base, releases };
@@ -83,12 +88,12 @@ async function settled(call: (m: string, r: string) => Promise<{ body: Body }>):
   throw new Error("the update never ended");
 }
 
-/** Publish v0.2.0 on the remote: the version bumped, and `change` made to the files. */
+/** Publish the next release on the remote: the version bumped, and `change` made to the files. */
 function publish(p: Place, change: (dir: string) => void = () => {}): string {
-  bumpVersion(p.remote, "0.2.0");
+  bumpVersion(p.remote, NEXT);
   change(p.remote);
-  const target = commitAndTag(p.remote, "chore(main): release 0.2.0", "v0.2.0");
-  p.releases.publish({ tag: "v0.2.0", notes: notesFor("0.2.0", "update Botbench from Settings") });
+  const target = commitAndTag(p.remote, `chore(main): release ${NEXT}`, `v${NEXT}`);
+  p.releases.publish({ tag: `v${NEXT}`, notes: notesFor(NEXT, "update Botbench from Settings") });
   return target;
 }
 
@@ -102,17 +107,17 @@ test("Update now installs a release, checks the new build starts, moves the inst
   const first = await start(t, p);
   first.server.push.subscribe(phone.subscription(endpoint.url("phone")));
   const before = await checked(first.call);
-  assert.equal(before.version, "0.1.0");
+  assert.equal(before.version, NOW);
   assert.equal(before.available, true);
   assert.equal(before.mode, "tap", "on a tap unless the owner chose otherwise");
-  assert.deepEqual(before.latest, { version: "0.2.0", tag: "v0.2.0", summary: "update Botbench from Settings", url: "https://github.com/botbenchhq/botbench/releases/tag/v0.2.0" });
+  assert.deepEqual(before.latest, { version: NEXT, tag: `v${NEXT}`, summary: "update Botbench from Settings", url: `https://github.com/botbenchhq/botbench/releases/tag/v${NEXT}` });
   assert.equal((before.state as Body).kind, "idle", "on a tap: nothing starts by itself");
   assert.equal(git(p.install, "rev-parse", "HEAD").trim(), p.base);
 
   const started = await first.call("POST", "/api/update", {});
   assert.equal(started.status, 202);
   const after = await settled(first.call);
-  assert.deepEqual(after.state, { ...(after.state as Body), kind: "restart_needed", version: "0.2.0", message: "0.2.0 is installed. Restart Botbench to run it." });
+  assert.deepEqual(after.state, { ...(after.state as Body), kind: "restart_needed", version: NEXT, message: `${NEXT} is installed. Restart Botbench to run it.` });
   assert.equal(git(p.install, "rev-parse", "HEAD").trim(), target, "moved to the tag's commit");
   assert.equal(git(p.install, "symbolic-ref", "--short", "HEAD").trim(), "main");
   assert.equal(git(p.install, "status", "--porcelain"), "", "installed and built with nothing left that git would list");
@@ -127,11 +132,11 @@ test("Update now installs a release, checks the new build starts, moves the inst
   const second = await start(t, p);
   for (let i = 0; i < 200 && endpoint.received.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
   const now = (await second.call("GET", "/api/update")).body;
-  assert.equal(now.version, "0.2.0");
+  assert.equal(now.version, NEXT);
   assert.equal((now.state as Body).kind, "updated");
   assert.equal(now.available, false);
   await second.server.push.idle();
-  assert.deepEqual(endpoint.received.map((r) => JSON.parse(decrypt(r.body, phone.privateKey, phone.auth).toString("utf8"))), [{ title: "Botbench updated to 0.2.0", path: "/#/settings/workbench" }]);
+  assert.deepEqual(endpoint.received.map((r) => JSON.parse(decrypt(r.body, phone.privateKey, phone.auth).toString("utf8"))), [{ title: `Botbench updated to ${NEXT}`, path: "/#/settings/workbench" }]);
   assert.equal(readJournal(p.home)?.state, "done");
   await second.server.close();
   const third = await start(t, p);
@@ -154,7 +159,7 @@ test("a release whose new build does not start is not installed: the installatio
   assert.equal(state.kind, "failed");
   assert.match(String(state.message), /^The new version did not start properly: it stopped as it started/);
   assert.match(String(state.message), /this release cannot start/);
-  assert.match(String(state.message), /The installation stays on 0\.1\.0; nothing in it was changed\.$/);
+  assert.ok(String(state.message).endsWith(`The installation stays on ${NOW}; nothing in it was changed.`), String(state.message));
   assert.equal(git(p.install, "rev-parse", "HEAD").trim(), p.base);
   assert.equal(git(p.install, "status", "--porcelain"), "");
   assert.equal(readJournal(p.home), null);

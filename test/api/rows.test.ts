@@ -31,7 +31,8 @@ type Body = Record<string, unknown>;
 type Item = Body & { kind: string; id: number };
 type Group = { name: string; total: number; items: Item[] };
 const JSON_TYPE = { "content-type": "application/json" };
-const ADDRESS = "https://github.com/botbenchhq/botbench-delivery-fixture.git";
+// jon-lange is the owner the replayed gh recording (test/recordings/gh-delivery.json) was captured under, so it stays.
+const ADDRESS = "https://github.com/jon-lange/botbench-delivery-fixture.git";
 
 interface Api {
   server: BotbenchServer;

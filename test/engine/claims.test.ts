@@ -116,7 +116,7 @@ test("with claims off (the default), a run from an issue writes nothing to the r
   const before = remoteBranches(remote.bare);
   const replay = replayGitHub();
   const claims = claimsOf(alice, replay.github);
-  const run = issueRun(alice, "Issue #82 on botbenchhq/botbench");
+  const run = issueRun(alice, "Issue #82 on jon-lange/botbench");
   await changed(claims, alice.db, run.id);
   cancelRun(alice.db, run.id);
   await changed(claims, alice.db, run.id);
@@ -132,7 +132,7 @@ test("with claims on, a run that keeps its work on this Mac pushes nothing: only
   const before = remoteBranches(remote.bare);
   const replay = replayGitHub();
   const claims = claimsOf(alice, replay.github);
-  const run = issueRun(alice, "Issue #82 on botbenchhq/botbench", { delivery: "branch" });
+  const run = issueRun(alice, "Issue #82 on jon-lange/botbench", { delivery: "branch" });
   await changed(claims, alice.db, run.id);
   assert.deepEqual(remoteBranches(remote.bare), before, "nothing left the machine");
   assert.equal(replay.lookups(), 0, "gh was not asked anything");
@@ -153,7 +153,7 @@ test("with claims on, a run that opens pull requests pushes its claim and the is
   const alice = bench(t, remote, "alice");
   const replay = replayGitHub();
   const claims = claimsOf(alice, replay.github);
-  const run = issueRun(alice, "Issue #82 on botbenchhq/botbench");
+  const run = issueRun(alice, "Issue #82 on jon-lange/botbench");
   await changed(claims, alice.db, run.id);
 
   const branch = `botbench/alice/run-${run.id}/issue-82-at-${STAMP}`;
@@ -247,7 +247,7 @@ test("a remote whose push destination is not the GitHub repository it is written
   const cases: [string, (repo: string) => void, RegExp][] = [
     ["pushes elsewhere than it fetches", (repo) => git(repo, "remote", "set-url", "--push", "origin", path.join(remote.dir, "elsewhere.git")), /pushes to another address than it fetches from/],
     ["another GitHub repository", (repo) => git(repo, "config", "url.https://github.com/someone/else.git.insteadOf", PEERS_ADDRESS), /but git sends it to github\.com\/someone\/else/],
-    ["another host", (repo) => git(repo, "config", "url.https://gitlab.example/botbenchhq/botbench.git.insteadOf", PEERS_ADDRESS), /but git sends it to gitlab\.example\/jon-lange\/botbench/],
+    ["another host", (repo) => git(repo, "config", "url.https://gitlab.example/jon-lange/botbench.git.insteadOf", PEERS_ADDRESS), /but git sends it to gitlab\.example\/jon-lange\/botbench/],
     ["an address that reads as no repository", (repo) => git(repo, "config", "url.ext::not-a-repository.insteadOf", PEERS_ADDRESS), /but git sends it to ext::not-a-repository, which Botbench cannot read as that repository/],
   ];
   for (const [i, [name, setUp, words]] of cases.entries()) {
@@ -395,7 +395,7 @@ test("the remote decides the earliest claim: the later workbench's push is refus
   const remote = sharedRemote(t);
   const alice = bench(t, remote, "alice");
   const bob = bench(t, remote, "bob");
-  const aliceRun = issueRun(alice, "Issue #82 on botbenchhq/botbench");
+  const aliceRun = issueRun(alice, "Issue #82 on jon-lange/botbench");
   await changed(claimsOf(alice, replayGitHub().github, STARTED), alice.db, aliceRun.id);
   const aliceBranch = claimSteps(alice.db, aliceRun.id).at(-1)!.branch!;
   const before = remoteBranches(remote.bare);
@@ -479,9 +479,9 @@ test("two workbenches on one issue and one real remote: the one that does not ho
   t.after(() => Promise.all([aliceDeliveries.close(), bobDeliveries.close()]));
 
   // Bob claims first. Then somebody deletes the lock on the remote by hand, and alice's claim takes it. Both build.
-  const bobWork = await readyRun(bob, bobClaims, "bob", "Issue #82 on botbenchhq/botbench");
+  const bobWork = await readyRun(bob, bobClaims, "bob", "Issue #82 on jon-lange/botbench");
   git(remote.bare, "update-ref", "-d", `refs/heads/${lockBranch(82)}`);
-  const aliceWork = await readyRun(alice, aliceClaims, "alice", "Issue #82 on botbenchhq/botbench");
+  const aliceWork = await readyRun(alice, aliceClaims, "alice", "Issue #82 on jon-lange/botbench");
   assert.deepEqual(steps(bob.db, bobWork.run.id), ["claiming", "claimed"]);
   assert.deepEqual(steps(alice.db, aliceWork.run.id), ["claiming", "claimed"], "the lock was free again, so alice holds it");
 
@@ -626,7 +626,7 @@ test("startup recovery releases the claims of runs that ended while no Botbench 
 test("another workbench's composer sees the claim, for an attached issue and for one its message names; Work names the shared repository, never the viewer's folder", async (t) => {
   const remote = sharedRemote(t);
   const bob = bench(t, remote, "bob");
-  const bobRun = issueRun(bob, "Issue #82 on botbenchhq/botbench");
+  const bobRun = issueRun(bob, "Issue #82 on jon-lange/botbench");
   await changed(claimsOf(bob, replayGitHub().github), bob.db, bobRun.id);
   const bobBranch = `botbench/bob/run-${bobRun.id}/issue-82-at-${STAMP}`;
 
@@ -640,7 +640,7 @@ test("another workbench's composer sees the claim, for an attached issue and for
   assert.deepEqual(view.branches, [], "a claim, and the issue's lock, are not listed again as pushed branches");
 
   assert.deepEqual(issueWarnings(view, { attached: 82, message: "", now: FIVE_MINUTES_LATER }), ["bob started on this issue 5 minutes ago."]);
-  assert.deepEqual(issueWarnings(view, { attached: null, message: "Issue #82 on botbenchhq/botbench", now: FIVE_MINUTES_LATER }), ["A best-effort match on #82 in your message: bob started on this issue 5 minutes ago."]);
+  assert.deepEqual(issueWarnings(view, { attached: null, message: "Issue #82 on jon-lange/botbench", now: FIVE_MINUTES_LATER }), ["A best-effort match on #82 in your message: bob started on this issue 5 minutes ago."]);
   assert.deepEqual(issueWarnings(view, { attached: 81, message: "Fix #80", now: FIVE_MINUTES_LATER }), []);
   assert.deepEqual(oldClaims(view, { attached: null, message: "Issue #82", now: FIVE_MINUTES_LATER }), [], "a claim five minutes old is not offered to take over");
   const later = STARTED.getTime() + OLD_CLAIM_MS + 60_000;
@@ -649,7 +649,7 @@ test("another workbench's composer sees the claim, for an attached issue and for
 
   const rows = peerRows(view, FIVE_MINUTES_LATER);
   // The repository is its own field: outside text, drawn apart from Botbench's words.
-  assert.deepEqual(rows.map((r) => [r.kind, r.workbench, r.branch, r.rest, r.repository, r.after]), [["claim", "bob", bobBranch, " · Started on issue #82 5 minutes ago · ", "github.com/botbenchhq/botbench", ""]]);
+  assert.deepEqual(rows.map((r) => [r.kind, r.workbench, r.branch, r.rest, r.repository, r.after]), [["claim", "bob", bobBranch, " · Started on issue #82 5 minutes ago · ", "github.com/jon-lange/botbench", ""]]);
   const folder = path.basename(alice.repo);
   for (const row of rows) assert.ok(!`${row.rest}${row.repository}${row.after}`.includes(folder), `the viewer's folder name ${folder} is not shown in place of the repository`);
 });
@@ -664,7 +664,7 @@ test("the composer says before Send when a run will push a claim: only with the 
 });
 
 test("the server and the composer spot an issue number in a message by the same rule", () => {
-  for (const message of ["Issue #82 on botbenchhq/botbench", "Fix #59 please", "Issue #59: the gate. Also (#60).", "#59 and #59 again", "see page.html#59, a&#59;b, x#59, colour #fff, #0, #12345678901", "#2147483647 #2147483648", "no number here"]) {
+  for (const message of ["Issue #82 on jon-lange/botbench", "Fix #59 please", "Issue #59: the gate. Also (#60).", "#59 and #59 again", "see page.html#59, a&#59;b, x#59, colour #fff, #0, #12345678901", "#2147483647 #2147483648", "no number here"]) {
     assert.deepEqual(serverSpotted(message), composerSpotted(message), message);
   }
 });
