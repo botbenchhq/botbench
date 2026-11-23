@@ -3,11 +3,13 @@ name: CI
 # The checks on every pull request and on every push to main. Modelled on jon-lange/settleview's ci.yml.
 # - Linux, on every run: install, typecheck, the client build, the design-system checker, npm audit, and npm test as
 #   far as it runs off a Mac (the tests that start macOS's sandbox-exec are skipped, and counted).
-# - macOS, on every run: the whole of npm test (the sandbox tests need sandbox-exec) and the browser suite without its
-#   LIVE and MILESTONE tests.
+# - macOS, on every run: the whole of npm test (the sandbox tests need sandbox-exec) but the dictation tests, which need
+#   speech recognition that GitHub's macOS virtual machines do not have.
 # - Secret scan (gitleaks, over the whole history) and CodeQL, on every run.
-# Live tests (test/live/, the browser suite's LIVE and MILESTONE tests) never run here: they drive the owner's own
-# signed-in vendor CLIs, and CI has none and gets none.
+# The browser suite (npm run e2e) does not run here, not even without its LIVE and MILESTONE tests: almost every one of
+# them needs Claude Code installed and signed in on the computer (the composer is enabled only then), and CI has no
+# sign-in and gets none. It runs on the owner's Mac, as do the live tests (test/live/), which drive the owner's own
+# signed-in vendor CLIs.
 # No secret is used by any job. Only pull_request, never pull_request_target: a fork's pull request runs with a
 # read-only token and no secrets.
 
@@ -71,7 +73,7 @@ jobs:
         run: npm run test:counted -- --test-timeout=120000
 
   macos:
-    name: Full tests and browser suite (macOS)
+    name: Full tests (macOS)
     runs-on: macos-latest
     timeout-minutes: 30
     permissions:
@@ -101,14 +103,10 @@ jobs:
       - name: A short temporary folder
         run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
 
-      # The dictation tests turn macOS's own speech into a phone's recording with ffmpeg (test/support/speech.ts).
+      # Botbench's dictation looks for ffmpeg before anything else (src/dictation/dictation.ts), so the dictation tests
+      # that do run here, about a speech engine that cannot be built, reach the part they are about.
       - name: ffmpeg, when the runner has none
         run: command -v ffmpeg || brew install ffmpeg
-
-      # The browser suite drives the Google Chrome installed on the runner (e2e/playwright.config.ts: channel chrome),
-      # so no Playwright browser is downloaded.
-      - name: Google Chrome is installed
-        run: test -d "/Applications/Google Chrome.app"
 
       - name: Build the client
         run: npm run build --prefix web
@@ -117,18 +115,6 @@ jobs:
       # without it (test/support/speech.ts); test/run-counted.ts fails unless exactly those were skipped.
       - name: npm test (the whole suite but dictation, counted)
         run: npm run test:counted -- --test-timeout=120000
-
-      - name: Browser suite without LIVE and MILESTONE tests
-        run: npm run e2e -- --trace off --grep-invert "LIVE|MILESTONE"
-
-      - name: Keep the browser suite's results when it fails
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: browser-suite-results
-          path: test-results/
-          retention-days: 7
-          if-no-files-found: ignore
 
   gitleaks:
     name: Secret scan (gitleaks, whole history)

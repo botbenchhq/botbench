@@ -29,7 +29,7 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           { "context": "Checks and tests (Linux)", "integration_id": 15368 },
-          { "context": "Full tests and browser suite (macOS)", "integration_id": 15368 },
+          { "context": "Full tests (macOS)", "integration_id": 15368 },
           { "context": "Secret scan (gitleaks, whole history)", "integration_id": 15368 },
           { "context": "CodeQL (JavaScript and TypeScript)", "integration_id": 15368 }
         ]
