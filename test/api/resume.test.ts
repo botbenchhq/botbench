@@ -9,6 +9,7 @@ import { createTask, getTask, moveTask, type Task } from "../../src/engine/task.
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { initRepo, tempDir, write } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // The Resume route over real HTTP, against a real Botbench server, a real temporary repository and real SQLite. Tasks
 // are put where a restart leaves them by Botbench's own worktree, commit and state functions, as the other task API
@@ -98,7 +99,7 @@ test("Resume is refused without a session, for a task that does not exist, and f
   assert.equal(getTask(api.server.db, bare.id)!.status, "interrupted");
 });
 
-test("Resume of a task stopped during its checks runs the checks again from the start on the committed work and the task becomes ready for review; the stopped run of them stays on record", async (t) => {
+test("Resume of a task stopped during its checks runs the checks again from the start on the committed work and the task becomes ready for review; the stopped run of them stays on record", { skip: NO_SANDBOX }, async (t) => {
   const api = await start(t);
   const task = await stoppedInChecks(api);
   const resumed = await call(api, "POST", `/api/tasks/${task.id}/resume`, {});

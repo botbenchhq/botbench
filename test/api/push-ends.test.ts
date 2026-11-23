@@ -14,6 +14,7 @@ import { createWorktree } from "../../src/worktrees.ts";
 import { decrypt, newDevice, startPushEndpoint, type Device, type PushEndpoint } from "../support/push-service.ts";
 import { buildReplayDriver } from "../support/replay-build.ts";
 import { initRepo, tempDir } from "../support/repo.ts";
+import { NO_SANDBOX } from "../support/confined.ts";
 
 // Notifications for a task that ends failed or stopped, and for a run that ends with nothing to review: a real Botbench
 // server over real SQLite, a real temporary repository, and a real HTTP server as the push endpoint
@@ -114,7 +115,7 @@ const failed = (id: number) => JSON.stringify({ title: "A task failed", path: `/
 const stopped = (id: number) => JSON.stringify({ title: "A task stopped", path: `/#/tasks/${id}` });
 const nothing = (id: number) => JSON.stringify({ title: "A run ended with nothing to review", path: `/#/runs/${id}` });
 
-test("a run whose tasks fail sends one push per device for each failed task and one for the run, through the server's hooks, and none again for the same state or after a restart", async (t) => {
+test("a run whose tasks fail sends one push per device for each failed task and one for the run, through the server's hooks, and none again for the same state or after a restart", { skip: NO_SANDBOX }, async (t) => {
   const b = await bench(t);
   const server = await boot(t, b);
   subscribeAll(server, b);
@@ -214,7 +215,7 @@ test("a task whose builder changed no file fails and sends one push per device, 
 });
 
 for (const trouble of ["the push service cannot be reached", "the push service answers 500", "the record of what was sent cannot be written"] as const) {
-  test(`when ${trouble}, the tasks still fail and the run still ends, and the error is only logged`, async (t) => {
+  test(`when ${trouble}, the tasks still fail and the run still ends, and the error is only logged`, { skip: NO_SANDBOX }, async (t) => {
     const b = await bench(t);
     const server = await boot(t, b);
     subscribeAll(server, b);

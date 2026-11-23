@@ -17,6 +17,7 @@ import type { Left, Order } from "../support/leave-running.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
 import { loadPlanRecording, planReplayDriver, THREE_TASKS, type PlanReplay } from "../support/replay-plan.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
+import { NO_PROCESS_LIST, NO_SANDBOX, NO_SANDBOX_OR_PROCESS_LIST } from "../support/confined.ts";
 
 // Restart recovery (unit 15). Every Botbench that "stops" here is a real process running the real engine on a real store,
 // killed with SIGKILL where it stands (test/support/leave-running.ts); the next start is a new engine over the same data
@@ -138,7 +139,7 @@ async function until(what: string, done: () => boolean, ms = 10_000): Promise<vo
   }
 }
 
-test("a restart mid-run: the finished task is not built again, a run waiting for plan approval still waits with its plan, the task that was mid-turn is re-driven once from its resume cursor, and the run goes on with its queued task after it", { timeout: 60_000 }, async (t) => {
+test("a restart mid-run: the finished task is not built again, a run waiting for plan approval still waits with its plan, the task that was mid-turn is re-driven once from its resume cursor, and the run goes on with its queued task after it", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const s = leave(t, p, { run: ["First", "Second", "Third"], waitingRun: ["Waiting one", "Waiting two"], setup: [WRITES], script: ["done", "done"], hold: 1, holdAt: "session", stopAt: "turn" });
   const [waitingId, runId] = s.runIds as [number, number];
@@ -172,7 +173,7 @@ test("a restart mid-run: the finished task is not built again, a run waiting for
   assert.deepEqual(planTasks(again.db, waitingId).map((task) => task.title), ["Waiting one", "Waiting two"]);
 });
 
-test("a task that was mid-turn: the CLI's process group that survived is stopped before anything is started in its copy; the task is re-driven from its resume cursor and finishes with what the agent wrote before the stop", { timeout: 60_000 }, async (t) => {
+test("a task that was mid-turn: the CLI's process group that survived is stopped before anything is started in its copy; the task is re-driven from its resume cursor and finishes with what the agent wrote before the stop", { skip: NO_PROCESS_LIST, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const s = leave(t, p, { task: PROMPT, script: ["done"], hold: 0, holdAt: "session", stopAt: "turn", survivor: true, wrote: "partial.txt" });
   const [taskId] = s.taskIds as [number];
@@ -193,7 +194,7 @@ test("a task that was mid-turn: the CLI's process group that survived is stopped
   assert.match(notes(again.db, taskId), /restart/);
 });
 
-test("a second interruption of the same task marks it stopped for the owner, with its work committed; the count is read from the store, not memory", { timeout: 90_000 }, async (t) => {
+test("a second interruption of the same task marks it stopped for the owner, with its work committed; the count is read from the store, not memory", { skip: NO_PROCESS_LIST, timeout: 90_000 }, async (t) => {
   const p = place(t);
   const first = leave(t, p, { task: PROMPT, script: ["done"], hold: 0, holdAt: "session", stopAt: "turn", wrote: "partial.txt" });
   const [taskId] = first.taskIds as [number];
@@ -220,7 +221,7 @@ test("a second interruption of the same task marks it stopped for the owner, wit
   assert.equal(driver.started.length, 0);
 });
 
-test("a turn stopped before its CLI had reported a session is started again from the task's own prompt, once", { timeout: 60_000 }, async (t) => {
+test("a turn stopped before its CLI had reported a session is started again from the task's own prompt, once", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const s = leave(t, p, { task: PROMPT, setup: [WRITES], script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
   const [taskId] = s.taskIds as [number];
@@ -240,7 +241,7 @@ function openStoreOnce(home: string): DatabaseSync {
   return db;
 }
 
-test("a recorded process group whose number now belongs to an unrelated process is never killed: the record is cleared and the process runs on", { timeout: 60_000 }, async (t) => {
+test("a recorded process group whose number now belongs to an unrelated process is never killed: the record is cleared and the process runs on", { skip: NO_PROCESS_LIST, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const s = leave(t, p, { task: PROMPT, script: ["done"], hold: 0, holdAt: "session", stopAt: "turn" });
   // A real process that has nothing to do with Botbench, under the number recorded for the CLI and for a command. It
@@ -263,7 +264,7 @@ test("a recorded process group whose number now belongs to an unrelated process 
   assert.equal(fs.existsSync(tmp), false, "the command's own temporary folder is removed all the same");
 });
 
-test("a command's process group whose leader has ended while what it started runs on is stopped, and the rest of a group recorded with no start time is never touched", { timeout: 60_000 }, async (t) => {
+test("a command's process group whose leader has ended while what it started runs on is stopped, and the rest of a group recorded with no start time is never touched", { skip: NO_SANDBOX_OR_PROCESS_LIST, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const s = leave(t, p, { task: PROMPT, setup: [waits(p)], stopAt: "setup" });
   const db = openStore(p.home);
@@ -281,7 +282,7 @@ test("a command's process group whose leader has ended while what it started run
   await until("the group is gone", () => !processGroupAlive(pgid));
 });
 
-test("a task stopped during setup, before any agent turn: the setup command at work is recorded as stopped by the restart, its process group and temporary folder are gone, and setup runs again once from the start before the agent starts", { timeout: 60_000 }, async (t) => {
+test("a task stopped during setup, before any agent turn: the setup command at work is recorded as stopped by the restart, its process group and temporary folder are gone, and setup runs again once from the start before the agent starts", { skip: NO_SANDBOX_OR_PROCESS_LIST, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const setup = ["echo one >> setup-runs.txt", waits(p)];
   const s = leave(t, p, { task: PROMPT, setup, stopAt: "setup" });
@@ -312,7 +313,7 @@ test("a task stopped during setup, before any agent turn: the setup command at w
   assert.equal(restarts(again.db, taskId), 1);
 });
 
-test("a task stopped during setup a second time is stopped for the owner, and nothing more runs in its copy", { timeout: 90_000 }, async (t) => {
+test("a task stopped during setup a second time is stopped for the owner, and nothing more runs in its copy", { skip: NO_SANDBOX_OR_PROCESS_LIST, timeout: 90_000 }, async (t) => {
   const p = place(t);
   const setup = ["echo one >> setup-runs.txt", waits(p)];
   const s = leave(t, p, { task: PROMPT, setup, stopAt: "setup" });
@@ -330,7 +331,7 @@ test("a task stopped during setup a second time is stopped for the owner, and no
   assert.deepEqual(row(again.db, "SELECT count(*) AS n FROM command_processes WHERE pgid IS NOT NULL").n, 0);
 });
 
-test("a task whose agent turn had started is never set up again after a restart, even though its setup is not repeatable: only the turn is re-driven", { timeout: 60_000 }, async (t) => {
+test("a task whose agent turn had started is never set up again after a restart, even though its setup is not repeatable: only the turn is re-driven", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const setup = ["echo one >> setup-runs.txt"];
   const s = leave(t, p, { task: PROMPT, setup, script: ["done"], hold: 0, holdAt: "session", stopAt: "turn", wrote: "partial.txt" });
@@ -344,7 +345,7 @@ test("a task whose agent turn had started is never set up again after a restart,
   assert.equal(driver.started[0]!.resumeCursor, CURSOR);
 });
 
-test("a task stopped during its checks: the check at work is recorded as stopped by the restart, and the checks run again once from the start on the same commit", { timeout: 60_000 }, async (t) => {
+test("a task stopped during its checks: the check at work is recorded as stopped by the restart, and the checks run again once from the start on the same commit", { skip: NO_SANDBOX_OR_PROCESS_LIST, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const checks = ["true", waits(p)];
   const s = leave(t, p, { task: PROMPT, setup: [WRITES], checks, script: ["done"], stopAt: "checks" });
@@ -407,7 +408,7 @@ test("a run that was being planned is planned again once from the start, read-on
   assert.equal(planner2.started.length, 0);
 });
 
-test("Botbench shut down in the ordinary way during a turn leaves the task where it was, uncommitted, and the next start continues it from its resume cursor", { timeout: 60_000 }, async (t) => {
+test("Botbench shut down in the ordinary way during a turn leaves the task where it was, uncommitted, and the next start continues it from its resume cursor", { skip: NO_SANDBOX, timeout: 60_000 }, async (t) => {
   const p = place(t);
   const db = openStore(p.home);
   const broker = createBroker({ db, home: p.home, onChange: () => {} });
@@ -464,7 +465,7 @@ test("Resume re-drives a stopped task from its resume cursor, told what happened
   assert.equal(driver.started.length, 1);
 });
 
-test("Resume of a task stopped before its CLI had reported a session starts a fresh turn with the task's own prompt", { timeout: 120_000 }, async (t) => {
+test("Resume of a task stopped before its CLI had reported a session starts a fresh turn with the task's own prompt", { skip: NO_SANDBOX, timeout: 120_000 }, async (t) => {
   const p = place(t);
   const s = leave(t, p, { task: PROMPT, setup: [WRITES], script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
   leave(t, p, { existing: true, setup: [WRITES], script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
