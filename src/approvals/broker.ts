@@ -75,8 +75,22 @@ const CHAT_QUIET_TOOLS: ReadonlySet<string> = new Set(["ToolSearch", "TodoWrite"
 /** Why a chat's approval left pending by a Botbench that stopped was ended, in the log. */
 export const CHAT_RESTARTED = "Botbench restarted before you answered, so this request of a chat ended without an answer. It was not run.";
 
-/** Whether a live broker answers on the socket at `socketPath`: then its data directory belongs to a running process. */
-export function socketAnswers(socketPath: string): Promise<boolean> {
+/** How long after a first answer the socket is asked again, to tell a live broker from one that is dying. */
+const RECHECK_MS = 250;
+
+/**
+ * Whether a live broker answers on the socket at `socketPath`: then its data directory belongs to a running process.
+ * It must answer twice, a moment apart. A Botbench that was killed just after it started a process (a CLI, a setup
+ * command) can leave its socket taking connections for a few milliseconds, until that process has replaced itself
+ * with the program it runs; asked once, that socket looks like a running Botbench, and the next start refused to run.
+ */
+export async function socketAnswers(socketPath: string): Promise<boolean> {
+  if (!(await answersOnce(socketPath))) return false;
+  await new Promise((resolve) => setTimeout(resolve, RECHECK_MS));
+  return answersOnce(socketPath);
+}
+
+function answersOnce(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (!fs.existsSync(socketPath)) return resolve(false);
     const probe = net.connect(socketPath);
