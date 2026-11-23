@@ -96,15 +96,23 @@ async function moveMidBuild(t: TestContext, from: "claude-code" | "codex", to: "
   // One branch, the same one, and one copy.
   assert.equal(done.branch, copy);
   assert.deepEqual(git(live.repo, "branch", "--format=%(refname:short)").split("\n").filter((b) => b.startsWith("botbench/")), [copy]);
-  assert.ok((done.files ?? []).some((f) => f.path === "one.txt"), JSON.stringify(done.files));
+  // The first agent's file, and the second agent's, which it wrote after taking the task over.
+  assert.deepEqual((done.files ?? []).map((f) => f.path).sort(), ["one.txt", "two.txt"], JSON.stringify(done.files));
+  assert.equal(git(live.repo, "show", `${done.branch}:two.txt`).trim(), "two");
+  // One task copy: the owner's checkout and this task's, no other.
+  const copies = git(live.repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => fs.realpathSync(l.slice("worktree ".length)));
+  assert.deepEqual(copies.filter((p) => p !== fs.realpathSync(live.repo)), [fs.realpathSync(worktree)]);
   // One hand-off, one line for it, and a fresh session of the new agent's own.
   assert.equal(done.handoffs.length, 1);
   assert.deepEqual([done.handoffs[0]!.from, done.handoffs[0]!.to, done.handoffs[0]!.reason, done.handoffs[0]!.fromAttemptId], [from, to, "owner", fromAttempt]);
   assert.notEqual(done.attemptId, fromAttempt);
-  // One transcript, both agents: the session the move left and the new agent's, the new one opening with the hand-off note.
-  const before = await getJson<{ events: { type: string; payload: Record<string, unknown> }[] }>(live, `/api/attempts/${fromAttempt}/events`);
-  const after = await getJson<{ events: { type: string; payload: Record<string, unknown> }[] }>(live, `/api/attempts/${done.attemptId}/events`);
+  // One transcript, both agents: the task screen shows the session each hand-off left and the one the task names now
+  // (web/src/screens/task.tsx, `shownAttempts`), read from the same routes it reads them from.
+  const shown = [...done.handoffs.map((h) => h.fromAttemptId!), done.attemptId!];
+  assert.deepEqual(shown, [fromAttempt, done.attemptId]);
+  const [before, after] = (await Promise.all(shown.map((id) => getJson<{ events: { type: string; payload: Record<string, unknown> }[] }>(live, `/api/attempts/${id}/events`)))) as [{ events: { type: string; payload: Record<string, unknown> }[] }, { events: { type: string; payload: Record<string, unknown> }[] }];
   assert.ok(before.events.some((e) => e.type === "tool_call" || e.type === "text"), "the first agent's session is there");
+  assert.ok(after.events.some((e) => e.type === "tool_call" || e.type === "text"), "the second agent's session is there");
   const firstPrompt = after.events.find((e) => e.type === "user_prompt")?.payload.text;
   assert.match(String(firstPrompt), /^\[From Botbench, not from the owner\] An earlier attempt at this task by (Claude Code|Codex) stopped/);
   const sessionOf = (e: { payload: Record<string, unknown> }) => (e.payload.type === "session_started" ? String(e.payload.resumeCursor) : null);

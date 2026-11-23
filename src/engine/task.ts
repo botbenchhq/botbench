@@ -1254,7 +1254,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // restart) it stops the task for the owner; only the owner's Resume allows another wait. Botbench stopping ends a
     // turn as interrupted, never as a limit; a limit reached just as Botbench stops is still stored, and the next start arms its time.
     else if (end === "error" && usageLimit !== null) {
-      const next = onLimitOf(db, task.runId) === "switch" ? switchTarget(task) : null;
+      const next = onLimitOf(db, task.runId) === "switch" ? await switchTarget(task) : null;
       if (next !== null && "agent" in next && !closed) await handOffNow(task, next.agent, takeOverModel(task, next.agent), "usage_limit", session.attemptId, stopped);
       else if (resumed === "limit" || waitedForLimit(id)) await finish(task, "interrupted", next === null || "agent" in next ? limitAgainReason(name) : `${limitAgainReason(name)} ${noSwitchWords(next.none)}`);
       else await waitForLimit(task, usageLimit.resetsAt, next === null || "agent" in next ? undefined : next.none);
@@ -1280,11 +1280,22 @@ export function createTasks(options: TasksOptions): Tasks {
   /** Why a builder cannot build a task of its run now, for a hand-off: exactly what starting the task on that agent would be refused for. */
   const cannotBuildFor = (task: Task) => (agent: string): string | null => builderProblem(agent === driver.name ? null : agent, runModeOf(db, task.runId));
 
-  /** The agent a task switches to on its builder's usage limit, or why none can take it (engine/handoff.ts, `nextAgent`). */
-  const switchTarget = (task: Task): { agent: string } | { none: string } => {
+  /**
+   * The agent a task switches to on its builder's usage limit, or why none can take it (engine/handoff.ts, `nextAgent`).
+   * Each agent on the list is asked its own check first (`probe`: installed, signed in), so one that is signed out is
+   * skipped, saying why, rather than chosen and failing to start.
+   */
+  const switchTarget = async (task: Task): Promise<{ agent: string } | { none: string }> => {
     const onLimit = taskHandoffs(db, task.id).filter((h) => h.reason === "usage_limit");
     const current = builderNow(task).agent;
-    return nextAgent({ list: readFallbacks(db, builderAgents()).builder, current, limited: new Set(onLimit.map((h) => h.from)), reviewer: reviewerOf(task), switches: onLimit.length, cannotBuild: cannotBuildFor(task) });
+    const list = readFallbacks(db, builderAgents()).builder;
+    const checked = new Map<string, string | null>();
+    for (const agent of list) {
+      if (agent === current) continue;
+      checked.set(agent, await driverFor(agent).probe().then((p) => (p.problem === null ? null : `${agentName(agent)} cannot build now: ${p.problem}`), (err: unknown) => `${agentName(agent)} could not be checked: ${words(err)}`));
+    }
+    const cannotBuild = (agent: string): string | null => cannotBuildFor(task)(agent) ?? checked.get(agent) ?? null;
+    return nextAgent({ list, current, limited: new Set(onLimit.map((h) => h.from)), reviewer: reviewerOf(task), switches: onLimit.length, cannotBuild });
   };
   /** Why a run that says Switch did not switch, for the reason a task stops with. */
   const noSwitchWords = (why: string): string => `Botbench could not switch it to another agent: ${why}`;

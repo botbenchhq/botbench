@@ -215,7 +215,7 @@ test("AE4: a task building on Claude Code, moved by the owner to another agent (
   // Its first prompt is the hand-off note.
   const [first] = prompts(e.db, done.attemptId!);
   assert.ok(first!.startsWith("[From Botbench, not from the owner] An earlier attempt at this task by Claude Code stopped: the owner moved the task from Claude Code to you."));
-  for (const part of ["<task>\nAdd hello.txt\n\nAcceptance criteria:", "Its acceptance criteria:\n- Add hello.txt: done\n- Nothing else changes", "1. Add hello.txt\n2. Add bye.txt", "- It wrote: started", "committed: one.txt.", "+one", CARRY_ON]) assert.ok(first!.includes(part), part);
+  for (const part of ["<task>\nAdd hello.txt\n\nAcceptance criteria:", "Its acceptance criteria:\n- Add hello.txt: done\n- Nothing else changes", "<plan>\n1. Add hello.txt\n   - Add hello.txt: done\n   - Nothing else changes\n2. Add bye.txt\n   - Add bye.txt: done\n   - Nothing else changes\n</plan>", "- It wrote: started", "committed: one.txt.", "+one", CARRY_ON]) assert.ok(first!.includes(part), part);
   // One hand-off, one line in the action log, and the switch in the task's history.
   const handoffs = taskHandoffs(e.db, task.id);
   assert.deepEqual(handoffs.map((h) => [h.from, h.to, h.reason, h.fromAttemptId]), [["claude-code", "codex", "owner", claudeAttempt]]);
@@ -388,6 +388,8 @@ test("with Switch chosen, a usage limit hands the task to the next agent on the 
   assert.equal(codex.started[0]!.resumeCursor, undefined, "no cursor of Claude Code's");
   assert.match(prompts(e.db, done.attemptId!)[0]!, /^\[From Botbench, not from the owner\] An earlier attempt at this task by Claude Code stopped: Claude Code reached its usage limit/);
   assert.ok(prompts(e.db, done.attemptId!)[0]!.includes("- It wrote: I will add hello.txt."));
+  // A run of one task still carries its plan.
+  assert.ok(prompts(e.db, done.attemptId!)[0]!.includes("The run's plan, as the owner approved it:\n<plan>\n1. Add hello.txt\n   - Add hello.txt: done"));
   assert.deepEqual(filesOn(e.repo, e.base, done.branch!), ["hello.txt"]);
   assert.equal(getRun(e.db, done.runId!)!.onLimit, "switch");
 });
@@ -402,16 +404,18 @@ test("with Wait chosen, the same usage limit waits as before and nothing is hand
   assert.equal((e.codex as CodexBuildReplay).started.length, 0);
 });
 
-test("with Switch chosen and no usable next agent (the list names only Claude Code, Codex is the reviewer, or Codex cannot build here), the task falls back to the wait, and its history says why", WITHIN, async (t) => {
-  for (const why of ["list", "reviewer", "unavailable"] as const) {
+test("with Switch chosen and no usable next agent (the list names only Claude Code, Codex is the reviewer, Codex cannot build here, or its own check says it is signed out), the task falls back to the wait, and its history says why", WITHIN, async (t) => {
+  for (const why of ["list", "reviewer", "unavailable", "signed out"] as const) {
     const claude = buildReplayDriver([limitedTurn() as AttemptScript]);
-    const e = await line(t, { main: claude, ...(why === "unavailable" ? { codex: null } : {}) });
+    // Signed out: Codex's own check says so (the probe's answer is the test's; the session would be the replay's).
+    const signedOut = (outside: string): Driver => ({ ...codexBuildReplay([["inside"]], { outside }), probe: async () => ({ installed: true, version: "0.171.0", supported: true, signedIn: false, billing: "unknown", problem: "Codex is signed out." }) });
+    const e = await line(t, { main: claude, ...(why === "unavailable" ? { codex: null } : why === "signed out" ? { codex: signedOut } : {}) });
     if (why === "list") setFallbacks(e.db, { builder: ["claude-code"] }, ["claude-code", "codex"]);
     const { task } = planned(e, { onLimit: "switch", ...(why === "reviewer" ? { reviewer: { agent: "codex", model: null } } : {}) });
     await until(() => getTask(e.db, task.id)!.status === "waiting_for_limit", "the task waits");
     assert.deepEqual(taskHandoffs(e.db, task.id), [], why);
     const detail = String(e.db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND status = 'waiting_for_limit'").get(task.id)!.detail);
-    const expected = { list: "Settings names no agent other than Claude Code to switch to.", reviewer: "Codex reviews this run, so it cannot build it.", unavailable: "Settings names no agent other than Claude Code to switch to." }[why];
+    const expected = { list: "Settings names no agent other than Claude Code to switch to.", reviewer: "Codex reviews this run, so it cannot build it.", unavailable: "Settings names no agent other than Claude Code to switch to.", "signed out": "Codex cannot build now: Codex is signed out." }[why];
     assert.ok(detail.startsWith(`Botbench could not switch it to another agent: ${expected}`), `${why}: ${detail}`);
   }
 });

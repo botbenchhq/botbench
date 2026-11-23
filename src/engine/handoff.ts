@@ -208,13 +208,17 @@ export function onLimitOf(db: DatabaseSync, runId: number | null): OnLimit {
 }
 
 /**
- * Every session a task's builders worked in, oldest first: the ones its history names by number (each is recorded
- * there as it starts) and the one it names now.
+ * Every session a task's builders worked in, oldest first: the ones its history records as the task's own (the part
+ * `attempt N` that `moveTaskIn` writes, alone between "; ", when the task names a session as it starts) and the one it
+ * names now. A session merely mentioned in a note ("from attempt N") is not read, so no other task's session is taken.
  */
 export function taskAttempts(db: DatabaseSync, taskId: number): number[] {
   const ids = new Set<number>();
-  for (const row of db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND detail LIKE '%attempt %' ORDER BY id").all(taskId)) {
-    for (const match of String(row.detail).matchAll(/\battempt (\d+)\b/g)) ids.add(Number(match[1]));
+  for (const row of db.prepare("SELECT detail FROM task_events WHERE task_id = ? AND status = 'building' AND detail LIKE '%attempt %' ORDER BY id").all(taskId)) {
+    for (const part of String(row.detail).split("; ")) {
+      const named = /^attempt (\d+)$/.exec(part);
+      if (named !== null) ids.add(Number(named[1]));
+    }
   }
   const current = db.prepare("SELECT attempt_id FROM tasks WHERE id = ?").get(taskId)?.attempt_id;
   if (typeof current === "number") ids.add(current);
@@ -235,7 +239,7 @@ export function planOfTask(db: DatabaseSync, taskId: number, runId: number | nul
   };
   const rows = db.prepare("SELECT title, criteria, task_id FROM plan_tasks WHERE run_id = ? ORDER BY position").all(runId);
   const own = rows.find((row) => row.task_id === taskId);
-  return { criteria: own === undefined ? [] : read(own.criteria), plan: rows.length < 2 ? [] : rows.map((row) => ({ title: String(row.title), criteria: read(row.criteria) })) };
+  return { criteria: own === undefined ? [] : read(own.criteria), plan: rows.map((row) => ({ title: String(row.title), criteria: read(row.criteria) })) };
 }
 
 /** The most of the earlier agent's record a hand-off note holds; the newest part is kept. */
@@ -290,7 +294,8 @@ export function handoffPrompt(o: { from: string; to: string; reason: HandoffReas
   const why = o.reason === "owner" ? `the owner moved the task from ${from} to you` : `${from} reached its usage limit, and this run hands the task to the next agent rather than wait for the limit to reset`;
   const diff = o.diff.length > MAX_HANDOFF_DIFF ? `${o.diff.slice(0, MAX_HANDOFF_DIFF)}\n(cut here: the diff is longer; read the files in this folder for the rest)` : o.diff;
   const criteria = o.criteria.length === 0 ? "None were given apart from the task's own words." : o.criteria.map((c) => `- ${c}`).join("\n");
-  const plan = o.plan.length === 0 ? "" : `\n\nThis task is one step of a plan; the other steps are other tasks, not yours:\n${dataBlock("plan", o.plan.map((p, i) => `${i + 1}. ${p.title}`).join("\n"))}`;
+  const steps = o.plan.map((p, i) => [`${i + 1}. ${p.title}`, ...p.criteria.map((c) => `   - ${c}`)].join("\n")).join("\n");
+  const plan = o.plan.length === 0 ? "" : `\n\nThe run's plan, as the owner approved it${o.plan.length > 1 ? "; this task is one of its steps, and the others are other tasks, not yours" : ""}:\n${dataBlock("plan", steps)}`;
   // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
   return `[From Botbench, not from the owner] An earlier attempt at this task by ${from} stopped: ${why}. You are ${to}, and you take the task over in a new session. You work in the same folder, on the same branch: what ${from} wrote is committed there, and the files are as it left them. Anything it was running was stopped, so check before you repeat something it may have done.
 
