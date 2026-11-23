@@ -36,9 +36,9 @@ Ranked by value to an engineer whose Botbench works on the same repository as a 
 - Paperclip: checkout writes the assignee and the run only if nobody else holds the issue; otherwise it answers 409 with who holds it. A repeat by the same run is not a conflict.
 - Paperclip file: `server/src/services/issues.ts` (the "Issue checkout conflict" path).
 - Botbench today: P2 warns only when another workbench already has an open pull request for the issue (`web/src/app/peers.ts`); two workbenches that start the same issue minutes apart both go ahead, and `src/github.ts` writes nothing to an issue.
-- Change: P3's claim is written just before the run starts (the owner's choice), then the issue is read again. GitHub has no compare-and-set, so the rule is: the earliest claim from a workbench wins, and a workbench that finds an earlier claim from another workbench withdraws its own and does not start without the owner confirming.
+- Change: P3's claim is written just before the run starts (the owner's choice), then the issue is read again. GitHub has no compare-and-set, and a reread may not yet show the other workbench's claim, so one reread cannot stop both from starting. The rule is: the earliest claim from a workbench wins, and it is checked again before every push, not only at start. A workbench that finds an earlier claim from another workbench, at start or later, withdraws its own claim, stops before pushing anything, and does not go on without the owner confirming.
 - Size: medium.
-- Acceptance: two installations claim the same issue within one second; exactly one run starts, and the other shows the winning workbench's name and claim time with its own claim gone from the issue.
+- Acceptance: two installations claim the same issue within one second; once both claims are visible on the issue, exactly one still holds a claim and only that one pushes a branch, and the other shows the winning workbench's name and claim time with its own claim gone.
 - Peers step: P3.
 
 ### 2. A claim names its run and is released when the run is gone
@@ -64,7 +64,7 @@ Ranked by value to an engineer whose Botbench works on the same repository as a 
 ### 4. Mark a shared check result stale when either branch moves
 
 - Paperclip: a required review reports a slot as "stale" when its evidence no longer matches, and dependent issues wake only when their blockers resolve (`issue_relations` type `blocks`).
-- Paperclip file: `server/src/services/issue-dependency-wakeups.ts`.
+- Paperclip files: `server/src/services/required-quality-review.ts` (the "stale" result) and `server/src/services/issue-dependency-wakeups.ts` (wakes when blockers resolve).
 - Botbench today: P2 reads the other workbench's pushed branches with `git ls-remote` (`src/engine/peers.ts`) but nothing ties a check result to the commits it ran on.
 - Change: a P4 shared check stores the two head commits it ran on; when the peers view shows a different head for either branch, the result is shown as stale and the check is offered again.
 - Size: small.
@@ -85,7 +85,7 @@ Ranked by value to an engineer whose Botbench works on the same repository as a 
 
 - Paperclip: interactions between agents (assign, mention, comment, edit, configure) have an outgoing and an incoming setting; both must allow, and an explicit "no" is not overridden by any role.
 - Paperclip file: `server/src/services/agent-interaction-permissions.ts`.
-- Botbench today: P5 plans typed messages with each owner approving what leaves and what is acted on; no per-kind setting is planned.
+- Botbench today: P5 plans typed messages with each owner approving what leaves and what is acted on (`docs/product/peers-concept.md`); no per-kind setting is planned.
 - Change: per peer, the owner sets which message kinds (question, interface proposal, review request, handoff) may be sent and received; a kind turned off on the receiving side is refused before it becomes a card, and the refusal is logged.
 - Size: small.
 - Acceptance: with review requests turned off for peer A, a review request from A is answered with a refusal, creates no pending approval, and adds one action-log row naming A.
@@ -93,9 +93,9 @@ Ranked by value to an engineer whose Botbench works on the same repository as a 
 
 ### 7. Cap how much one run can send to a peer
 
-- Paperclip: one run may influence at most 20 other issues (comments, updates, resolutions); every attempt is logged first, then refused over the cap.
+- Paperclip: one run may make at most 20 actions on issues other than its own (comments, updates, resolutions), counted per action, so repeats on the same issue count too; every attempt is logged first, then refused over the cap.
 - Paperclip file: `server/src/services/cross-issue-influence-limit.ts`.
-- Botbench today: nothing in P5's plan limits volume; two agents asking each other questions could fill both owners' screens with cards.
+- Botbench today: nothing in P5's plan (`docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md`, Milestone 6) limits volume; two agents asking each other questions could fill both owners' screens with cards.
 - Change: a per-run limit, small by default, on messages an agent may send to peers; over it, the request is refused without a card and the agent is told why in plain words.
 - Size: small.
 - Acceptance: in a run with a limit of 3, the fourth outgoing peer message creates no card, is not sent, and leaves one action-log row with a rule distinct from `owner_declined`.
