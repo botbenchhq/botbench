@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { actionLog } from "../../src/approvals/broker.ts";
 import type { Config } from "../../src/config.ts";
-import { claimBranchName, lockBranch, OLD_CLAIM_MS, parseClaimBranch, parseLockBranch, spottedIssues as serverSpotted, takeOverGiven } from "../../src/engine/claim-branch.ts";
+import { claimBranchName, claimMessage, lockBranch, OLD_CLAIM_MS, parseClaimBranch, parseLockBranch, spottedIssues as serverSpotted, takeOverGiven } from "../../src/engine/claim-branch.ts";
 import { claimSteps, createClaims, type Claims } from "../../src/engine/claims.ts";
 import { decideTask } from "../../src/engine/decision.ts";
 import { createDeliveries, deliverySteps } from "../../src/engine/delivery.ts";
@@ -324,6 +324,13 @@ test("a claim branch that moved, that has a pull request, or that is another wor
   assert.equal(remoteBranches(remote.bare).get(bobBranch), bobCommit, "bob's branch is untouched");
   assert.equal(remoteBranches(remote.bare).get(lockBranch(84)), bobCommit, "bob's lock is untouched");
   assert.match(claimSteps(alice.db, foreign.id).at(-1)!.detail, /not this workbench's own/);
+  // Nor does a record under alice's own name that gives bob's commit: the commit is not a claim Botbench made here for it.
+  const forged = issueRun(alice, "Issue #84", { delivery: "branch" });
+  alice.db.prepare("INSERT INTO issue_claims (run_id, step, issue, remote, branch, commit_id, detail, created_at) VALUES (?, 'claimed', 84, 'origin', ?, ?, 'recorded', ?)").run(forged.id, claimBranchName("alice", forged.id, 84, STARTED), bobCommit, now());
+  cancelRun(alice.db, forged.id);
+  await changed(plain, alice.db, forged.id);
+  assert.equal(remoteBranches(remote.bare).get(lockBranch(84)), bobCommit, "bob's lock is untouched");
+  assert.match(claimSteps(alice.db, forged.id).at(-1)!.detail, /not a claim commit Botbench made in this repository for it/);
 });
 
 test("the delete is git's compare-and-delete, all or none: at any other commit than the one given, the remote branches stay", async (t) => {
@@ -362,9 +369,11 @@ test("a claim that cannot be made (no remote, no network, a refused push) is sai
   git(offline.repo, "remote", "add", "origin", PEERS_ADDRESS);
   const b = issueRun(offline, "Issue #82");
   await changed(claimsOf(offline, github), offline.db, b.id);
-  assert.deepEqual(steps(offline.db, b.id), ["claiming", "not_claimed"]);
-  assert.match(claimSteps(offline.db, b.id).at(-1)!.detail, /could not be pushed to the remote origin/);
+  // Whether the remote took it is not known, so the claim stays as stored, to be read again later; the run goes on.
+  assert.deepEqual(steps(offline.db, b.id), ["claiming"]);
+  assert.match(claimSteps(offline.db, b.id).at(-1)!.detail, /reads the remote again before it pushes the task's branch and when the run ends; the run goes on as usual\.$/);
   assert.equal(getRun(offline.db, b.id)!.status, "planning");
+  assert.equal(await claimsOf(offline, github).beforeSend(b.id, "push", "botbench/carol/run-1/task-1"), null, "a remote it still cannot read holds nothing up");
 
   // Refused: a branch of that very name is already on the remote, with another commit. It is not forced over, and
   // with the push all or none the issue's lock is not created either.
@@ -571,7 +580,7 @@ test("startup recovery releases the claims of runs that ended while no Botbench 
   const crashed = (issue: number, pushed: boolean) => async (): Promise<{ run: Run; branch: string }> => {
     const run = issueRun(alice, `Issue #${issue}`);
     const branch = claimBranchName("alice", run.id, issue, STARTED);
-    const commit = await makeClaimCommit(alice.repo, `Botbench: alice started on issue #${issue}`);
+    const commit = await makeClaimCommit(alice.repo, claimMessage("alice", run.id, issue, branch));
     alice.db.prepare("INSERT INTO issue_claims (run_id, step, issue, remote, branch, commit_id, detail, created_at) VALUES (?, 'claiming', ?, 'origin', ?, ?, 'pushing', ?)").run(run.id, issue, branch, commit, now());
     if (pushed) await pushNewBranches({ repo: alice.repo, remote: "origin", branches: [lockBranch(issue), branch], commit });
     return { run, branch };
@@ -579,6 +588,10 @@ test("startup recovery releases the claims of runs that ended while no Botbench 
   const crashedEnded = await crashed(86, true)();
   const crashedGoing = await crashed(87, true)();
   const crashedNotPushed = await crashed(88, false)();
+  // One whose push was refused because bob holds the issue, stopped before it read the remote back: it gives way now.
+  const bob = bench(t, remote, "bob");
+  const bobHolds = await pushClaimOf(bob, "bob", 1, 89, new Date(STARTED.getTime() - 1000));
+  const crashedLost = await crashed(89, false)();
   // The workbench stopped; meanwhile runs were cancelled and one ended with its only task discarded, nothing announced.
   cancelRun(alice.db, cancelled.id);
   endRun(alice.db, done.id, "done");
@@ -596,15 +609,18 @@ test("startup recovery releases the claims of runs that ended while no Botbench 
   assert.ok(branches.has(branchOf(going.id)), "a run still going keeps its claim");
   assert.deepEqual(steps(alice.db, crashedGoing.run.id), ["claiming", "claimed"], "a run still going whose push went through holds its claim");
   assert.deepEqual(steps(alice.db, crashedNotPushed.run.id), ["claiming", "not_claimed"], "one whose push never arrived goes on without one");
+  assert.deepEqual(steps(alice.db, crashedLost.run.id), ["claiming", "withdrawn"], "one that lost to another workbench's lock gives way after the restart");
+  assert.equal(getRun(alice.db, crashedLost.run.id)!.status, "cancelled");
+  assert.equal(remoteBranches(remote.bare).get(lockBranch(89)), bobHolds.commit, "bob's lock is untouched");
   const rows = claimRows(alice.db).slice(rowsBefore);
   assert.equal(rows.filter((r) => r.detail!.startsWith("The run ended without a pull request")).length, 3, "one row for each release");
-  assert.equal(rows.length, 4, "and one for the claim settled");
+  assert.equal(rows.length, 5, "and one each for the claim settled and the one given way");
   assert.deepEqual(steps(alice.db, cancelled.id), ["claiming", "claimed", "released"]);
   // A second start finds nothing more to do.
   const again = claimsOf(alice, replayGitHub().github);
   again.recover();
   await again.idle();
-  assert.equal(claimRows(alice.db).length, rowsBefore + 4);
+  assert.equal(claimRows(alice.db).length, rowsBefore + 5);
 });
 
 test("another workbench's composer sees the claim, for an attached issue and for one its message names; Work names the shared repository, never the viewer's folder", async (t) => {

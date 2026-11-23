@@ -20,6 +20,13 @@ import { parseTaskBranch } from "../workbench.ts";
 /** The issue's lock branch, `botbench/claims/issue-<number>`: whichever claim created it first holds the issue. */
 export const lockBranch = (issue: number): string => `botbench/claims/issue-${issue}`;
 
+/**
+ * The message of a claim's commit. It names the claim branch, whose name holds the time to the millisecond, so no two
+ * claims share a commit; and release deletes a branch only at a commit whose message names it (engine/claims.ts).
+ */
+export const claimMessage = (workbench: string, runId: number, issue: number, branch: string): string =>
+  `Botbench: ${workbench} started on issue #${issue}\n\nClaim ${branch}. This branch tells other workbenches that ${workbench} started on issue #${issue} (Botbench run ${runId}). It holds no files, and Botbench deletes it if the run ends without a pull request.`;
+
 /** The issue number of a lock branch's name; null for any other branch. */
 export function parseLockBranch(branch: string): number | null {
   const m = /^botbench\/claims\/issue-([1-9]\d{0,9})$/.exec(branch);

@@ -597,6 +597,27 @@ export async function makeClaimCommit(repo: string, message: string): Promise<st
 }
 
 /**
+ * The message of `commit` when it is a claim commit this repository holds, as `makeClaimCommit` makes one: the empty
+ * tree, no parent, Botbench as author. Null for any other commit, or one this repository does not have. Read only.
+ */
+export async function claimCommitMessage(repo: string, commit: string): Promise<string | null> {
+  if (!COMMIT_ID.test(commit)) return null;
+  const dir = path.resolve(repo);
+  let text: string;
+  try {
+    text = await git(dir, ["cat-file", "commit", commit], GIT_CHECK_LIMIT_MS);
+  } catch (err) {
+    unlessTimeout(err);
+    return null;
+  }
+  const empty = (await git(dir, ["hash-object", "-t", "tree", "/dev/null"], GIT_CHECK_LIMIT_MS)).trim();
+  const [head = "", ...body] = text.split("\n\n");
+  const lines = head.split("\n");
+  const ok = lines[0] === `tree ${empty}` && !lines.some((l) => l.startsWith("parent ")) && lines.some((l) => l.startsWith(`author ${AUTHOR_NAME} <${AUTHOR_EMAIL}> `));
+  return ok ? body.join("\n\n") : null;
+}
+
+/**
  * Push `commit` to a new branch `branch` on `remote`: `git push … <remote> <commit>:refs/heads/<branch>`. Never by
  * force: a branch of that name already there, with any other commit, refuses it. Only a branch in Botbench's own form.
  */

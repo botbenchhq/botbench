@@ -5,8 +5,8 @@ import { repositoryClaims, repositoryDelivery, type Config } from "../config.ts"
 import { githubRepoOf, redact, repoName, type GitHub, type RepoRef } from "../github.ts";
 import { now } from "../store/db.ts";
 import { ownWorkbenches, workbenchName } from "../workbench.ts";
-import { deleteRemoteBranchesAt, makeClaimCommit, pushNewBranch, pushNewBranches, remoteAddress, remoteTaskBranches } from "../worktrees.ts";
-import { claimBranchName, claimTimeWords, lockBranch, messageIssue, parseClaimBranch, type ClaimName } from "./claim-branch.ts";
+import { claimCommitMessage, deleteRemoteBranchesAt, makeClaimCommit, pushNewBranch, pushNewBranches, remoteAddress, remoteTaskBranches } from "../worktrees.ts";
+import { claimBranchName, claimMessage, claimTimeWords, lockBranch, messageIssue, parseClaimBranch, type ClaimName } from "./claim-branch.ts";
 import { deliverySteps } from "./delivery.ts";
 import { githubOfRepository, runIssue } from "./intake.ts";
 import { getRun, runTasks, type Run } from "./run.ts";
@@ -234,6 +234,10 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     const parsed = parseClaimBranch(branch);
     // The recorded commit is trusted as this run's own only with a name this installation has had.
     if (parsed === null || parsed.issue !== c.issue || !ownWorkbenches(db).has(parsed.workbench)) return left("its name is not this workbench's own.");
+    // And the recorded commit must be a claim commit Botbench made here, for this very claim: a store edited by hand
+    // that names another workbench's commit deletes nothing of theirs.
+    const message = await claimCommitMessage(run.repo, commit);
+    if (message === null || !message.includes(`Claim ${branch}.`)) return left("its recorded commit is not a claim commit Botbench made in this repository for it.");
     let refs: Map<string, string>;
     try {
       refs = await remoteRefs(run, remote);
@@ -299,12 +303,12 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     const lock = lockBranch(issue);
     let commit: string;
     try {
-      commit = await makeClaimCommit(run.repo, `Botbench: ${workbench} started on issue #${issue}\n\nThis branch tells other workbenches that ${workbench} started on issue #${issue} (Botbench run ${run.id}). It holds no files, and Botbench deletes it if the run ends without a pull request.`);
+      commit = await makeClaimCommit(run.repo, claimMessage(workbench, run.id, issue, branch));
     } catch (err) {
       return notClaimed(`the claim's commit could not be made. ${words(err)}`);
     }
     // Stored before the push: a Botbench that stops in the middle finds it again at its next start (recover).
-    record(run, "claiming", { issue, remote, branch, commit, detail: `Botbench is pushing the branches ${branch} and ${lock} to the remote ${remote}, so other workbenches can see you started on issue #${issue}.` });
+    record(run, "claiming", { issue, remote, branch, commit, detail: `Botbench is pushing the branches ${branch} and ${lock} to the remote ${remote}, so other workbenches can see you started on issue #${issue}. If it cannot tell whether the remote took them, it reads the remote again before it pushes the task's branch and when the run ends; the run goes on as usual.` });
     const pushCommand = `git push --atomic ${remote} ${commit}:refs/heads/${lock} ${commit}:refs/heads/${branch}`;
     const claimed = (extra: string, command: string): void => record(run, "claimed", { issue, remote, branch, commit, detail: `Botbench pushed ${extra} to the remote ${remote}, so other workbenches can see you started on issue #${issue}. The claim holds no files, and is deleted if the run ends without a pull request.` }, command);
     let pushError: unknown;
@@ -318,12 +322,25 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     let refs: Map<string, string>;
     try {
       refs = await remoteRefs(run, remote);
-    } catch {
-      return notClaimed(`the branch ${branch} could not be pushed to the remote ${remote}. ${words(pushError)}`);
+    } catch (err) {
+      // Not known either way: the claim stays `claiming`, read again before a delivery, at the run's end and at a restart.
+      return report(run.id, "Reading the remote after its claim's push failed")(err);
     }
+    await resolve(run, held(run.id) ?? onRemote(run.id)!, refs, `the branch ${branch} could not be pushed to the remote ${remote}. ${words(pushError)}`);
+  };
+
+  /**
+   * What became of a claim's push whose answer was a failure or never came, from the remote as it is now: claimed when
+   * it has this run's lock or named branch, else given way to the lock's holder, else not claimed (`failure`, in words).
+   */
+  const resolve = async (run: Run, c: HeldClaim, refs: ReadonlyMap<string, string>, failure: string): Promise<void> => {
+    const { issue, remote, branch, commit } = c;
+    const lock = lockBranch(issue);
+    const notClaimed = (why: string): void => record(run, "not_claimed", { issue, detail: `Botbench could not tell other workbenches that you started on issue #${issue}: ${why} The run goes on as usual.` });
+    const there = [branch, lock].filter((b) => refs.get(b) === commit);
+    if (there.length > 0) return record(run, "claimed", { issue, remote, branch, commit, detail: `Botbench pushed ${there.length === 1 ? "the branch" : "the branches"} ${there.join(" and ")} to the remote ${remote}, so other workbenches can see you started on issue #${issue}. The claim holds no files, and is deleted if the run ends without a pull request.` }, `git push --atomic ${remote} ${commit}:refs/heads/${lock} ${commit}:refs/heads/${branch}`);
     const lockAt = refs.get(lock);
-    if (lockAt === commit) return claimed(`the branches ${branch} and ${lock}`, pushCommand);
-    if (lockAt === undefined) return notClaimed(`the branch ${branch} could not be pushed to the remote ${remote}. ${words(pushError)}`);
+    if (lockAt === undefined) return notClaimed(failure);
     const holder = holderOf(refs, issue, lockAt);
     if (holder !== null && ownWorkbenches(db).has(holder.workbench)) return notClaimed(`run ${holder.run} of this workbench already holds the claim on issue #${issue}.`);
     const taken = holder === null ? undefined : takenOver(db, run.id).get(holder.branch);
@@ -338,30 +355,32 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
       return;
     }
     const mine = parseClaimBranch(branch)!;
-    record(run, "withdrawn", { issue, remote, branch, commit, detail: `${holderWords(holder, issue, mine)}, so this run stopped: when two workbenches start on one issue, the earliest claim goes ahead. The remote refused this workbench's claim, so nothing of this run was pushed.${unknownHolderHelp(holder, issue)}` }, pushCommand);
-    o.stopRun?.(run.id);
+    record(run, "withdrawn", { issue, remote, branch, commit, detail: `${holderWords(holder, issue, mine)}, so this run stopped: when two workbenches start on one issue, the earliest claim goes ahead. The remote refused this workbench's claim, so nothing of this run was pushed.${unknownHolderHelp(holder, issue)}` }, `git push --atomic ${remote} ${commit}:refs/heads/${lock} ${commit}:refs/heads/${branch}`);
+    try {
+      o.stopRun?.(run.id);
+    } catch (err) {
+      report(run.id, "Stopping it after its issue claim gave way")(err);
+    }
   };
 
   const release = async (run: Run): Promise<void> => {
     const c = onRemote(run.id);
-    if (c === null) return;
+    // Checked again when its turn comes: a Try again may have put a pull request on its way since.
+    if (c === null || !endedWithoutPullRequest(db, run)) return;
     const removed = await removeClaim(run, c);
     if (removed.gone) record(run, "released", { issue: c.issue, remote: c.remote, branch: c.branch, commit: c.commit, detail: `The run ended without a pull request. ${removed.said.replace(/\.$/, "")}: other workbenches no longer see issue #${c.issue} as started here.` }, removed.command ?? c.branch);
     else record(run, "kept", { issue: c.issue, remote: c.remote, branch: c.branch, commit: c.commit, detail: `The run ended without a pull request, but ${removed.said}` }, removed.command ?? c.branch);
   };
 
-  /** A claim whose push a stopped Botbench never saw end, for a run still going: claimed when the remote has its lock or named branch, else not claimed. */
+  /** A claim whose push a stopped Botbench never saw end, for a run still going: settled from the remote as it is now; left as it is while the remote cannot be read. */
   const settle = async (run: Run, c: HeldClaim): Promise<void> => {
     let refs: Map<string, string>;
     try {
       refs = await remoteRefs(run, c.remote);
     } catch (err) {
-      return record(run, "not_claimed", { issue: c.issue, detail: `Botbench stopped while it was telling other workbenches that you started on issue #${c.issue}, and could not read the remote ${c.remote} again after its restart: ${words(err)} The run goes on as usual.` });
+      return report(run.id, "Reading the remote again for its claim")(err);
     }
-    const lock = lockBranch(c.issue);
-    const there = [c.branch, lock].filter((b) => refs.get(b) === c.commit);
-    if (there.length > 0) return record(run, "claimed", { issue: c.issue, remote: c.remote, branch: c.branch, commit: c.commit, detail: `Botbench pushed ${there.join(" and ")} to the remote ${c.remote}, so other workbenches can see you started on issue #${c.issue}. The claim holds no files, and is deleted if the run ends without a pull request.` }, `git push --atomic ${c.remote} ${c.commit}:refs/heads/${lock} ${c.commit}:refs/heads/${c.branch}`);
-    record(run, "not_claimed", { issue: c.issue, detail: `Botbench stopped while it was telling other workbenches that you started on issue #${c.issue}, and the remote ${c.remote} did not take the claim. The run goes on as usual.` });
+    await resolve(run, c, refs, `Botbench stopped while it was pushing the claim, and the remote ${c.remote} did not take it.`);
   };
 
   const beforeSend = async (runId: number, when: "push" | "pull_request", branch: string): Promise<string | null> => {
@@ -370,6 +389,13 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     const last = claimSteps(db, runId).at(-1);
     const nothing = when === "push" ? `Botbench did not push the branch ${branch} or open a pull request` : `Botbench opened no pull request: the branch ${branch} it pushed stays on the remote, withdrawn, and no pull request is opened from it`;
     if (last?.step === "withdrawn") return `This run gave way to an earlier claim on issue #${last.issue}, so ${nothing}. ${last.detail}`;
+    // A push whose end was not known is settled first: it may have lost to another workbench's lock.
+    const pending = onRemote(runId);
+    if (pending?.step === "claiming") {
+      await settle(run, pending);
+      const now = claimSteps(db, runId).at(-1);
+      if (now?.step === "withdrawn") return `This run gave way to an earlier claim on issue #${now.issue}, so ${nothing}. ${now.detail}`;
+    }
     const c = held(runId);
     if (c === null) return null;
     let verdict: ReturnType<typeof lockLetsGo>;
