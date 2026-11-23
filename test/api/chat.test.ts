@@ -9,6 +9,7 @@ import { createTurns, SCRATCH_DIR, TurnError } from "../../src/api/turns.ts";
 import { setChatWebAccess } from "../../src/approvals/web-access.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
+import { listChats, recordChat } from "../../src/engine/chats.ts";
 import { openStore, now } from "../../src/store/db.ts";
 import { usageReport } from "../../src/usage.ts";
 import { chatReplayDriver, type ChatReplay, type ChatSession, type ConstructedSession } from "../support/replay-chat.ts";
@@ -248,6 +249,36 @@ test("refused, with nothing sent: an agent that is not usable now, an unknown ag
   await assert.rejects(chat.send({ message: "Hi", conversation: [old], agents: [{ agent: "codex", model: null }] }), (err: unknown) => err instanceof TurnError && err.status === 409 && /Start a new chat/.test(err.message));
   assert.equal(Number(db.prepare("SELECT count(*) AS n FROM attempts").get()!.n), before + 1, "no attempt was started");
   assert.equal(agents.codex.started.length, 0);
+});
+
+test("each message's attempts are recorded as one chat, named by its first attempt; an empty conversation starts another; an attempt no chat started never joins one", async (t) => {
+  const { db, chat } = setup(t, { codex: ["chat", "compare"] });
+  const members = (id: number): number[] => listChats(db).find((c) => c.id === id)?.attempts ?? [];
+  // A first message to three agents at once: one chat, named by the first of the three attempts.
+  const round = await chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }, { agent: "grok", model: null }, { agent: "antigravity", model: null }] });
+  await settled(chat, round.map((r) => r.attemptId));
+  const ids = round.map((r) => r.attemptId);
+  const first = Math.min(...ids);
+  assert.deepEqual(listChats(db).map((c) => c.id), [first]);
+  assert.deepEqual(members(first), [...ids].sort((a, b) => a - b));
+  assert.equal(listChats(db)[0]!.title, QUESTION);
+  // A comparison, and a next message, sent with the conversation join the same chat.
+  const [compared] = await chat.send({ message: "", conversation: ids, agents: [{ agent: "codex", model: null }], compare: round[0]!.roundId! });
+  await settled(chat, [compared!.attemptId]);
+  const [next] = await chat.send({ message: "And one more?", conversation: [...ids, compared!.attemptId], agents: [{ agent: "grok", model: null }] });
+  await settled(chat, [next!.attemptId]);
+  assert.deepEqual(members(first), [...ids, compared!.attemptId, next!.attemptId].sort((a, b) => a - b));
+  assert.deepEqual(listChats(db)[0]!.agents, ["codex", "grok", "antigravity"]);
+  // New chat on the device: an empty conversation starts a chat of its own.
+  const [fresh] = await chat.send({ message: "Something else", conversation: [], agents: [{ agent: "grok", model: null }] });
+  await settled(chat, [fresh!.attemptId]);
+  assert.deepEqual(listChats(db).map((c) => c.id), [first, fresh!.attemptId]);
+  // A task's attempt sent as a conversation is not a chat's, and is never recorded as part of one.
+  const at = now();
+  const task = Number(db.prepare("INSERT INTO attempts (driver, model, status, created_at, updated_at) VALUES ('claude-code', NULL, 'ended', ?, ?)").run(at, at).lastInsertRowid);
+  recordChat(db, [task], []);
+  assert.equal(db.prepare("SELECT 1 FROM chat_members WHERE attempt_id = ?").get(task), undefined);
+  assert.equal(listChats(db).length, 2);
 });
 
 test("compare is refused for a round with fewer than two answers", async (t) => {

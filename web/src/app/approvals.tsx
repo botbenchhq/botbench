@@ -44,7 +44,7 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
     );
   }, [onSignedOut]);
 
-  // Counts what this same connection says changed a run or a task, for the column of runs and tasks: one stream a tab
+  // Counts what this same connection says changed a run or a task, for the column of chats and work: one stream a tab
   // serves both, so a wide screen opens no connection of its own (a browser holds only a few to one address).
   const [workChanges, setWorkChanges] = useState(0);
   useEffect(() => {

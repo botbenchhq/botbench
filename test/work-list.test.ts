@@ -3,14 +3,14 @@ import test from "node:test";
 import type { BoardGroup, BoardItem } from "../web/src/api/client.ts";
 import { countLine, matching, workRows } from "../web/src/app/work-list.ts";
 
-// What the column of runs and tasks beside a wide screen lists and says, decided without a browser, from rows shaped
+// What the column of chats and work beside a wide screen lists and says, decided without a browser, from rows shaped
 // as /api/board sends them.
 
 const task = (id: number, title: string, status: "awaiting_decision" | "building" | "failed", updatedAt: string, waitingOnApproval = false): BoardItem => ({
-  kind: "task", id, repo: "/tmp/api", title, status, reason: null, checks: null, waitingOnApproval, resuming: false, createdAt: updatedAt, updatedAt,
+  kind: "task", id, repo: "/tmp/api", title, status, reason: null, checks: null, waitingOnApproval, resuming: false, discardable: false, branch: null, pullRequest: null, createdAt: updatedAt, updatedAt,
 });
 const run = (id: number, title: string, updatedAt: string): BoardItem => ({
-  kind: "run", id, repo: "/tmp/api", title, status: "awaiting_plan_approval", reason: null, attemptId: 1, taskCount: 2, finishedCount: 0, readyCount: 0, decidedCount: 0, waitingOnApproval: false, mode: "manual", outsideText: false, createdAt: updatedAt, updatedAt,
+  kind: "run", id, repo: "/tmp/api", title, status: "awaiting_plan_approval", reason: null, attemptId: 1, taskCount: 2, finishedCount: 0, readyCount: 0, decidedCount: 0, waitingOnApproval: false, mode: "manual", outsideText: false, cancellable: false, branch: null, pullRequest: null, createdAt: updatedAt, updatedAt,
 });
 const groups = (needs: BoardItem[], running: BoardItem[], finished: BoardItem[], finishedTotal = finished.length): BoardGroup[] => [
   { name: "needs-you", total: needs.length, items: needs },
@@ -55,4 +55,12 @@ test("the count line says in words how many are shown, by kind, and of how many 
   const cut = workRows(groups([], [task(5, "Older work at work", "building", "2026-10-01T10:00:00Z")], [task(4, "Old work", "failed", "2026-11-01T10:00:00Z")], 120));
   assert.equal(countLine(cut, "", 2), "2 tasks. The 119 oldest finished are not listed.");
   assert.equal(countLine(workRows(groups([], [], [task(4, "Old work", "failed", "2026-11-01T10:00:00Z")], 2)), "", 1), "1 task. The 1 oldest finished one is not listed.");
+});
+
+test("chats are listed with the work, newest change first, each opening on Chat, and counted in words with the rest", () => {
+  const chat = (id: number, title: string, updatedAt: string): BoardItem => ({ kind: "chat", id, title, named: false, agents: ["claude-code"], attempts: [id], createdAt: updatedAt, updatedAt });
+  const list = workRows([...groups([], [task(2, "Add rate limiting", "building", "2026-11-22T10:00:00Z")], []), { name: "chats", total: 2, items: [chat(4, "Why is the login slow?", "2026-11-23T10:00:00Z"), chat(3, "Name the export", "2026-11-21T10:00:00Z")] }]);
+  assert.deepEqual(list.rows.map((r) => [r.title, r.state, r.href]), [["Why is the login slow?", "Chat", "#/chats/4"], ["Add rate limiting", "Working", "#/tasks/2"], ["Name the export", "Chat", "#/chats/3"]]);
+  assert.equal(countLine(list, "", 3), "2 chats and 1 task");
+  assert.deepEqual(matching(list.rows, "login").map((r) => r.href), ["#/chats/4"]);
 });

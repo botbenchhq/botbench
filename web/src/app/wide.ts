@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * From this width a screen has the column of runs and tasks beside it, and Settings is two panes. Below it every screen
+ * From this width a screen has the column of chats and work beside it, and Settings is two panes. Below it every screen
  * is as it was. Approach from OpenMausBot src/components/settings/SettingsWindow.tsx: one media query decides which
  * layout is drawn, so the narrow layout's markup is left as it is rather than restyled.
  */

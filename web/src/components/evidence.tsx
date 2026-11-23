@@ -4,6 +4,7 @@ import { roundLabel } from "./command-rounds.ts";
 import { failureExtract } from "./failure-extract.ts";
 import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
+import { MarkdownView } from "./markdown-view.tsx";
 import { StatusBadge } from "./status.tsx";
 
 /** A duration in words with its unit, and as an ISO 8601 duration for the time element. */
@@ -192,7 +193,8 @@ function verdictWords(review: Review): string {
 /**
  * A task's review, under its checks: the verdict line and, in view under it, what the reviewer says it checked, or the
  * plain note that it did not say; the reviewer's own words are one tap away behind a disclosure. A review that did not
- * happen says why, in view. The reply and its Checked lines are the model's text, shown as text.
+ * happen says why, in view. The Checked lines are the model's text, shown as text; the reply is drawn with the safe
+ * markdown subset, which makes no link, image or element the text names.
  */
 export function ReviewEvidence({ review }: { review: Review }) {
   if (review.outcome !== "reviewed") {
@@ -235,11 +237,7 @@ export function ReviewEvidence({ review }: { review: Review }) {
         </summary>
         <div className="ds-disclosure__content ds-stack ds-gap-sm">
           {review.diffCut && <p>{`The diff was ${review.diffChars} characters long, and the reviewer was sent only its first part.`}</p>}
-          <figure className="ds-code-block">
-            <pre data-ds-content="" data-testid="review-text" className="ds-code-block__body">
-              <code>{review.text}</code>
-            </pre>
-          </figure>
+          <MarkdownView text={review.text} className="ds-stack ds-gap-sm" testId="review-text" />
         </div>
       </details>
     </div>

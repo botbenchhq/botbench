@@ -3,7 +3,7 @@ import { runWord } from "../components/run-status.ts";
 import { statusWord } from "../components/task-status.ts";
 
 /*
- * What the column of runs and tasks beside a wide screen lists and says, decided without a browser
+ * What the column of chats and work beside a wide screen lists and says, decided without a browser
  * (test/work-list.test.ts). It reads only what /api/board returns. Approach from OpenMausBot
  * src/components/Sidebar.tsx: the sidebar's own query, trimmed and matched case-blind against each row's title.
  */
@@ -11,7 +11,7 @@ import { statusWord } from "../components/task-status.ts";
 /** One row of the column: what it links to, its title and its state in words. */
 export interface WorkRow {
   key: string;
-  kind: "run" | "task";
+  kind: "run" | "task" | "chat";
   id: number;
   href: string;
   title: string;
@@ -29,7 +29,9 @@ export interface WorkRows {
 const row = (item: BoardItem): WorkRow =>
   item.kind === "run"
     ? { key: `run ${item.id}`, kind: "run", id: item.id, href: `#/runs/${item.id}`, title: item.title, state: runWord(item), updatedAt: item.updatedAt }
-    : { key: `task ${item.id}`, kind: "task", id: item.id, href: `#/tasks/${item.id}`, title: item.title, state: statusWord(item), updatedAt: item.updatedAt };
+    : item.kind === "chat"
+      ? { key: `chat ${item.id}`, kind: "chat", id: item.id, href: `#/chats/${item.id}`, title: item.title, state: "Chat", updatedAt: item.updatedAt }
+      : { key: `task ${item.id}`, kind: "task", id: item.id, href: `#/tasks/${item.id}`, title: item.title, state: statusWord(item), updatedAt: item.updatedAt };
 
 /** The board's groups as one list, newest change first: the column has no groups of its own. */
 export function workRows(groups: readonly BoardGroup[]): WorkRows {
@@ -46,13 +48,15 @@ export function matching(rows: readonly WorkRow[], query: string): WorkRow[] {
 
 const counted = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
-/** "2 runs and 3 tasks", "1 task": what the listed rows are, by kind. */
+/** "2 runs and 3 tasks", "1 task", "1 chat, 1 run and 2 tasks": what the listed rows are, by kind. */
 function kinds(rows: readonly WorkRow[]): string {
-  const runs = rows.filter((r) => r.kind === "run").length;
-  const tasks = rows.length - runs;
-  if (runs === 0) return counted(tasks, "task", "tasks");
-  if (tasks === 0) return counted(runs, "run", "runs");
-  return `${counted(runs, "run", "runs")} and ${counted(tasks, "task", "tasks")}`;
+  const parts = [
+    counted(rows.filter((r) => r.kind === "chat").length, "chat", "chats"),
+    counted(rows.filter((r) => r.kind === "run").length, "run", "runs"),
+    counted(rows.filter((r) => r.kind === "task").length, "task", "tasks"),
+  ].filter((part) => !part.startsWith("0 "));
+  if (parts.length === 0) return counted(0, "task", "tasks");
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 /** The search field's count line: how many rows are shown, in words, and of how many when a search narrows them. */

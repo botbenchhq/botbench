@@ -297,7 +297,7 @@ export const primaries = async (page: Page): Promise<(string | null)[]> => {
 /**
  * The design system, checked on the rendered page: its structural rules (one primary action per view, disclosure
  * limits, cards, badges, emoji, stock phrases, controls that use no system component) find nothing; the view has one h1, in its page header; every colour drawn is one of its tokens; there is no
- * gradient or blur, no shadow except on a dialog or a toast, and no corner off its radius scale; its typefaces are the theme's; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
+ * gradient or blur, no shadow except on a dialog, a toast or a menu, and no corner off its radius scale; its typefaces are the theme's; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
  * screen has its data, and again with each dialog open: an open dialog is a view of its own.
  */
 export async function checkDesign(page: Page, screen: string): Promise<void> {
@@ -328,8 +328,8 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
           colours[style[property]] ??= `${property} of ${describe(el)}${pseudo ?? ""}`;
         }
         if (style.backgroundImage !== "none") decorations.push(`background-image ${style.backgroundImage} on ${describe(el)}${pseudo ?? ""}`);
-        // The system's one shadow is on its overlays: a dialog, and a toast, which floats over the page the same way.
-        if (style.boxShadow !== "none" && el.tagName !== "DIALOG" && !el.classList.contains("ds-toast")) decorations.push(`box-shadow on ${describe(el)}${pseudo ?? ""}`);
+        // The system's one shadow is on its overlays: a dialog, a toast and a menu, which float over the page the same way.
+        if (style.boxShadow !== "none" && el.tagName !== "DIALOG" && !el.classList.contains("ds-toast") && !el.classList.contains("ds-menu")) decorations.push(`box-shadow on ${describe(el)}${pseudo ?? ""}`);
         if (style.textShadow !== "none") decorations.push(`text-shadow on ${describe(el)}`);
         if (style.backdropFilter !== "none" || style.filter !== "none") decorations.push(`filter on ${describe(el)}`);
         radii[style.borderTopLeftRadius] ??= `${describe(el)}${pseudo ?? ""}`;
@@ -380,7 +380,7 @@ export async function checkDesign(page: Page, screen: string): Promise<void> {
   const offPalette = Object.entries(found.colours).filter(([colour]) => !PALETTE[mode].includes(colour) && colour !== "rgba(0, 0, 0, 0)" && colour !== "transparent");
   expect(offPalette, `${screen}: colours that are not tokens of the design system in ${mode} mode`).toEqual([]);
   expect(Object.keys(found.colours).length, `${screen}: the check saw colours`).toBeGreaterThan(2);
-  expect(found.decorations, `${screen}: gradients, blur, or a shadow on anything but a dialog or a toast`).toEqual([]);
+  expect(found.decorations, `${screen}: gradients, blur, or a shadow on anything but a dialog, a toast or a menu`).toEqual([]);
   expect(Object.entries(found.radii).filter(([radius]) => radius !== "0px" && !RADII.includes(radius)), `${screen}: corners off the radius scale`).toEqual([]);
   expect(found.small, `${screen}: touch targets under 44px`).toEqual([]);
   // The theme's own typefaces, as its tokens name them: the platform's, which Botbench does not load or substitute.

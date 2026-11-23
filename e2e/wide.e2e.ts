@@ -9,7 +9,7 @@ import { initRepo, write } from "../test/support/repo.ts";
 import { checkDesign, expect, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// The column of runs and tasks beside a wide screen, and the two-pane Settings, at 1280×800; and the same screens at
+// The column of chats and work beside a wide screen, and the two-pane Settings, at 1280×800; and the same screens at
 // 390×844, where neither is drawn. No model turn: before Botbench starts, runs and tasks are put in its real store
 // through the engine itself (a task's work is committed to its real branch), and the real Botbench process shows them.
 
@@ -49,9 +49,14 @@ const test = base.extend<{ dir: string; seeded: Seeded; botbench: Botbench }>({
     const committed = await commitWork({ path: worktree.path, message: `Botbench task ${ready.id}` });
     if (!committed.committed) throw new Error("nothing was committed");
     moveTask(db, ready.id, "awaiting_decision", { headCommit: committed.commit, checks: "none" });
+    // Each later row is written at a later millisecond, so newest first has one order (rows written in the same
+    // millisecond tie, and a tie keeps the board's group order).
+    const later = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5));
+    await later();
     const plannedTitle = "Plan the billing export";
     const run = createRun(db, { repo, prompt: plannedTitle, baseCommit });
     storePlan(db, run.id, [{ title: "Write the exporter", criteria: ["It writes a CSV file"] }]);
+    await later();
     const newestTitle = "Cancel the old cron job";
     const newest = createTask(db, { repo, prompt: newestTitle });
     moveTask(db, newest.id, "cancelled", { reason: "Cancelled by the owner." });
@@ -65,8 +70,8 @@ const test = base.extend<{ dir: string; seeded: Seeded; botbench: Botbench }>({
   },
 });
 
-const column = (page: Page): Locator => page.getByRole("region", { name: "Runs and tasks" });
-const search = (page: Page): Locator => column(page).getByLabel("Search runs and tasks");
+const column = (page: Page): Locator => page.getByRole("region", { name: "Chats and work" });
+const search = (page: Page): Locator => column(page).getByLabel("Search chats and work");
 const count = (page: Page): Locator => column(page).getByTestId("work-column-count");
 const rows = (page: Page): Locator => column(page).locator(".ds-list__link");
 const ALL = FILLERS + 3;
@@ -74,7 +79,7 @@ const ALL = FILLERS + 3;
 test.describe("at 1280×800", () => {
   test.use({ viewport: WIDE });
 
-  test("every screen but Settings has the column of runs and tasks, newest first with their states in words; its search filters by title as you type, counts in words, says when nothing matches and clears; opening a row keeps the column, its search and its scroll position, and marks the row current", async ({ page, botbench, seeded }) => {
+  test("every screen but Settings has the column of chats and work, newest first with their states in words; its search filters by title as you type, counts in words, says when nothing matches and clears; opening a row keeps the column, its search and its scroll position, and marks the row current", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
     // Chat, the home screen, with the column beside it.
     await expect(rows(page)).toHaveCount(ALL);
@@ -88,10 +93,10 @@ test.describe("at 1280×800", () => {
     await expect(rows(page).nth(3)).toContainText("Failed");
     await expect(rows(page).nth(2)).toHaveAttribute("href", `#/tasks/${seeded.ready.id}`);
     await expect(rows(page).nth(1)).toHaveAttribute("href", `#/runs/${seeded.planned.id}`);
-    // Nothing in it is about chats: no endpoint lists them.
-    await expect(column(page).getByText(/chat/i)).toHaveCount(0);
+    // No chat was had here, so none is listed (test/work-list.test.ts lists chats with the work).
+    await expect(column(page).locator('a[href^="#/chats/"]')).toHaveCount(0);
     await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(0);
-    await checkDesign(page, "chat, wide, with the column of runs and tasks");
+    await checkDesign(page, "chat, wide, with the column of chats and work");
 
     // Typing filters by title, in any case, and the count says how many of how many.
     await search(page).pressSequentially("LOGIN");
@@ -102,7 +107,7 @@ test.describe("at 1280×800", () => {
     await search(page).fill("no such title");
     await expect(rows(page)).toHaveCount(0);
     await expect(column(page).locator("ul")).toHaveCount(0);
-    await expect(column(page).getByTestId("work-column-empty")).toHaveText("No title has those words. Clear the search to see every run and task.");
+    await expect(column(page).getByTestId("work-column-empty")).toHaveText("No title has those words. Clear the search to see them all.");
     await expect(count(page)).toHaveText(`None of ${ALL} match "no such title"`);
     await checkDesign(page, "chat, wide, the column searched with no match");
     // Clear the search: every row comes back, and the field keeps the focus.
@@ -135,7 +140,7 @@ test.describe("at 1280×800", () => {
     // Another row: the run opens beside the column, and the mark moves to it.
     await search(page).fill("billing");
     await rows(page).first().click();
-    await expect(page.getByRole("heading", { level: 1, name: seeded.planned.title })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: `Run ${seeded.planned.id}` })).toBeVisible();
     await expect(rows(page).first()).toHaveAttribute("aria-current", "true");
     await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(1);
     await checkDesign(page, "run, wide, opened from the column");
@@ -167,7 +172,7 @@ test.describe("at 1280×800", () => {
     await expect(page.getByRole("group", { name: "Appearance" })).toHaveCount(0);
     await expect(page.getByTestId("devices")).toHaveCount(0);
     await expect(page.getByTestId("settings-links")).toHaveCount(0);
-    await expect(page.getByRole("region", { name: "Runs and tasks" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Chats and work" })).toHaveCount(0);
     await checkDesign(page, "settings, wide, Agents");
 
     await sections.filter({ hasText: "Appearance" }).click();
@@ -221,7 +226,7 @@ test.describe("at 1280×800", () => {
 test.describe("at 390×844", () => {
   test.use({ viewport: PHONE });
 
-  test("no column of runs and tasks and no section list: the screens and the one-column Settings, with its rows to Permissions and Usage, are as before", async ({ page, botbench, seeded }) => {
+  test("no column of chats and work and no section list: the screens and the one-column Settings, with its rows to Permissions and Usage, are as before", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
     await expect(page.getByTestId("work-column")).toHaveCount(0);
     await expect(page.locator(".ds-split-panel")).toHaveCount(0);

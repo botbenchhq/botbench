@@ -10,7 +10,7 @@ import { Alert } from "./header.tsx";
  * current, the list kept in place while only the screen beside it changes). It reads only /api/board, again whenever
  * live updates say a run or a task changed.
  *
- * Past chats are not listed: nothing the server offers lists them, so the column says nothing about chats at all.
+ * Chats are listed with runs and tasks: the board sends each with the rest (src/api/board.ts), and a chat opens on Chat.
  *
  * Approach from OpenMausBot src/components/SidebarSimpleTop.tsx: the search sits at the top of the list it filters,
  * and Escape empties it (a search input's own key in the browser).
@@ -26,7 +26,7 @@ export function WorkColumn({ current, query, onQuery, onSignedOut }: { current: 
   const load = useCallback((): void => {
     const read = ++reads.current;
     getBoard().then(
-      (groups) => {
+      ({ groups }) => {
         if (read !== reads.current) return;
         setList(workRows(groups));
         setFailed(null);
@@ -34,7 +34,7 @@ export function WorkColumn({ current, query, onQuery, onSignedOut }: { current: 
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
         if (read !== reads.current) return;
-        setFailed(err instanceof ApiError ? `The runs and tasks could not be read. ${err.message}` : "The runs and tasks could not be read: Botbench could not be reached.");
+        setFailed(err instanceof ApiError ? `The chats and work could not be read. ${err.message}` : "The chats and work could not be read: Botbench could not be reached.");
       },
     );
   }, [onSignedOut]);
@@ -42,7 +42,7 @@ export function WorkColumn({ current, query, onQuery, onSignedOut }: { current: 
 
   const shown = list === null ? [] : matching(list.rows, query);
   return (
-    <section className="ds-split-panel__list" aria-label="Runs and tasks" data-testid="work-column">
+    <section className="ds-split-panel__list" aria-label="Chats and work" data-testid="work-column">
       <div className="ds-stack ds-gap-md p-md">
         {failed !== null && (
           <Alert tone="error" role="alert">
@@ -52,16 +52,16 @@ export function WorkColumn({ current, query, onQuery, onSignedOut }: { current: 
         {list === null ? (
           failed === null && (
             <p role="status" className="ds-spinner">
-              Reading runs and tasks.
+              Reading chats and work.
             </p>
           )
         ) : list.rows.length === 0 ? (
-          <p data-testid="work-column-none">No runs or tasks yet. Each one you start is listed here.</p>
+          <p data-testid="work-column-none">Nothing yet. Each chat, run and task you start is listed here.</p>
         ) : (
           <>
             <div className="ds-search-field">
               <label className="ds-search-field__label" htmlFor={`${id}-search`}>
-                Search runs and tasks
+                Search chats and work
               </label>
               <div className="ds-search-field__box">
                 <input ref={input} className="ds-field__control ds-search-field__input" type="search" id={`${id}-search`} placeholder="Words in a title" autoComplete="off" value={query} onChange={(e) => onQuery(e.currentTarget.value)} />
@@ -81,7 +81,7 @@ export function WorkColumn({ current, query, onQuery, onSignedOut }: { current: 
               </p>
             </div>
             {shown.length === 0 ? (
-              <p data-testid="work-column-empty">No title has those words. Clear the search to see every run and task.</p>
+              <p data-testid="work-column-empty">No title has those words. Clear the search to see them all.</p>
             ) : (
               <ul className="ds-list ds-list--dense">
                 {shown.map((r) => (

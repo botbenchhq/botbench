@@ -1664,4 +1664,38 @@ CREATE TRIGGER task_notes_no_delete BEFORE DELETE ON task_notes
 BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
 `,
   },
+  {
+    // The lists' own state, per installation (src/api/board.ts, src/engine/chats.ts). `chat_members`: which chat each
+    // chat attempt belongs to, a chat being named by its first attempt (`chat_id`), recorded as each message is sent;
+    // append-only, like the chat itself. `chat_titles`: the name the owner gave a chat, one line, trimmed, at most 80
+    // characters; no row means the chat is called by its first message. `hidden_rows`: a run, a task or a chat the owner
+    // hid from the Work list. Renaming, hiding and showing change only these two tables: no run, task, chat, branch or
+    // copy is changed or deleted by them. This migration adds its own tables and changes no other.
+    name: "list_rows",
+    sql: `
+CREATE TABLE chat_members (
+  attempt_id INTEGER PRIMARY KEY REFERENCES chat_attempts (attempt_id),
+  chat_id INTEGER NOT NULL REFERENCES chat_attempts (attempt_id),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX chat_members_chat ON chat_members (chat_id, attempt_id);
+CREATE TRIGGER chat_members_no_update BEFORE UPDATE ON chat_members
+BEGIN SELECT RAISE(ABORT, 'chat members are append-only'); END;
+CREATE TRIGGER chat_members_no_delete BEFORE DELETE ON chat_members
+BEGIN SELECT RAISE(ABORT, 'chat members are append-only'); END;
+
+CREATE TABLE chat_titles (
+  chat_id INTEGER PRIMARY KEY REFERENCES chat_attempts (attempt_id),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 80 AND title = trim(title) AND instr(title, char(10)) = 0),
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE hidden_rows (
+  kind TEXT NOT NULL CHECK (kind IN ('run', 'task', 'chat')),
+  item_id INTEGER NOT NULL CHECK (item_id >= 1),
+  hidden_at TEXT NOT NULL,
+  PRIMARY KEY (kind, item_id)
+);
+`,
+  },
 ];
