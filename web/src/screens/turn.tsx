@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type RunSourceRef, type StoredEvent } from "../api/client.ts";
+import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type RunSourceRef, type StoredEvent, type UpdateWithMain } from "../api/client.ts";
+import { MAIN_CHOICE_WORDS } from "../app/main-words.ts";
 import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, limitName, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
@@ -191,6 +192,8 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   // What a builder's usage limit does in the run: Wait unless the owner chooses Switch for this run. Not remembered on
   // the device: each run starts at Wait, and the run keeps what it was started with.
   const [onLimit, setOnLimit] = useState<OnLimit>("wait");
+  // What happens when main moved on as a task is handed to the owner: Ask unless chosen otherwise for this run. Not remembered.
+  const [updateWithMain, setUpdateWithMain] = useState<UpdateWithMain>("ask");
   /** Who the owner chose to build; Claude Code unless Codex was chosen here. Not remembered: each start chooses again. */
   const [builderPick, setBuilderPick] = useState<Builder | null>(null);
   /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
@@ -562,7 +565,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const send = (): void => {
     if (starting || showStop) return;
     // Only the commands shown in the list are sent, and the server grants nothing else.
-    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, onLimit, takeOver, builder: chosenBuilder, approvalLimitMinutes: approvalLimit });
+    const action = sendFor(facts, { preapproved: repository.listed?.commands ?? [], reviewer: review.choice(), delivery, oneTask, onLimit, updateWithMain, takeOver, builder: chosenBuilder, approvalLimitMinutes: approvalLimit });
     if (action.do === "focus") return promptRef.current?.focus();
     if (action.do === "blocked") return;
     if (action.do === "chat") return targets.ok ? sendChat(action.prompt, targets.targets, undefined, action.repository) : undefined;
@@ -662,6 +665,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
     limit: LIMIT_WORDS[onLimit].value,
     approvalLimit: limitName(approvalLimit),
+    main: MAIN_CHOICE_WORDS[updateWithMain].value,
     commands: commandsWords(repository.listed?.commands.length ?? 0),
     models: chatting ? agentRowValue(agents.choice.pick) : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
@@ -962,6 +966,8 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
             setDelivery,
             onLimit,
             setOnLimit,
+            updateWithMain,
+            setUpdateWithMain,
             oneTask,
             setOneTask: setChosenOneTask,
             approvalLimit,

@@ -13,31 +13,27 @@
   <a href="docs/media/botbench-demo.mp4"><img src="docs/media/botbench-demo-thumbnail.png" alt="A still from the demo video: a task ready for review, with its four changed files, its branch botbench/maya/run-1/task-1, and Your decision: 1 of 1 check passed, Codex found nothing to fix, Accept and Reject" width="100%"></a>
 </p>
 
-<p align="center"><sub><a href="docs/media/botbench-demo.mp4">Watch the 35-second demo (MP4)</a>: a real run on a small demo shop, recorded at 1440×900; the minute of work in the middle is shown five times faster.</sub></p>
+<p align="center"><sub><a href="docs/media/botbench-demo.mp4">Watch the 35-second demo (MP4)</a>: a real run on a small demo shop, recorded at 1440×900; the minute of work in the middle plays five times faster.</sub></p>
 
 **Delegate.** Hand a task, or a run of several, to Claude Code or Codex. Each works in its own copy of your repository, on its own branch, under the mode you choose.
 
 **Verify.** Your repository's checks run on the work, and another vendor's agent can review it. You read the branch, the checks and the review, then accept or reject.
 
-**Coordinate.** See what your teammates' workbenches are doing on the same repository, claim an issue so only one of you takes it (a setting you turn on), and ask a paired workbench a question. Every message between workbenches is one its owner approved.
+**Coordinate.** See what your teammates' workbenches are doing on the same repository, claim an issue so only one of you takes it (a setting you turn on for a repository), check two changes together before either is merged, and, once paired, ask the other workbench a question. Every message between workbenches is one its owner approved.
 
 [Quickstart](#quickstart) · [Documentation](#where-to-go-next) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going)
 
-Your coding agents are powerful. But as you add more agents, tools and teammates, keeping their work organized, and making sure it all fits together, becomes a job of its own.
+As you add more agents, tools and teammates, keeping their work organized, and making sure it all fits together, becomes a job of its own.
 
 Botbench is a local-first workbench for the coding agents you already use. Hand them tasks, let them work within your policies, and come back to git branches, diffs, check results and review evidence, instead of piecing together what happened across terminals.
 
-**Work on your own.** Give agents tasks in separate working copies, choose how much supervision they need, and inspect the work before you accept it.
-
-**Work with a teammate.** Separately run Botbench installations already see each other's work, can claim a GitHub issue so only one of them takes it (a setting you turn on for a repository), can check two changes together before either is merged, and, once paired, can send each other questions and answers that you approve before they leave.
-
-**Where it is going.** Connect your workbench with a colleague's, so your agents and theirs coordinate who does what, exchange the context each of you chose to share, manage what depends on what, and deliver work that fits together, while each person keeps control of their own agents, environments and permissions. Only its first piece is built: two paired workbenches exchange questions and answers, each one approved by its owner. [Where it is going](#where-it-is-going) says what is planned.
+**Where it is going.** Connect your workbench with a colleague's, so your agents and theirs coordinate the work between them, while each person keeps control of their own agents, environments and permissions. Only its first piece is built: two paired workbenches exchange questions and answers, each one approved by its owner. [Where it is going](#where-it-is-going) says what is planned.
 
 Your agents. Their agents. One coordinated workflow.
 
 Walk away. Come back to the branch.
 
-> **Current availability.** Early, and macOS only. Claude Code, signed in with your own subscription, plans and builds. Codex can build too, in its own sandbox, and Codex, Grok and Antigravity review and chat. Messages sent directly between workbenches work in a first form: one paired workbench per installation, questions and answers only, with both listeners on this Mac's loopback address or a private network; they have been tested with two installations on one Mac, not across two Macs. A container for each task is in development. Each task works in a separate copy of your repository, which separates changes and is not a security boundary; commands are confined by the macOS sandbox, which is not a virtual machine or a container ([Is it a sandbox?](#is-it-a-sandbox)). It is not a hosted service, and it never merges a pull request.
+> **Current availability.** Early, and macOS only. Claude Code, signed in with your own subscription, plans and builds. Codex can build too, in its own sandbox, and Codex, Grok and Antigravity review and chat. Messages sent directly between workbenches work in a first form: one paired workbench per installation, questions and answers only, with both listeners on this Mac's loopback address or a private network; they have been tested with two installations on one Mac, not across two Macs. A repository can run its commands in one Docker container per task (a setting, off by default). Each task works in a separate copy of your repository, which separates changes and is not a security boundary; commands are confined by the macOS sandbox, which is not a virtual machine or a container ([Is it a sandbox?](#is-it-a-sandbox)). It is not a hosted service, and it never merges a pull request.
 
 <!-- CAPTURE: a 20 to 30 second screen recording at phone size, from a real task in a practice repository: type the task in the message box, Send, the approval card appears, Allow once, the task reads Ready for review with its changed file and branch, Accept. Upload it to GitHub and put its <video> tag here, above the screenshots. -->
 
@@ -47,33 +43,33 @@ One coding agent in one terminal is easy to follow. Several are not. You answer 
 
 Add a teammate who hands work to their own agents, and the two of you become the messengers. One agent builds an API; the other developer's agent needs that contract for the frontend; you and your teammate carry it from one conversation to the other. You find out you both took the same issue when the second pull request opens, and that two changes do not fit when both are merged.
 
-Botbench is built for both problems. For the first, it does a good deal today. For the second, it does the first steps, and the larger part is still to come. This page keeps the two apart.
+Botbench is built for both problems: it does a good deal for the first today, and only the first steps for the second, with the larger part still to come. This page keeps the two apart.
 
 ## Two ways to use it
 
 ### Your workbench
 
-Start a task, or a run of several, from a browser on the Mac or on your phone. Each task works in its own copy of your repository, on its own branch; your files and your branch are not touched. You choose how much each run needs you: manual, semi-autonomous or fully autonomous. An action that reaches outside the task's copy waits for your answer, and a short list of dangerous ones always asks, or is refused when nobody is there. Botbench then runs your repository's checks and keeps their output, and another vendor's agent can review the change. You come back to a branch, its diff, the checks and the transcript, and you accept it or reject it.
+Start a task, or a run of several, from a browser on the Mac or on your phone. Each task works in its own copy of your repository, on its own branch; Botbench does not touch your files or your branch. You choose how much each run needs you: manual, semi-autonomous or fully autonomous. An action that reaches outside the task's copy waits for your answer, and a short list of dangerous ones always asks, or is refused when nobody is there. Botbench then runs your repository's checks and keeps their output, and another vendor's agent can review the change. You come back to a branch, its diff, the checks and the transcript, and you accept it or reject it.
 
 ### Your team's coordination
 
-Two developers, each with their own Mac, their own Botbench and their own agents, on one GitHub repository. Neither gives the other access to their machine. What Botbench does about that today:
+Two developers work on one GitHub repository, each with their own Mac, their own Botbench and their own agents, and neither gives the other access to their machine. What Botbench does about that today:
 
 - **Branches never clash.** Each workbench puts its name in its branches (`botbench/<workbench>/run-N/task-M`). Change the name in Settings → Workbench.
 - **You see each other's work.** The Work screen shows, read only, the other workbenches' open pull requests and pushed branches on the same remote, read with your own `gh` and `git`.
-- **You are warned before you overlap.** Under the message box, when another workbench already has a pull request open for the issue you attached, or has started on it. Under Your decision, when another workbench's open pull request changes the same files as your task, so the two may conflict when both are merged.
+- **You are warned before you overlap.** The warning appears under the message box when another workbench already has a pull request open for the issue you attached, or has started on it, and under Your decision when another workbench's open pull request changes the same files as your task, so the two may conflict when both are merged.
 - **You can ask each other directly, once paired.** One owner makes an invite in Settings → Paired workbench, the other pastes it, you compare fingerprints, and both confirm. Then either of you, or your agent with your Send, can ask the other workbench a question about the repository you share, and the other owner answers it, gives it to their Claude Code, or dismisses it. Every message that leaves is one you approved, and every message that arrives is a card for its owner and runs nothing. [Pair two workbenches](docs/pairing.md) walks through it.
 - **Only one of you takes an issue, if you choose.** With `"claimIssues": true` for the repository in each settings file, a run from an issue that opens pull requests claims the issue as it starts, with two empty branches on the remote. The remote takes only the first claim; the other workbench's run stops and says who started first. Nothing is pushed for a run that keeps its work on your Mac.
 
-Apart from a claim, nothing is written to GitHub for this, and nothing another workbench wrote is put in a prompt to your agents unless you give a paired workbench's message to Claude Code yourself, as outside text. It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. Checking your task together with another workbench's open pull request is built: on a task that is ready for review, you ask for it, and Botbench merges the two in a temporary copy and runs the repository's own checks on the merge (`src/engine/combined.ts`). What it can and cannot tell you is under [What works today](#what-works-today).
+Apart from a claim, Botbench writes nothing to GitHub for this, and puts nothing another workbench wrote in a prompt to your agents unless you give a paired workbench's message to Claude Code yourself, as outside text. It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. You can also check your task together with another workbench's open pull request: on a task that is ready for review, you ask for it, and Botbench merges the two in a temporary copy and runs the repository's own checks on the merge (`src/engine/combined.ts`), so you learn that two changes do not fit before either is merged. A passing check proves only what the check covers; what else it can and cannot tell you is under [What works today](#what-works-today).
 
 <!-- CAPTURE: a screenshot from two real installations of the task screen's "Your decision" with the line "<workbench>'s open pull request #<n> also changes <files>, so the two may conflict when both are merged." -->
 
 ## Proof, not promises
 
-Every task ends in things you can inspect: a branch, its diff, the output of your own checks, and the transcript of what the agent did and what you answered. A review by another vendor's agent is shown as a model's opinion, never as a check.
+Every task ends in things you can inspect: a branch, its diff, the output of your own checks, and the transcript of what the agent did and what you answered. Botbench shows a review by another vendor's agent as a model's opinion, never as a check.
 
-Botbench is built with Botbench where it can be. [Pull request #113](https://github.com/jon-lange/botbench/pull/113) is one it pushed and opened: its description is the task's evidence, from what was asked to the review.
+Botbench is built with Botbench where it can be. [Pull request #113](https://github.com/botbenchhq/botbench/pull/113) is one it pushed and opened: its description is the task's evidence, from what was asked to the review.
 
 ### The acceptance test
 
@@ -83,17 +79,15 @@ Botbench is built with Botbench where it can be. [Pull request #113](https://git
 npx playwright test --config e2e/playwright.config.ts e2e/northstar.e2e.ts
 ```
 
-It needs Claude Code installed and signed in, since it drives the real one on its cheapest model, and Chrome. gh need not be signed in: its answers are replayed from output captured once from the real gh, and so is the reviewer's. It does not run in GitHub CI.
-
-When two workbenches change the same repository, Botbench can merge your ready task with a teammate's open pull request in a temporary copy and run the repository's own checks on the result, so you learn that two changes do not fit before either is merged. A passing check proves only what the check covers.
+It needs Chrome, and Claude Code installed and signed in, since it drives the real one on its cheapest model. gh need not be signed in: the test replays its answers from output captured once from the real gh, and replays the reviewer's too. It does not run in GitHub CI.
 
 ### What changes
 
 | Without Botbench | With Botbench |
 |---|---|
 | You keep a terminal open and answer each permission prompt as it comes. | The agent uses its tools inside the task's own copy of your repository without asking; the shell commands it runs there are confined by the macOS sandbox. An action that reaches outside the copy waits as a card you can answer from your phone. |
-| The agent edits your checkout, and you sort out what changed. | Each task works in its own copy on its own branch. Your files and your branch are not touched. |
-| "Done" is the agent's word. | Botbench runs your repository's checks and keeps their output. Another vendor's agent can review the change; its review is shown as a model's opinion, never as a check. |
+| The agent edits your checkout, and you sort out what changed. | Each task works in its own copy on its own branch. Botbench does not touch your files or your branch. |
+| "Done" is the agent's word. | Botbench runs your repository's checks and keeps their output. Another vendor's agent can review the change; Botbench shows its review as a model's opinion, never as a check. |
 | Two developers find out they took the same issue when the second pull request opens. | Each workbench's branches carry its own name, and you see the other workbenches' open pull requests and pushed branches. When you start, Botbench says if another workbench already has a pull request for your issue; when you review, it says if another workbench's open pull request changes the same files. |
 
 ## What it looks like
@@ -110,7 +104,7 @@ Real screens from two Botbench installations on one Mac, named maya and theo, wo
     <td width="50%"><img src="docs/images/permissions-check.png" alt="Settings, Permissions, Check a command: git push origin main in acme-shop asks you in Manual and Semi-autonomous, and is refused in Fully autonomous, each with its rule, git-push; below, the Activity log"></td>
   </tr>
   <tr>
-    <td><b>Proof.</b> The repository's own check passed, and Codex, another vendor's agent, reviewed Claude Code's change and said what it checked. Its review is shown as a model's opinion, not a check.</td>
+    <td><b>Proof.</b> The repository's own check passed, and Codex, another vendor's agent, reviewed Claude Code's change and said what it checked. Botbench shows its review as a model's opinion, not a check.</td>
     <td><b>Control.</b> Check what a command would get before any agent runs it: here a push asks you, or is refused in a fully autonomous run.</td>
   </tr>
   <tr>
@@ -127,7 +121,7 @@ Real screens from two Botbench installations on one Mac, named maya and theo, wo
 
 **Use it if** you work on a Mac, use Claude Code with your own sign-in, and want to hand it work and come back to a reviewable branch instead of watching a terminal; you want a record of every command an agent ran and every answer you gave, kept on your machine; or you and a teammate both hand work to agents in one repository and want to see each other's work before you start.
 
-**Don't use it if:**
+**Do not use it if:**
 
 - **You are on Windows or Linux.** Agents are started only on macOS, because the confinement relies on macOS's sandbox.
 - **You want a hosted service or a shared team server.** Each developer runs their own Botbench on their own Mac, behind its own login token. There are no accounts, and two workbenches share nothing but what they push to GitHub.
@@ -143,7 +137,7 @@ About ten minutes. It ends with a branch made by Claude Code in a practice repos
 **1. Get it and build the screens.** The server has nothing to install to run; the first `npm ci` brings what the build of the screens needs.
 
 ```sh
-git clone https://github.com/jon-lange/botbench.git
+git clone https://github.com/botbenchhq/botbench.git
 cd botbench
 npm ci
 npm ci --prefix web
@@ -185,7 +179,7 @@ Add a file hello.txt that says hello, then run ls to show that it is there.
 
 Any model will do; the chip under the box shows the one in use, and a small one such as Haiku is enough (tap the chip to change it). Choose Send.
 
-**6. Watch it work.** Within a minute the transcript shows Claude Code writing the file and running `ls`. Neither asks you: both stay inside the task's copy. A card appears only for an action that reaches outside the copy; if you see one, read it and choose Allow once or Deny.
+**6. Watch it work.** Within a minute the transcript shows Claude Code writing the file and running `ls`. Neither asks you: both stay inside the task's copy. A card appears only for an action that reaches outside the copy; if you see one, read it and choose Allow or Decline.
 
 **7. Review and accept.** The task reads Ready for review, with "No checks are set up for this repository", `hello.txt` under Changed files, and its branch, such as `botbench/your-mac/run-1/task-1`. The middle part is your workbench's name, made from the Mac's name at first start; Settings → Workbench shows it. Choose Accept. Botbench keeps the branch and removes the task's copy.
 
@@ -232,16 +226,15 @@ Planned work is under [Where it is going](#where-it-is-going).
 
 Planned, not in this code.
 
-Botbench is two things meant to work as one product. Much of the first exists today ([What works today](#what-works-today)); most of the second is ahead. **The workbench** is one place to bring your agents, subscriptions, models, tools, context and memory together, and to run them within your own policies. **The coordination layer** connects separately owned workbenches, so that your agents and a colleague's can coordinate who does what, exchange context each owner chose to share, manage what depends on what, and finish work together, with the people watching and steering instead of relaying every message. Each person keeps their own agents, environments and permissions. A message from another workbench will never be permission to run anything.
+Botbench is two things meant to work as one product. **The workbench** is one place to bring your agents, subscriptions, models, tools, context and memory together, and to run them within your own policies; much of it exists today ([What works today](#what-works-today)). **The coordination layer**, most of which is ahead, connects separately owned workbenches, so that your agents and a colleague's can coordinate who does what, exchange context each owner chose to share, manage what depends on what, and finish work together, with the people watching and steering instead of relaying every message. Each person keeps their own agents, environments and permissions. A message from another workbench will never be permission to run anything.
 
 Coding is where this starts. It is not meant to be where it ends.
 
 What is being built next, each with its issue:
 
-- **More between workbenches that talk directly** (Peers P5, [#154](https://github.com/jon-lange/botbench/issues/154), [ADR 0004](docs/adr/0004-peers-direct-messages.md)): pairing and questions and answers work today. The other six kinds of message (interface proposals, counters, accepts, blockers, review requests and verdicts), pairing across two Macs on a private network, and more than one pairing are planned. How much of it a person must approve is an open question, set out in [`docs/product/peers-autonomy-tradeoff.md`](docs/product/peers-autonomy-tradeoff.md); today the owner approves every message that leaves and handles every message that arrives.
-- **Work that depends on a teammate's work**, including two changes to different files that must meet one shared contract ([#172](https://github.com/jon-lange/botbench/issues/172)).
-- **One container per task** ([#72](https://github.com/jon-lange/botbench/issues/72)).
-- **A shorter first run** ([#174](https://github.com/jon-lange/botbench/issues/174)).
+- **More between workbenches that talk directly** (Peers P5, [#154](https://github.com/botbenchhq/botbench/issues/154), [ADR 0004](docs/adr/0004-peers-direct-messages.md)): pairing and questions and answers work today. The other six kinds of message (interface proposals, counters, accepts, blockers, review requests and verdicts), pairing across two Macs on a private network, and more than one pairing are planned. How much of it a person must approve is an open question, set out in [`docs/product/peers-autonomy-tradeoff.md`](docs/product/peers-autonomy-tradeoff.md); today the owner approves every message that leaves and handles every message that arrives.
+- **Work that depends on a teammate's work**, including two changes to different files that must meet one shared contract ([#172](https://github.com/botbenchhq/botbench/issues/172)).
+- **A shorter first run** ([#174](https://github.com/botbenchhq/botbench/issues/174)).
 
 The order and the reasons are in [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md). The direction is in [`docs/product/positioning-concept.md`](docs/product/positioning-concept.md), and how Botbench compares with other projects, from a read of their source, is in [`docs/competitive/`](docs/competitive/README.md).
 
@@ -257,7 +250,7 @@ The order and the reasons are in [the plan](docs/plans/2026-11-21-2234-feat-botb
 
 ### Is it a sandbox?
 
-Partly, and not a hard one. Commands an agent runs are confined by the macOS sandbox: they cannot read your sign-ins, keys or Keychain, reach no network except hosts you allow for that repository, and can write only in the task's copy and a temporary folder. It is not a virtual machine or a container. Claude Code itself runs outside it with your rights. Your repository's setup and check commands, which run the code the agent wrote, can still read your home folder outside the protected places. A test server those commands start on all network addresses, rather than only on 127.0.0.1, can be reached from other machines on your network while it runs, as macOS's sandbox cannot tell the two apart; the macOS firewall blocks that. Point Botbench only at repositories you trust. The exact limits are in the [threat model](docs/security/threat-model.md#confined-commands-u27).
+Partly, and not a hard one. The macOS sandbox confines the commands an agent runs: they cannot read your sign-ins, keys or Keychain, reach no network except hosts you allow for that repository, and can write only in the task's copy and a temporary folder. It is not a virtual machine or a container, and Claude Code itself runs outside it with your rights. Your repository's setup and check commands, which run the code the agent wrote, can still read your home folder outside the protected places. A test server those commands start on all network addresses, rather than only on 127.0.0.1, can be reached from other machines on your network while it runs, as macOS's sandbox cannot tell the two apart; the macOS firewall blocks that. Point Botbench only at repositories you trust. The exact limits are in the [threat model](docs/security/threat-model.md#confined-commands-u27).
 
 ### Does my code leave my Mac?
 
@@ -285,6 +278,9 @@ Your settings go in `botbench.local.json` in the `botbench` folder (git ignores 
     "/Users/you/code/my-app": {
       "setup": ["npm ci"],
       "checks": ["npm run typecheck", { "command": "npm test", "timeoutSeconds": 900 }],
+      "machineChecks": [
+        { "command": "npm run e2e -- {files}", "needs": ["chrome"], "files": ["e2e/*.e2e.ts"], "timeoutSeconds": 1800 }
+      ],
       "preapproved": ["npm test", "npm run typecheck"],
       "allowedHosts": ["registry.npmjs.org"]
     }
@@ -294,8 +290,10 @@ Your settings go in `botbench.local.json` in the `botbench` folder (git ignores 
 
 - `setup` runs in each new copy before the agent starts; a command that fails ends the task.
 - `checks` run after the work is committed; the task shows "Checks passed" or "Checks failed". Each has a 10-minute limit unless you give `timeoutSeconds`.
+- `machineChecks` are checks that need what a check's sandbox does not give. Botbench runs them itself after the other checks, before the review; a failure goes back to the agent like a failing check's. Each says what it `needs`: `"chrome"` runs it in a check's sandbox that may also start headless Chrome (Chrome itself runs with `--no-sandbox`, as Playwright starts it); `"nested-sandbox"` is for a command that starts `sandbox-exec` itself, which macOS allows only outside any sandbox, so it runs with your own rights: list one only for a suite you would run yourself on the agent's work. It is never run for a run started from a GitHub issue or another workbench's message. With `files`, `{files}` in the command becomes the files the change touches that match those patterns (`*` within a name, `**` across folders); with none, the check is skipped and says so. The task shows which ran, which could not and why. See the [threat model](docs/security/threat-model.md#checks-that-need-the-real-machine-issue-201-enginemachine-checksts).
 - `preapproved` are commands a task may run without asking. They are offered when you start a task or run, and you confirm or edit them there.
 - `allowedHosts` are the only host names the repository's commands may reach. Without it, no network.
+- `baseBranch` (and `remote`) name main for this repository: what a pull request is opened into, and what "Bring up to date with main" merges into a task's branch. Without it, the branch your remote's HEAD names, else `main` or `master`. Bringing a task up to date merges main as your repository last fetched it (Botbench fetches nothing) into the task's branch in its own copy, as one new commit; the agent resolves any conflict; the checks run again. A run chooses whether a task offers it (the default), does it before the task is handed to you, or neither.
 - `execution` says where the repository's commands run: `{ "kind": "host" }` (the default) on your Mac, kept away from your sign-ins and the network, or `{ "kind": "container", "image": "node:24" }` in one Docker container per task, from an image already on your Mac (Botbench never pulls one), holding only the task's copy and no network. Claude Code stays on your Mac; each command it runs, and the setup and check commands, go into the container. When Docker or the image is not there the task does not start; nothing runs on your Mac instead. A container cannot be combined with `allowedHosts`. See [ADR 0009](docs/adr/0009-container-execution.md).
 
 The defaults are in [`botbench.config.json`](botbench.config.json). Every setting, including models per agent and your own additions to the always-ask list, is described in [`src/config.ts`](src/config.ts).
@@ -329,10 +327,11 @@ Do not put Botbench on the public internet. Its sign-in is one token, made for a
 | I want to | Go to |
 |---|---|
 | Know exactly what is protected and what is not | [`docs/security/threat-model.md`](docs/security/threat-model.md) |
+| See how it is put together, in three diagrams | [`docs/architecture/`](docs/architecture/README.md) |
 | Know why it drives the vendors' programs, and how secrets are kept from agents | [`docs/adr/`](docs/adr/) |
 | Add another agent | [`CONTRIBUTING.md`, Adding an agent](CONTRIBUTING.md#adding-an-agent) |
 | Contribute a fix, run the tests | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| Report a bug | [GitHub issues](https://github.com/jon-lange/botbench/issues), with what you did, what you expected and what Botbench printed |
+| Report a bug | [GitHub issues](https://github.com/botbenchhq/botbench/issues), with what you did, what you expected and what Botbench printed |
 | Report a security problem | Not in an issue. See [`CONTRIBUTING.md`, Reporting a security problem](CONTRIBUTING.md#reporting-a-security-problem) |
 | See what is planned, and why | [The plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
 

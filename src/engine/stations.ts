@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { confinementProblem, SANDBOX_EXEC, seatbeltProfile, startHostProxy, unreadablePaths, type Confinement } from "../confinement.ts";
+import { execFileSync } from "node:child_process";
 import { buildChildEnv } from "../drivers/launch.ts";
 import { containerExecArgv, stopLeftovers, type TaskContainer } from "../execution.ts";
 import { now, transaction } from "../store/db.ts";
@@ -55,7 +56,11 @@ export const MAX_OUTPUT_CHARS = 200_000;
 /** After a command's own process ends, how long its output pipes get to close before Botbench stops reading them. */
 const DRAIN_MS = 2000;
 
-export type CommandOutcome = "passed" | "failed" | "timed_out" | "stopped";
+/**
+ * How a command ended. `skipped` and `not_run` are a machine check's only (engine/machine-checks.ts): it had nothing to
+ * run (the change touches no file its placeholder names), or Botbench could not run it here, with why in its output.
+ */
+export type CommandOutcome = "passed" | "failed" | "timed_out" | "stopped" | "skipped" | "not_run";
 
 export interface CommandRun {
   command: string;
@@ -96,7 +101,16 @@ const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
  * Run one command in the worktree `cwd`, confined, and resolve with how it went. Never rejects: a command that cannot
  * be started, or cannot be confined, has failed.
  */
-export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container?: TaskContainer; track?: Tracked }): Promise<CommandRun> {
+/**
+ * How a command is held. `check`: the profile above, for every setup and check command. The two others are for a
+ * machine check the owner's settings list (engine/machine-checks.ts, #201): `chrome` is the check's profile with the
+ * rules Chrome needs to start (src/confinement.ts, `chromeRules`); `unconfined` is no sandbox at all, for a command that
+ * starts sandbox-exec itself, which macOS refuses inside any sandbox that denies anything. Such a command still gets a
+ * check's environment, its own temporary folder, its process group and its time limit, and nothing else of a check.
+ */
+export type CommandProfile = "check" | "chrome" | "unconfined";
+
+export async function runCommand(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container?: TaskContainer; track?: Tracked; profile?: CommandProfile }): Promise<CommandRun> {
   const track = o.track;
   if (track === undefined) return runUntracked(o, () => {}, () => {});
   const at = now();
@@ -109,7 +123,7 @@ export async function runCommand(o: { command: string; cwd: string; limitMs: num
   );
   // Its evidence and the end of its row are one write: a start after a kill finds either both or neither.
   transaction(track.db, () => {
-    insertEvidence(track.db, track.taskId, track.kind, track.position, result, track.round);
+    insertEvidence(track.db, track.taskId, track.kind, track.position, result, track.round, track.needs ?? null);
     track.db.prepare("UPDATE command_processes SET pgid = NULL, ended_at = ? WHERE id = ?").run(now(), row);
   });
   return result;
@@ -122,6 +136,8 @@ export interface Tracked {
   kind: EvidenceKind;
   round: number;
   position: number;
+  /** For a machine check: what it was allowed beyond a check, stored with its evidence. */
+  needs?: string;
 }
 
 /** How one setup or check command is started: the program and its arguments, and its environment. */
@@ -136,13 +152,30 @@ export interface ConfinedStart {
  * when the repository allows hosts. `npm run test:confined` (test/run-confined.ts) starts Botbench's own tests this way.
  * Throws when a path cannot be put in a profile.
  */
-export function confinedStart(o: { command: string; worktree: string; dataDir: string; tmp: string; proxyPort: number | null }): ConfinedStart {
-  const profile = seatbeltProfile({ worktree: o.worktree, unreadable: unreadablePaths({ dataDir: o.dataDir }), writable: [o.tmp] });
+export function confinedStart(o: { command: string; worktree: string; dataDir: string; tmp: string; proxyPort: number | null; chrome?: { userTemp: string } }): ConfinedStart {
+  const profile = seatbeltProfile({ worktree: o.worktree, unreadable: unreadablePaths({ dataDir: o.dataDir }), writable: [o.tmp], ...(o.chrome === undefined ? {} : { chrome: o.chrome }) });
   // The allowlist holds no GIT_* variable; the owner's own proxy settings are replaced, as the network is Botbench's to give.
   const env = buildChildEnv(process.env, { TMPDIR: o.tmp, GIT_TERMINAL_PROMPT: "0" });
   for (const name of [...PROXY_VARIABLES, "NO_PROXY", "no_proxy"]) delete env[name];
   if (o.proxyPort !== null) for (const name of PROXY_VARIABLES) env[name] = `http://127.0.0.1:${o.proxyPort}`;
   return { argv: [SANDBOX_EXEC, "-p", profile, "/bin/sh", "-c", o.command], env };
+}
+
+/**
+ * How a machine check that may not be in a sandbox is started (`unconfined`): `/bin/sh -c <command>` with a check's
+ * environment (no provider key, no GIT_* variable, its own TMPDIR) and no proxy, as nothing holds it to one.
+ */
+export function unconfinedStart(o: { command: string; tmp: string }): ConfinedStart {
+  const env = buildChildEnv(process.env, { TMPDIR: o.tmp, GIT_TERMINAL_PROMPT: "0" });
+  for (const name of [...PROXY_VARIABLES, "NO_PROXY", "no_proxy"]) delete env[name];
+  return { argv: ["/bin/sh", "-c", o.command], env };
+}
+
+/** The user's own temporary folder as macOS names it, by its real path: where Chrome makes its lock folder, whatever TMPDIR says. */
+export function userTempDir(): string {
+  const named = execFileSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8", timeout: 5000 }).trim();
+  if (!path.isAbsolute(named)) throw new Error("macOS did not name the user's temporary folder (getconf DARWIN_USER_TEMP_DIR).");
+  return fs.realpathSync(named);
 }
 
 /**
@@ -162,8 +195,9 @@ async function runInContainer(o: { command: string; cwd: string; limitMs: number
   }
 }
 
-async function runUntracked(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container?: TaskContainer }, onTmp: (dir: string) => void, onSpawn: (pgid: number) => void): Promise<CommandRun> {
+async function runUntracked(o: { command: string; cwd: string; limitMs: number; signal?: AbortSignal; confinement: Confinement; container?: TaskContainer; profile?: CommandProfile }, onTmp: (dir: string) => void, onSpawn: (pgid: number) => void): Promise<CommandRun> {
   if (o.container !== undefined) return runInContainer({ ...o, container: o.container }, onSpawn);
+  const profile = o.profile ?? "check";
   const problem = confinementProblem();
   if (problem !== null) return notRun(o, `Botbench did not run this command. ${problem}`);
   let tmp: string;
@@ -176,8 +210,11 @@ async function runUntracked(o: { command: string; cwd: string; limitMs: number; 
   }
   onTmp(tmp);
   try {
-    if (o.confinement.allowedHosts.length > 0) proxy = await startHostProxy(o.confinement.allowedHosts);
-    start = confinedStart({ command: o.command, worktree: fs.realpathSync(o.cwd), dataDir: o.confinement.dataDir, tmp, proxyPort: proxy?.port ?? null });
+    if (profile === "unconfined") start = unconfinedStart({ command: o.command, tmp });
+    else {
+      if (o.confinement.allowedHosts.length > 0) proxy = await startHostProxy(o.confinement.allowedHosts);
+      start = confinedStart({ command: o.command, worktree: fs.realpathSync(o.cwd), dataDir: o.confinement.dataDir, tmp, proxyPort: proxy?.port ?? null, ...(profile === "chrome" ? { chrome: { userTemp: userTempDir() } } : {}) });
+    }
   } catch (err) {
     await proxy?.close();
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -262,6 +299,8 @@ export interface Evidence extends Omit<CommandRun, "command"> {
   /** The command's place in its list, from 1. */
   position: number;
   command: string;
+  /** For a machine check: what it was allowed beyond a check ("chrome", "nested-sandbox"); null otherwise. */
+  needs: string | null;
 }
 
 const int = (v: unknown): number | null => (typeof v === "number" ? v : null);
@@ -284,13 +323,14 @@ export function taskEvidence(db: DatabaseSync, taskId: number): Evidence[] {
     startedAt: String(row.started_at),
     endedAt: String(row.ended_at),
     durationMs: Number(row.duration_ms),
+    needs: typeof row.needs === "string" ? row.needs : null,
   }));
 }
 
 /** Store one command's result on a task. */
-export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceKind, position: number, run: CommandRun, round = 1): void {
-  db.prepare("INSERT INTO evidence (task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-    taskId, kind, round, position, run.command, run.outcome, run.exitCode, run.signal, run.output, run.truncated ? 1 : 0, run.limitMs, run.startedAt, run.endedAt, run.durationMs,
+export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceKind, position: number, run: CommandRun, round = 1, needs: string | null = null): void {
+  db.prepare("INSERT INTO evidence (task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms, needs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    taskId, kind, round, position, run.command, run.outcome, run.exitCode, run.signal, run.output, run.truncated ? 1 : 0, run.limitMs, run.startedAt, run.endedAt, run.durationMs, needs,
   );
 }
 

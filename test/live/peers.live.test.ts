@@ -12,7 +12,7 @@ import { initRepo, git, tempDir } from "../support/repo.ts";
 import { PEERS_CAPTURE_FILE, PEERS_OPEN_CAPTURE_FILE, PEERS_REPO, type PeersCapture, type PeersOpenCapture } from "../support/replay-peers.ts";
 
 // The one live read of what other workbenches have in flight (Peers P2), against the owner's own repository
-// jon-lange/botbench, read only: the owner's gh lists the open pull requests with Botbench's exact arguments, and the
+// botbenchhq/botbench, read only: the owner's gh lists the open pull requests with Botbench's exact arguments, and the
 // real git lists the remote's task branches with `git ls-remote`. Nothing is written to GitHub. With
 // BOTBENCH_CAPTURE_GH=1 it also writes what gh printed to test/recordings/gh-peers.json for the replayed tests: the
 // open list Botbench asks for, and the same list with every state, so the parser is tested on real closing references
@@ -107,7 +107,7 @@ test("live: the open pull requests parse, and those from another workbench's tas
   assert.deepEqual(viaSeam.pullRequests.map((pr) => pr.number).sort(), page.pullRequests.map((pr) => pr.number).sort(), "the GitHub seam asks with the same arguments");
   assert.ok(page.pullRequests.every((pr) => pr.state === "OPEN" && pr.url === `https://github.com/${repo.owner}/${repo.name}/pull/${pr.number}`));
   const fromTasks = page.pullRequests.filter((pr) => parseTaskBranch(pr.headRefName)?.workbench != null);
-  if (fromTasks.length === 0) return t.skip("no pull request from a named workbench's task branch is open on jon-lange/botbench right now");
+  if (fromTasks.length === 0) return t.skip("no pull request from a named workbench's task branch is open on botbenchhq/botbench right now");
   // As another workbench sees them: none of these names is its own.
   const work = otherWork(page.pullRequests, fromTasks.map((pr) => ({ branch: pr.headRefName, commit: "0".repeat(40) })), new Set(["a-workbench-that-opened-none"]));
   assert.deepEqual(work.pullRequests.map((pr) => pr.number), fromTasks.map((pr) => pr.number).sort((a, b) => a - b));
@@ -117,7 +117,7 @@ test("live: the open pull requests parse, and those from another workbench's tas
   }
   if (process.env.BOTBENCH_CAPTURE_GH_OPEN === "1" && !fs.existsSync(PEERS_OPEN_CAPTURE_FILE)) {
     const capture: PeersOpenCapture = {
-      about: "Captured once from the real gh by test/live/peers.live.test.ts (BOTBENCH_CAPTURE_GH_OPEN=1): the open pull requests of jon-lange/botbench, listed with Botbench's own arguments, while pull requests from named workbenches' task branches were open. Replayed by test/support/replay-peers.ts; never re-recorded.",
+      about: "Captured once from the real gh by test/live/peers.live.test.ts (BOTBENCH_CAPTURE_GH_OPEN=1): the open pull requests of botbenchhq/botbench, listed with Botbench's own arguments, while pull requests from named workbenches' task branches were open. Replayed by test/support/replay-peers.ts; never re-recorded.",
       gh: execFileSync("gh", ["--version"], { encoding: "utf8" }).split("\n")[0]!,
       captured: new Date().toISOString(),
       repository: `github.com/${repo.owner}/${repo.name}`,

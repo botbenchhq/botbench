@@ -363,9 +363,12 @@ export interface Evidence {
   round: number;
   /** Its place in its list, from 1. */
   position: number;
-  /** The command as the owner configured it. */
+  /** The command as the owner configured it (a machine check's with its files put in). */
   command: string;
-  outcome: "passed" | "failed" | "timed_out" | "stopped";
+  /** `skipped` and `not_run` are a machine check's only: it had nothing to run, or Botbench could not run it here. */
+  outcome: "passed" | "failed" | "timed_out" | "stopped" | "skipped" | "not_run";
+  /** For a machine check: what it was allowed beyond a check ("chrome", "nested-sandbox", comma-separated); null otherwise. */
+  needs: string | null;
   exitCode: number | null;
   signal: string | null;
   /** What it printed, its end when it was long. */
@@ -480,6 +483,8 @@ export interface Handoff {
 
 /** What a builder's usage limit does in a run: wait for the reset, or switch to the next agent on the list in Settings. */
 export type OnLimit = "wait" | "switch";
+/** What a run does when a task's branch is behind main as it is handed to the owner: offer it, do it first, or nothing. */
+export type UpdateWithMain = "ask" | "auto" | "off";
 
 export interface TaskDetail extends TaskSummary {
   /** The runs the owner made from this task ("Make this a run"), oldest first; empty for none. */
@@ -524,6 +529,39 @@ export interface TaskDetail extends TaskSummary {
   remainsProblem: string | null;
   /** For an accepted task that kept its branch and has no pull request yet: where Open a pull request would send it. */
   pullRequestTarget: PullRequestTarget | null;
+  /** The task and main: how far its branch is behind it, and what came of bringing it up to date. */
+  mainUpdate: MainUpdate;
+}
+
+/** One time a task was brought up to date with main, as stored. */
+export interface BranchUpdate {
+  id: number;
+  requestedBy: "owner" | "run";
+  baseBranch: string;
+  behind: number;
+  mergeCommit: string | null;
+  conflicts: string[];
+  outcome: "merged" | "resolved" | "unresolved" | "failed" | "stopped" | null;
+  problem: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+/** A task and main, as its screen shows it. */
+export interface MainUpdate {
+  /** What its run does when the branch is behind main as the task is handed to you. */
+  choice: UpdateWithMain;
+  /** Main's name, when Botbench found it. */
+  branch: string | null;
+  /** How many commits of main the branch lacks; null when not read (the task is not ready for review) or not readable. */
+  behind: number | null;
+  /** Why it could not be read, in words for the owner. */
+  problem: string | null;
+  /** An update is under way now. */
+  underWay: boolean;
+  /** The line about its latest update; null with none. */
+  line: string | null;
+  updates: BranchUpdate[];
 }
 
 /** What a task that ended without being ready for review left: its copy, Botbench's branch, and the files in the copy that are not on the branch. */
@@ -595,6 +633,8 @@ export interface TaskNote {
 /** The owner's note for a building task's builder; the answer says which waiting note it replaced, if one waited. */
 /** Move a task that is being built to another agent: its turn is stopped, its work committed, and the agent takes it over. */
 export const moveTask = (id: number, agent: string): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/move`, { agent }, 30_000);
+/** Bring a task that is ready for review up to date with main: main is merged into its branch, and its checks run again. */
+export const updateWithMain = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/update-with-main`, {}, 30_000);
 export const sendTaskNote = (id: number, text: string): Promise<{ note: TaskNote; replaced: TaskNote | null }> => request("POST", `/api/tasks/${id}/notes`, { text }, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
@@ -742,8 +782,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; takeOver?: string[]; agent?: string; source?: RunSourceRef; approvalLimitMinutes?: number }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.source === undefined ? {} : { source: { [o.source.kind]: o.source.id } }), ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.onLimit === undefined ? {} : { onLimit: o.onLimit }), ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }), ...(o.approvalLimitMinutes === undefined ? {} : { approvalLimitMinutes: o.approvalLimitMinutes }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: string[]; agent?: string; source?: RunSourceRef; approvalLimitMinutes?: number }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.source === undefined ? {} : { source: { [o.source.kind]: o.source.id } }), ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.onLimit === undefined ? {} : { onLimit: o.onLimit }), ...(o.updateWithMain === undefined ? {} : { updateWithMain: o.updateWithMain }), ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }), ...(o.approvalLimitMinutes === undefined ? {} : { approvalLimitMinutes: o.approvalLimitMinutes }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {

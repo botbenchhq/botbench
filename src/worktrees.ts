@@ -945,3 +945,162 @@ export async function commitLessonFile(o: { repo: string; branch: string; parent
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 }
+
+/*
+ * Bringing a task up to date with main (engine/branch-update.ts, #201). Main is read as this Mac's repository last saw
+ * it: Botbench fetches nothing, so nothing leaves the machine and no git credential is used. The merge is made in the
+ * task's own copy, on its own branch, by Botbench's identity with no hook and no remembered resolution (rerere): a new
+ * commit on top of the task's work, never a rebase, a reset or a forced update. Approach from Paperclip
+ * server/src/services/execution-workspaces.ts, which reads how far a workspace's branch is behind its base with
+ * `git rev-list --left-right --count base...HEAD`.
+ */
+
+/** A branch name Botbench passes to git as main: letters, digits and `._/-`, no `..`, not one of Botbench's own. */
+const MAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+const mainNameOk = (name: string): boolean => MAIN_NAME.test(name) && !name.includes("..") && !name.endsWith("/") && !name.endsWith(".lock") && !name.startsWith(BRANCH_PREFIX);
+
+/** Main as Botbench merges it: its name, the ref it was read from, and the commit that ref points at. */
+export interface MainBranch {
+  branch: string;
+  ref: string;
+  commit: string;
+}
+
+/**
+ * The repository's main branch: `baseBranch` when the settings name one, else the branch the remote's HEAD names as
+ * last fetched (`refs/remotes/<remote>/HEAD`), else `main` or `master`, whichever the repository has. Of the local branch
+ * and the remote's as last fetched, the newer is taken: the one that holds the other, or the remote's when they went
+ * apart. Null when the repository has none of these.
+ */
+export async function mainBranchOf(o: { repo: string; remote: string; baseBranch: string | null }): Promise<MainBranch | null> {
+  const repo = path.resolve(o.repo);
+  const remote = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(o.remote) ? o.remote : null;
+  const commitOf = async (ref: string): Promise<string | null> => {
+    const out = await git(repo, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], GIT_CHECK_LIMIT_MS).catch((err: unknown) => {
+      unlessTimeout(err);
+      return "";
+    });
+    return COMMIT_ID.test(out.trim()) ? out.trim() : null;
+  };
+  let names: string[] = [];
+  if (o.baseBranch !== null) names = [o.baseBranch];
+  else {
+    const named = remote === null ? "" : await git(repo, ["symbolic-ref", "--quiet", "--short", `refs/remotes/${remote}/HEAD`], GIT_CHECK_LIMIT_MS).catch((err: unknown) => {
+      unlessTimeout(err);
+      return "";
+    });
+    const fromRemote = named.trim().startsWith(`${remote}/`) ? named.trim().slice(remote!.length + 1) : "";
+    names = [...(fromRemote === "" ? [] : [fromRemote]), "main", "master"];
+  }
+  for (const name of names) {
+    if (!mainNameOk(name)) continue;
+    const local = await commitOf(`refs/heads/${name}`);
+    const tracked = remote === null ? null : await commitOf(`refs/remotes/${remote}/${name}`);
+    if (local === null && tracked === null) continue;
+    if (tracked === null) return { branch: name, ref: `refs/heads/${name}`, commit: local! };
+    if (local === null || local === tracked) return { branch: name, ref: `refs/remotes/${remote}/${name}`, commit: tracked };
+    // The local branch holds the remote's: it is the newer. Otherwise the remote's is, or they went apart and the remote's is taken.
+    if (await succeeds(repo, ["merge-base", "--is-ancestor", tracked, local])) return { branch: name, ref: `refs/heads/${name}`, commit: local };
+    return { branch: name, ref: `refs/remotes/${remote}/${name}`, commit: tracked };
+  }
+  return null;
+}
+
+/** How many commits `commit` (main) has that `head` (the task's) does not: how far the task's branch is behind it. */
+export async function commitsBehind(o: { repo: string; head: string; commit: string }): Promise<number> {
+  checkBase(o.head);
+  checkBase(o.commit);
+  const out = await git(path.resolve(o.repo), ["rev-list", "--count", `${o.head}..${o.commit}`], GIT_WORK_LIMIT_MS);
+  const n = Number(out.trim());
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`git did not say how many commits ${o.commit} has that ${o.head} does not.`);
+  return n;
+}
+
+const MERGE_IDENTITY = ["-c", `user.name=${AUTHOR_NAME}`, "-c", `user.email=${AUTHOR_EMAIL}`, "-c", "commit.gpgsign=false", "-c", "rerere.enabled=false", "-c", "merge.conflictStyle=merge"];
+
+/** The files git holds in conflict in a task's copy, sorted. */
+async function conflictedFiles(dir: string): Promise<string[]> {
+  return (await git(dir, ["diff", "--name-only", "--diff-filter=U", "-z"], GIT_CHECK_LIMIT_MS)).split("\0").filter(Boolean).sort();
+}
+
+/** Whether a merge is under way in a task's copy (git keeps MERGE_HEAD for it). */
+export async function mergeUnderWay(dir: string): Promise<boolean> {
+  await taskWorktree(path.resolve(dir));
+  return succeeds(path.resolve(dir), ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"]);
+}
+
+/**
+ * Merge `commit` (main) into the task's branch in its copy at `path`, as a new merge commit by Botbench. Answers the
+ * merge commit, or the files in conflict: git then leaves the merge under way, with the conflicts marked in those files,
+ * for the builder to resolve (`concludeMerge`) or Botbench to undo (`abortMerge`). Throws when git refuses for another
+ * reason (a file a check left would be overwritten), and then nothing is under way.
+ */
+export async function mergeIntoTask(o: { path: string; commit: string; message: string }): Promise<{ merged: true; commit: string } | { merged: false; conflicts: string[] }> {
+  checkBase(o.commit);
+  if (o.message.trim() === "") throw new Error("A commit message is required.");
+  const dir = path.resolve(o.path);
+  await taskWorktree(dir);
+  try {
+    await git(dir, [...MERGE_IDENTITY, "merge", "--quiet", "--no-ff", "--no-edit", "--no-verify", "--no-stat", "-m", o.message, o.commit]);
+    return { merged: true, commit: (await git(dir, ["rev-parse", "HEAD"], GIT_CHECK_LIMIT_MS)).trim() };
+  } catch (err) {
+    unlessTimeout(err);
+    const conflicts = await conflictedFiles(dir);
+    if (conflicts.length === 0) {
+      if (await succeeds(dir, ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])) await git(dir, ["merge", "--abort"]);
+      throw err;
+    }
+    return { merged: false, conflicts };
+  }
+}
+
+/** Undo a merge under way in a task's copy: its files go back to the task's commit, and nothing is committed. Nothing when none is under way. */
+export async function abortMerge(dir: string): Promise<void> {
+  if (!(await mergeUnderWay(dir))) return;
+  await git(path.resolve(dir), ["merge", "--abort"]);
+}
+
+/** A conflict marker git writes, at the start of a line: `<<<<<<< `, `||||||| ` or `>>>>>>> `. */
+const CONFLICT_MARKER = /^(<{7}|\|{7}|>{7})( |$)/m;
+
+/**
+ * The files of `files` in a task's copy that still hold a conflict marker. A file that is no longer there, or is not a
+ * plain file inside the copy (a link), is not read.
+ */
+export function filesWithMarkers(dir: string, files: readonly string[]): string[] {
+  const top = realPath(dir);
+  return files.filter((file) => {
+    const at = path.join(top, file);
+    try {
+      const stat = fs.lstatSync(at);
+      if (!stat.isFile() || !isInside(realPath(at), top)) return false;
+      return CONFLICT_MARKER.test(fs.readFileSync(at, "utf8"));
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Commit the merge under way in a task's copy, once its conflicts are resolved: everything in the copy is staged, and
+ * the merge commit is made by Botbench with git's own message. Refused, with nothing committed, while one of
+ * `conflicts` still holds a conflict marker or git still holds a file in conflict.
+ */
+export async function concludeMerge(o: { path: string; conflicts: readonly string[] }): Promise<{ committed: true; commit: string } | { committed: false; unresolved: string[] }> {
+  const dir = path.resolve(o.path);
+  if (!(await mergeUnderWay(dir))) throw new Error(`No merge is under way in ${dir}, so there is none to commit.`);
+  const marked = filesWithMarkers(dir, o.conflicts);
+  if (marked.length > 0) return { committed: false, unresolved: marked };
+  await git(dir, ["add", "--all"]);
+  const left = await conflictedFiles(dir);
+  if (left.length > 0) return { committed: false, unresolved: left };
+  await git(dir, [...MERGE_IDENTITY, "commit", "--quiet", "--no-edit", "--no-verify", "--no-gpg-sign"]);
+  return { committed: true, commit: (await git(dir, ["rev-parse", "HEAD"], GIT_CHECK_LIMIT_MS)).trim() };
+}
+
+/** The commit a task's copy is at, and that commit's parents. */
+export async function copyHead(dir: string): Promise<{ commit: string; parents: string[] }> {
+  await taskWorktree(path.resolve(dir));
+  const [commit, ...parents] = (await git(path.resolve(dir), ["rev-list", "--parents", "-n", "1", "HEAD"], GIT_CHECK_LIMIT_MS)).trim().split(" ");
+  return { commit: commit!, parents };
+}

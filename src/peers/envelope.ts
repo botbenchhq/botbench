@@ -153,7 +153,7 @@ export const isId = (value: unknown): value is string => typeof value === "strin
 export function repositoryProblem(repository: unknown): string | null {
   return typeof repository === "string" && repository.length >= 1 && repository.length <= 500 && repository === repository.trim() && !/[\0-\x1f\x7f]/.test(repository)
     ? null
-    : "A pairing's repository is its delivery remote, as one line of 1 to 500 characters, such as github.com/jon-lange/botbench.";
+    : "A pairing's repository is its delivery remote, as one line of 1 to 500 characters, such as github.com/botbenchhq/botbench.";
 }
 
 const codePoints = (text: string): number => [...text].length;

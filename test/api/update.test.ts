@@ -105,7 +105,7 @@ test("Update now installs a release, checks the new build starts, moves the inst
   assert.equal(before.version, "0.1.0");
   assert.equal(before.available, true);
   assert.equal(before.mode, "tap", "on a tap unless the owner chose otherwise");
-  assert.deepEqual(before.latest, { version: "0.2.0", tag: "v0.2.0", summary: "update Botbench from Settings", url: "https://github.com/jon-lange/botbench/releases/tag/v0.2.0" });
+  assert.deepEqual(before.latest, { version: "0.2.0", tag: "v0.2.0", summary: "update Botbench from Settings", url: "https://github.com/botbenchhq/botbench/releases/tag/v0.2.0" });
   assert.equal((before.state as Body).kind, "idle", "on a tap: nothing starts by itself");
   assert.equal(git(p.install, "rev-parse", "HEAD").trim(), p.base);
 

@@ -244,8 +244,9 @@ test("a repository's setup and check commands are each a command, or a command w
   assert.deepEqual(repositoryCommands(config, repo), {
     setup: [{ command: "npm ci", limitMs: 600_000 }, { command: "make deps", limitMs: 90_000 }],
     checks: [{ command: "npm test", limitMs: 600_000 }],
+    machineChecks: [],
   });
-  assert.deepEqual(repositoryCommands(config, "/somewhere/else"), { setup: [], checks: [] });
+  assert.deepEqual(repositoryCommands(config, "/somewhere/else"), { setup: [], checks: [], machineChecks: [] });
 
   const refused: [unknown, RegExp][] = [
     [{ setup: [{ timeoutSeconds: 5 }] }, /repository "\/r": "setup".*"command"/],

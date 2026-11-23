@@ -235,7 +235,7 @@ export function ancestors(place: string): string[] {
  * temporary folder and the terminal devices, and the network, apart from this Mac's own addresses (where Botbench's
  * proxy listens when hosts are allowed) and Unix sockets in the copy and the temporary folder.
  */
-export function seatbeltProfile(o: { worktree: string; unreadable: readonly string[]; writable: readonly string[] }): string {
+export function seatbeltProfile(o: { worktree: string; unreadable: readonly string[]; writable: readonly string[]; chrome?: { userTemp: string } }): string {
   const subpaths = (places: readonly string[]): string => places.map((place) => `(subpath ${quoted(place)})`).join(" ");
   return [
     "(version 1)",
@@ -260,6 +260,29 @@ export function seatbeltProfile(o: { worktree: string; unreadable: readonly stri
     // the owner's full rights; with them `open` fails (error -54) and nothing escapes.
     "(deny lsopen)",
     "(deny appleevent-send)",
+    ...(o.chrome === undefined ? [] : chromeRules(o.chrome.userTemp)),
     "",
   ].join("\n");
+}
+
+/**
+ * What a machine check that needs Chrome is allowed beyond a check (engine/machine-checks.ts, #201). Measured on this Mac
+ * (macOS 27.2, Chrome 156, 2026-11-23): under a check's profile, headless Chrome exits at once, "Failed to create socket
+ * directory": it makes the folder for its one-instance lock and socket in the user's own temporary folder, which
+ * macOS names (`getconf DARWIN_USER_TEMP_DIR`), whatever TMPDIR says. These rules allow writing, and Unix sockets,
+ * only in folders there whose names start as Chrome's and Chromium's do. Nothing else changes: no other place may be
+ * written or read, and the network stays as it is for a check. Chrome's own sandbox cannot start inside this one
+ * (macOS starts no sandbox inside another), so Chrome must be started with --no-sandbox, as Playwright starts it by
+ * default: this profile, not Chrome's, is then what holds it.
+ */
+export function chromeRules(userTemp: string): string[] {
+  const top = path.resolve(userTemp);
+  quoted(top);
+  const escaped = top.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
+  const place = `^${escaped}/(com\\.google\\.Chrome|org\\.chromium\\.Chromium)\\.[^/]+`;
+  return [
+    `(allow file-write* (regex #"${place}(/.*)?$"))`,
+    `(allow network-bind (local unix-socket (regex #"${place}/")))`,
+    `(allow network-outbound (remote unix-socket (regex #"${place}/")))`,
+  ];
 }

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A task, from queued to your decision</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #F2F2F7;
+      --color-ink:     #1C1C1E;
+      --color-muted:   #636366;
+      --color-accent:  #8F6202;
+      --font-sans:     system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      --font-mono:     ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1032px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-sans);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 1.75rem);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 992px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">State machine · Botbench</p>
+    <h1>A task, from queued to your decision</h1>
+    <div class="diagram-container">
+      <svg viewBox="0 0 992 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="botbench-task-lifecycle-title botbench-task-lifecycle-desc">
+        <title id="botbench-task-lifecycle-title">A task, from queued to your decision</title>
+        <desc id="botbench-task-lifecycle-desc">Lifecycle of a Botbench task: Queued, Working, Checking and Reviewing lead to Ready for review, where the owner accepts or rejects; failed checks and review concerns send it back to Working, and a usage limit makes it wait and try again.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#636366"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8F6202"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#0066CC"/></marker>
+          <marker id="arrow-ink" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#1C1C1E"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#F2F2F7"/>
+<rect x="24" y="44" width="944" height="120" rx="8" fill="rgba(28,28,30,0.03)" stroke="rgba(28,28,30,0.12)" stroke-width="0.8"/>
+<rect x="24" y="408" width="944" height="104" rx="8" fill="rgba(28,28,30,0.03)" stroke="rgba(28,28,30,0.12)" stroke-width="0.8"/>
+<text x="40" y="64" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">WAITS BY ITSELF</text>
+<text x="40" y="216" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">STATIONS</text>
+<text x="40" y="428" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">YOUR DECISION</text>
+<line x1="184" y1="268" x2="232" y2="268" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="376" y1="268" x2="424" y2="268" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="568" y1="268" x2="616" y2="268" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="760" y1="268" x2="808" y2="268" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="280" y1="232" x2="280" y2="140" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="328" y1="140" x2="328" y2="232" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 496,304 V 328 Q 496,336 488,336 H 336 Q 328,336 328,328 V 304" fill="none" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<path d="M 664,304 V 352 Q 664,360 656,360 H 288 Q 280,360 280,352 V 304" fill="none" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<line x1="904" y1="304" x2="904" y2="424" stroke="#8F6202" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<path d="M 856,304 V 376 Q 856,384 848,384 H 712 Q 704,384 704,392 V 424" fill="none" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="188" y="248" width="40" height="12" rx="2" fill="#F2F2F7"/><text x="208" y="257" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">START</text>
+<rect x="378" y="248" width="44" height="12" rx="2" fill="#F2F2F7"/><text x="400" y="257" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">COMMIT</text>
+<rect x="570" y="248" width="44" height="12" rx="2" fill="#F2F2F7"/><text x="592" y="257" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">CHECKED</text>
+<rect x="760" y="248" width="48" height="12" rx="2" fill="#F2F2F7"/><text x="784" y="257" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">REVIEWED</text>
+<rect x="210" y="180" width="60" height="12" rx="2" fill="#F2F2F7"/><text x="240" y="189" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">LIMIT HIT</text>
+<rect x="336" y="180" width="64" height="12" rx="2" fill="#F2F2F7"/><text x="368" y="189" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">RESET TIME</text>
+<rect x="382" y="316" width="60" height="12" rx="2" fill="#F2F2F7"/><text x="412" y="325" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">FIX ROUND</text>
+<rect x="558" y="340" width="44" height="12" rx="2" fill="#F2F2F7"/><text x="580" y="349" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">REFINE</text>
+<rect x="912" y="358" width="40" height="12" rx="2" fill="#F2F2F7"/><text x="932" y="367" fill="#8F6202" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">ACCEPT</text>
+<rect x="758" y="364" width="44" height="12" rx="2" fill="#F2F2F7"/><text x="780" y="373" fill="#6C6C70" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">REJECT</text>
+<rect x="40" y="232" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="40" y="232" width="144" height="72" rx="8" fill="#FFFFFF" stroke="#1C1C1E" stroke-width="1"/>
+<rect x="48" y="240" width="28" height="12" rx="2" fill="none" stroke="#1C1C1E" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="62" y="249" fill="#1C1C1E" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">1</text>
+<text x="112" y="274" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Queued</text>
+<text x="112" y="290" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">queued</text>
+<rect x="232" y="232" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="232" y="232" width="144" height="72" rx="8" fill="#FFFFFF" stroke="#1C1C1E" stroke-width="1"/>
+<rect x="240" y="240" width="28" height="12" rx="2" fill="none" stroke="#1C1C1E" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="254" y="249" fill="#1C1C1E" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">2</text>
+<text x="304" y="274" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Working</text>
+<text x="304" y="290" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">building</text>
+<rect x="424" y="232" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="424" y="232" width="144" height="72" rx="8" fill="#FFFFFF" stroke="#1C1C1E" stroke-width="1"/>
+<rect x="432" y="240" width="28" height="12" rx="2" fill="none" stroke="#1C1C1E" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="446" y="249" fill="#1C1C1E" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">3</text>
+<text x="496" y="274" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Checking</text>
+<text x="496" y="290" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">verifying</text>
+<rect x="616" y="232" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="616" y="232" width="144" height="72" rx="8" fill="#FFFFFF" stroke="#1C1C1E" stroke-width="1"/>
+<rect x="624" y="240" width="28" height="12" rx="2" fill="none" stroke="#1C1C1E" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="638" y="249" fill="#1C1C1E" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">4</text>
+<text x="688" y="274" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Reviewing</text>
+<text x="688" y="290" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">reviewing</text>
+<rect x="808" y="232" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="808" y="232" width="144" height="72" rx="8" fill="#FEF3C7" stroke="#8F6202" stroke-width="1"/>
+<rect x="816" y="240" width="28" height="12" rx="2" fill="none" stroke="#8F6202" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="830" y="249" fill="#8F6202" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">5</text>
+<text x="880" y="274" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Ready for review</text>
+<text x="880" y="290" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">awaiting_decision</text>
+<rect x="232" y="68" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="232" y="68" width="144" height="72" rx="8" fill="#F2F2F7" stroke="#636366" stroke-width="1" stroke-dasharray="5,4"/>
+<rect x="240" y="76" width="36" height="12" rx="2" fill="none" stroke="#636366" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="258" y="85" fill="#636366" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">WAIT</text>
+<text x="304" y="110" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Usage limit</text>
+<text x="304" y="126" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">waiting_for_limit</text>
+<rect x="632" y="424" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="632" y="424" width="144" height="72" rx="8" fill="rgba(28,28,30,0.05)" stroke="#636366" stroke-width="1"/>
+<rect x="640" y="432" width="32" height="12" rx="2" fill="none" stroke="#636366" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="656" y="441" fill="#636366" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">END</text>
+<text x="704" y="466" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Rejected</text>
+<text x="704" y="482" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">branch kept or deleted</text>
+<rect x="808" y="424" width="144" height="72" rx="8" fill="#F2F2F7"/>
+<rect x="808" y="424" width="144" height="72" rx="8" fill="rgba(28,28,30,0.05)" stroke="#636366" stroke-width="1"/>
+<rect x="816" y="432" width="32" height="12" rx="2" fill="none" stroke="#636366" stroke-opacity="0.45" stroke-width="0.8"/>
+<text x="832" y="441" fill="#636366" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">END</text>
+<text x="880" y="466" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Accepted</text>
+<text x="880" y="482" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">branch kept, PR if chosen</text>
+<text x="432" y="96" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">A restart retries a working task once. A second restart</text>
+<text x="432" y="114" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">leaves it Stopped, until you choose Resume.</text>
+<text x="48" y="456" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">In a fully autonomous run Botbench accepts a task itself</text>
+<text x="48" y="474" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">only when its conditions hold. Otherwise it waits for you.</text>
+<line x1="40" y1="528" x2="952" y2="528" stroke="rgba(28,28,30,0.10)" stroke-width="0.8"/>
+<text x="40" y="546" fill="#636366" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="560" width="14" height="10" rx="2" fill="#FEF3C7" stroke="#8F6202" stroke-width="1"/>
+<text x="60" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">You decide</text>
+<rect x="137" y="560" width="14" height="10" rx="2" fill="#FFFFFF" stroke="#1C1C1E" stroke-width="1"/>
+<text x="157" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Station</text>
+<rect x="219" y="560" width="14" height="10" rx="2" fill="#F2F2F7" stroke="#636366" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="239" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Waits, then goes on by itself</text>
+<rect x="409" y="560" width="14" height="10" rx="2" fill="rgba(28,28,30,0.05)" stroke="#636366" stroke-width="1"/>
+<text x="429" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">End</text>
+<line x1="471" y1="565" x2="499" y2="565" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<text x="507" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Back for another round</text>
+<line x1="642" y1="565" x2="670" y2="565" stroke="#8F6202" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<text x="678" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Accepted work</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

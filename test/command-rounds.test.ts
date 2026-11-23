@@ -6,7 +6,7 @@ import type { Evidence } from "../web/src/api/client.ts";
 // What an earlier time a task's list of commands ran is called on its screen. Run 3 of the self-review labelled the
 // checks before each round of fixes "Checks before Botbench restarted", though nothing had restarted.
 
-const row = (round: number, position: number, outcome: Evidence["outcome"], kind: Evidence["kind"] = "check"): Evidence => ({ id: round * 10 + position, kind, round, position, command: `c${position}`, outcome, exitCode: outcome === "failed" ? 1 : 0, signal: null, output: "", truncated: false, limitMs: 1000, startedAt: "", endedAt: "", durationMs: 1 });
+const row = (round: number, position: number, outcome: Evidence["outcome"], kind: Evidence["kind"] = "check"): Evidence => ({ id: round * 10 + position, kind, round, position, command: `c${position}`, outcome, exitCode: outcome === "failed" ? 1 : 0, signal: null, output: "", truncated: false, limitMs: 1000, startedAt: "", endedAt: "", durationMs: 1, needs: null });
 const lists = (rounds: number[], total = 2) => rounds.map((round) => ({ kind: "check" as const, round, total }));
 
 test("earlier rounds of checks are named by the build or round of fixes they checked, and a round a restart cut short says so", () => {

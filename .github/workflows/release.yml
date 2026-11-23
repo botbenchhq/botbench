@@ -34,7 +34,7 @@ concurrency:
 jobs:
   release-please:
     name: Release pull request, tag and Release (release-please)
-    if: github.repository == 'jon-lange/botbench'
+    if: github.repository == 'botbenchhq/botbench'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

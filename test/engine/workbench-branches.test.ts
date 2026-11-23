@@ -24,7 +24,7 @@ import { NO_SANDBOX } from "../support/confined.ts";
 // replayed through the GitHub seam (test/support/replay-github.ts): the owner's approved exception to "no fakes".
 
 type T = { after(fn: () => unknown): void };
-const ADDRESS = "https://github.com/jon-lange/botbench-peers-fixture.git";
+const ADDRESS = "https://github.com/botbenchhq/botbench-peers-fixture.git";
 
 interface Bench {
   db: DatabaseSync;

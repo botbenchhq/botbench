@@ -17,6 +17,7 @@ import { GROK, GROK_CAPABILITIES } from "./drivers/grok.ts";
 import { roleProblem } from "./engine/roles.ts";
 import { BRANCH_PREFIX, remoteNameProblem } from "./worktrees.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
+import { machineChecksProblem, type MachineCheck, type MachineNeed } from "./engine/machine-checks.ts";
 import { workbenchProblem } from "./workbench.ts";
 import { labelProblem } from "./github.ts";
 import { USAGE_LIMIT_WAIT_MS } from "./engine/usage-limit.ts";
@@ -105,6 +106,15 @@ export interface RepositoryConfig {
   /** Commands Botbench runs in the worktree after the work is committed, each with its time limit; their results are evidence on the task. */
   checks?: CommandConfig[];
   /**
+   * Checks that need what a check's sandbox does not give (engine/machine-checks.ts, #201): Botbench runs them itself
+   * after the checks, before the review, outside the builder's turn, each allowed only what its "needs" names:
+   * "chrome" (start headless Chrome, still in a check's sandbox) or "nested-sandbox" (start sandbox-exec, which macOS
+   * allows only outside any sandbox: such a check runs with your own rights). With "files", `{files}` in the command
+   * becomes the files this change touches that match those patterns, quoted, and the check is skipped when there are none.
+   * A failure goes back to the builder as a round of fixes for a failing check. None when absent.
+   */
+  machineChecks?: MachineCheckConfig[];
+  /**
    * The host names this repository's commands may reach: the builder's commands, through Claude Code's sandbox, and the
    * setup and check commands, through Botbench's proxy. Plain names only. None, and no network at all, when absent.
    * The planner's commands reach no network whatever is set here.
@@ -112,7 +122,7 @@ export interface RepositoryConfig {
   allowedHosts?: string[];
   /** The remote an accepted task's branch is pushed to for a pull request; "origin" when absent. */
   remote?: string;
-  /** The branch a pull request asks to be merged into; the repository's default branch on GitHub, as `gh` reports it, when absent. */
+  /** The branch a pull request asks to be merged into, and the one "Bring up to date with main" merges into a task (engine/branch-update.ts); the repository's default branch on GitHub, as `gh` reports it (for a merge, the remote's HEAD as last fetched, else main or master), when absent. */
   baseBranch?: string;
   /** Paths in this repository, added to the top-level "protectedPaths", that only the owner may accept a change to. */
   protectedPaths?: string[];
@@ -148,6 +158,13 @@ const MAX_WATCH_INTERVAL_MINUTES = 1440;
 const WATCH_SETTINGS = ["label", "intervalMinutes"] as const;
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
+/** A machine check as the settings file gives it. */
+export interface MachineCheckConfig {
+  command: string;
+  needs: MachineNeed[];
+  files?: string[];
+  timeoutSeconds?: number;
+}
 const MAX_TIMEOUT_SECONDS = 86_400;
 /** One entry the owner adds to the safety floor: a command whose words, found anywhere in a request, make it always ask. */
 export interface FloorConfig {
@@ -396,6 +413,11 @@ function validate(c: Json, where: string): Config {
           if (problem !== null) fail(`repository "${repo}": ${problem}`);
           continue;
         }
+        if (setting === "machineChecks") {
+          const problem = machineChecksProblem(list);
+          if (problem !== null) fail(`repository "${repo}": "machineChecks" ${problem}`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -441,7 +463,7 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "execution", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "machineChecks", "allowedHosts", "execution", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
 
 /** What is wrong with a repository's "watch", as a sentence that names the setting, or null. */
 function watchProblem(watch: unknown): string | null {
@@ -504,9 +526,13 @@ const asCommand = (entry: CommandConfig): StationCommand =>
   typeof entry === "string" ? { command: entry, limitMs: DEFAULT_LIMIT_MS } : { command: entry.command, limitMs: entry.timeoutSeconds === undefined ? DEFAULT_LIMIT_MS : entry.timeoutSeconds * 1000 };
 
 /** The commands Botbench runs itself in a repository's worktrees, each with its time limit. */
-export function repositoryCommands(config: Config, repo: string): { setup: StationCommand[]; checks: StationCommand[] } {
+export function repositoryCommands(config: Config, repo: string): { setup: StationCommand[]; checks: StationCommand[]; machineChecks: MachineCheck[] } {
   const settings = repositorySettings(config, repo);
-  return { setup: (settings.setup ?? []).map(asCommand), checks: (settings.checks ?? []).map(asCommand) };
+  return {
+    setup: (settings.setup ?? []).map(asCommand),
+    checks: (settings.checks ?? []).map(asCommand),
+    machineChecks: (settings.machineChecks ?? []).map((entry) => ({ ...asCommand(entry), machine: { needs: [...entry.needs], files: [...(entry.files ?? [])] } })),
+  };
 }
 
 /** The host names a repository's commands may reach; none when its settings name none. */

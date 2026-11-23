@@ -224,7 +224,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   });
   // An agent's drafts to a paired workbench, and what a builder is told of one (src/peers/drafts.ts).
   const drafts = createDrafts({ db, config });
-  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), execution: (repo) => repositoryExecution(config, repo), containers, protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, peerMessages: {
+  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoMain: (repo) => repositoryDelivery(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), execution: (repo) => repositoryExecution(config, repo), containers, protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, peerMessages: {
       promptFor: (task, fresh) => drafts.promptFor(task, fresh),
       takeDrafts: (task, attemptId, texts) => (task.runId === null ? Promise.resolve() : drafts.takeDrafts({ agent: agentName(task.builderAgent ?? CLAUDE_CODE), taskId: task.id, runId: task.runId, repo: task.repo, attemptId }, texts)),
     }, onEvent: stream.notify, onTaskChange: (task) => {

@@ -32,7 +32,7 @@ const keyIn = (t: { after(fn: () => void): void }) => {
   return workbenchKey(home);
 };
 
-const fields = (key: string, over: Partial<PairRequestFields> = {}): PairRequestFields => ({ inviteId: newId(), pairingKey: newPairingKey(), key, name: "bob", address: "127.0.0.1:4791", repository: "github.com/jon-lange/botbench", ...over });
+const fields = (key: string, over: Partial<PairRequestFields> = {}): PairRequestFields => ({ inviteId: newId(), pairingKey: newPairingKey(), key, name: "bob", address: "127.0.0.1:4791", repository: "github.com/botbenchhq/botbench", ...over });
 
 test("the pair request's byte form is a fixed prefix and each field tagged and length-prefixed, in a fixed order", (t) => {
   const r = fields(keyIn(t).publicKey);
@@ -102,7 +102,7 @@ test("the inviter's answer is signed over its own byte form and taken only for t
 
 test("the invite is one line safe to paste, read back whole, and refused whole when anything is off, without repeating what was pasted", (t) => {
   const alice = keyIn(t);
-  const invite: Invite = { id: newId(), name: "alice", fingerprint: alice.fingerprint, address: "127.0.0.1:4790", repository: "github.com/jon-lange/botbench", expiresAt: new Date(Date.now() + 60_000).toISOString(), secret: randomBytes(32) };
+  const invite: Invite = { id: newId(), name: "alice", fingerprint: alice.fingerprint, address: "127.0.0.1:4790", repository: "github.com/botbenchhq/botbench", expiresAt: new Date(Date.now() + 60_000).toISOString(), secret: randomBytes(32) };
   const text = inviteText(invite);
   assert.ok(text.startsWith(INVITE_PREFIX));
   assert.match(text, /^[A-Za-z0-9._-]+$/, "letters, digits, '.', '-' and '_' only: no space, quote, slash or line break");
