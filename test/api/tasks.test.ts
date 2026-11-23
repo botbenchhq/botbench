@@ -221,6 +221,10 @@ test("a committed task is described with its changed files, each marked as the p
     reviews: [],
     refinements: [],
     earlierAttempts: 0,
+    // Built by Claude Code from its start: never moved to another agent, and not at work, so nothing to move it to.
+    builder: "claude-code",
+    handoffs: [],
+    moveTo: [],
     maxRefineRounds: 0,
     reviewLine: null,
     decision: null,
