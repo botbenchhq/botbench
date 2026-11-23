@@ -2,6 +2,13 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-23: a rename across the repository broke every test that replays a recording, and one test waited without end
+The move to botbenchhq/botbench (#213) replaced the old address in the tests too. The sessions recorded from the real `gh` still name jon-lange/botbench, as they must, so replayed calls no longer matched: 21 tests of the fast suite failed, and one of them waited for a poll to be "checked" that had failed, under mocked timers, so `npm test` never ended. Three more tests had been failing since the 0.2.0 release: they wrote the installed version as "0.1.0" while installing this checkout's own files. Caught by running the suite on `main` with a time limit for each test. Rules going forward:
+- A rename is not applied to `test/recordings/` nor to what replays it: a test that replays a recording names the repository the recording was captured from, with a comment where the name is set. A live test names the repository as it is today.
+- After a search-and-replace, the whole fast suite is run and seen to end before the merge.
+- A test that waits for an outcome ends the wait on every outcome, the failing ones too, and registers its clean-up before the first assertion.
+- A test does not write as a number what it reads from this checkout (its version): it reads it.
+
 ## 2026-11-23: test runs left thousands of botbench-* folders in the temporary folder, and two timing tests failed under load (task 21 of run 17)
 The owner's temporary folder held hundreds of `botbench-*` leftovers, and a sandboxed builder's thousands. Four causes: a probe file named by the shell's `$$`, which the test could not know to remove; `t.after` hooks run first in, first out, so a fixture that added its removal first removed the folder before the server or engine added after it had closed, and closing wrote `home/worktrees` back; a setup that threw (a socket the sandbox refused) before the fixture added its removal; and Playwright loading a test file once just to list its tests, so a folder made at the top of the file was made twice and removed once. Separately, the sign-in slow-down tests timed one request against a wait counted from the request before it, and a loaded machine spent that wait delivering the earlier answer. Rules going forward:
 - Make temporary folders with `tempDir` (test/support/repo.ts, e2e/botbench.ts), or wrap `mkdtemp` in `removedAtEnd`: they are removed after every hook of the file at the latest. A file a test writes into the temporary folder is named by the test, which removes it.

@@ -10,7 +10,7 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // An issue proposed on Work by the issue watch (issue #73), in the real client at a phone's size, with no model turn. A
 // real Botbench process started through e2e/serve-replayed-watch.ts, whose gh answers are replayed from output captured
-// once from the real gh for botbenchhq/botbench (test/support/replay-watch.ts, the owner's approved exception); a real
+// once from the real gh for jon-lange/botbench (test/support/replay-watch.ts, the owner's approved exception); a real
 // temporary repository whose origin is that repository's address, watched for the captured label. Nothing is sent: the
 // run is never started here.
 
@@ -89,7 +89,7 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   await page.goto(`${botbench.base}/#/settings`);
   await expect(async () => {
     await page.reload();
-    await expect(page.getByTestId("watch")).toContainText(watchAbout({ label, intervalMinutes: 10, repository: "github.com/botbenchhq/botbench" }), { timeout: 2_000 });
+    await expect(page.getByTestId("watch")).toContainText(watchAbout({ label, intervalMinutes: 10, repository: "github.com/jon-lange/botbench" }), { timeout: 2_000 });
   }).toPass({ timeout: 15_000 });
   await checkDesign(page, "Settings, with a watched repository");
 });

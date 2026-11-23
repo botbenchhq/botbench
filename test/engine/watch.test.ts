@@ -13,7 +13,7 @@ import { git, initRepo, tempDir } from "../support/repo.ts";
 import { loadGhCapture } from "../support/replay-github.ts";
 import { capturedIssue, loadWatchCapture, replayWatchGh, WATCH_ADDRESS, WATCH_REPO } from "../support/replay-watch.ts";
 
-// The issue watch's engine (issue #73): polls of a real temporary repository whose origin is botbenchhq/botbench, whose gh
+// The issue watch's engine (issue #73): polls of a real temporary repository whose origin is jon-lange/botbench, whose gh
 // answers are replayed from the capture taken once from the real gh (test/support/replay-watch.ts, the owner's approved
 // exception); its failures are the real gh's and the real process's (gh not signed in, no such program), or GitHub's
 // documented answer over its limit; the seen table is a real SQLite file, closed and opened again.
@@ -44,7 +44,7 @@ test("a poll proposes each open issue gh listed with the label once, with only g
   assert.deepEqual(proposed.map((p) => p.number).sort(), listed.map((i) => i.number).sort());
   const first = capturedIssue();
   const shown = watch.proposals().find((p) => p.number === first.number)!;
-  assert.deepEqual({ title: shown.title, author: shown.author, url: shown.url, repository: shown.repository, repoPath: shown.repoPath }, { title: first.title, author: first.author, url: first.url, repository: "github.com/botbenchhq/botbench", repoPath: b.repo });
+  assert.deepEqual({ title: shown.title, author: shown.author, url: shown.url, repository: shown.repository, repoPath: shown.repoPath }, { title: first.title, author: first.author, url: first.url, repository: "github.com/jon-lange/botbench", repoPath: b.repo });
   // How GitHub says the author relates to the repository, from the captured read of that issue (the composer's own read).
   assert.equal(shown.authorRelation, parseIssueRelation(loadWatchCapture().outputs.issueApi.result.stdout, WATCH_REPO, first.number));
   assert.equal(shown.authorRelation, "OWNER");
@@ -168,7 +168,7 @@ test("a poll that fails shows its repository's failure in plain words with what 
  * documentation, since a real limit cannot be reached on demand.
  */
 const LIMIT_HEAD = "HTTP/2.0 403 Forbidden\nDate: Tue, 20 Aug 2013 14:50:41 GMT\nX-Ratelimit-Limit: 60\nX-Ratelimit-Remaining: 0\nX-Ratelimit-Reset: 1377013266\nX-Ratelimit-Used: 60\nX-Ratelimit-Resource: core\n\n{\"message\":\"API rate limit exceeded for xxx.xxx.xxx.xxx.\"}";
-const LIMIT_FAILURE: GhResult = { started: true, code: 1, stdout: "", stderr: "HTTP 403: API rate limit exceeded for xxx.xxx.xxx.xxx. (https://api.github.com/repos/botbenchhq/botbench/issues)\n" };
+const LIMIT_FAILURE: GhResult = { started: true, code: 1, stdout: "", stderr: "HTTP 403: API rate limit exceeded for xxx.xxx.xxx.xxx. (https://api.github.com/repos/jon-lange/botbench/issues)\n" };
 
 test("after GitHub's limit the watch reads one answer's head with gh api -i and waits until the reset it names, never less than the interval", async (t) => {
   const b = bench(t, { intervalMinutes: 10 });
@@ -239,13 +239,18 @@ test("one watch per store, polling at start and then at its interval, stopped cl
   let finished!: () => void;
   let done = new Promise<void>((resolve) => (finished = resolve));
   t.mock.timers.enable({ apis: ["setTimeout"] });
+  // A poll that ends, failed too, ends the wait: a poll that fails then fails the count below, and the test never waits
+  // on a poll that will not be "checked" (under the mocked timers nothing else would end it).
   const watch = startWatch({ db, config: b.config, run: async (args, o) => replay.run(args, o), onChange: () => {
       const s = watch?.status()[0];
-      if (s?.state === "checked") (polled++, finished());
+      if (s?.state === "checked") polled++;
+      if (s?.state === "checked" || s?.state === "failed") finished();
     } });
+  t.after(() => watch.close());
   assert.throws(() => startWatch({ db, config: b.config, run: replay.run }), /already running for this store/);
   t.mock.timers.tick(0);
   await done;
+  assert.deepEqual([watch.status()[0]!.state, watch.status()[0]!.problem], ["checked", null]);
   assert.equal(polled, 1, "the first poll is at start");
   done = new Promise<void>((resolve) => (finished = resolve));
   t.mock.timers.tick(59_000);

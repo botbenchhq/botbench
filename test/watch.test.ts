@@ -11,7 +11,7 @@ import { removedAtEnd } from "./support/repo.ts";
 
 // Watching a repository for labelled issues (issue #73), at the lowest layer: the one list command's exact arguments,
 // the reading of gh's answer, the label and interval settings, and the wait after GitHub's limits. Pure functions: no
-// process, no network. The answers are the real gh's: the capture from botbenchhq/botbench (test/live/watch.live.test.ts)
+// process, no network. The answers are the real gh's: the capture from jon-lange/botbench (test/live/watch.live.test.ts)
 // and the issue capture from cli/cli (test/live/issue.live.test.ts), whose entries have the same shape as a list's.
 
 const repo: RepoRef = { host: "github.com", owner: "jon-lange", name: "example" };
@@ -59,7 +59,7 @@ test("what is kept of an issue is its number, the address Botbench makes, and it
   assert.deepEqual(kept, { number: 15019, url: "https://github.com/cli/cli/issues/15019", title: "Line one [31mtwo three", author: "jeffwall-curlewlabs" });
 });
 
-test("the capture from botbenchhq/botbench: every open issue gh listed with the label is kept, with its number, title and author", () => {
+test("the capture from jon-lange/botbench: every open issue gh listed with the label is kept, with its number, title and author", () => {
   const capture = loadWatchCapture();
   assert.equal(capture.command, `gh ${ghArgs.watchIssues(WATCH_REPO, capture.label).join(" ")}`, "the file states the exact command it was taken with");
   assert.deepEqual(capture.outputs.labelled.args, ghArgs.watchIssues(WATCH_REPO, capture.label));

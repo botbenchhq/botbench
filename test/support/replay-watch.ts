@@ -4,15 +4,17 @@ import { ghArgs, parseIssueRelation, parseIssueView, parseWatchedIssues, repoNam
 
 /*
  * Output captured once from the real gh tool by test/live/watch.live.test.ts (BOTBENCH_CAPTURE_GH=1), against the
- * owner's repository botbenchhq/botbench, read only: the open issues carrying the watched label, listed with Botbench's
+ * owner's repository jon-lange/botbench, read only: the open issues carrying the watched label, listed with Botbench's
  * exact arguments (`gh issue list --label=... --json=...`, the command is written in the file), the first of them read
  * as the composer reads an issue (`gh issue view` and `gh api`), and the head of one `gh api -i` answer. It holds no
  * token. Like replay-github.ts, this is the owner's approved exception to "no fakes": captured real output replayed
  * through the one seam the watch uses (RunGh), each answer given only to the exact arguments it was captured for.
  */
 
+// jon-lange/botbench is the repository the recording was captured from (the address before it moved to botbenchhq): the
+// replay answers only the exact arguments it recorded, so the name stays until a new capture is added.
 export const WATCH_REPO: RepoRef = { host: "github.com", owner: "jon-lange", name: "botbench" };
-export const WATCH_ADDRESS = "https://github.com/botbenchhq/botbench.git";
+export const WATCH_ADDRESS = "https://github.com/jon-lange/botbench.git";
 
 export interface WatchCapture {
   /** The exact command the list was taken with, as one line. */
@@ -63,7 +65,7 @@ export function replayWatchGh(o: { answer?: (args: readonly string[]) => GhResul
   };
 }
 
-/** The issue reads of the replay, added to `base`: the captured issue of botbenchhq/botbench, read as the composer reads it. */
+/** The issue reads of the replay, added to `base`: the captured issue of jon-lange/botbench, read as the composer reads it. */
 export function replayWatchIssue(base: GitHub): GitHub {
   const capture = loadWatchCapture();
   const { number } = capturedIssue(capture);
@@ -77,7 +79,7 @@ export function replayWatchIssue(base: GitHub): GitHub {
   };
 }
 
-/** The exact arguments of the capture's reads, for the live test that takes it. */
-export function captureArgs(label: string, number: number): Record<keyof WatchCapture["outputs"], string[]> {
-  return { labelled: ghArgs.watchIssues(WATCH_REPO, label), issue: ghArgs.issueView(WATCH_REPO, number), issueApi: ghArgs.issueApi(WATCH_REPO, number), head: ghArgs.watchHead(WATCH_REPO) };
+/** The exact arguments of the capture's reads of `repo`, for the live test that takes it. */
+export function captureArgs(repo: RepoRef, label: string, number: number): Record<keyof WatchCapture["outputs"], string[]> {
+  return { labelled: ghArgs.watchIssues(repo, label), issue: ghArgs.issueView(repo, number), issueApi: ghArgs.issueApi(repo, number), head: ghArgs.watchHead(repo) };
 }

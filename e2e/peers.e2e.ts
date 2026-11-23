@@ -14,7 +14,7 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 // Named workbenches that see each other's work (Peers P1, P2, P3) in the real client, at a phone's size, with no model
 // turn. The shared remote is a real bare repository on disk; another installation ("bob") has pushed its task branch
 // and a claim on issue #82 to it from its own clone, and this installation ("alice") has a task ready for review on its own named branch. The
-// repository names the remote by the GitHub address of the owner's repository botbenchhq/botbench, which its git
+// repository names the remote by the GitHub address of the owner's repository jon-lange/botbench, which its git
 // settings send to the bare repository. Botbench is started through e2e/serve-replayed-gh.ts, whose list of open pull
 // requests is replayed from output captured once from the real gh for that repository (test/support/replay-peers.ts,
 // the owner's approved exception). That capture holds no open pull request: none from a named workbench could exist
@@ -83,11 +83,11 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(branch).toHaveCount(1);
   await expect(branch).toContainText("botbench/bob/run-1/task-1");
   // Each row names the repository both share, never this Mac's folder for it ("alice").
-  await expect(branch).toContainText("bob · Pushed, no pull request yet · github.com/botbenchhq/botbench");
-  await expect(others.getByRole("list", { name: "Other workbenches in github.com/botbenchhq/botbench" })).toBeVisible();
+  await expect(branch).toContainText("bob · Pushed, no pull request yet · github.com/jon-lange/botbench");
+  await expect(others.getByRole("list", { name: "Other workbenches in github.com/jon-lange/botbench" })).toBeVisible();
   await expect(others.getByTestId("peer-claim")).toHaveCount(2);
   await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #82" })).toContainText(/bob · Started on issue #82 \d+ minutes ago · github\.com\/jon-lange\/botbench/);
-  await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #90" })).toContainText("bob · Started on issue #90 3 hours ago and has shown no work on it for 3 hours: it may have stopped, or be waiting for its owner · github.com/botbenchhq/botbench");
+  await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #90" })).toContainText("bob · Started on issue #90 3 hours ago and has shown no work on it for 3 hours: it may have stopped, or be waiting for its owner · github.com/jon-lange/botbench");
   // This workbench's own branch is not listed.
   await expect(others).not.toContainText(seeded.branch);
   await checkDesign(page, "Work, with another workbench's branch");
@@ -105,17 +105,17 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   await expect(page.getByTestId("peer-warning")).toHaveCount(0);
   // Naming the issue bob claimed: a warning only, and Send stays enabled.
-  await messageBox(page).fill("Issue #82 on botbenchhq/botbench");
+  await messageBox(page).fill("Issue #82 on jon-lange/botbench");
   await expect(page.getByTestId("peer-warning")).toHaveText(/^A best-effort match on #82 in your message: bob started on this issue \d+ minutes ago\.$/);
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
   // A new run on the issue of bob's old claim: Take over, behind a confirm that names bob. A claim minutes old offers none.
   await page.goto(`${botbench.base}/#/turn?start=run`);
   await closeContext(page);
-  await messageBox(page).fill("Issue #82 on botbenchhq/botbench");
+  await messageBox(page).fill("Issue #82 on jon-lange/botbench");
   await expect(page.getByTestId("peer-warning")).toHaveCount(1);
   await expect(page.getByRole("button", { name: /^Take over/ })).toHaveCount(0);
-  await messageBox(page).fill("Issue #90 on botbenchhq/botbench");
+  await messageBox(page).fill("Issue #90 on jon-lange/botbench");
   await expect(page.getByTestId("peer-warning")).toHaveText(/^A best-effort match on #90 in your message: bob started on this issue 3 hours ago and has shown no work on it for 3 hours: it may have stopped, or be waiting for its owner\.$/);
   await page.getByRole("button", { name: "Take over bob's claim on issue #90" }).click();
   const dialog = page.getByTestId("take-over-dialog");

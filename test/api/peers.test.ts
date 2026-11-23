@@ -92,7 +92,7 @@ test("the view of a repository lists another workbench's pushed branches from th
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const view = res.body.view as Record<string, unknown>;
   assert.equal(view.state, "ready", String(view.problem));
-  assert.equal(view.repository, "github.com/botbenchhq/botbench");
+  assert.equal(view.repository, "github.com/jon-lange/botbench");
   assert.deepEqual(view.branches, [
     { workbench: "bob", branch: "botbench/bob/run-1/task-1" },
     { workbench: "bob", branch: "botbench/bob/run-2/task-2" },

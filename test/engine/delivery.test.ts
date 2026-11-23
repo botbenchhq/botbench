@@ -23,7 +23,8 @@ import { git, initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
 // (test/support/replay-github.ts, the owner's approved exception). The live test opens a real one.
 
 type T = { after(fn: () => unknown): void };
-const ADDRESS = "https://github.com/botbenchhq/botbench-delivery-fixture.git";
+// jon-lange is the owner the replayed gh recording (test/recordings/gh-delivery.json) was captured under, so it stays.
+const ADDRESS = "https://github.com/jon-lange/botbench-delivery-fixture.git";
 
 interface Store {
   db: DatabaseSync;
@@ -152,7 +153,7 @@ test("the owner's own Open a pull request on a kept branch: refused unless it na
   await refused(() => d.deliver(task.id, { by: "owner" }), 409, /not accepted/);
   await decideTask(s.db, { taskId: task.id, decision: "accept" });
   const target = await d.target(getTask(s.db, task.id)!);
-  assert.deepEqual(target, { remote: "origin", address: ADDRESS, repository: "github.com/botbenchhq/botbench-delivery-fixture", branch: task.branch, base: null });
+  assert.deepEqual(target, { remote: "origin", address: ADDRESS, repository: "github.com/jon-lange/botbench-delivery-fixture", branch: task.branch, base: null });
   await refused(() => d.deliver(task.id, { by: "owner", expect: { remote: "upstream", branch: task.branch } }), 409, /not the one you were shown/);
   await refused(() => d.deliver(task.id, { by: "owner", expect: { remote: "origin", branch: "botbench/other" } }), 409, /not the one you were shown/);
   assert.deepEqual(stepsOf(s.db, task.id), [], "nothing was recorded or sent");
@@ -285,8 +286,8 @@ test("credentials written into a remote's address never reach the ledger, Activi
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
   assert.match(view.problem!, /https:\/\/\*\*\*@example\.invalid/);
   // The confirmation shows a GitHub address with a token in it without the token.
-  git(s.repo, "remote", "set-url", "origin", `https://jon:${secret}@github.com/botbenchhq/botbench-delivery-fixture.git`);
-  assert.equal((await d.target(getTask(s.db, task.id)!))!.address, "https://***@github.com/botbenchhq/botbench-delivery-fixture.git");
+  git(s.repo, "remote", "set-url", "origin", `https://jon:${secret}@github.com/jon-lange/botbench-delivery-fixture.git`);
+  assert.equal((await d.target(getTask(s.db, task.id)!))!.address, "https://***@github.com/jon-lange/botbench-delivery-fixture.git");
 
   // A GitHub address with a token, which git sends to a remote that is not there: the failure is redacted too.
   const second = await readyTask(s, { delivery: "pull_request" });

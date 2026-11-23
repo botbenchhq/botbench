@@ -3,9 +3,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import { test } from "node:test";
-import { ghArgs, parseApiHead, parseIssueView, parseWatchedIssues, runGh, WATCH_LIMIT } from "../../src/github.ts";
+import { ghArgs, parseApiHead, parseIssueView, parseWatchedIssues, runGh, WATCH_LIMIT, type RepoRef } from "../../src/github.ts";
 import { checkRecording } from "../support/recording-check.ts";
-import { captureArgs, WATCH_CAPTURE_FILE, WATCH_REPO, type WatchCapture } from "../support/replay-watch.ts";
+import { captureArgs, WATCH_CAPTURE_FILE, type WatchCapture } from "../support/replay-watch.ts";
 
 // The one live read of a watched repository (issue #73), against the owner's own repository botbenchhq/botbench, read
 // only: the owner's gh lists the open issues carrying the label with Botbench's exact arguments, the first of them is
@@ -14,6 +14,12 @@ import { captureArgs, WATCH_CAPTURE_FILE, WATCH_REPO, type WatchCapture } from "
 // issue must carry it. With BOTBENCH_CAPTURE_GH=1 it writes what gh printed to test/recordings/gh-watch.json, which the
 // replayed tests read, with the exact command it was taken with.
 
+// The repository as it is on GitHub today. The replayed tests keep the one their recordings were captured from
+// (WATCH_REPO, jon-lange/botbench); read live, that old name would be answered through GitHub's redirect, and the parser
+// leaves out every entry whose address is not on the repository it asked for. A capture taken from here is a new
+// recording: the replay's repository and address move to it in the same change.
+const LIVE_REPO: RepoRef = { host: "github.com", owner: "botbenchhq", name: "botbench" };
+
 test("live: the owner's gh lists the open issues carrying a label with Botbench's arguments and fields, read only", { timeout: 120_000 }, async (t) => {
   try {
     execFileSync("gh", ["--version"], { stdio: "ignore" });
@@ -21,21 +27,21 @@ test("live: the owner's gh lists the open issues carrying a label with Botbench'
     return t.skip("gh is not installed here");
   }
   const label = process.env.BOTBENCH_WATCH_LABEL ?? "botbench";
-  const listArgs = ghArgs.watchIssues(WATCH_REPO, label);
+  const listArgs = ghArgs.watchIssues(LIVE_REPO, label);
   const labelled = await runGh(listArgs, { cwd: process.cwd() });
   assert.equal(labelled.code, 0, labelled.stderr);
   const raw = JSON.parse(labelled.stdout) as Record<string, unknown>[];
   assert.ok(raw.length > 0, `no open issue of botbenchhq/botbench carries the label ${label}: apply it to one, or name another with BOTBENCH_WATCH_LABEL`);
   assert.ok(raw.length <= WATCH_LIMIT);
   for (const field of ["number", "title", "author", "url", "labels"]) assert.ok(field in raw[0]!, field);
-  const issues = parseWatchedIssues(labelled.stdout, WATCH_REPO, label);
+  const issues = parseWatchedIssues(labelled.stdout, LIVE_REPO, label);
   assert.equal(issues.length, raw.length, "every entry gh lists is an open issue of this repository with the label");
 
   const number = issues[0]!.number;
-  const args = captureArgs(label, number);
+  const args = captureArgs(LIVE_REPO, label, number);
   const issue = await runGh(args.issue, { cwd: process.cwd() });
   assert.equal(issue.code, 0, issue.stderr);
-  assert.equal(parseIssueView(issue.stdout, WATCH_REPO, number).state, "OPEN");
+  assert.equal(parseIssueView(issue.stdout, LIVE_REPO, number).state, "OPEN");
   const issueApi = await runGh(args.issueApi, { cwd: process.cwd() });
   assert.equal(issueApi.code, 0, issueApi.stderr);
   const head = await runGh(args.head, { cwd: process.cwd() });
