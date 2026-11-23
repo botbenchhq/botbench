@@ -185,7 +185,8 @@ test("hostile sizes finish in linear time without throwing: long lines, long wor
     assert.ok(Array.isArray(blocks));
   }
   const took = performance.now() - started;
-  assert.ok(took < 3000, `parsing ${inputs.length} hostile texts of about ${n} characters took ${Math.round(took)} ms`);
+  // A generous ceiling that only a parser gone wrong reaches; the shape of the growth is checked below, on any machine.
+  assert.ok(took < 15000, `parsing ${inputs.length} hostile texts of about ${n} characters took ${Math.round(took)} ms`);
   // A quadratic parser would take about four times as long on twice the text; a linear one about twice.
   // The fastest of three runs: one pause for garbage collection on a busy machine must not read as quadratic time.
   const timed = (s: string) =>
