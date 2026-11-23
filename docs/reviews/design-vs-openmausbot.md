@@ -9,7 +9,7 @@ Each path is relative to the repository its column or line names: the Botbench c
 Stronger: Botbench gives each task its own copy and branch, confines the agent's commands in macOS's sandbox, and has a safety floor that no mode loosens; OpenMausBot defaults every bot to its engine's most permissive mode and, on this computer, works in the person's own folder.
 Stronger: Botbench ends in a branch with checks, a review by another vendor's model and an owner decision; no OpenMausBot code was found for checks, a cross-vendor review or a branch hand-back.
 Weaker: once a Botbench task is building, the owner cannot tell the agent anything except through an approval card; OpenMausBot takes a message into a running turn.
-Weaker: a Botbench task that goes quiet, or meets its usage limit, waits for the owner; OpenMausBot ends a silent turn after an activity window and records when a limit resets.
+Weaker: no Botbench code acts on a task that goes quiet or meets its usage limit, so neither resumes without the owner; OpenMausBot ends a silent turn after an activity window and records when a limit resets.
 Weaker: reaching Botbench from a phone means typing a 43-character token; OpenMausBot pairs a phone from a link or QR code.
 
 ## Side by side
@@ -44,7 +44,7 @@ Ranked by value to a Botbench user who hands work over from a phone, walks away,
 ### 2. Wait for a usage limit to reset, then carry on
 
 - OpenMausBot: reads the reset time from the CLI's refusal and plan usage, saves it across restarts, and uses it to decide when work may run again. `server/limit-resets.ts`, with the refusal parsed in `server/drivers/claude-limits.ts`.
-- Botbench today: the driver turns `rate_limit_event` into a `rate_limit` event with `resetsAt` (`src/drivers/claude-code.ts`, the type in `src/drivers/events.ts`), the transcript shows it (`web/src/components/transcript.tsx`), and no engine code reads it, so the task stops and waits for the owner. The voice glossary already names the state "Paused · usage limit (resumes 3:14)" (`docs/product/voice.md`).
+- Botbench today: the driver turns `rate_limit_event` into a `rate_limit` event with `resetsAt` (`src/drivers/claude-code.ts`, the type in `src/drivers/events.ts`), the transcript shows it (`web/src/components/transcript.tsx`), and no engine code reads it, so nothing resumes the task after the reset; how the task ends at that point is unverified (see Could not verify). The voice glossary already names the state "Paused · usage limit (resumes 3:14)" (`docs/product/voice.md`).
 - Change: when a builder turn ends refused by the limit with a real reset time, record it on the task, show the paused state, and resume the same session on the same subscription once after the reset; never switch to another account or to metered billing. Without a reset time, stop as today.
 - Size: medium.
 - Acceptance criterion: replaying a captured session that ends with a rejected `rate_limit_event` leaves the task paused with that `resetsAt` stored, starts no attempt before it, and starts exactly one resume attempt after it.
@@ -55,7 +55,7 @@ Ranked by value to a Botbench user who hands work over from a phone, walks away,
 - Botbench today: the task routes are create, list, diff, accept, reject, discard, resume and pull request (`src/api/tasks.ts`); the only way to correct a building agent is the note on Deny and say what to do instead (`src/approvals/broker.ts`), which needs the agent to ask first. The driver already keeps Claude Code's stdin open in stream-json (`src/drivers/claude-code.ts`).
 - Change: a message box on a building task that writes one owner message into the running session, recorded in the transcript and the action log as the owner's words; between turns it is kept for the next turn. Only a signed-in owner session can send one, and reviewers are never sent one.
 - Size: medium.
-- Acceptance criterion: a message posted to a building task is stored as an owner event of that attempt and is written to the agent process's stdin before the attempt's next assistant event.
+- Acceptance criterion: a message posted to a building task is stored as an owner event of that attempt and is written once, as a user message, to the running agent process's stdin.
 
 ### 4. Pair a phone with a one-time link instead of the login token
 
@@ -71,7 +71,7 @@ Ranked by value to a Botbench user who hands work over from a phone, walks away,
 - Botbench today: a run's mode is chosen at start and a database trigger refuses any change. `src/engine/modes.ts`.
 - Change: allow moving a running run to a stricter mode only (fully autonomous to semi-autonomous to manual), from the run screen, logged as an owner action; never looser, so the safety floor and the start-time rules for issue runs are untouched.
 - Size: small.
-- Acceptance criterion: changing a running run from fully autonomous to manual succeeds and the next confined command asks the owner; changing manual to fully autonomous is refused with 409.
+- Acceptance criterion: after a running run is changed from fully autonomous to manual, the next confined command the agent asks for waits for the owner instead of running.
 
 ## Not worth taking
 
