@@ -15,6 +15,7 @@ import { containerCommand, containerExecArgv, containerName, containerRunArgs, c
 import { launchFingerprint } from "./support/launch-fingerprint.ts";
 import { bannedIn } from "../e2e/voice.ts";
 import { EXECUTION_ABOUT, executionWords, NO_REPOSITORIES } from "../web/src/app/execution-words.ts";
+import { removedAtEnd } from "./support/repo.ts";
 
 // Where a repository's commands run (U28, ADR 0009): the setting, the host kind left exactly as it was, and the
 // container kind's run arguments, refusals and command rewrite, each at the lowest layer that can prove it. Docker
@@ -24,7 +25,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const BASE = { port: 4780, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: { implementer: { driver: "claude-code" } } };
 
 function load(t: { after(fn: () => void): void }, repositories: unknown) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, "botbench.config.json");
   fs.writeFileSync(file, JSON.stringify({ ...BASE, repositories }));
@@ -245,7 +246,7 @@ test("Docker not answering is refused in plain words: a failure, no answer withi
   // A program that never answers whatever it is asked: sh running sleep, in place of docker. (`yes` was used before; the
   // uutils `yes` of newer Linux refuses `info --format …` and ends at once.) It is stopped at its limit, its whole
   // process group with it: the sleep it started is gone too.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-silent-"));
+  const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-silent-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const silent = path.join(dir, "docker");
   const pidFile = path.join(dir, "sleep.pid");
@@ -287,7 +288,7 @@ test("starting a task's container is refused, before anything runs and with no f
 });
 
 test("a copy reached through a link, or gone, is refused before docker run: what is mounted is the copy's own real path", async (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-link-")));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-link-"))));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const dataDir = path.join(dir, "data");
   const elsewhere = path.join(dir, "elsewhere");

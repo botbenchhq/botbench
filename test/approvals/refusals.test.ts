@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { gate } from "../../src/approvals/gate.ts";
 import { REFUSAL_KINDS, refusalBlocksAccept, refusalKind, readOnlyCommand, type RefusalKind } from "../../src/approvals/refusals.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 // Which refusals of a fully autonomous run block its accept. Pure functions, no process or store: each request is put to
 // the real gate in a fully autonomous run, its refusal is read for its kind, and the kind decides. What the broker
@@ -99,7 +100,7 @@ test("a read-only command is read from the folder the agent stood in, and only i
 });
 
 test("a word after -- that is a real link out of the copy is followed, and the command is not read-only", () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-refusals-")));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-refusals-"))));
   try {
     const copy = path.join(dir, "copy");
     fs.mkdirSync(copy);
@@ -126,7 +127,7 @@ test("a short option with its value attached is read as a path too: one that nam
 });
 
 test("a short option's attached value that is a real link out of the copy is followed, and the command is not read-only", () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-refusals-")));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-refusals-"))));
   try {
     const copy = path.join(dir, "copy");
     fs.mkdirSync(copy);

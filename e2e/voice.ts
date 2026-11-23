@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { escapeRegExp } from "../test/support/regexp.ts";
 
 // The words Botbench never shows, read from the one place they are kept: the glossary table of docs/product/voice.md.
 // The browser tests and the server's unit test both import this module, so the list is never written twice.
@@ -27,9 +28,8 @@ export const BANNED: readonly string[] = readBanned(fs.readFileSync(VOICE, "utf8
  */
 const ALLOWED_PHRASES = [/\bgit worktrees?\b/gi, /"[^"\n]*"/g, /`[^`\n]*`/g, /(?<![\w.])~?\/[^\s"'`)]+/g];
 
-const escape = (term: string): string => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** A term as a whole word, in any case, with or without a final "s". A term of several words matches across any white space. */
-const pattern = (term: string): RegExp => new RegExp(`(?<![\\w-])${escape(term).replace(/ /g, "\\s+")}s?(?![\\w-])`, "i");
+const pattern = (term: string): RegExp => new RegExp(`(?<![\\w-])${escapeRegExp(term).replace(/ /g, "\\s+")}s?(?![\\w-])`, "i");
 const PATTERNS = BANNED.map((term) => ({ term, test: pattern(term) }));
 
 /** The banned terms a piece of Botbench's own text holds. */

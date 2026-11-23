@@ -957,26 +957,34 @@ export class ClaudeCodeDriver implements Driver {
     // chat has no repository: a CLAUDE.md in its folder is one an agent may have written, and is not handed on.
     const instructions = gate && options.allowEdits === true && !options.readOnly ? repositoryInstructions(options.cwd) : null;
     let instructionsDir: string | null = null;
-    if (instructions !== null) {
-      // An owner-only directory for the one file; it goes when the CLI process does.
-      instructionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-instructions-"));
-      fs.writeFileSync(path.join(instructionsDir, "instructions.md"), instructions, { mode: 0o600 });
-    }
     const cleanUp = (): void => {
       if (instructionsDir !== null) fs.rmSync(instructionsDir, { recursive: true, force: true });
     };
-    const args = claudeArgs({
-      confinement: { ...options.confinement, cwd: options.cwd, ...(this.configDir === undefined ? {} : { configDir: this.configDir }) },
-      gated: gate !== undefined,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.resumeCursor ? { resumeCursor: options.resumeCursor } : {}),
-      ...(options.allowEdits ? { allowEdits: true } : {}),
-      ...(options.readOnly ? { readOnly: true } : {}),
-      ...(instructionsDir === null ? {} : { instructionsFile: path.join(instructionsDir, "instructions.md") }),
-      ...(options.container === undefined ? {} : { container: true }),
-    });
-    const extraEnv = gate ? { ...this.extraEnv, [SOCKET_ENV]: gate.socketPath, [SECRET_ENV]: gate.secret } : this.extraEnv;
-    const { child, pgid } = launch(COMMAND, args, { cwd: options.cwd, extraEnv });
+    let launched: ReturnType<typeof launch>;
+    // The folder goes when the CLI process does, and also when anything before its start throws.
+    try {
+      if (instructions !== null) {
+        // An owner-only directory for the one file.
+        instructionsDir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-instructions-"));
+        fs.writeFileSync(path.join(instructionsDir, "instructions.md"), instructions, { mode: 0o600 });
+      }
+      const args = claudeArgs({
+        confinement: { ...options.confinement, cwd: options.cwd, ...(this.configDir === undefined ? {} : { configDir: this.configDir }) },
+        gated: gate !== undefined,
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.resumeCursor ? { resumeCursor: options.resumeCursor } : {}),
+        ...(options.allowEdits ? { allowEdits: true } : {}),
+        ...(options.readOnly ? { readOnly: true } : {}),
+        ...(instructionsDir === null ? {} : { instructionsFile: path.join(instructionsDir, "instructions.md") }),
+        ...(options.container === undefined ? {} : { container: true }),
+      });
+      const extraEnv = gate ? { ...this.extraEnv, [SOCKET_ENV]: gate.socketPath, [SECRET_ENV]: gate.secret } : this.extraEnv;
+      launched = launch(COMMAND, args, { cwd: options.cwd, extraEnv });
+    } catch (err) {
+      cleanUp();
+      throw err;
+    }
+    const { child, pgid } = launched;
     if (!pgid) {
       child.on("error", () => {});
       cleanUp();

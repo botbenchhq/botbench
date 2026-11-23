@@ -16,7 +16,14 @@ const TOUCH_AFTER_MS = 60 * 1000;
 
 /** A short name for the device a sign-in came from, read from its User-Agent: "iPhone · Safari", "Mac · Chrome". */
 export function deviceLabel(userAgent: string | undefined): string {
-  const ua = userAgent ?? "";
+  // A User-Agent is any text the client sends. Every test below is a plain search with no nested or adjacent repeats
+  // that can backtrack, so each is linear in the text's length, and the text is cut to 512 characters (real ones are
+  // under 300) so even that is bounded. Safari is "Version/<digit or dot>" followed somewhere later by "Safari/": found
+  // with two searches, not one pattern `Version\/[\d.]+.*Safari\/`, whose `[\d.]+` and `.*` both match a run of digits
+  // and so backtrack quadratically on "Version/1111…" with no "Safari/" after it (CodeQL js/polynomial-redos, alert 1).
+  const ua = (userAgent ?? "").slice(0, 512);
+  const version = ua.search(/Version\/[\d.]/);
+  const safari = version !== -1 && ua.includes("Safari/", version);
   const platform = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Macintosh/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : null;
   const ios = platform === "iPhone" || platform === "iPad";
   const browser = /Edg(A|iOS)?\//.test(ua)
@@ -25,7 +32,7 @@ export function deviceLabel(userAgent: string | undefined): string {
       ? "Firefox"
       : /Chrome\/|CriOS\//.test(ua)
         ? "Chrome"
-        : /Version\/[\d.]+.*Safari\//.test(ua)
+        : safari
           ? "Safari"
           : // An app added to the Home Screen on iOS reports WebKit with no browser name.
             ios && /AppleWebKit\//.test(ua)

@@ -2316,6 +2316,26 @@ BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that 
 `,
   },
   {
+    // Updating Botbench to a published release (src/update.ts): the owner chooses in Settings whether it updates on a
+    // tap (`tap`, also when never chosen) or by itself (`auto`). A check cannot be altered in place, so the table is
+    // made again with every row kept.
+    name: "update mode",
+    sql: `
+ALTER TABLE owner_settings RENAME TO owner_settings_before_update;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'update_mode')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
+  CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off')),
+  CHECK (name <> 'ask_every_command' OR value IN ('on', 'off')),
+  CHECK (name <> 'update_mode' OR value IN ('tap', 'auto'))
+);
+INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_update;
+DROP TABLE owner_settings_before_update;
+`,
+  },
+  {
     // A task can be handed to another agent while it is built (src/engine/handoff.ts): by the owner's choice, or on its
     // builder's usage limit when its run says Switch. Each hand-off is a row of `task_handoffs`, append-only: the agent
     // it left and the one it moved to (never the same), the model that one starts on (NULL for its own default), why,
@@ -2350,12 +2370,13 @@ BEGIN SELECT RAISE(ABORT, 'what a run does on a usage limit is chosen when it st
 
 ALTER TABLE owner_settings RENAME TO owner_settings_before_handoffs;
 CREATE TABLE owner_settings (
-  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'fallbacks')),
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'update_mode', 'fallbacks')),
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
   CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off')),
   CHECK (name <> 'ask_every_command' OR value IN ('on', 'off')),
+  CHECK (name <> 'update_mode' OR value IN ('tap', 'auto')),
   CHECK (name <> 'fallbacks' OR (json_valid(value) AND json_type(value, '$.builder') = 'array'))
 );
 INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_handoffs;

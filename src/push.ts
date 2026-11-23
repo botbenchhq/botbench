@@ -126,6 +126,10 @@ export function issueReadyMessage(): PushMessage {
 }
 /** The notification each state a task reaches sends; the others send none. A task the owner's own cancel ended sends none. */
 const TASK_MESSAGES: Partial<Record<string, (task: { id: number }) => PushMessage>> = { awaiting_decision: readyMessage, failed: failedMessage, interrupted: stoppedMessage, waiting_for_limit: usageLimitMessage };
+/** Botbench restarted on a release it updated itself to (src/update.ts): sent once, by the new version's first start. */
+export function updatedMessage(version: string): PushMessage {
+  return { title: `Botbench updated to ${version}`, path: "/#/settings/workbench" };
+}
 export function testMessage(): PushMessage {
   return { title: "Test notification from Botbench", path: "/#/settings" };
 }
@@ -171,6 +175,8 @@ export interface Push {
    * issue, when the issue's row is first written to the seen table, so a poll that sees it again sends none.
    */
   issueProposed(): void;
+  /** Botbench now runs a release it updated itself to: every device is told once. */
+  updated(version: string): void;
   /** Resolves when every message in flight has been sent or has failed. */
   idle(): Promise<void>;
 }
@@ -313,9 +319,17 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
     }
   };
 
+  const updated = (version: string): void => {
+    try {
+      sendAll(updatedMessage(version));
+    } catch (err) {
+      console.error(`A notification for the update could not be started: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const idle = async (): Promise<void> => {
     while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
   };
 
-  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, issueProposed, idle };
+  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, issueProposed, updated, idle };
 }

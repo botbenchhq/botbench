@@ -73,5 +73,6 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     await checkDesign(page, "settings, memory, no notes");
   } finally {
     await botbench.stop();
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });

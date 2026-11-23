@@ -17,7 +17,7 @@ import type { Driver } from "../../src/drivers/contract.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { GROK_PROVIDER, grokEnv, GrokDriver, grokProfile } from "../../src/drivers/grok.ts";
 import { openStore } from "../../src/store/db.ts";
-import { initRepo, tempDir } from "../support/repo.ts";
+import { initRepo, tempDir, removedAtEnd } from "../support/repo.ts";
 
 // Codex and Grok with their own tools in a chat, on the owner's Mac and subscription sign-ins, through the chat itself
 // (src/api/chat.ts) with a repository attached. Each probe was first run by hand in the review of PR #127 and is kept
@@ -66,7 +66,7 @@ async function rig(t: T, agent: "codex" | "grok") {
   const decoy = path.join(decoyDir, "decoy.txt");
   fs.writeFileSync(decoy, `${DECOY}\n`);
   // Another program's socket in the shared temporary folder, as Chrome's SingletonSocket is on this Mac.
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-other-app-")));
+  const other = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-other-app-"))));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   const received: string[] = [];
   const socket = path.join(other, "app.sock");
@@ -192,7 +192,7 @@ test("LIVE: Grok's commands, under the profile and proxy Botbench gives the whol
   const r = await rig(t, "grok");
   const proxy = await startProviderProxy(GROK_PROVIDER);
   t.after(() => proxy.close());
-  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-")));
+  const temp = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-"))));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const extra = 'out=$( { curl -sS -m 8 -o /dev/null https://api.x.ai ; } 2>&1 ); echo "PROBE xai rc=$?"\nout=$( { curl -sS -m 8 -o /dev/null https://example.com ; } 2>&1 ); echo "PROBE proxied_other rc=$?"\nout=$( { ls ~/.grok >/dev/null ; } 2>&1 ); echo "PROBE grok_home rc=$?"\n';
   fs.writeFileSync(path.join(r.scratch, "probe.sh"), probeScript(r) + extra);

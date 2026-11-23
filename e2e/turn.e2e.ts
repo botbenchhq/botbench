@@ -292,9 +292,10 @@ test("with Claude Code signed out, the composer says why it cannot send, and Che
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
     await expect(send).toBeDisabled();
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
     fs.rmSync(empty, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
 

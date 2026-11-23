@@ -8,6 +8,7 @@ import { LOGIN_TOKEN_FILE } from "../../src/api/auth.ts";
 import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 // These tests start the real Claude Code on the owner's login, through Botbench's
 // HTTP API. Every prompt is tiny and asks for the cheapest model.
@@ -16,7 +17,7 @@ const TURN_TIMEOUT = 180_000;
 const JSON_TYPE = { "content-type": "application/json" };
 
 async function start(t: TestContext, options: { idleCloseMs?: number } = {}): Promise<{ server: BotbenchServer; base: string; headers: Record<string, string>; home: string }> {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-live-turns-")));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-live-turns-"))));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": { model: "haiku" } }, roles: { implementer: { driver: "claude-code" } } };
