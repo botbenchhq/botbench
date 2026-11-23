@@ -20,7 +20,6 @@ type T = { after(fn: () => unknown): void };
 /** A temporary directory for a Botbench home and the repositories of one test. Removing it removes their worktrees with them. */
 function scratch(t: T): { dir: string; home: string } {
   const dir = tempDir("botbench-task-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return { dir, home: path.join(dir, "home") };
 }
 
@@ -270,7 +269,6 @@ test("on start, a task left being prepared by a Botbench that stopped, before an
 test("a task whose worktree cannot be made fails with the reason, without a driver; after closing, nothing more is started", async (t) => {
   // Botbench's home inside the repository itself: the one place a worktree must never go.
   const dir = tempDir("botbench-task-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   initRepo(dir);
   const home = path.join(dir, "home");
   const db = openStore(home);

@@ -82,7 +82,6 @@ const asOwner = (repo: string, ...args: string[]): string => git(repo, "-c", "us
 
 test("north star: a reason given when rejecting a task on workbench A, once the owner merges A's lesson branch into the shared remote's default branch, is in the next planner and builder prompts on A and on workbench B", async (t) => {
   const root = tempDir("botbench-learnings-north-star-");
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   // One shared bare remote, and each workbench's repository folder a clone of it.
   const seed = path.join(root, "seed");
   initRepo(seed);

@@ -15,7 +15,6 @@ const skip = NO_SPEECH ?? false;
 
 function setUp(t: { after: (fn: () => void) => void }, options: { maxSeconds?: number; timeLimitMs?: number; swiftc?: string; ffmpeg?: string } = {}) {
   const dir = tempDir("botbench-dictation-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const tempRoot = path.join(dir, "tmp");
   fs.mkdirSync(tempRoot);
   const dictation = createDictation({ home: path.join(dir, "home"), tempRoot, ...options });

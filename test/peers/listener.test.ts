@@ -33,7 +33,6 @@ interface Alice {
 
 async function alice(t: T, inviteLifeMs?: number): Promise<Alice> {
   const dir = tempDir("botbench-listener-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const remote = path.join(dir, "remote.git");
   git(dir, "init", "--quiet", "--bare", "-b", "main", remote);
   const repo = path.join(dir, "alice-repo");
@@ -74,7 +73,6 @@ async function post(url: string, body: unknown, headers: Record<string, string> 
 /** The other workbench, with its own real key and store. */
 function bob(t: T): { key: WorkbenchKey; request: (i: Invite, pairingKey?: string) => WirePairRequest } {
   const home = tempDir("botbench-listener-bob-");
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const db = openStore(home);
   t.after(() => db.close());
   const key = workbenchKey(home);

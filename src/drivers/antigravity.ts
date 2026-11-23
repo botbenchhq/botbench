@@ -6,6 +6,7 @@ import { startAcpTurn, type AcpDecision, type AcpToolRequest } from "./acp-turn.
 import { acpReader } from "./acp-turn.ts";
 import { KEYCHAIN_DENIED, makeReviewFolder, proxyEnv, sandboxed, startProviderProxy, toolsProfile, wholeCliProfile } from "./cli-sandbox.ts";
 import { DriverUnavailableError, modelNameProblem, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
+import { refuseInFastTests } from "./fast-tests.ts";
 import { checkVersion, runCli } from "./launch.ts";
 import { NO_BROWSER, parseAntigravitySignIn, pastedAntigravityCode, type SignInDefinition } from "./sign-in.ts";
 
@@ -464,6 +465,7 @@ export class AntigravityDriver implements Driver {
       const problem = modelNameProblem(options.model);
       if (problem !== null) throw new Error(`The model name cannot be passed to Antigravity. ${problem}`);
     }
+    refuseInFastTests("Antigravity");
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
     const program = agyProgram()!;

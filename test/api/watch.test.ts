@@ -28,7 +28,6 @@ interface Api {
 
 function place(t: T): { home: string; repo: string } {
   const dir = tempDir("botbench-watch-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, "repo");
   initRepo(repo);
   git(repo, "remote", "add", "origin", WATCH_ADDRESS);

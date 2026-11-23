@@ -24,7 +24,6 @@ type T = { after(fn: () => unknown): void };
 
 function repoDir(t: T): string {
   const dir = tempDir("botbench-learnings-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, "repo");
   initRepo(repo);
   return repo;

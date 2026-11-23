@@ -36,7 +36,6 @@ interface Api {
 
 async function start(t: T, o: { allowHttp?: boolean } = {}): Promise<Api> {
   const dir = tempDir("botbench-push-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
   const server = await startServer({ config, home, signInDelayMs: 1, allowHttpPushEndpoints: o.allowHttp ?? true });
@@ -264,7 +263,6 @@ test("a task built to Ready for review sends one push per device, with the fixed
 
 test("the install files are served without a session, as the browser fetches them, and no other file beside them is", async (t) => {
   const root = tempDir("botbench-push-client-");
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, "dist");
   fs.mkdirSync(path.join(dir, "icons"), { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>Botbench</title>");

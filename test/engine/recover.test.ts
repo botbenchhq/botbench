@@ -253,7 +253,6 @@ test("a recorded process group whose number now belongs to an unrelated process 
   const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
   db.prepare("UPDATE attempts SET pgid = ?, created_at = ? WHERE id = ?").run(stranger.pid!, hourAgo, s.attemptId!);
   const tmp = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-command-")));
-  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   db.prepare("INSERT INTO command_processes (task_id, kind, round, position, command, limit_ms, tmp_dir, pgid, spawned_at, created_at) VALUES (?, 'setup', 1, 1, 'npm ci', 60000, ?, ?, ?, ?)").run(s.taskIds[0]!, tmp, stranger.pid!, hourAgo, hourAgo);
   db.close();
 

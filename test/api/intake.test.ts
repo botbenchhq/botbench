@@ -28,7 +28,6 @@ interface Api {
 
 async function start(t: T, o: { defaultFull?: boolean } = {}): Promise<Api> {
   const dir = tempDir("botbench-intake-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);

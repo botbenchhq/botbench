@@ -23,7 +23,6 @@ const recorded = (): string => {
 
 test("a bare-verdict review, Grok's recorded one, is stored exactly as given, carries the plain note, and is not satisfied, so a fully autonomous accept does not go ahead", async (t) => {
   const root = tempDir("botbench-review-account-");
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, "home");
   const repo = path.join(root, "repo");
   const baseCommit = initRepo(repo);

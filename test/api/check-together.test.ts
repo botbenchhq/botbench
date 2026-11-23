@@ -25,7 +25,6 @@ interface Api {
 
 async function start(t: T, files: Record<string, string>, peerFiles: Record<string, string>): Promise<Api> {
   const dir = tempDir("botbench-together-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const scene = makeScene(dir, files, peerFiles);
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: { [scene.repo]: { checks: ["true"] } }, workbench: "alice" };
   const server = await startServer({ config, home: scene.home, signInDelayMs: 1, github: scene.github });

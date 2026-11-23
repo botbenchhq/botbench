@@ -24,7 +24,6 @@ const JSON_TYPE = { "content-type": "application/json" };
 /** A client directory with real files in it, plus a file beside it that must never be served. */
 function clientDir(t: T): { dir: string; outside: string } {
   const root = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-client-")));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const dir = path.join(root, "dist");
   fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), '<!doctype html><title>Botbench</title><script type="module" src="/assets/app-1a2b.js"></script>');
@@ -39,7 +38,6 @@ function clientDir(t: T): { dir: string; outside: string } {
 
 async function start(t: T, options: { clientDir?: string; heartbeatMs?: number } = {}): Promise<{ server: BotbenchServer; home: string; token: string; base: string }> {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {} };
   const server = await startServer({ config, home, signInDelayMs: 1, ...options });
@@ -231,7 +229,6 @@ test("the client shell is served without a session, and /api/session says 401 be
 
 test("a server whose client has not been built says so instead of serving a page", async (t) => {
   const empty = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-noclient-")));
-  t.after(() => fs.rmSync(empty, { recursive: true, force: true }));
   const { base } = await start(t, { clientDir: path.join(empty, "dist") });
   const page = await fetch(`${base}/`);
   assert.equal(page.status, 503);
@@ -332,7 +329,6 @@ test("GET /api/attempts/:id/events returns stored events in order, and only thos
 
 test("a chat turn a restart cut off is served, after the next start, as stopped because Botbench restarted, and not as running", async (t) => {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   // What the last Botbench left of a Codex chat turn it was killed in: the attempt still running, the prompt, part of a reply.
   const before = openStore(home);
@@ -363,7 +359,6 @@ test("a chat turn a restart cut off is served, after the next start, as stopped 
 
 test("a Claude Code chat turn that waited on an approval card at a restart ends once: the card as not answered, the turn as stopped because Botbench restarted", async (t) => {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-turns-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const before = openStore(home);
   const at = new Date(Date.now() - 1000).toISOString();

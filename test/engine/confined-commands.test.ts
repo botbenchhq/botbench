@@ -30,7 +30,6 @@ interface Layout {
 /** A real repository, a Botbench data folder holding a decoy where its login token would be, and a task's copy inside it. */
 async function layout(t: TestContext): Promise<Layout> {
   const dir = tempDir("botbench-confined-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const repo = path.join(dir, "repo");
   initRepo(repo, { "README.md": "# Sample\n", "inside.txt": "INSIDE-OK\n" });
   const dataDir = path.join(dir, "home");

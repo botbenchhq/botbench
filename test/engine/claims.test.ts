@@ -44,7 +44,6 @@ interface Bench {
 /** A shared remote: a bare repository with one commit on main. */
 function sharedRemote(t: T): { dir: string; bare: string } {
   const dir = tempDir("botbench-claims-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const seed = path.join(dir, "seed");
   initRepo(seed);
   const bare = path.join(dir, "remote.git");

@@ -12,7 +12,6 @@ const T = "2026-11-22T10:00:00.000Z";
 
 test("the peers migration keeps every approval and action-log row, ids included, and each reads as asked by the owner", (t) => {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-asked-by-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = new DatabaseSync(path.join(dir, "botbench.sqlite"));
   t.after(() => db.close());
   db.exec("PRAGMA foreign_keys = ON; PRAGMA recursive_triggers = ON;");

@@ -18,7 +18,6 @@ type T = { after(fn: () => unknown): void };
 
 function setup(t: T) {
   const dir = tempDir("botbench-preview-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
   t.after(() => db.close());
@@ -113,7 +112,6 @@ test("a listed entry that could never be allowed for a task is left out, as a ta
 
 test("a link the repository tracks is followed as a task's copy of it would follow it", (t) => {
   const dir = tempDir("botbench-preview-link-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
   t.after(() => db.close());

@@ -25,7 +25,7 @@ export interface WatchCapture {
 }
 
 export const WATCH_CAPTURE_FILE = path.resolve(import.meta.dirname, "..", "recordings", "gh-watch.json");
-export const CAPTURE_COMMAND = "BOTBENCH_CAPTURE_GH=1 node --test test/live/watch.live.test.ts";
+export const CAPTURE_COMMAND = "BOTBENCH_CAPTURE_GH=1 BOTBENCH_LIVE_TESTS=1 node --test test/live/watch.live.test.ts";
 
 /** The capture, or an error saying how to take it: it is taken from the owner's own gh, never made up. */
 export function loadWatchCapture(): WatchCapture {

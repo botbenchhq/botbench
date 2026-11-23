@@ -42,7 +42,6 @@ test("the whole-CLI profile denies reading every listed place but the CLI's own 
 
 test("CRITICAL: under the profile of a CLI with its own tools, a command reads and writes its working folder, reads a read-only repository and cannot change it, cannot read a decoy elsewhere in the home folder, and reaches only the proxy's port", { skip: NO_SANDBOX }, async (t) => {
   const dir = fs.realpathSync(tempDir("botbench-tools-sandbox-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const data = path.join(dir, "data");
   const folder = path.join(data, "scratch");
   const own = path.join(dir, "own");
@@ -77,7 +76,6 @@ test("CRITICAL: under the profile of a CLI with its own tools, a command reads a
 
 test("CRITICAL: under the profile of a CLI with its own tools, a command cannot reach another program's Unix socket in the temporary folder, nor read or write the temporary folder outside its own private one, which it can use", { skip: NO_SANDBOX }, async (t) => {
   const dir = fs.realpathSync(tempDir("botbench-tools-temp-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const data = path.join(dir, "data");
   const folder = path.join(data, "scratch");
   const own = path.join(dir, "own");
@@ -86,7 +84,6 @@ test("CRITICAL: under the profile of a CLI with its own tools, a command cannot 
   // Another program's socket and file in the temporary folder, as Chrome's SingletonSocket or another sandbox's proxy
   // socket are on this Mac: a command that reached the socket could ask that program to act outside the sandbox.
   const other = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-other-app-"))));
-  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   fs.writeFileSync(path.join(other, "state.txt"), "OTHER\n");
   let received = "";
   const server = net.createServer((socket) => socket.on("data", (d) => (received += d)).end("REPLY\n")).listen(path.join(other, "app.sock"));

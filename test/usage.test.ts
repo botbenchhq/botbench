@@ -17,7 +17,6 @@ const WEEK_START = "2026-11-15T12:00:00.000Z";
 
 function setup(t: { after(fn: () => unknown): void }): { db: DatabaseSync; repo: string } {
   const dir = tempDir("botbench-usage-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const repo = path.join(dir, "repo");

@@ -53,7 +53,6 @@ test("task branches: the named form, the two older forms, and nothing else", () 
 
 test("the name is made once and kept; a change keeps the earlier names as this installation's own, and another workbench's branch is never its own", (t) => {
   const dir = tempDir("botbench-workbench-test-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   let db = openStore(home);
   assert.equal(workbenchName(db, () => "Alices-Mac.local"), "alices-mac");
