@@ -54,14 +54,13 @@ const test = base.extend<{ dir: string; seeded: { home: string; conversation: nu
   },
 });
 
-test("the agent choice offers each agent with its state and Ask several; a chat three agents answered names each reply, and a comparison reads as one", async ({ page, botbench, seeded, dir }) => {
+test("the agent choice offers each agent with its state and Ask several; a chat three agents answered names each reply, and a comparison reads as one", async ({ page, botbench, seeded }) => {
   test.setTimeout(240_000);
   await signIn(page, botbench);
 
   // The agent view: each agent from its own check, the one line about what the others cannot do, and Ask several.
   let sheet = await openRow(page, "Model");
   await expect(sheet.getByRole("heading", { name: "Agent and model" })).toBeVisible();
-  await expect(sheet.getByTestId("agent-hint")).toHaveText("Codex, Grok and Antigravity answer from the conversation alone: they cannot read your files or change anything here. Botbench gives each the chat so far.");
   for (const name of ["Claude Code", "Codex", "Grok", "Antigravity"]) await expect(sheet.getByRole("radio", { name, exact: true })).toBeVisible({ timeout: 60_000 });
   await sheet.getByRole("radio", { name: "Ask several" }).check();
   await expect(sheet.getByTestId("several-about")).toHaveText("Your message and the chat so far, with what each agent wrote, go to every agent you tick.");
@@ -90,16 +89,75 @@ test("the agent choice offers each agent with its state and Ask several; a chat 
   await expect(page.getByTestId("compare-action")).toHaveCount(0);
   await checkDesign(page, "chat, three agents and a comparison");
   await shot(page, "2-three-agents-and-compare.png");
+});
 
-  // With a repository, the builder is Claude Code, and the view says why in one line.
+/** An agent's chip in the row at the top of the view, by its words. */
+const drawn = (sheet: import("@playwright/test").Locator, name: string) => sheet.getByTestId("agent-options").locator(".ds-filter-chips__chip", { hasText: new RegExp(`^${name}$`) });
+const AGENTS = ["Claude Code", "Codex", "Grok", "Antigravity", "Ask several"];
+
+test("the agent choice lists every agent and Ask several at once on a phone, the chosen agent's models show five before More models…, and with a repository the others are Chat only with a way to remove it", async ({ page, botbench, dir }) => {
+  test.setTimeout(120_000);
+  await signIn(page, botbench);
+  // The home screen asks for the agents when it opens; the device keeps what they were.
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("botbench.agents")), { timeout: 30_000 }).not.toBeNull();
+  await page.reload();
+  await expect(messageBox(page)).toBeEnabled();
+
+  // Opened, the view lists them all at once, from the last check: no line about checking, and nothing scrolled to.
+  let sheet = await openRow(page, "Model");
+  await expect(sheet.getByRole("heading", { name: "Agent and model" })).toBeVisible();
+  for (const name of AGENTS) await expect(drawn(sheet, name)).toBeInViewport({ timeout: 1000 });
+  await expect(sheet.getByTestId("agents-line")).toHaveCount(0);
+  await expect(sheet.getByTestId("agent-options")).not.toContainText("Checking…");
+  // Claude Code chosen: its name, version and sign-in state over its models; its default and at most four more, then More models… and Other….
+  await sheet.getByRole("radio", { name: "Claude Code", exact: true }).check();
+  await expect(sheet.getByTestId("model-about")).toHaveText(/^Version .+ · Signed in$/);
+  const models = sheet.getByTestId("model-options");
+  const before = await models.evaluate((fieldset) => [...fieldset.children].filter((el) => el.matches("div.ds-radio")).map((el) => el.querySelector(".ds-radio__label")!.textContent));
+  expect(before.at(-1)).toBe("Other…");
+  // The rows before More models…: the default and at most four more (Other… comes after it).
+  expect(before.length - 1).toBeLessThanOrEqual(5);
+  if ((await models.getByTestId("more-models").count()) > 0) {
+    await models.getByText("More models…").click();
+    await expect(models.getByTestId("more-models").getByRole("radio").first()).toBeVisible();
+    // The row of agents stays on screen however far the models scroll.
+    await sheet.getByTestId("agent-shown").evaluate((el) => el.scrollTo(0, el.scrollHeight));
+    for (const name of AGENTS) await expect(drawn(sheet, name)).toBeInViewport();
+  }
+  // Ask several swaps the models for the agents to tick.
+  await sheet.getByRole("radio", { name: "Ask several", exact: true }).check();
+  await expect(sheet.getByRole("group", { name: "Agents to ask" })).toBeVisible();
+  await expect(models).toHaveCount(0);
+  await sheet.getByRole("radio", { name: "Claude Code", exact: true }).check();
+  await checkDesign(page, "chat, agent and model, every agent at once");
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+  await expect(sheet.locator(".ds-context-list__button", { hasText: /^Model/ })).toHaveText(/Claude Code$/);
+  await closeContext(page);
+  // The chip names Claude Code's default as Claude Code alone, with no stray comma.
+  await expect(page.getByRole("button", { name: /^Agent and model: / })).not.toContainText(",");
+  sheet = await openRow(page, "Model");
+  await tempShot(page, "agents-no-repository");
+  await closeContext(page);
+
+  // With a repository: every agent still listed, the others and Ask several as Chat only, with one way back to them.
   const repo = path.join(dir, "repo");
   initRepo(repo);
   await chooseRepository(page, repo);
   sheet = await openRow(page, "Model");
-  await expect(sheet.getByTestId("builder-only")).toHaveText("Only Claude Code can work in a repository. Codex, Grok and Antigravity can be asked in a chat with no repository.");
-  await expect(sheet.getByRole("radio", { name: "Codex" })).toHaveCount(0);
-  await closeContext(page);
-  await expect(page.getByRole("button", { name: /^Model: / })).toContainText("Claude Code");
+  await expect(sheet.getByRole("heading", { name: "Agent and model" })).toBeVisible();
+  for (const name of ["Claude Code", ...AGENTS.slice(1).map((a) => `${a}: Chat only`)]) await expect(drawn(sheet, name)).toBeInViewport();
+  for (const name of AGENTS.slice(1)) await expect(sheet.getByRole("radio", { name: `${name}: Chat only`, exact: true })).toBeDisabled();
+  await expect(sheet.getByRole("radio", { name: "Claude Code", exact: true })).toBeChecked();
+  await expect(sheet.getByTestId("builder-only")).toHaveText("Only Claude Code can work in a repository. Remove the repository to ask the others.");
+  await checkDesign(page, "task, agent and model, the others chat only");
+  await tempShot(page, "agents-with-repository");
+  await sheet.getByRole("button", { name: "Remove the repository" }).click();
+  // The view stays, the repository is gone, and the others can be chosen again.
+  await expect(sheet.getByRole("heading", { name: "Agent and model" })).toBeVisible();
+  await expect(sheet.getByTestId("builder-only")).toHaveCount(0);
+  await expect(sheet.getByRole("radio", { name: "Ask several", exact: true })).toBeEnabled();
+  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+  await expect(sheet.locator(".ds-context-list__button", { hasText: /^Repository/ })).toHaveText(/None \(just chat\)$/);
 });
 
 test("LIVE: Codex chosen for a chat answers, and its reply is named as Codex's", async ({ page, botbench }) => {
@@ -107,9 +165,11 @@ test("LIVE: Codex chosen for a chat answers, and its reply is named as Codex's",
   await signIn(page, botbench);
   const sheet = await openRow(page, "Model");
   await sheet.getByRole("radio", { name: "Codex", exact: true }).check({ timeout: 60_000 });
-  await sheet.getByTestId("model-codex-options").getByRole("radio", { name: /luna/i }).first().check();
+  const codexModels = sheet.getByTestId("model-codex-options");
+  if ((await codexModels.getByTestId("more-models").count()) > 0) await codexModels.getByText("More models…").click();
+  await codexModels.getByRole("radio", { name: /luna/i }).first().check();
   await closeContext(page);
-  await expect(page.getByRole("button", { name: /^Model: / })).toContainText("Codex");
+  await expect(page.getByRole("button", { name: /^Agent and model: / })).toContainText("Codex");
   await page.getByLabel("Message Codex").fill("Reply with exactly the word: marmot");
   await page.getByRole("button", { name: "Send" }).click();
   const reply = page.locator('[data-event="text"]');

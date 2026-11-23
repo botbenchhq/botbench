@@ -28,6 +28,9 @@ async function openModels(page: Page) {
 const chosenModel = (page: Page) => contextSheet(page).locator('input[name="model"]:checked');
 async function pickModel(page: Page, value: string) {
   const sheet = await openModels(page);
+  // A model after the first four is behind More models….
+  const more = sheet.getByTestId("model-options").getByTestId("more-models");
+  if ((await more.locator(`input[value="${value}"]`).count()) > 0 && !(await more.evaluate((d) => (d as HTMLDetailsElement).open))) await more.locator("summary").click();
   await sheet.locator(`input[name="model"][value="${value}"]`).check();
   await closeContext(page);
 }
@@ -44,9 +47,10 @@ test("in the composer the model is picked from the CLI's own list, a name that i
   const sheet = await openModels(page);
   await expect(chosenModel(page)).toHaveValue(CONFIGURED);
   await expect(page.getByTestId("model-source")).toHaveText("The list is what Claude Code reports on this Mac.");
-  const options = await sheet.locator('input[name="model"]').evaluateAll((all) => all.map((o) => ({ value: (o as HTMLInputElement).value, text: document.getElementById(o.getAttribute("aria-labelledby")!)!.textContent ?? "" })));
+  const options = await sheet.locator('input[name="model"]').evaluateAll((all) => all.map((o) => ({ value: (o as HTMLInputElement).value, text: (o as HTMLInputElement).labels![0]!.textContent ?? "" })));
+  // The CLI's own default first, named by the model it is, with a default tag.
   expect(options[0]!.value).toBe("");
-  expect(options[0]!.text).toBe("Claude Code's default");
+  expect(options[0]!.text).toMatch(/ default$/);
   expect(options.at(-1)!.text).toBe("Other…");
   expect(options.map((o) => o.value)).toEqual(expect.arrayContaining([CONFIGURED, CHEAP, "sonnet"]));
   await expect(page.getByLabel("Model name")).toBeHidden();
@@ -74,7 +78,7 @@ test("in the composer the model is picked from the CLI's own list, a name that i
   await other.fill(UNKNOWN);
   await closeContext(page);
 
-  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${UNKNOWN} , Claude Code$`));
+  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Agent and model: ${UNKNOWN} Claude Code$`));
   // The design system keeps a long value inside the chip (0.8.2): the page does not scroll sideways at 390px.
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "the page does not scroll sideways").toBe(0);
   await checkDesign(page, "composer, a model name of 100 characters being named");
@@ -117,7 +121,7 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   await expect(page.getByText(/^Worked for/)).toHaveCount(0);
   // The model that answered is the one asked for: it is named in the chip only, and the transcript has no row for it.
   await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
-  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${NAME} , Claude Code$`));
+  await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Agent and model: ${NAME} Claude Code$`));
   expect(JSON.parse(turnsSent[1]!)).toMatchObject({ model: CHEAP });
   // Send is the one primary action; New chat, which begins again, is a quiet icon in the header.
   expect(await primaries(page)).toEqual(["Send"]);
@@ -195,7 +199,7 @@ test("where Claude Code reports no list, the picker offers the configured models
     const sheet = await openModels(page);
     await expect(chosenModel(page)).toHaveValue("sonnet");
     await expect(page.getByTestId("model-source")).toHaveText("The list comes from Botbench's configuration: Claude Code reported none.");
-    expect(await sheet.getByTestId("model-options").locator(".ds-option-picker__name").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
+    expect(await sheet.getByTestId("model-options").locator(".ds-radio__label").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
     await checkDesign(page, "add context, models from configuration");
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);

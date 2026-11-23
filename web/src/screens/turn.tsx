@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
 import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
-import { agentName, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
+import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
 import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
@@ -291,9 +291,9 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     [logRef],
   );
 
-  // Who a chat asks. The agents are checked once the owner opens the choice, or when another agent than Claude Code is remembered.
-  const agents = useChatAgents(onSignedOut, view === "models");
-  const offered = agents.offer.state === "ready" ? agents.offer.agents : null;
+  // Who a chat asks. The agents are asked for when the screen opens, so the choice lists them all at once.
+  const agents = useChatAgents(onSignedOut);
+  const offered = agents.offer.known;
   const targets = chatTargets(agents.choice, models.request(), offered);
   const asksClaude = !targets.ok || targets.targets.some((t) => t.agent === CLAUDE);
   const claudeState: Facts["builder"] = driverFailed ? { state: "problem", words: "Botbench could not check Claude Code." } : driver === null ? { state: "checking" } : driver.problem !== null ? { state: "problem", words: driver.problem } : { state: "ready" };
@@ -454,7 +454,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   useEffect(() => {
     if (run) setRunWanted(true);
   }, [run]);
-  const chip = chatChip(agents, models);
+  const chip = chatting ? chatChip(agents, models) : chipWords(chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }), "Claude Code");
   const values: Record<Row, string> = {
     repository: repoName(repo, known),
     kind: kind === "task" ? "One task" : "Plan a run",
@@ -463,7 +463,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     review: review.offer.state === "checking" ? "Checking" : review.words,
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
     commands: commandsWords(repository.listed?.commands.length ?? 0),
-    models: chatting ? `${chip.value}, ${chip.qualifier}` : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
+    models: chatting ? agentRowValue(agents.choice.pick) : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
   };
   const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
@@ -559,11 +559,14 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                 ) : (
                   <BusyButton variant="quiet" size="small" className="ds-composer__chip" aria-haspopup="dialog" onClick={() => openSheet("models")}>
                     <span className="ds-composer__value">
-                      <span className="ds-visually-hidden">Model: </span>
-                      {chatting ? chip.value : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) })}
-                      <span className="ds-visually-hidden">, </span>
-                      {" "}
-                      <span className="ds-composer__qualifier">{chatting ? chip.qualifier : "Claude Code"}</span>
+                      <span className="ds-visually-hidden">Agent and model: </span>
+                      {chip.value}
+                      {chip.qualifier !== null && (
+                        <>
+                          {" "}
+                          <span className="ds-composer__qualifier">{chip.qualifier}</span>
+                        </>
+                      )}
                     </span>
                   </BusyButton>
                 )}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
+import { agentState } from "../app/chat.ts";
 import { ApiError, getAgents, getDefaultMode, getWorkbench, openEventStream, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { DeviceSettings } from "../app/device-settings.tsx";
@@ -13,15 +14,6 @@ const LINKED: readonly { href: string; name: string; about: string }[] = [
   { href: "#/trust", name: "Permissions", about: "What is always allowed, and what ran" },
   { href: "#/usage", name: "Usage", about: "How much each agent did" },
 ];
-
-/** An agent's state in a word or two, from the probe: what the CLI itself reported. */
-function agentState(agent: AgentState): string {
-  if (agent.problem === null) return "Available";
-  if (!agent.installed) return "Not installed";
-  if (!agent.supported) return "Unsupported version";
-  if (!agent.signedIn) return "Signed out";
-  return "Unavailable";
-}
 
 /** What Botbench lets the agent do, in words, from the steps the server reports. */
 function agentSteps(agent: AgentState): string {
@@ -182,7 +174,8 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [version, setVersion] = useState(0);
 
   const refresh = useCallback((): void => {
-    getAgents().then(
+    // Settings shows each agent's state as it is now, after a sign-in or sign-out too.
+    getAgents(true).then(
       (found) => (setAgents(found), setVersion((v) => v + 1)),
       (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
