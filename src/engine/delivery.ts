@@ -5,7 +5,9 @@ import { ghArgs, githubRepoOf, redact, repoName, type GitHub, type PullRequest, 
 import { now, transaction } from "../store/db.ts";
 import { branchCommit, BRANCH_PREFIX, pushTaskBranch, remoteAddress, remoteBranchCommit } from "../worktrees.ts";
 import { onTaskAccepted, taskDecision } from "./decision.ts";
-import { taskReview } from "./review.ts";
+import { count, loopRecord, outcomeLine, parseFindings, parseRefineReply } from "./refine.ts";
+import { taskReviews } from "./review.ts";
+import { agentName } from "./roles.ts";
 import type { Delivery } from "./run.ts";
 import { taskEvidence } from "./stations.ts";
 import { MODE_WORDS, isRunMode } from "./modes.ts";
@@ -155,11 +157,54 @@ function fenced(body: string): string {
   return `${fence}text\n${body.replace(/\s+$/, "")}\n${fence}`;
 }
 
-const VERDICT: Record<string, string> = { looks_right: "Verdict: looks right", concerns: "Verdict: concerns" };
+/** The most findings of the last review a pull request's body lists. */
+export const MAX_BODY_FINDINGS = 10;
 
 /**
- * The title and body of a task's pull request, made from what is stored. Everything an agent, a planner or the owner
- * wrote goes in fenced blocks, as data. For a run started from a GitHub issue the body closes that issue, the one line
+ * The body's Review section: who reviewed, the loop's outcome in the task screen's own line (`outcomeLine`), how many
+ * reviews and rounds of fixes there were, the last review's findings, what the builder did not address in the last
+ * round of fixes and why, and who accepted. Botbench's own words are outside the fences; the model's name (the owner
+ * may have typed it), the findings, the builder's reasons, the owner's note and the mode's reasons are inside.
+ */
+function reviewSection(db: DatabaseSync, taskId: number): string[] {
+  const reviews = taskReviews(db, taskId);
+  const last = reviews.at(-1);
+  if (last === undefined) return ["## Review", "No review was run."];
+  const record = loopRecord(db, taskId, last.agent);
+  const reviewer = agentName(last.agent);
+  const parts = [
+    "## Review",
+    `${reviewer} reviewed this task: a model's opinion, not a check. Its model:`,
+    fenced(last.model ?? `${reviewer}'s own default model`),
+    "How it ended, as the task shows it:",
+    fenced(outcomeLine(record)),
+    `${count(record.reviews.length, "review", "reviews")} and ${count(record.refinements.length, "round", "rounds")} of fixes.`,
+  ];
+  if (last.outcome === "reviewed") {
+    const findings = parseFindings(last.text);
+    const which = reviews.length === 1 ? "the review" : `review ${reviews.length}, the last`;
+    if (findings.length === 0) parts.push(`Findings of ${which}: none listed.`);
+    else {
+      parts.push(`### Findings of ${which}`, fenced(findings.slice(0, MAX_BODY_FINDINGS).map((f) => `- ${f}`).join("\n")));
+      const cut = findings.length - MAX_BODY_FINDINGS;
+      if (cut > 0) parts.push(`${count(cut, "more finding was", "more findings were")} left out.`);
+    }
+  }
+  const fix = record.refinements.at(-1);
+  const notAddressed = fix === undefined ? [] : (parseRefineReply(fix.reply)?.notAddressed ?? []);
+  if (notAddressed.length > 0) parts.push("### Not addressed, and why", `${agentName(record.builder)}'s words, from the last round of fixes:`, fenced(notAddressed.map((n) => `- ${n}`).join("\n")));
+  const decision = taskDecision(db, taskId);
+  if (decision?.decision === "accept") {
+    if (decision.decidedBy === "mode") parts.push("Accepted without the owner (fully autonomous):", fenced(decision.reasons ?? "No reasons were recorded."));
+    else if (decision.note === null) parts.push("Accepted by the owner.");
+    else parts.push("Accepted by the owner, with this note:", fenced(decision.note));
+  }
+  return parts;
+}
+
+/**
+ * The title and body of a task's pull request, made from what is stored. Everything an agent, a planner, a reviewer or
+ * the owner wrote goes in fenced blocks, as data, each fence longer than any run of backticks inside it. For a run started from a GitHub issue the body closes that issue, the one line
  * Botbench writes from it: built from the stored number and repository alone, `Closes #N` on the issue's own repository
  * (`repo`, where the pull request is opened) and `Closes owner/name#N` elsewhere. Nothing the issue says is in the body.
  */
@@ -178,7 +223,6 @@ export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): {
   const checks = taskEvidence(db, task.id).filter((e) => e.kind === "check");
   const round = Math.max(0, ...checks.map((e) => e.round));
   const latest = checks.filter((e) => e.round === round);
-  const review = taskReview(db, task.id);
   const run = task.runId === null ? undefined : db.prepare("SELECT * FROM runs WHERE id = ?").get(task.runId);
   const mode = isRunMode(run?.mode) ? MODE_WORDS[run.mode] : null;
   const parts = [
@@ -188,10 +232,7 @@ export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): {
   ];
   if (criteria.length > 0) parts.push("## Acceptance criteria", fenced(criteria.map((c) => `- ${c}`).join("\n")));
   parts.push("## Checks", latest.length === 0 ? "No checks are set up for this repository." : fenced(latest.map((e) => `${e.outcome === "passed" ? "passed" : e.outcome === "timed_out" ? "timed out" : e.outcome}  ${e.command}`).join("\n")));
-  if (review !== null) {
-    const line = review.outcome === "reviewed" ? (review.verdict === null ? "No verdict in the asked form" : VERDICT[review.verdict]!) : `No review: ${review.problem ?? review.outcome}`;
-    parts.push("## Review", `A model's opinion, not a check: ${review.agent}${review.model === null ? "" : ` (${review.model})`}.`, fenced(line));
-  }
+  parts.push(...reviewSection(db, task.id));
   if (mode !== null) parts.push("## Mode", fenced(mode));
   const issue = runIssue(db, task.runId);
   if (issue !== null) {
