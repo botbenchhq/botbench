@@ -359,7 +359,8 @@ test("LIVE: in light mode, a chat with a tool call, an approval card, a task rea
   await checkDesign(page, "board, a task waiting on an approval, light");
   await shot(page, "u16-light-board.png");
   await page.goto(`${botbench.base}/#/tasks/${taskId}`);
-  await page.getByTestId("approval-card").getByRole("button", { name: "Allow once", exact: true }).click();
+  await expect(page.getByTestId("approval-card")).toHaveAttribute("data-settled", "");
+  await page.getByTestId("approval-card").getByRole("button", { name: "Allow", exact: true }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 120_000 });
   await checkDesign(page, "task ready for review, light");
   await shot(page, "u16-light-ready.png");

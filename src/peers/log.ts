@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { askedByFor, askedByValues, OWNER, type AskedBy } from "./asked-by.ts";
 import type { Pairing } from "./pairings.ts";
 
 /*
@@ -13,7 +14,7 @@ import type { Pairing } from "./pairings.ts";
  * Botbench's refusal, kept with the default `owner`, and the detail says where the request came from.
  */
 
-export type PeerRule = "peer_invite" | "peer_pairing" | "peer_protocol" | "peer_refused";
+export type PeerRule = "peer_invite" | "peer_pairing" | "peer_protocol" | "peer_refused" | "peer_message" | "peer_kind_refused" | "peer_send_attempt" | "peer_send_over_limit" | "peer_settings";
 
 export interface PeerLogRow {
   rule: PeerRule;
@@ -23,13 +24,22 @@ export interface PeerLogRow {
   detail: string;
   /** The pairing whose peer caused this; the owner (or Botbench itself) when absent. */
   byPeer?: Pairing;
+  /** Who asked, when it is neither the owner nor `byPeer`: this workbench's agent, for its draft (src/peers/asked-by.ts). */
+  asked?: AskedBy;
+  /** The task, run or attempt the row is about (an agent's draft). Their run, when given a peer's message, names that peer. */
+  taskId?: number | null;
+  runId?: number | null;
+  attemptId?: number | null;
   at?: Date;
 }
 
 export function logPeer(db: DatabaseSync, row: PeerLogRow): void {
   const at = (row.at ?? new Date()).toISOString();
   const p = row.byPeer;
+  const given: AskedBy = p === undefined ? (row.asked ?? OWNER) : { by: "peer", pairingId: p.id, peerName: p.peerName, peerFingerprint: p.peerFingerprint };
+  const taskId = row.taskId ?? null;
+  const runId = row.runId ?? null;
   db.prepare(
-    "INSERT INTO action_log (ts, task_id, run_id, attempt_id, rule, tool, command, cwd, detail, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, NULL, NULL, NULL, ?, 'peer', ?, '', ?, ?, ?, ?, ?)",
-  ).run(at, row.rule, row.command, row.detail, p === undefined ? "owner" : "peer", p?.id ?? null, p?.peerName ?? null, p?.peerFingerprint ?? null);
+    "INSERT INTO action_log (ts, task_id, run_id, attempt_id, rule, tool, command, cwd, detail, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, ?, ?, ?, 'peer', ?, '', ?, ?, ?, ?, ?)",
+  ).run(at, taskId, runId, row.attemptId ?? null, row.rule, row.command, row.detail, ...askedByValues(askedByFor(db, taskId, runId, given)));
 }

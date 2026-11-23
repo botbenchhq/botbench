@@ -18,7 +18,7 @@ const test = base.extend<{ botbench: Botbench }>({
   },
 });
 
-test("with Ask, a chat's fetch waits as a card in the chat, Allow once continues and the answer arrives without a reload; a denied one says so in one line", async ({ page, botbench }) => {
+test("with Ask, a chat's fetch waits as a card in the chat, Allow continues and the answer arrives without a reload; a denied one says so in one line", async ({ page, botbench }) => {
   test.setTimeout(120_000);
   await signIn(page, botbench);
 
@@ -48,15 +48,16 @@ test("with Ask, a chat's fetch waits as a card in the chat, Allow once continues
   await expect(asked.getByTestId("approval-card")).toBeVisible();
   await expect(asked.locator("xpath=preceding-sibling::li[1]")).toContainText("Wants to fetch");
   await expect(card.getByTestId("approval-line")).toHaveText("Wants to fetch https://example.com");
-  await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny"]);
-  await expect(card.getByText("Deny and say what to do instead")).toBeVisible();
+  await expect(card.getByRole("button")).toHaveText(["Allow", "Decline"]);
+  await expect(card.getByText("Add a note for Claude Code")).toBeVisible();
   await expect(card.getByTestId("approval-directory")).toHaveCount(0);
   await expect(card.getByTestId("standing-offer")).toHaveCount(0);
   await expect(page.getByTestId("approval-tray")).toHaveText("An approval is waiting on this screen.");
   await expect(log.getByRole("status")).toHaveText("Claude Code is waiting for your answer.");
   await checkDesign(page, "chat, an approval card in the transcript");
 
-  await card.getByRole("button", { name: "Allow once" }).click();
+  await expect(card).toHaveAttribute("data-settled", "");
+  await card.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(card).toHaveCount(0);
   await expect(log.locator('[data-event="text"]').last()).toContainText("Example Domain", { timeout: 30_000 });
   await expect(page.getByTestId("approval-tray")).toBeEmpty();
@@ -65,9 +66,10 @@ test("with Ask, a chat's fetch waits as a card in the chat, Allow once continues
   await sendChat(page, "Fetch https://example.com and tell me its title.");
   const second = log.getByTestId("approval-card");
   await expect(second).toBeVisible({ timeout: 30_000 });
-  await second.getByText("Deny and say what to do instead").click();
+  await second.getByText("Add a note for Claude Code").click();
   await second.getByLabel("What Claude Code should do instead").fill("Do not fetch it. Answer from what you already know.");
-  await second.getByRole("button", { name: "Deny and send" }).click();
+  await expect(second).toHaveAttribute("data-settled", "");
+  await second.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(second).toHaveCount(0);
   const denied = log.locator('[data-event="tool_call"]').filter({ hasText: "example.com" }).last().locator(".ds-tool-call");
   await expect(denied).toHaveAttribute("data-state", "declined", { timeout: 30_000 });
