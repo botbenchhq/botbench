@@ -10,11 +10,20 @@ const all = [agent("claude-code"), agent("codex"), agent("grok", "Grok is signed
 
 test("every agent is offered for a chat, in a fixed order; one its own check finds unusable is listed with the reason, and cannot be chosen", () => {
   assert.deepEqual(chatOffer([all[3]!, all[2]!, all[1]!, all[0]!]), [
-    { agent: "claude-code", name: "Claude Code", problem: null, version: "1", state: "Available" },
-    { agent: "codex", name: "Codex", problem: null, version: "1", state: "Available" },
-    { agent: "grok", name: "Grok", problem: "Grok is signed out. Run `grok login` in a terminal.", version: "1", state: "Signed out" },
-    { agent: "antigravity", name: "Antigravity", problem: null, version: "1", state: "Available" },
+    { agent: "claude-code", name: "Claude Code", problem: null, version: "1", state: "Available", chat: null },
+    { agent: "codex", name: "Codex", problem: null, version: "1", state: "Available", chat: null },
+    { agent: "grok", name: "Grok", problem: "Grok is signed out. Run `grok login` in a terminal.", version: "1", state: "Signed out", chat: null },
+    { agent: "antigravity", name: "Antigravity", problem: null, version: "1", state: "Available", chat: null },
   ]);
+});
+
+test("what an agent can do in a chat is the server's sentence, kept with its check and shown on its row", () => {
+  const words = "Codex cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds: …";
+  const offer = chatOffer([{ ...agent("codex"), chat: words }, agent("claude-code")]);
+  assert.equal(offer.find((o) => o.agent === "codex")!.chat, words);
+  assert.equal(agentList({ known: offer, checking: false, failed: null, inRepository: false }).rows[1]!.chat, words);
+  assert.equal(readKnownAgents(JSON.stringify(offer))!.find((o) => o.agent === "codex")!.chat, words, "the device keeps it with the check");
+  assert.equal(agentList({ known: null, checking: true, failed: null, inRepository: false }).rows[1]!.chat, null, "nothing is said before the check is known");
 });
 
 test("Send goes to the one agent chosen with its model, or to each agent ticked under Ask several; an unusable or too short choice says what to do", () => {
@@ -117,7 +126,7 @@ test("with a last check known, the row is drawn at once as it was, with no line,
 
 test("an agent its check finds unusable stays in the row, its state in words, and can be chosen to see why; it cannot be ticked under Ask several", () => {
   const list = agentList({ known: chatOffer(all), checking: false, failed: null, inRepository: false });
-  assert.deepEqual(list.rows[2], { agent: "grok", name: "Grok", label: "Grok: Signed out", state: "Signed out", version: "1", problem: "Grok is signed out. Run `grok login` in a terminal.", disabled: false });
+  assert.deepEqual(list.rows[2], { agent: "grok", name: "Grok", label: "Grok: Signed out", state: "Signed out", version: "1", problem: "Grok is signed out. Run `grok login` in a terminal.", disabled: false, chat: null });
   assert.deepEqual(list.several.tickable, ["claude-code", "codex", "antigravity"]);
 });
 
@@ -150,8 +159,8 @@ test("the agents last checked are read back from the device part by part; anythi
   assert.equal(readKnownAgents("not json"), null);
   assert.equal(readKnownAgents('{"agents":3}'), null);
   assert.deepEqual(readKnownAgents(JSON.stringify([{ agent: "codex", name: "Codex", problem: null, version: "0.172.0", state: "Available" }, { agent: "grok", problem: "Signed out.", state: 3 }, { agent: 4 }])), [
-    { agent: "codex", name: "Codex", problem: null, version: "0.172.0", state: "Available" },
-    { agent: "grok", name: "Grok", problem: "Signed out.", version: null, state: "Unavailable" },
+    { agent: "codex", name: "Codex", problem: null, version: "0.172.0", state: "Available", chat: null },
+    { agent: "grok", name: "Grok", problem: "Signed out.", version: null, state: "Unavailable", chat: null },
   ]);
 });
 

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { confinementProblem, unreadablePaths } from "../confinement.ts";
+import { makeReviewFolder } from "./cli-sandbox.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent } from "./events.ts";
 import { buildChildEnv, checkVersion, runCli } from "./launch.ts";
@@ -9,8 +10,8 @@ import { startOneTurn, type LineResult } from "./one-turn.ts";
 import { codexSignIn, type SignInDefinition } from "./sign-in.ts";
 
 /*
- * Codex, driven for one thing only: a read-only turn, for a review (U17 in part, for U20) or a chat message (src/api/chat.ts,
- * in a new empty folder). Seen on 0.171.0:
+ * Codex, driven one turn at a time: a read-only review of a task's copy (U17 in part, for U20), or a chat message
+ * (src/api/chat.ts) with Codex's own tools in the chat's folder and an attached repository read-only. Seen on 0.171.0:
  *   `codex exec --json … -` reads the prompt from its input and prints one JSON object per line:
  *     {"type":"thread.started","thread_id":"…"}  {"type":"turn.started"}
  *     {"type":"item.started"|"item.completed","item":{"id":"item_0","type":"command_execution","command":"…",
@@ -25,32 +26,49 @@ import { codexSignIn, type SignInDefinition } from "./sign-in.ts";
  *   one be asked (`approval_policy = "never"`): what the profile forbids is refused, and the model is told so.
  *
  * Confinement, without `--sandbox` (passing it, or `sandbox_mode` in any config Codex loads, sets permission profiles
- * aside): a permissions profile given with `-c` extends the built-in `:read-only`, so commands write nothing, the
- * task's copy included; it denies reading the home folder, every place of the one shared list in src/confinement.ts,
- * Codex's own folder where the owner moved it, and Botbench's data folder; it opens again for reading only the task's
- * copy and the repository's git folder (a narrower rule wins, seen on 0.171.0); and it gives commands no network.
- * Seen with `codex sandbox -P` on 0.171.0: a decoy in a denied folder and `~/.codex` read as "Operation not permitted",
- * a write in the copy failed, and a name did not resolve.
+ * aside): a permissions profile given with `-c` (`codexConfig`) denies reading the home folder, every place of the one
+ * shared list in src/confinement.ts, Codex's own folder where the owner moved it, and Botbench's data folder, then
+ * opens what the turn may reach (a narrower rule wins, seen on 0.171.0), and gives commands no network. A review
+ * extends `:read-only`: commands write nothing, the task's copy included. A chat extends `:workspace`: commands write
+ * the chat's folder (and the temporary folder), and an attached repository and its git folder are opened for reading
+ * only. Seen with `codex sandbox -P` on 0.171.0: a decoy in a denied folder and `~/.codex` read as "Operation not
+ * permitted", a write in the copy failed, and a name did not resolve.
  *
- * What the review is started without: the owner's config.toml (`--ignore-user-config`, which also leaves out personal
- * MCP servers and profiles), the owner's and the repository's command rules (`--ignore-rules`), hooks, plugins, apps,
- * the browser and computer use (`--disable`), web search, and any saved session (`--ephemeral`). A repository's own
- * `.codex/` folder is not loaded for a folder Codex was never told to trust, and every setting here is a session flag,
- * which outranks project config. Codex says when it ignores a setting it does not know; Botbench then stops the turn,
- * since a setting it relies on would not be in force.
+ * Codex's own sandbox is the control here, not Botbench's sandbox-exec around the whole CLI (src/drivers/cli-sandbox.ts)
+ * as for Grok: macOS does not let a sandboxed process start another sandbox (seen on 27.2: "sandbox_apply: Operation
+ * not permitted"), so Codex inside one would have to run its commands with no sandbox of its own, and they could then
+ * read Codex's own sign-in, which its own profile keeps from them. Before each turn, Codex is asked which sandbox it
+ * would use (`codexSandboxCheckArgs`), and it is not started when it reports a looser one than Botbench set, or any
+ * network for commands.
+ *
+ * What a turn is started without: the owner's config.toml (`--ignore-user-config`, which also leaves out personal
+ * MCP servers and profiles), MCP servers (`mcp_servers={}`), the owner's and the repository's command rules
+ * (`--ignore-rules`), hooks, plugins, apps, the browser, computer use and the other features in DISABLED_FEATURES
+ * (`--disable`), and any saved session (`--ephemeral`). Web search, which OpenAI runs on its own servers, is on only
+ * when the owner's "Web access in chat" is Allow. A repository's own `.codex/` folder is not loaded for a folder Codex
+ * was never told to trust, and every setting here is a session flag, which outranks project config. Codex says when it
+ * ignores a setting it does not know; Botbench then stops the turn, since a setting it relies on would not be in force.
  */
 
 const COMMAND = "codex";
 export const CODEX = "codex";
 
-/** Codex here does one read-only turn: it cannot resume, cannot put a permission request to the owner, and is never let edit. It can be stopped. */
-export const CODEX_CAPABILITIES: DriverCapabilities = { resume: false, interrupt: true, permissionRequests: false, edits: false };
+/**
+ * Codex here does one turn: it cannot resume, cannot put a permission request to the owner, and never edits a task's
+ * copy. In a chat it has its own tools, kept by its own sandbox to the chat's folder. It can be stopped.
+ */
+export const CODEX_CAPABILITIES: DriverCapabilities = { resume: false, interrupt: true, permissionRequests: false, edits: false, chatTools: true };
 
 /** The name of Botbench's permissions profile for a review. */
 export const REVIEW_PROFILE = "botbench-review";
+/** The name of Botbench's permissions profile for a chat with Codex's own tools. */
+export const CHAT_PROFILE = "botbench-chat";
 
-/** Features of 0.171.0 a review has no use for; each is a name `codex features list` shows. */
-const DISABLED_FEATURES = ["hooks", "plugins", "apps", "browser_use", "computer_use", "image_generation"];
+/**
+ * Features of 0.171.0 Botbench has no use for, or that would reach past the confinement (a browser, the computer,
+ * another agent, a background service); each is a name `codex features list` shows as on.
+ */
+export const DISABLED_FEATURES = ["hooks", "plugins", "apps", "browser_use", "browser_use_external", "computer_use", "image_generation", "in_app_browser", "remote_plugin", "skill_mcp_dependency_install", "daemon_auto_start"];
 
 /**
  * Variables Botbench sets for Codex on top of the allowlisted ones. The home folder is unreadable to commands, and git
@@ -82,18 +100,52 @@ function tomlPath(place: string): string {
   return `"${place}"`;
 }
 
+/** What a turn is: a review, read-only in the task's copy, or a chat, in the chat's folder with `readable` read-only. */
+export interface CodexTurn {
+  place: ReviewPlace;
+  /** A chat with Codex's own tools; a review when left out. */
+  chat?: { readable: readonly string[] };
+  /** Codex's own web search, which OpenAI runs on its servers (`web_search = "live"`). Disabled when left out. */
+  webSearch?: boolean;
+  /** Where a moved Codex folder (CODEX_HOME) is read from; Botbench's own environment when left out. */
+  env?: NodeJS.ProcessEnv;
+}
+
 /**
- * The arguments of one review turn. `env` is where a moved Codex folder (CODEX_HOME) is read from; Botbench's own
- * environment when left out.
+ * The settings of one turn, which `codex exec` and the check before it (`codexArgs`, `codexSandboxCheckArgs`) are
+ * both given. The permissions profile denies reading the home folder, every place of the shared list in
+ * src/confinement.ts, Codex's own folder where the owner moved it, and Botbench's data folder; a narrower rule wins
+ * (seen on 0.171.0), so it then opens what the turn may reach. A review extends `:read-only` and opens the task's copy
+ * and the git folder for reading. A chat extends `:workspace` and opens the chat's folder for writing, and an attached
+ * repository and its git folder for reading only. Commands reach no network either way; web search is OpenAI's.
  */
-export function codexArgs(o: { place: ReviewPlace; model?: string; env?: NodeJS.ProcessEnv }): string[] {
+export function codexConfig(o: CodexTurn): string[] {
   const home = os.homedir();
   const denied = [home, ...unreadablePaths({ dataDir: o.place.dataDir, home, ...(o.env ? { env: o.env } : {}) })];
-  const readable = [realOrAsIs(o.place.cwd), ...(o.place.gitDir === undefined ? [] : [realOrAsIs(o.place.gitDir)])];
   const rules = new Map<string, string>();
   for (const place of denied) rules.set(place, "deny");
-  for (const place of readable) rules.set(place, "read");
+  const profile = o.chat === undefined ? REVIEW_PROFILE : CHAT_PROFILE;
+  if (o.chat === undefined) {
+    for (const place of [o.place.cwd, ...(o.place.gitDir === undefined ? [] : [o.place.gitDir])]) rules.set(realOrAsIs(place), "read");
+  } else {
+    for (const place of o.chat.readable) rules.set(realOrAsIs(place), "read");
+    rules.set(realOrAsIs(o.place.cwd), "write");
+  }
   const filesystem = `{${[...rules].map(([place, rule]) => `${tomlPath(place)}="${rule}"`).join(",")}}`;
+  return [
+    "-c", 'approval_policy="never"',
+    "-c", `default_permissions="${profile}"`,
+    "-c", `permissions.${profile}.extends="${o.chat === undefined ? ":read-only" : ":workspace"}"`,
+    "-c", `permissions.${profile}.filesystem=${filesystem}`,
+    "-c", `permissions.${profile}.network.enabled=false`,
+    "-c", "mcp_servers={}",
+    "-c", `web_search="${o.webSearch === true ? "live" : "disabled"}"`,
+    ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
+  ];
+}
+
+/** The arguments of one turn of `codex exec`. */
+export function codexArgs(o: CodexTurn & { model?: string }): string[] {
   const args = [
     "exec",
     "--json",
@@ -102,16 +154,9 @@ export function codexArgs(o: { place: ReviewPlace; model?: string; env?: NodeJS.
     "--ignore-rules",
     "--color", "never",
     "-C", o.place.cwd,
-    "-c", 'approval_policy="never"',
-    "-c", `default_permissions="${REVIEW_PROFILE}"`,
-    "-c", `permissions.${REVIEW_PROFILE}.extends=":read-only"`,
-    "-c", `permissions.${REVIEW_PROFILE}.filesystem=${filesystem}`,
-    "-c", `permissions.${REVIEW_PROFILE}.network.enabled=false`,
-    "-c", "mcp_servers={}",
-    "-c", 'web_search="disabled"',
-    ...DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
-    // A chat turn works in a new empty folder, which is no git repository, and Codex refuses to start in one without this.
-    ...(o.place.gitDir === undefined ? ["--skip-git-repo-check"] : []),
+    ...codexConfig(o),
+    // A chat works in the chat's folder, which is no git repository, and Codex refuses to start in one without this.
+    ...(o.chat !== undefined || o.place.gitDir === undefined ? ["--skip-git-repo-check"] : []),
   ];
   if (o.model !== undefined) {
     const problem = modelNameProblem(o.model);
@@ -120,6 +165,37 @@ export function codexArgs(o: { place: ReviewPlace; model?: string; env?: NodeJS.
   }
   args.push("-");
   return args;
+}
+
+/**
+ * The check before a turn: `codex debug prompt-input`, which starts no turn and prints the text Codex's model would
+ * be given, its account of the sandbox included, under the turn's own settings. It takes no `--ignore-user-config`, so
+ * it is run with CODEX_HOME set to a new empty folder: it then reads no config of the owner's, as the turn does not,
+ * and still every setting from outside (a managed configuration) that could loosen the sandbox.
+ */
+export const codexSandboxCheckArgs = (o: CodexTurn): string[] => ["debug", "prompt-input", ...codexConfig(o), "Botbench checks the sandbox."];
+
+/** Codex's own sandbox modes, loosest last. */
+const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"] as const;
+export type CodexSandboxMode = (typeof SANDBOX_MODES)[number];
+
+/**
+ * The sandbox Codex says it would run commands in, from the text its model is given (on 0.171.0: "`sandbox_mode` is
+ * `read-only`: … Network access is restricted."). Null when it says none Botbench knows.
+ */
+export function parseCodexSandbox(text: string): { mode: CodexSandboxMode; network: "restricted" | "enabled" } | null {
+  const mode = /`sandbox_mode` is `([a-z-]+)`/.exec(text)?.[1];
+  const network = /Network access is (restricted|enabled)\b/.exec(text)?.[1];
+  if (mode === undefined || network === undefined || !(SANDBOX_MODES as readonly string[]).includes(mode)) return null;
+  return { mode: mode as CodexSandboxMode, network: network as "restricted" | "enabled" };
+}
+
+/** Why Codex must not be started, given the sandbox it reported and the one Botbench set it, or null when it may. */
+export function codexSandboxProblem(reported: ReturnType<typeof parseCodexSandbox>, expected: CodexSandboxMode): string | null {
+  if (reported === null) return "Codex did not say which sandbox it would run its commands in, so Botbench did not start it. Update Botbench for this Codex.";
+  if (SANDBOX_MODES.indexOf(reported.mode) > SANDBOX_MODES.indexOf(expected)) return `Codex said it would run its commands with ${reported.mode} access, looser than the ${expected} Botbench set, so Botbench did not start it. A Codex setting outside Botbench, such as a managed configuration, may be overriding it.`;
+  if (reported.network !== "restricted") return "Codex said its commands would reach the network, which Botbench does not allow, so Botbench did not start it. A Codex setting outside Botbench, such as a managed configuration, may be overriding it.";
+  return null;
 }
 
 /** What `codex login status` printed, and how it exited, as a sign-in. Its words on 0.171.0: "Logged in using ChatGPT", "Not logged in". */
@@ -196,8 +272,15 @@ export function parseCodexLine(line: string): DriverEvent[] {
           const call: DriverEvent = { type: "tool_call", id, name: "file_change", input: { changes: item.changes ?? null } };
           return done ? [call, { type: "tool_result", id, output: str(item.status) ?? "", isError: item.status !== "completed" }] : [call];
         }
+        case "web_search": {
+          // A search OpenAI runs on its own servers: a step of the transcript, with what was searched for.
+          // 0.171.0 starts the item before the query is known (`"query":""`), so the step is recorded once complete.
+          const query = str(item.query) || (isObject(item.action) ? str(item.action.query) : null) || "";
+          if (!done && query === "") return [];
+          const call: DriverEvent = { type: "tool_call", id, name: "web_search", input: { query } };
+          return done ? [call, { type: "tool_result", id, output: query, isError: false }] : [call];
+        }
         case "mcp_tool_call":
-        case "web_search":
           return [{ type: "tool_call", id, name: item.type, input: item }];
         case "error": {
           const message = str(item.message) ?? "Codex reported an error without saying what.";
@@ -231,7 +314,7 @@ export function parseCodexLine(line: string): DriverEvent[] {
 export function readCodexLine(line: string): LineResult {
   const events = parseCodexLine(line);
   const ignored = events.find((e): e is Extract<DriverEvent, { type: "error" }> => e.type === "error" && IGNORED_SETTING.test(e.message));
-  return { events, stop: ignored ? `Stopped: Codex did not take one of Botbench's settings (${ignored.message}), so the review could not be kept to read-only. Update Botbench or Codex.` : null };
+  return { events, stop: ignored ? `Stopped: Codex did not take one of Botbench's settings (${ignored.message}), so it could not be kept in the sandbox Botbench set. Update Botbench or Codex.` : null };
 }
 
 export interface CodexDriverOptions {
@@ -242,6 +325,7 @@ export interface CodexDriverOptions {
 }
 
 const PROBE_TIMEOUT_MS = 15_000;
+const CHECK_TIMEOUT_MS = 30_000;
 const MODELS_FRESH_MS = 60_000;
 
 export class CodexDriver implements Driver {
@@ -292,17 +376,42 @@ export class CodexDriver implements Driver {
   }
 
   /**
-   * Probe, then make the attempt that one review turn runs in; the CLI starts with the turn. Only a read-only attempt
-   * with no network can be made: anything else would need what Codex lacks here.
+   * Ask Codex which sandbox it would run the turn's commands in (`codexSandboxCheckArgs`). Null when it is the one
+   * Botbench set, else why Codex must not be started.
+   */
+  private async sandboxProblem(turn: CodexTurn, expected: CodexSandboxMode): Promise<string | null> {
+    const empty = makeReviewFolder(turn.place.dataDir);
+    try {
+      const run = await runCli(COMMAND, codexSandboxCheckArgs(turn), { cwd: turn.place.cwd, extraEnv: { ...EXTRA_ENV, CODEX_HOME: empty.path }, timeoutMs: CHECK_TIMEOUT_MS });
+      if (!run.started || run.exitCode !== 0) return `Codex did not say which sandbox it would run its commands in (${run.started ? `it exited with code ${run.exitCode}` : "it did not start"}), so Botbench did not start it.${run.stderr.trim() === "" ? "" : ` It said: ${shorten(run.stderr.trim(), 300)}`}`;
+      return codexSandboxProblem(parseCodexSandbox(run.stdout), expected);
+    } finally {
+      empty.remove();
+    }
+  }
+
+  /**
+   * Probe, check the sandbox Codex reports, then make the attempt one turn runs in; the CLI starts with the turn. A
+   * review is read-only in the task's copy. A chat (`chatTools`) works in the chat's folder, with an attached
+   * repository read-only. Commands reach no network either way.
    */
   async startAttempt(options: StartAttemptOptions): Promise<DriverSession> {
-    if (options.readOnly !== true || options.allowEdits === true || options.gate !== undefined) throw new Error("Codex can only review in Botbench: it cannot ask you for permission or edit files under Botbench's rules.");
+    const chat = options.chatTools;
+    if (chat !== undefined && (options.readOnly === true || options.allowEdits === true || options.gate !== undefined)) throw new Error("A chat with Codex's own tools is kept by its sandbox alone: it cannot also be read-only, edit under Botbench's rules or ask you.");
+    if (chat === undefined && (options.readOnly !== true || options.allowEdits === true || options.gate !== undefined)) throw new Error("Codex can only review or chat in Botbench: it cannot ask you for permission or edit a task's files under Botbench's rules.");
     if (options.resumeCursor !== undefined) throw new Error("Codex cannot resume a session in Botbench.");
     if (options.confinement.allowedHosts.length > 0) throw new Error("Codex's commands reach no network in Botbench, so it cannot be given hosts to reach.");
     const probe = await this.probe();
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
-    const args = codexArgs({ place: { cwd: options.cwd, dataDir: options.confinement.dataDir, ...(options.confinement.gitDir === undefined ? {} : { gitDir: options.confinement.gitDir }) }, ...(options.model ? { model: options.model } : {}) });
+    const turn: CodexTurn = {
+      place: { cwd: options.cwd, dataDir: options.confinement.dataDir, ...(options.confinement.gitDir === undefined ? {} : { gitDir: options.confinement.gitDir }) },
+      ...(chat === undefined ? {} : { chat }),
+      webSearch: options.webSearch === true,
+    };
+    const args = codexArgs({ ...turn, ...(options.model ? { model: options.model } : {}) });
+    const unsafe = await this.sandboxProblem(turn, chat === undefined ? "read-only" : "workspace-write");
+    if (unsafe !== null) throw new Error(unsafe);
     return startOneTurn(options.db, CODEX, options.model ?? null, { agent: "Codex", command: COMMAND, args, cwd: options.cwd, extraEnv: EXTRA_ENV, capabilities: CODEX_CAPABILITIES, input: (prompt) => prompt, reader: () => readCodexLine });
   }
 }
