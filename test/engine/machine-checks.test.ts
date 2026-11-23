@@ -110,12 +110,15 @@ test("a command that starts a sandbox of its own fails in a check's sandbox, as 
   assert.match(env.output, /^no key\ntmp=.*botbench-command-/);
 });
 
-test("headless Chrome cannot start in a check's sandbox; as a machine check that needs chrome it starts, and the check's other rules still hold", { skip: NO_CHROME, timeout: 120_000 }, async (t) => {
+test("as a machine check that needs chrome, headless Chrome starts, and the check's other rules still hold", { skip: NO_CHROME, timeout: 120_000 }, async (t) => {
   const l = await copy(t);
   const confinement = { dataDir: l.dataDir, allowedHosts: [] };
   const chrome = `'${CHROME}' --headless=new --no-sandbox --no-first-run --disable-gpu --user-data-dir="$TMPDIR/profile" --dump-dom 'data:text/html,<p>machine-check-ok</p>' 2>/dev/null`;
+  // Measured on the owner's Mac (macOS 27.2, Chrome 156): under a check's profile alone Chrome exits at once, unable to
+  // make its lock folder in the user's temporary folder. A Mac whose Chrome or temporary folder differs (CI's runner)
+  // may start it there; what this test holds to is the machine check's profile, below.
   const asCheck = await runCommand({ command: chrome, cwd: l.worktree, limitMs: 60_000, confinement });
-  assert.equal(asCheck.output.includes("machine-check-ok"), false, "Chrome does not start under a check's profile");
+  t.diagnostic(`under a check's profile alone, Chrome ${asCheck.output.includes("machine-check-ok") ? "started" : "did not start"} on this Mac`);
   const asMachine = await runCommand({ command: chrome, cwd: l.worktree, limitMs: 60_000, confinement, profile: "chrome" });
   assert.match(asMachine.output, /<p>machine-check-ok<\/p>/);
   // Botbench's data folder stays unreadable, and nothing outside the copy, its temporary folder and Chrome's own lock
