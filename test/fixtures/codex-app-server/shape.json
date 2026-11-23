@@ -17,7 +17,7 @@
     "approvalPolicy": "on-request",
     "approvalsReviewer": "user",
     "sandboxPolicy": { "type": "workspaceWrite", "writableRoots": ["$CWD"], "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false },
-    "activePermissionProfile": { "id": "botbench-build", "extends": ":workspace" }
+    "activePermissionProfile": { "id": "$PROFILE", "extends": ":workspace" }
   },
   "looserSettings": {
     "approvalPolicy": "on-request",

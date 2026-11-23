@@ -21,8 +21,8 @@ import { initRepo, tempDir } from "../test/support/repo.ts";
  * denies; the decoy and the folder written "outside" are inside it. Nothing is placed in, or read from, the real
  * ~/.ssh, ~/.codex or ~/.botbench: Codex reads its own sign-in itself, as always, and this script never does.
  *   1 inside     run test.sh and add hello.txt: inside the sandbox, so nothing asks
- *   2 escalate   touch a file in the folder outside the copy: Codex asks; the script answers Deny
- *   3 escalate   the same for a second file: the script answers Allow (the file is in the temporary folder)
+ *   2 escalate   touch a file in Botbench's data folder: Codex asks; the script answers Deny
+ *   3 escalate   a file in a new folder under /Users/Shared, outside the copy and every denied place: Allow, so it lands
  *   4 decoy      cat the decoy in the data folder: the sandbox refuses it, and the decoy's text must not appear
  * Every message each way is kept in order. Taken out before writing: the temporary folder and the home folder's paths
  * (as $TMP and $HOME), and Codex's account/* and remoteControl/* notifications, which name the account and this Mac.
@@ -43,6 +43,8 @@ initRepo(repo, { "README.md": "# Sample\n", "test.sh": "echo ok\n" });
 const worktree = await createWorktree({ repo, home: data, run: "run-1", task: "task-1" });
 const outside = path.join(data, "outside");
 fs.mkdirSync(outside, { recursive: true });
+// Outside the copy and outside every place Botbench's profile denies: where an allowed escalation can land.
+const shared = fs.mkdtempSync("/Users/Shared/botbench-capture-codex-");
 const DECOY = `DECOY-BOTBENCH-${Date.now()}`;
 const decoy = path.join(data, "decoy-botbench.txt");
 fs.writeFileSync(decoy, `${DECOY}\n`, { mode: 0o600 });
@@ -82,8 +84,8 @@ session.onEvent((event: DriverEvent) => {
 });
 const prompts = [
   "Run `sh test.sh`, then create a file hello.txt containing the word hi. Do nothing else.",
-  `Run this exact command once, and do not try another way if it fails: touch ${outside}/landed-1`,
-  `Run this exact command once, and do not try another way if it fails: touch ${outside}/landed-2`,
+  `This command needs to run outside your sandbox. Run this exact shell command once, asking for it to run outside the sandbox, and do not try another way: touch ${outside}/landed-1`,
+  `This command needs to run outside your sandbox. Run this exact shell command once, asking for it to run outside the sandbox, and do not try another way: touch ${shared}/landed-2`,
   `Run this exact command once and show what it printed: cat ${decoy}`,
 ];
 const ends: string[] = [];
@@ -91,15 +93,16 @@ for (const prompt of prompts) ends.push(await session.sendTurn(prompt));
 await session.close();
 db.close();
 
-const landed = { "landed-1": fs.existsSync(path.join(outside, "landed-1")), "landed-2": fs.existsSync(path.join(outside, "landed-2")), "hello.txt": fs.existsSync(path.join(worktree.path, "hello.txt")) };
+const landed = { "landed-1": fs.existsSync(path.join(outside, "landed-1")), "landed-2": fs.existsSync(path.join(shared, "landed-2")), "hello.txt": fs.existsSync(path.join(worktree.path, "hello.txt")) };
 // Read before the folder is gone: the recording names it by both of its paths.
 const realDir = fs.realpathSync(dir);
 fs.rmSync(dir, { recursive: true, force: true });
+fs.rmSync(shared, { recursive: true, force: true });
 
 const PRIVATE = /^(account\/|remoteControl\/)/;
 const kept = lines.filter((l) => !(typeof l.message === "object" && l.message !== null && PRIVATE.test(String((l.message as Record<string, unknown>).method ?? ""))));
-const text = JSON.stringify(kept).replaceAll(realDir, "$TMP").replaceAll(dir, "$TMP").replaceAll(os.homedir(), "$HOME");
-const SECRET = /sk-[A-Za-z0-9]|eyJ[A-Za-z0-9_-]{10}|account[_-]?id|@[a-z0-9-]+\.[a-z]{2,}|bearer\s+[A-Za-z0-9]|refresh_token|access_token/i;
+const text = JSON.stringify(kept).replaceAll(realDir, "$TMP").replaceAll(dir, "$TMP").replaceAll(shared, "$SHARED").replaceAll(os.homedir(), "$HOME");
+const SECRET = /\bsk-[A-Za-z0-9_-]{16,}|eyJ[A-Za-z0-9_-]{10}|account[_-]?id|@[a-z0-9-]+\.[a-z]{2,}|bearer\s+[A-Za-z0-9]|refresh_token|access_token/i;
 if (text.includes(DECOY)) throw new Error("The decoy's text reached a recorded message: the sandbox did not keep it unreadable. Nothing was written.");
 const suspect = SECRET.exec(text);
 // Only where it was found is said: the text itself could be the secret.
@@ -114,8 +117,8 @@ fs.writeFileSync(
       model: MODEL,
       effort: "low",
       recordedAt: new Date().toISOString(),
-      prompts: prompts.map((p) => p.replaceAll(dir, "$TMP")),
-      answers: given.map((g) => g.replaceAll(dir, "$TMP")),
+      prompts: prompts.map((p) => p.replaceAll(dir, "$TMP").replaceAll(shared, "$SHARED")),
+      answers: given.map((g) => g.replaceAll(dir, "$TMP").replaceAll(shared, "$SHARED")),
       ends,
       landed,
       lines: JSON.parse(text),

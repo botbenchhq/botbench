@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,8 +46,13 @@ import { killProcessGroup, launch, processGroupAlive, type CliChild } from "./la
  */
 
 export const CODEX_DRIVER = "codex";
-/** The name of Botbench's permissions profile for a build. */
-export const BUILD_PROFILE = "botbench-build";
+/**
+ * The name of Botbench's permissions profile for a build: new each time Botbench starts. The owner's config.toml is
+ * loaded too, and a table of the same name there is merged into Botbench's (seen on 0.171.0: a narrower `"read"` rule for
+ * a file under a denied folder made it readable, and Codex's report of the sandbox does not show read rules). A name
+ * nobody can know beforehand leaves nothing in a config.toml to merge.
+ */
+export const BUILD_PROFILE = `botbench-build-${randomBytes(8).toString("hex")}`;
 
 /**
  * Features of 0.171.0 that are off for a build, beside those off for every Codex turn (`baseFeatures`, from

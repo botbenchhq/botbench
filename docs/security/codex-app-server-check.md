@@ -127,3 +127,12 @@ Before the live run, the same protocol was driven against a scripted Responses e
 - The params of `item/fileChange/requestApproval` carry no paths or diff. They come in the `item/started` of the `fileChange` item with the same id.
 - `exec_command`'s `sandbox_permissions:"require_escalated"` is not marked in the request (only `reason`), so a client cannot tell an escalation from an ordinary request.
 - `apply_patch` is offered to a scripted endpoint only with a catalog entry that has `apply_patch_tool_type` (`-c model_catalog_json=…`), since the bundled models are `code_mode_only`.
+
+## 5. Measured again on the built driver (2026-11-23, Codex 0.171.0, gpt-5.6-luna, low effort)
+
+With Botbench's own arguments (`appServerArgs` in `src/drivers/codex-app-server.ts`, profile extending `:workspace`, `on-request`), driven by Botbench's own session:
+
+- **An allowed escalation leaves the copy but not the profile's deny rules.** `touch` into a new folder under `/Users/Shared` (outside the copy, not denied) asked once and, accepted, landed. `touch` into Botbench's data folder (denied) asked once and, accepted, produced no item and wrote nothing. So with a permissions profile an accepted request is not fully unsandboxed, unlike the plain `read-only` sandbox of section 1.
+- **config.toml merges into a profile of the same name.** A `[permissions.botbench-build.filesystem]` table in `$CODEX_HOME/config.toml` added `"/Users/Shared" = "write"` (reported in `writableRoots`, so the driver stopped) and a narrower `"<file under a denied folder>" = "read"` (not reported, and `codex sandbox` with the same flags read the file). Botbench's profile name is therefore new on each start. `sandbox_mode`, `approval_policy` and `[sandbox_workspace_write]` in config.toml had no effect on the profile.
+- **A later session flag does outrank Botbench's:** `-c permissions.<profile>.network.enabled=true` after Botbench's flags made `thread/start` report `networkAccess: true`, and the driver stopped before `turn/start`. `-c sandbox_mode="danger-full-access"` did not loosen anything.
+- A real session is recorded in `test/recordings/codex-app-server-build.json` by `scripts/capture-codex-app-server.ts`.

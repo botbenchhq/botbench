@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CODEX_BUILD_CAPABILITIES } from "../../src/drivers/codex.ts";
-import { startAppServerSession, type AppServerTransport, type CodexAppServerSession } from "../../src/drivers/codex-app-server.ts";
+import { BUILD_PROFILE, startAppServerSession, type AppServerTransport, type CodexAppServerSession } from "../../src/drivers/codex-app-server.ts";
 import type { Driver, DriverCapabilities, DriverProbe, StartAttemptOptions } from "../../src/drivers/contract.ts";
 
 /*
@@ -40,7 +40,7 @@ export const loadShape = (): CodexShape => JSON.parse(fs.readFileSync(path.resol
 
 /** The shape with the task's copy, a folder outside it and Codex's folder filled in. */
 function filled(shape: CodexShape, o: { cwd: string; outside: string }): CodexShape {
-  const text = JSON.stringify(shape).replaceAll("$CWD", o.cwd).replaceAll("$OUTSIDE", o.outside).replaceAll("$HOME_CODEX", path.join(o.outside, ".codex"));
+  const text = JSON.stringify(shape).replaceAll("$CWD", o.cwd).replaceAll("$OUTSIDE", o.outside).replaceAll("$HOME_CODEX", path.join(o.outside, ".codex")).replaceAll("$PROFILE", BUILD_PROFILE);
   const parsed = JSON.parse(text) as CodexShape;
   // A mid-turn report of looser settings is the shape's `looserSettings`.
   return JSON.parse(JSON.stringify(parsed).replaceAll('"$LOOSER"', JSON.stringify(parsed.looserSettings))) as CodexShape;

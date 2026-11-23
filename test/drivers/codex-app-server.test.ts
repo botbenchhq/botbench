@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -239,4 +240,11 @@ test("an escalation nobody answers in time is declined, and so is one still wait
   assert.equal(await ended, "interrupted");
   assert.deepEqual(stopped.transport.sent.find((m) => m.id === 0 && m.method === undefined), { id: 0, result: { decision: "decline" } });
   assert.ok(stopped.events.some((e) => e.type === "permission_resolved" && e.decision === "cancelled"));
+});
+
+test("Botbench's permissions profile has a new name each time Botbench starts, so no table in the owner's config.toml can be merged into it", () => {
+  assert.match(BUILD_PROFILE, /^botbench-build-[0-9a-f]{16}$/);
+  const other = execFileSync(process.execPath, ["--input-type=module", "-e", `import { BUILD_PROFILE } from ${JSON.stringify(new URL("../../src/drivers/codex-app-server.ts", import.meta.url).href)}; console.log(BUILD_PROFILE);`], { encoding: "utf8" }).trim();
+  assert.match(other, /^botbench-build-[0-9a-f]{16}$/);
+  assert.notEqual(other, BUILD_PROFILE);
 });
