@@ -63,7 +63,7 @@ function sentences(file: string): { line: number; text: string }[] {
 
 test("the banned words are read from the glossary of docs/product/voice.md", () => {
   assert.deepEqual(readBanned("| On screen | Means | Never shown |\n|---|---|---|\n| Chat | a turn | `turn`, `Attempt` |\n| Task | the same | |\nA `stray` word outside the table."), ["turn", "attempt"]);
-  for (const term of ["turn", "attempt", "worktree", "driver", "cli", "broker", "gate", "floor", "hook", "station", "parked", "superseded", "resume cursor", "pgid", "admission", "schema", "migration", "stream", "sse", "standing permission", "pre-approved", "implementer", "blocked", "interrupted", "decline"]) {
+  for (const term of ["turn", "attempt", "worktree", "driver", "cli", "broker", "gate", "floor", "hook", "station", "parked", "superseded", "resume cursor", "pgid", "admission", "schema", "migration", "stream", "sse", "standing permission", "pre-approved", "implementer", "blocked", "interrupted", "allow once", "deny and send"]) {
     assert.ok(BANNED.includes(term), `${term} is on the list`);
   }
 });

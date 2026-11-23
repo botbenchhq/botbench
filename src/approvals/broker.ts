@@ -1120,7 +1120,7 @@ export function createBroker(options: {
     const { stored, question } = transaction(db, () => {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
-      if (current.question === null) throw new ApprovalError(409, "This request is not a question. Answer it with Allow once or Deny.");
+      if (current.question === null) throw new ApprovalError(409, "This request is not a question. Answer it with Allow or Decline.");
       if (current.status !== "pending" || current.answer !== null || current.storedDecision !== null) throw new ApprovalError(409, current.status === "superseded" ? "This question is no longer waiting for an answer." : "This question already has your answer.");
       const entry = { taskId: current.taskId, runId: current.runId, attemptId: current.attemptId, approvalId: id, rule: "owner_answered", tool: current.tool, command: current.command, cwd: current.cwd, detail: given } as const;
       if (waiters.has(id)) {
@@ -1218,7 +1218,7 @@ export function createBroker(options: {
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
       const found = eligibility(current);
-      if (typeof found === "string") throw new ApprovalError(409, `Always allow is not available for this request: ${found}. Nothing was allowed; answer it with Allow once or Deny.`);
+      if (typeof found === "string") throw new ApprovalError(409, `Always allow is not available for this request: ${found}. Nothing was allowed; answer it with Allow or Decline.`);
       const answered = db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ? AND status = 'pending'").run(now(), id);
       if (Number(answered.changes) !== 1) throw new ApprovalError(409, "This approval is no longer waiting for an answer.");
       const about = { taskId: current.taskId, attemptId: current.attemptId, approvalId: id, tool: current.tool, command: current.command, cwd: current.cwd };

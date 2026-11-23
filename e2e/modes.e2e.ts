@@ -110,7 +110,11 @@ test("LIVE modes: semi-autonomous builds without plan approval and runs a task's
   await expect(page.getByTestId("run-status")).toHaveText(/^Done\. Every task that was built is decided: this run is fully autonomous/);
   await checkDesign(page, "run, fully autonomous, done");
   await page.getByTestId("run-tasks").getByRole("link").first().click();
-  await expect(page.getByRole("heading", { name: "Accepted without you", level: 2 })).toBeVisible();
+  // The review decision holds the result in place of the buttons: the badge says who accepted it.
+  const decision = page.getByRole("region", { name: "Decision", exact: true });
+  await expect(decision.getByRole("heading", { level: 2 })).toHaveText("Decision");
+  await expect(decision.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted without you");
+  await expect(decision.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
   await expect(page.getByTestId("decided-by")).toHaveText("Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and nothing an agent asked for was refused.");
   await expect(page.getByTestId("not-merged")).toContainText("Nothing has been merged or pushed.");
   await checkDesign(page, "task, accepted without the owner");
