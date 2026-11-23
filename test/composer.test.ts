@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
-import { arrive, blocked, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, oneTaskFor, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { arrive, blocked, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -107,9 +107,9 @@ test("a disabled Send sends nothing", () => {
   assert.deepEqual(sendFor(inRepo({ repoStatus: { state: "checking" } }), extras), { do: "blocked", reason: "Checking the repository." });
 });
 
-test("the sheet shows only the rows that apply: a chat has a repository and a model, a task adds what to do, mode and commands, a run adds the rest", () => {
+test("the sheet shows only the rows that apply: a chat has a repository, one to read and a model, a task adds what to do, mode and commands, a run adds the rest", () => {
   const known = { reviewOffered: true, commandsKnown: true };
-  assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "run", ...known }), ["repository", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "run", ...known }), ["repository", "read", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "needed" }, kind: "task", ...known }), ["repository", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }), ["repository", "kind", "mode", "commands", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
@@ -254,4 +254,74 @@ test("Review lists, for each agent that reviews, its own default and the configu
     ["grok ?default", "Grok", "its default model"],
     ["grok ?other", "Grok", "Other model…"],
   ]);
+});
+
+// A repository a chat lets its agents read (Add context: Let this chat read a repository): not the Repository row's,
+// which starts a task or a run. The server checks it again and refuses what these refuse (src/api/chat.ts).
+const OTHER_REPO = "/Users/owner/code/docs";
+const codex = { name: "Codex", reads: true };
+const chatReading = (over: Partial<NonNullable<Facts["read"]>> = {}, asked: Facts["asked"] = [codex]): Facts => ({ ...ready, read: { pick: { kind: "known", path: OTHER_REPO }, status: { state: "usable" }, ...over }, ...(asked === undefined ? {} : { asked }) });
+
+test("a chat with a repository to read sends it with the message; with none, or in a task or run, nothing to read is sent", () => {
+  assert.deepEqual(sendFor(chatReading(), extras), { do: "chat", prompt: "Add a README", model: "haiku", repository: OTHER_REPO });
+  // A typed folder is sent trimmed; the server checks it again.
+  assert.deepEqual(sendFor(chatReading({ pick: { kind: "other", path: `  ${OTHER_REPO} ` } }), extras), { do: "chat", prompt: "Add a README", model: "haiku", repository: OTHER_REPO });
+  // None: no `repository` key at all.
+  const none = sendFor({ ...chatReading(), read: { pick: { kind: "none" }, status: { state: "none" } } }, extras);
+  assert.deepEqual(none, { do: "chat", prompt: "Add a README", model: "haiku" });
+  assert.equal("repository" in none, false);
+  assert.equal("repository" in sendFor(ready, extras), false, "a chat that never had one");
+  // A repository chosen under Repository starts a task or run as before: the one to read is not part of it.
+  assert.deepEqual(sendFor({ ...chatReading(), repo: { kind: "known", path: REPO }, repoStatus: { state: "usable" } }, extras), { do: "task", repo: REPO, prompt: "Add a README", model: "haiku", preapproved: ["npm test"] });
+  assert.equal(blocked({ ...chatReading({ status: { state: "checking" } }), repo: { kind: "known", path: REPO }, repoStatus: { state: "usable" } }), null, "not checked for a task");
+  // Come from New task or New run, there is nothing to read, and the Read a repository row is not offered.
+  assert.deepEqual(blocked({ ...chatReading({ status: { state: "checking" } }), repo: { kind: "needed" } }), { reason: "Choose a repository", required: "repository" });
+  const known = { reviewOffered: true, commandsKnown: true };
+  assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "task", ...known }), ["repository", "read", "models"]);
+  for (const repo of [{ kind: "needed" as const }, { kind: "known" as const, path: REPO }]) assert.equal(rowsFor({ repo, kind: "task", ...known }).includes("read"), false, repo.kind);
+  // An empty box still just puts the cursor in it.
+  assert.deepEqual(sendFor({ ...chatReading(), text: " " }, extras), { do: "focus" });
+});
+
+test("Send waits, with the reason in words, while the repository to read is empty, being checked or refused", () => {
+  assert.equal(blocked(chatReading()), null);
+  assert.deepEqual(blocked(chatReading({ pick: { kind: "other", path: "  " }, status: { state: "none" } })), { reason: "Enter the full path of a git repository on this Mac for the chat to read, or choose None.", required: null });
+  assert.deepEqual(blocked(chatReading({ status: { state: "checking" } })), { reason: "Checking the repository for the chat to read.", required: null });
+  assert.deepEqual(blocked(chatReading({ status: { state: "refused", words: "This folder is not a git repository." } })), { reason: "This folder is not a git repository. Choose another repository for the chat to read, or choose None.", required: null });
+  assert.deepEqual(sendFor(chatReading({ status: { state: "checking" } }), extras), { do: "blocked", reason: "Checking the repository for the chat to read." });
+  // A check that could not be made does not stop the message: the server checks again, and its refusal is shown.
+  assert.equal(blocked(chatReading({ status: { state: "unknown", words: "The path could not be checked." } })), null);
+});
+
+test("with Claude Code or an agent that cannot read a repository asked, Send waits and says the repository is read only by the other agents", () => {
+  const onlyOthers = "The repository is read only by the other agents: ask only them, or choose None for the repository to read.";
+  assert.deepEqual(blocked(chatReading({}, [{ name: "Claude Code", reads: false }])), { reason: `Claude Code works on a repository only as a task, in a separate copy, so a chat does not give it one. ${onlyOthers}`, required: null });
+  assert.deepEqual(blocked(chatReading({}, [codex, { name: "Antigravity", reads: false }])), { reason: `Antigravity cannot read a repository: it answers from the conversation alone. ${onlyOthers}`, required: null });
+  assert.equal(sendFor(chatReading({}, [codex, { name: "Claude Code", reads: false }]), extras).do, "blocked");
+  // Not known yet (an older check): asked as chosen, and the server's refusal is shown if it comes.
+  assert.equal(blocked(chatReading({}, [{ name: "Grok", reads: null }])), null);
+  assert.equal(blocked(chatReading({}, undefined)), null);
+  // With nothing to read, any agent is asked as before.
+  assert.equal(blocked({ ...ready, read: { pick: { kind: "none" }, status: { state: "none" } }, asked: [{ name: "Claude Code", reads: false }] }), null);
+});
+
+test("the Read a repository row names the repository or None, and its view returns to the rows unless Another folder… opens the field", () => {
+  const known = [{ name: "docs", path: OTHER_REPO }];
+  assert.equal(readName({ kind: "none" }, known), "None");
+  assert.equal(readName({ kind: "known", path: OTHER_REPO }, known), "docs");
+  assert.equal(readName({ kind: "other", path: "/Users/owner/code/notes/ " }, known), "notes");
+  assert.equal(readName({ kind: "other", path: "" }, known), "Another folder");
+  assert.equal(returnsToList({ view: "read", value: OTHER_REPO, run: false }), true);
+  assert.equal(returnsToList({ view: "read", value: "?other", run: false }), false);
+  assert.match(READ_ABOUT, /never change it: nothing in it is written, committed or pushed\.$/);
+});
+
+test("a repository to read is never remembered, nor mistaken for the repository a task starts in", () => {
+  const remembered: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" };
+  // What is written holds only what Remembered holds; nothing to read rides along.
+  assert.deepEqual(Object.keys(JSON.parse(writeRemembered(remembered))).sort(), ["delivery", "kind", "mode", "repo", "review"]);
+  // A stored value that carries another key (an older or altered one) is still read part by part, and the key is dropped.
+  const read = readRemembered(JSON.stringify({ ...remembered, read: { kind: "known", path: OTHER_REPO }, repository: OTHER_REPO }));
+  assert.deepEqual(read, remembered);
+  assert.equal("read" in read, false);
 });

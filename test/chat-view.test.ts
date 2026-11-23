@@ -26,6 +26,13 @@ test("what an agent can do in a chat is the server's sentence, kept with its che
   assert.equal(agentList({ known: null, checking: true, failed: null, inRepository: false }).rows[1]!.chat, null, "nothing is said before the check is known");
 });
 
+test("whether an agent reads a repository attached to a chat is the server's answer, kept with its check; not said is not known", () => {
+  const offer = chatOffer([{ ...agent("codex"), readsRepository: true }, { ...agent("antigravity"), readsRepository: false }, agent("grok")]);
+  assert.deepEqual(offer.map((o) => [o.agent, o.readsRepository]), [["codex", true], ["grok", undefined], ["antigravity", false]]);
+  const kept = readKnownAgents(JSON.stringify([...offer, { agent: "claude-code", problem: null, readsRepository: "yes" }]))!;
+  assert.deepEqual(kept.map((o) => [o.agent, o.readsRepository]), [["codex", true], ["grok", undefined], ["antigravity", false], ["claude-code", undefined]]);
+});
+
 test("Send goes to the one agent chosen with its model, or to each agent ticked under Ask several; an unusable or too short choice says what to do", () => {
   const offer = chatOffer(all);
   const claude = { ok: true as const, model: "haiku" };

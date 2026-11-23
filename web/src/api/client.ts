@@ -136,6 +136,8 @@ export interface AgentState extends Omit<DriverState, "driver"> {
   roles: string[];
   /** What it can do in a chat, in one sentence; null for Claude Code. */
   chat?: string | null;
+  /** Whether it reads a repository attached to a chat (never changing it); false for Claude Code. */
+  readsRepository?: boolean;
 }
 /** The agents as their last check found them, when it ended, whether a new check is running, and the cap on rounds of fixes. */
 export interface AgentsAnswer {
@@ -270,8 +272,9 @@ export interface ChatReply {
   roundId: number | null;
 }
 /** Send a chat message to one agent or several, with the chat so far; or, with `compare`, ask one to compare a round's answers. Each agent is checked first, which takes seconds. */
-export const sendChatMessage = (o: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number }): Promise<ChatReply[]> =>
-  request<{ replies: ChatReply[] }>("POST", "/api/chat", o, 60_000).then((r) => r.replies);
+/** `repository`: the full path of a repository attached to the chat, which the agents asked read and never change; left out for none. */
+export const sendChatMessage = ({ repository, ...o }: { prompt: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number; repository?: string }): Promise<ChatReply[]> =>
+  request<{ replies: ChatReply[] }>("POST", "/api/chat", { ...o, ...(repository === undefined || repository === "" ? {} : { repository }) }, 60_000).then((r) => r.replies);
 
 export async function interruptTurn(attemptId: number): Promise<void> {
   await request("POST", `/api/turns/${attemptId}/interrupt`, {});
