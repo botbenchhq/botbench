@@ -27,6 +27,7 @@ Scope: Botbench as built through units 1 to 13, unit 26 and unit 27, plus the bo
 | B12 | The reviewers with no tools: Grok (`grok -p -`) and Antigravity (`agy`), each a vendor's CLI child with no tool offered to its model, the whole process under Botbench's `sandbox-exec` profile | Botbench process, the owner's Grok and Google sign-ins | The CLI process, its model's output, the task, criteria and diff it is sent, and anything the CLI starts |
 | B13 | GitHub, through the owner's own `git push` and `gh` (delivery) | Botbench process, the owner's repository, the owner's git credential helper and `gh` sign-in | GitHub and the network to it; the remote repository's settings and hooks; whoever can read the pull request |
 | B14 | A GitHub issue's authors, read through the owner's own `gh` (intake) | Botbench process, the owner's choice of issue, the issue's number and address | Everything else in the issue: its title, text, labels, comments and authors' names, written by anyone who can open or comment on an issue of that repository |
+| B16 | A paired peer workbench, through the peer listener (P5, planned: `docs/adr/0004-peers-direct-messages.md`) | Botbench process, the owner's Botbench key, the owner's decisions | The other workbench, every byte it sends, and every process that can reach the peer listener's address |
 
 ### How a tool call is decided (U7)
 
@@ -461,6 +462,59 @@ STRIDE for B15:
 | Elevation of privilege: another workbench's text steers an agent or Botbench | Never placed in a prompt, never acted on; the composer and review lines are warnings for the owner only | Done |
 
 What it does not cover: a warning is best effort. An issue the owner's message names is matched by its `#number` only; a branch pushed without a pull request says nothing about its issue (P3 makes taking an issue visible); overlapping files are compared by path, and no merge is tried (P4).
+
+### Peers: direct messages between paired workbenches (P5)
+
+Planned, not built. New boundary B16: another person's Botbench, which can now send this one bytes directly. The decisions are in `docs/adr/0004-peers-direct-messages.md`. In short:
+- **The listener.** A second listener (the peer listener) is off by default and bound only to the loopback, private or carrier-grade address the owner names in the settings file. It has four routes (pair, message, settings, end) and no access to the owner's API or session.
+- **Identity.** Each workbench has an Ed25519 key. Every message is signed and checked against the key stored at pairing.
+- **Pairing.** Pairing takes a one-use, 15-minute invite (only its hash is stored), a pairing key that is safe to retry, and both owners' confirmation of each other's fingerprint.
+- **Scope.** A pairing covers one repository and gives no access to files, credentials, tasks, transcripts, diffs or the store.
+- **Messages.** There are eight typed kinds, with at most 3 round trips per thread. Messages are stored append-only and are idempotent by message id.
+- **Incoming.** An incoming message is outside text and only ever becomes a card for the owner. Work the owner gives it to is marked under the Intake (B14) rules.
+- **Outgoing.** Every outgoing message, the owner's or an agent's draft, leaves only after the owner presses Send on a card that shows its exact text. Fully autonomous runs send nothing.
+
+Every test named below uses real SQLite, a real temporary git repository with a bare remote, real HTTP, and real child processes: two Botbench processes started as separate installations on this Mac, each with its own data folder. None uses a mock, a fake peer or a fake CLI. An agent's draft comes from a session captured from a real CLI run and replayed through the driver contract, as the hard rules allow. The live test (`test/live/peers.live.test.ts`) has a real Claude Code draft a question once.
+
+STRIDE for B16:
+
+| Threat | Control | Test that will prove it |
+|---|---|---|
+| Spoofing: a process that can reach the listener, or a workbench with the same name, poses as the paired peer | Identity is the public key stored at pairing, not the name. Every route but pair needs a valid Ed25519 signature from that key. A pair request needs an HMAC made with the invite secret, which is used once, expires after 15 minutes and is stored only as a hash. A pairing is in force only after both owners confirm the fingerprint | `test/peers/pairing.test.ts`: an unsigned message, one signed with another key, one from a second installation that has the same name, an expired invite, a reused invite and a wrong HMAC are each refused and create no row. `e2e/peers.e2e.ts`: two installations pair and both show the same fingerprints |
+| Spoofing: a retried or replayed pair request makes a second pairing | The pairing key makes a retry answer with the same pairing. A different key on a used invite is refused | `test/peers/pairing.test.ts`: the same pair request sent three times makes one pairing; a second key on that invite gets 409 |
+| Tampering: a message is changed in transit, replayed, or the same id is sent twice with other content | The signature covers the whole envelope. `UNIQUE(peer_id, message_id)`. The same bytes get the same acknowledgement; other bytes are refused and logged. Sequence numbers per pairing. `peer_messages` append-only by trigger | `test/peers/messages.test.ts`: one flipped byte, a replay and a same-id-other-body are each refused or deduplicated; update, delete and `INSERT OR REPLACE` on `peer_messages` are refused |
+| Tampering: a message for another repository, or of the wrong shape, is accepted | The repository must be the pairing's. A fixed shape per kind, a parent of the right kind, a body of at most 8,000 characters | `test/peers/messages.test.ts`: another repository, an answer whose parent is not a question, and an over-long body are each refused with a log row |
+| Repudiation (finding 5): nobody can tell whether the owner, the agent or a peer caused an action or an approval | `asked_by` (`owner`, `agent`, `peer` with the pairing id, and the name and fingerprint as they were then) on every approval and action-log row. Work started from a peer's message carries that peer, fixed by trigger. The card says "Asked by Claude Code, working on a message from bob's workbench". Rows from before P5 read as `owner` | `test/peers/asked-by.test.ts`: an approval raised in a task given a peer's message stores the peer, the card's text names it, the action-log row for the answer carries the same peer, and a trigger refuses changing it. `e2e/peers.e2e.ts` checks the card on screen |
+| Repudiation (finding 5): a verdict is attributed to a review nobody requested, or a peer issues a verdict for another's request | A verdict is accepted only as the answer to a review request this workbench sent to that same peer, in that thread, once | `test/peers/asked-by.test.ts`: a verdict with no request, from another pairing, or a second verdict is refused and logged. Runs with the review kinds, after the first slice |
+| Information disclosure: a peer reads files, credentials, the diff, transcripts or the store; an agent's draft sends something the owner did not see | The peer listener has four routes and no route that reads anything. The private key and the store are in the data folder that confined commands cannot read (U27). The outbound card shows the exact text that is sent, and nothing else from the repository is attached | `test/peers/listener.test.ts`: every path but the four gives 404 with and without a valid signature, and the owner's session cookie is ignored there. `test/peers/outbound.test.ts`: the bytes received equal the bytes shown on the card. `e2e/peers.e2e.ts`: nothing reaches B before A presses Send |
+| Information disclosure: the listener is reachable from the internet | Off by default; a public address in `peers.listen` stops Botbench at start with a message naming the setting | `test/peers/listener.test.ts`: a public IPv4 and IPv6 address each fail the start; loopback, a private and a carrier-grade address are each accepted |
+| Denial of service: a peer floods the owner with messages or cards | At most 30 incoming messages an hour and 10 waiting cards per peer. Over that, refused with one log row per minute, not per message. Request size at most 64 KB, with time limits on the listener. The cap of 3 round trips per thread is checked at both ends | `test/peers/limits.test.ts`: the 31st message in an hour and the 11th waiting card are refused, and the 7th message of a thread is refused at the receiving end even when the sender does not check |
+| Denial of service (finding 7): one run's agent sends without end | At most 5 agent drafts per run (`peers.messagesPerRun`). Every draft is logged first (`peer_send_attempt`). Over the cap it is refused with no card under `peer_send_over_limit`, never `owner_declined`, and the agent is told why | `test/peers/limits.test.ts`: with a cap of 3, the 4th draft creates no card, is not sent, and leaves its attempt row and one `peer_send_over_limit` row; the replayed session's next prompt carries the sentence |
+| Elevation of privilege (finding 6): a kind the owner switched off reaches them anyway | Per peer and kind, a send and a receive setting. The sending end checks its own setting and the peer's last receive settings. The receiving end checks its own setting before storing anything, and its check decides. An explicit no is never overridden by a mode, an allowed command, Always allow, the other side, an agent or a message | `test/peers/kinds.test.ts`: with questions switched off for peer A on B, a question from A, from a sending end that skips its own check, creates no card, stores no body, and leaves one `peer_kind_refused` row naming A; the same switched off on A's sending side makes no card on A; every mode and an Always allow leave the no in force |
+| Elevation of privilege: a message becomes a command, a grant, a run or an accepted change | A message is outside text. It only becomes a card. Work the owner gives it to is marked under B14: an `<outside-text>` block it cannot close, no allowed command or Always allow, never fully autonomous, no network hosts unless ticked. No agent is started or woken by a message, and nothing in it is read by Botbench | `test/peers/incoming.test.ts`: a message holding "run `rm -rf ~`", a closing tag and a fake verdict starts nothing, and a task given it is marked, refuses a full-autonomous start and gets no hosts. Engine-tested as for B14 |
+| Elevation of privilege: an ended pairing keeps working | End writes an append-only end row, refuses the key at once, closes the peer's waiting cards and drops unsent messages to it. The end notice is sent once | `test/peers/pairing.test.ts` and `e2e/peers.e2e.ts`: after End on either side, the next message each way is refused and the waiting card is closed |
+
+**The first slice**, as in the record, is two installations on one Mac: invite, pair, question and answer, and every control above apart from the verdict row. It will NOT do:
+- no relay and no Botbench service;
+- no remote execution;
+- no transfer of code or files;
+- no A2A;
+- no more than two peers;
+- no test across two Macs or a real private network;
+- no kinds beyond question and answer;
+- no messages from a fully autonomous run;
+- no agent started by an incoming message;
+- no phone notifications for peer cards;
+- no change to P3 claims or P4 shared checks.
+
+**What this section does not cover**, stated exactly:
+- **The network.** Messages are signed, not encrypted. Confidentiality on the wire is the private network's, or loopback's on one Mac. Anyone on that network can see the text of messages and can reach the listener, though not get past its signatures.
+- **The key.** The key in the data folder is as strong as the folder. A process of the owner's account can read it and act as this workbench to its peer, as it can already read the login token.
+- **The fingerprint check** is only as good as the owners' comparison of it.
+- **A modified peer** can send anything a signed message can carry. The receiving end's checks are the control, not the sender's.
+- **What the owner sends.** An outgoing draft can carry repository text or a secret the agent read. The owner reads the card, and nothing else stands in the way.
+- **A persuaded agent.** A peer's message given to an agent can persuade it as an issue can, within the B14 limits and the cards.
+- **Not built.** A relay, a second Mac, more than two peers and A2A are not designed here. Each needs its own decision record and an update of this section.
 
 ### Scope: files changed outside the plan, and protected paths
 
