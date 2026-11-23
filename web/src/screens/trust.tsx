@@ -38,6 +38,7 @@ const RULE_WORDS: Record<LogRule, string> = {
   memory: "Memory",
   owner_answered: "You answered Claude Code's question",
   question_unasked: "Not asked: fully autonomous, Claude Code chose itself",
+  handoff: "Moved to another agent",
   peer_message_conflict: "Refused: another workbench sent a message again with other content",
   peer_invite: "Invite to pair with another workbench",
   peer_pairing: "Pairing with another workbench",
@@ -349,7 +350,7 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
                     <div className="ds-list__content">
                       <span className="ds-list__body">
                         <span className="ds-list__primary">{RULE_WORDS[entry.rule] ?? entry.rule}</span>
-                        <code data-ds-content="" className="ds-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" || entry.rule === "owner_accepted" || entry.rule === "owner_rejected" || entry.rule === "owner_discarded" || entry.rule === "mode_accepted" || entry.rule === "delivery" || entry.rule === "issue_claim" || entry.rule === "memory" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
+                        <code data-ds-content="" className="ds-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" || entry.rule === "owner_accepted" || entry.rule === "owner_rejected" || entry.rule === "owner_discarded" || entry.rule === "mode_accepted" || entry.rule === "delivery" || entry.rule === "issue_claim" || entry.rule === "memory" || entry.rule === "handoff" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
                         {/* The server's own sentence, which may hold the command it is about; its wording is checked where it is built. */}
                         {entry.detail !== null && (
                           <span data-ds-content="" className="ds-list__secondary">

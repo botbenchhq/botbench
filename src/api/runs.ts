@@ -46,7 +46,7 @@ export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
  */
 async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unknown>> {
   const { db } = ctx;
-  const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds, outsideText, outsideHosts, oneTask, createdAt, updatedAt } = run;
+  const { id, repo, prompt, specPath, specText, status, reason, requestedModel, plannerModel, buildModel, baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds, outsideText, outsideHosts, oneTask, onLimit, createdAt, updatedAt } = run;
   const plan = planTasks(db, id);
   const issue = runIssue(db, id);
   const titles = new Map(plan.map((task) => [task.taskId, task.title]));
@@ -54,7 +54,9 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
     id, repo, prompt, specPath, specText, title: title(db, run), status, reason, requestedModel, plannerModel, ...(buildModel === undefined ? {} : { buildModel }), baseCommit, attemptId, planVersion, reviewer, mode, delivery, maxRefineRounds,
     // The issue the run was started from, and whether it is marked as having read outside text (engine/intake.ts).
     // `issueHosts`: for a marked run whose owner allowed them, the network hosts its commands may reach, as the settings name them now.
-    issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
+    issue: issue === null ? null : issueLink(issue), outsideText, outsideHosts, oneTask,
+    // What a builder's usage limit does in this run: "wait" for the reset, or "switch" to the next agent (engine/handoff.ts).
+    onLimit, issueHosts: issueHostsFor(db, id, repositoryHosts(ctx.config, repo)),
     // Whether the run told other workbenches it started on its issue, and what became of that (engine/claims.ts).
     claim: claimOf(db, id),
     // The finished task or the chat the owner made this run from ("Make this a run"), with its line; null for any other run.
@@ -81,7 +83,7 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
 }
 
 // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
-const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full", "delivery"?: "branch" | "pull_request", "issue"?: null | { "fetchId": number, "allowHosts": boolean }, "oneTask"?: boolean, "source"?: null | { "task": number } | { "chat": number } }';
+const EXPECTED = 'expected { "repo": "/full/path", "prompt": "..." or "specPath": "/full/path.md", "model"?: string | null, "buildModel"?: string | null, "preapproved"?: ["command", ...], "reviewer"?: null | { "agent": "codex" | "grok" | "antigravity", "model": string | null }, "mode"?: "manual" | "semi" | "full", "delivery"?: "branch" | "pull_request", "issue"?: null | { "fetchId": number, "allowHosts": boolean }, "oneTask"?: boolean, "onLimit"?: "wait" | "switch", "source"?: null | { "task": number } | { "chat": number } }';
 
 /**
  * The run routes: start one, list them, describe one, the owner's decisions at the plan gate (edit, approve,
@@ -108,7 +110,7 @@ export async function runRoutes(req: http.IncomingMessage, res: http.ServerRespo
       // Checked before the repository or a file is looked at, and long before a run row or a worktree exists.
       const builder = builderChoice(body);
       const model = modelChoice(body);
-      const run = await ctx.runs.start({ repo: body.repo, builder, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, takeOver: body.takeOver, source: body.source });
+      const run = await ctx.runs.start({ repo: body.repo, builder, prompt: body.prompt, specPath: body.specPath, ...(model === undefined ? {} : { model }), ...(body.buildModel === undefined ? {} : { buildModel: body.buildModel }), preapproved: body.preapproved, reviewer: body.reviewer, ...(body.mode === undefined ? {} : { mode: body.mode }), delivery: body.delivery, issue: body.issue, oneTask: body.oneTask, onLimit: body.onLimit, takeOver: body.takeOver, source: body.source });
       json(res, 200, { runId: run.id });
     } else if (method === "GET" && pathname === "/api/runs") {
       json(res, 200, { runs: listRuns(ctx.db).map((run) => summary(ctx.db, run)) });

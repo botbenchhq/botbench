@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { agentState } from "../app/chat.ts";
-import { ApiError, getAgents, getAskEveryCommand, getChatWebAccess, getDefaultMode, getWorkbench, openEventStream, setAskEveryCommand, setChatWebAccess, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
+import { ApiError, getAgents, getAskEveryCommand, getChatWebAccess, getDefaultMode, getFallbacks, getWorkbench, openEventStream, setAskEveryCommand, setChatWebAccess, setDefaultMode, setFallbacks, setWorkbench, type AgentState, type FallbackSetting, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
+import { FALLBACK_ABOUT, FALLBACK_LABEL, fallbackOrders, orderWords } from "../app/handoff-words.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { DeviceSettings } from "../app/device-settings.tsx";
 import { MemorySettings } from "../app/memory-settings.tsx";
@@ -242,6 +243,66 @@ function ChatWebAccess({ onSignedOut }: { onSignedOut: () => void }) {
  * Ask before every command: off by default. On, every command of a Manual run or a single task asks you, also one kept
  * inside the task's copy. Kept by Botbench and saved as it is chosen; it is read at each request.
  */
+/**
+ * The builder's fallback list (src/engine/handoff.ts): the agents a run set to Switch moves a task to when its builder
+ * reaches its usage limit, in order. Stored by Botbench and kept across restarts; offered as each order of the agents
+ * that can build here.
+ */
+function FallbackList({ onSignedOut }: { onSignedOut: () => void }) {
+  const id = useId();
+  const [value, setValue] = useState<FallbackSetting | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    getFallbacks().then(setValue, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setProblem(err instanceof ApiError ? `The list of agents to switch to could not be read. ${err.message}` : "The list of agents to switch to could not be read: Botbench could not be reached.");
+    });
+  }, [onSignedOut]);
+  const choose = (list: string[]): void => {
+    const before = value;
+    if (before !== null) setValue({ ...before, list });
+    setProblem(null);
+    setFallbacks(list).then(setValue, (err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setValue(before);
+      setProblem(err instanceof ApiError ? `The list of agents to switch to was not saved. ${err.message}` : "The list of agents to switch to was not saved: Botbench could not be reached.");
+    });
+  };
+  const orders = value === null ? [] : fallbackOrders(value.agents);
+  const current = value === null ? "" : value.list.join(",");
+  return (
+    <>
+      <div className="ds-settings-row">
+        <div className="ds-settings-row__text">
+          <label className="ds-settings-row__label" htmlFor={`${id}-fallbacks`}>
+            {FALLBACK_LABEL}
+          </label>
+          <p className="ds-settings-row__description" id={`${id}-fallbacks-about`}>
+            {FALLBACK_ABOUT}
+          </p>
+        </div>
+        <div className="ds-settings-row__control">
+          <div className="ds-select">
+            <select data-testid="fallback-list" className="ds-field__control ds-select__control" id={`${id}-fallbacks`} value={current} disabled={value === null} aria-describedby={`${id}-fallbacks-about`} onChange={(e) => choose(e.currentTarget.value.split(","))}>
+              {value === null && <option value="">Checking</option>}
+              {orders.map((order) => (
+                <option key={order.join(",")} value={order.join(",")}>
+                  {orderWords(order)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+      {problem !== null && (
+        <Alert tone="error" role="alert">
+          {problem}
+        </Alert>
+      )}
+    </>
+  );
+}
+
 function AskEveryCommand({ onSignedOut }: { onSignedOut: () => void }) {
   const id = useId();
   const [value, setValue] = useState<boolean | null>(null);
@@ -388,6 +449,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
         </Alert>
       )}
       <AskEveryCommand onSignedOut={onSignedOut} />
+      <FallbackList onSignedOut={onSignedOut} />
     </div>
   );
 

@@ -2,6 +2,7 @@ import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { chatWebAccess, isWebAccess, setChatWebAccess } from "../approvals/web-access.ts";
 import { askEveryCommand, defaultMode, isRunMode, setAskEveryCommand, setDefaultMode } from "../engine/modes.ts";
+import { BUILDER_AGENTS, fallbacksProblem, readFallbacks, setFallbacks } from "../engine/handoff.ts";
 import { HOST_EXECUTION } from "../execution.ts";
 import { chooseWorkbench, workbenchName, workbenchProblem } from "../workbench.ts";
 import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
@@ -26,16 +27,18 @@ export async function settingsRoutes(req: http.IncomingMessage, res: http.Server
   if (req.method === "GET" && url.pathname === "/api/first-run") return (json(res, 200, { firstRun: firstRun(ctx.db) }), true);
   if (url.pathname !== "/api/settings") return false;
   try {
+    // The agents a fallback list may name: those this Botbench can build with (engine/handoff.ts).
+    const builders = BUILDER_AGENTS.filter((agent) => agent === ctx.driver.name || ctx.builders[agent] !== undefined);
     // Where each repository in the settings file runs its commands (src/execution.ts): set there, shown here, never changed here.
     const repositories = Object.entries(ctx.config.repositories ?? {}).map(([repo, settings]) => ({ path: repo, execution: settings.execution ?? HOST_EXECUTION }));
-    const current = () => ({ defaultMode: defaultMode(ctx.db, ctx.config.autonomy?.mode), chatWebAccess: chatWebAccess(ctx.db), askEveryCommand: askEveryCommand(ctx.db), workbench: { name: workbenchName(ctx.db), setInFile: ctx.config.workbench !== undefined }, repositories });
+    const current = () => ({ defaultMode: defaultMode(ctx.db, ctx.config.autonomy?.mode), chatWebAccess: chatWebAccess(ctx.db), askEveryCommand: askEveryCommand(ctx.db), workbench: { name: workbenchName(ctx.db), setInFile: ctx.config.workbench !== undefined }, repositories, fallbacks: readFallbacks(ctx.db, builders), fallbackAgents: builders });
     if (req.method === "GET") {
       json(res, 200, current());
     } else if (req.method === "PUT") {
       const body = await readJsonBody(req);
       // voice: not on screen. It names the API's own fields and values for a caller whose request was malformed; the client never sends one.
-      const malformed = 'expected { "defaultMode": "manual" | "semi" | "full" }, { "chatWebAccess": "allow" | "ask" | "off" }, { "askEveryCommand": true | false } or { "workbench": "name" }';
-      if (!isObject(body) || (body.defaultMode === undefined && body.workbench === undefined && body.chatWebAccess === undefined && body.askEveryCommand === undefined)) throw new BodyError(400, malformed);
+      const malformed = 'expected { "defaultMode": "manual" | "semi" | "full" }, { "chatWebAccess": "allow" | "ask" | "off" }, { "askEveryCommand": true | false }, { "workbench": "name" } or { "fallbacks": { "builder": ["claude-code", "codex"] } }';
+      if (!isObject(body) || (body.defaultMode === undefined && body.workbench === undefined && body.chatWebAccess === undefined && body.askEveryCommand === undefined && body.fallbacks === undefined)) throw new BodyError(400, malformed);
       if (body.defaultMode !== undefined && !isRunMode(body.defaultMode)) throw new BodyError(400, malformed);
       if (body.chatWebAccess !== undefined && !isWebAccess(body.chatWebAccess)) throw new BodyError(400, malformed);
       if (body.askEveryCommand !== undefined && typeof body.askEveryCommand !== "boolean") throw new BodyError(400, malformed);
@@ -44,6 +47,10 @@ export async function settingsRoutes(req: http.IncomingMessage, res: http.Server
         const problem = workbenchProblem(body.workbench);
         if (problem !== null) throw new BodyError(400, problem);
       }
+      // Checked with the rest, before anything is stored: a request with one value that cannot be stored stores nothing.
+      const fallbacks = body.fallbacks === undefined ? null : fallbacksProblem(body.fallbacks, builders);
+      if (fallbacks !== null) throw new BodyError(400, fallbacks);
+      if (body.fallbacks !== undefined) setFallbacks(ctx.db, body.fallbacks, builders);
       if (isRunMode(body.defaultMode)) setDefaultMode(ctx.db, body.defaultMode);
       if (isWebAccess(body.chatWebAccess)) setChatWebAccess(ctx.db, body.chatWebAccess);
       if (typeof body.askEveryCommand === "boolean") setAskEveryCommand(ctx.db, body.askEveryCommand);

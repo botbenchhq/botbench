@@ -2367,4 +2367,107 @@ CREATE TRIGGER runs_source_fixed BEFORE UPDATE OF source_task_id, source_chat_id
 BEGIN SELECT RAISE(ABORT, 'a run''s source is set when it starts and never changed'); END;
 `,
   },
+  {
+    // A task can be handed to another agent while it is built (src/engine/handoff.ts): by the owner's choice, or on its
+    // builder's usage limit when its run says Switch. Each hand-off is a row of `task_handoffs`, append-only: the agent
+    // it left and the one it moved to (never the same), the model that one starts on (NULL for its own default), why,
+    // and the session it left. A task's builder now is its last hand-off's `to_agent`, else `tasks.builder_agent`, which
+    // stays what the task started with. A run keeps what its builder's usage limit does (`on_limit`): wait for the reset
+    // (#71, the default and every run before this) or switch; chosen when it starts, never changed. The owner's
+    // settings gain `fallbacks`, the ordered list of agents for the builder (JSON), so `owner_settings` is made again
+    // with its rows kept. The action log gains
+    // `handoff`, one line per hand-off, written with its row; a check cannot be altered in place, so the action log is
+    // made again with every row kept, ids included, and its indexes and triggers put back.
+    name: "handoffs",
+    sql: `
+CREATE TABLE task_handoffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  from_agent TEXT NOT NULL CHECK (from_agent IN ('claude-code', 'codex')),
+  to_agent TEXT NOT NULL CHECK (to_agent IN ('claude-code', 'codex')),
+  to_model TEXT,
+  reason TEXT NOT NULL CHECK (reason IN ('owner', 'usage_limit')),
+  from_attempt_id INTEGER REFERENCES attempts (id),
+  created_at TEXT NOT NULL,
+  CHECK (from_agent <> to_agent)
+);
+CREATE INDEX task_handoffs_task ON task_handoffs (task_id, id);
+CREATE TRIGGER task_handoffs_no_update BEFORE UPDATE ON task_handoffs
+BEGIN SELECT RAISE(ABORT, 'hand-offs are append-only'); END;
+CREATE TRIGGER task_handoffs_no_delete BEFORE DELETE ON task_handoffs
+BEGIN SELECT RAISE(ABORT, 'hand-offs are append-only'); END;
+ALTER TABLE runs ADD COLUMN on_limit TEXT NOT NULL DEFAULT 'wait' CHECK (on_limit IN ('wait', 'switch'));
+CREATE TRIGGER runs_on_limit_fixed BEFORE UPDATE OF on_limit ON runs WHEN NEW.on_limit IS NOT OLD.on_limit
+BEGIN SELECT RAISE(ABORT, 'what a run does on a usage limit is chosen when it starts and never changed'); END;
+
+ALTER TABLE owner_settings RENAME TO owner_settings_before_handoffs;
+CREATE TABLE owner_settings (
+  name TEXT PRIMARY KEY CHECK (name IN ('default_mode', 'chat_web_access', 'ask_every_command', 'update_mode', 'fallbacks')),
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (name <> 'default_mode' OR value IN ('manual', 'semi', 'full')),
+  CHECK (name <> 'chat_web_access' OR value IN ('allow', 'ask', 'off')),
+  CHECK (name <> 'ask_every_command' OR value IN ('on', 'off')),
+  CHECK (name <> 'update_mode' OR value IN ('tap', 'auto')),
+  CHECK (name <> 'fallbacks' OR (json_valid(value) AND json_type(value, '$.builder') = 'array'))
+);
+INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated_at FROM owner_settings_before_handoffs;
+DROP TABLE owner_settings_before_handoffs;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_handoffs;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused', 'peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings', 'handoff')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'handoff' OR (task_id IS NOT NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule NOT IN ('peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused') OR (task_id IS NULL AND run_id IS NULL AND attempt_id IS NULL AND approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule NOT IN ('peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings') OR (approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_settings' OR (asked_by = 'owner' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'peer_invite' OR asked_by = 'owner'),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log_before_handoffs ORDER BY id;
+DROP TABLE action_log_before_handoffs;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+-- The rebuilt table loses the triggers of the one before it: put back the peer rule ("peer messages").
+CREATE TRIGGER action_log_peer_asked BEFORE INSERT ON action_log
+WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
+  AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))
+BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
+`,
+  },
 ];

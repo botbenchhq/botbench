@@ -134,8 +134,8 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
       if (event.type === "session_started") db.prepare("UPDATE attempts SET model = ?, resume_cursor = ?, updated_at = ? WHERE id = ?").run(event.model, event.resumeCursor, now(), attemptId);
       for (const listener of listeners) listener(event);
     };
-    const end = (reason: TurnEndReason, detail: string | null): TurnEndReason => {
-      record({ type: "turn_ended", reason, detail });
+    const end = (reason: TurnEndReason, detail: string | null, usageLimit?: { resetsAt: string | null }): TurnEndReason => {
+      record({ type: "turn_ended", reason, detail, ...(usageLimit === undefined ? {} : { usageLimit }) });
       db.prepare("UPDATE attempts SET status = ?, updated_at = ? WHERE id = ?").run(reason === "completed" ? "ended" : reason === "interrupted" ? "interrupted" : "failed", now(), attemptId);
       return reason;
     };
@@ -160,7 +160,8 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
         if (event.type === "user_prompt") continue;
         await new Promise((resolve) => setImmediate(resolve));
         if (stopped) return end("interrupted", "The replay was stopped.");
-        if (event.type === "turn_ended") return end(event.reason, event.detail);
+        // A recorded end keeps what the driver marked on it: a turn the driver ended on the usage limit (`limitedEnd`).
+        if (event.type === "turn_ended") return end(event.reason, event.detail, event.usageLimit);
         if (event.type === "tool_result" && edits.has(event.id) && !event.isError && recorded.files) {
           for (const [file, content] of Object.entries(recorded.files)) fs.writeFileSync(path.join(options.cwd, file), content);
         }
