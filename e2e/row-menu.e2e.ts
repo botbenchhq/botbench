@@ -134,7 +134,7 @@ test("a run still going and two finished tasks each offer only what is real for 
   await expect(items(runMenu).first()).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(runMenu).toBeHidden();
-  await runButton.focus();
+  await expect(runButton).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(items(runMenu).first()).toBeFocused();
   await page.keyboard.press("Escape");
