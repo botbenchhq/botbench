@@ -70,17 +70,20 @@ const openRow = (route: Route): string | null => (route.screen === "run" ? `run 
  * tasks beside it, as the design system's split panel lays them out. The column is drawn here, above the screens, so
  * opening a row replaces only the screen: the column keeps its search, its scroll position and its focus. The screen
  * is in a plain region of its own, not a section, so its header and navigation stay the page's landmarks. Below 1024px
- * the screen is drawn alone, exactly as before.
+ * the screen is laid out alone, exactly as before, but in the same place in the tree, so it is never drawn anew.
  */
 function Beside({ route, wide, onSignedOut, children }: { route: Route; wide: boolean; onSignedOut: () => void; children: ReactNode }) {
   // Kept here, so the search is still there after a visit to Settings, which has no column.
   const [query, setQuery] = useState("");
   const settings = route.screen === "settings" || route.screen === "trust" || route.screen === "usage";
-  if (!wide || settings) return children;
+  const split = wide && !settings;
+  // The screen keeps its place in the tree at every width: crossing 1024px only adds or removes the column and the
+  // panel's classes, so the screen is not drawn anew and keeps what the owner typed (a note, a message, an open dialog).
+  // Below 1024px, and on Settings, the two wrappers are `display: contents`: the screen is laid out as if drawn alone.
   return (
-    <div className="ds-split-panel ds-split-panel--fill h-screen">
-      <WorkColumn current={openRow(route)} query={query} onQuery={setQuery} onSignedOut={onSignedOut} />
-      <div className="ds-split-panel__detail p-0">{children}</div>
+    <div className={split ? "ds-split-panel ds-split-panel--fill h-screen" : "contents"}>
+      {split && <WorkColumn current={openRow(route)} query={query} onQuery={setQuery} onSignedOut={onSignedOut} />}
+      <div className={split ? "ds-split-panel__detail p-0" : "contents"}>{children}</div>
     </div>
   );
 }

@@ -23,6 +23,8 @@ const test = base.extend<{ botbench: Botbench }>({
 
 /** Check the screen as it is now at 390px and 1280px, in light and in dark, and leave it at a phone's width in dark. */
 async function everyLook(page: Page, screen: string): Promise<void> {
+  // Drawn at rest: the pointer left where the last press was would hover whatever the other width puts there.
+  await page.mouse.move(0, 0);
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     for (const mode of ["light", "dark"] as const) {
@@ -55,6 +57,8 @@ test("a task ready for review: the note opens Plan a run with it, and no run exi
   await expect(page.getByTestId("run-source-line")).toHaveText(/^From task \d+$/);
   expect(await runs(page, botbench)).toEqual([]);
   await everyLook(page, "composer opened from a task");
+  // Crossing 1024px leaves the screen as it was: the note is still in the box.
+  await expect(messageBox(page)).toHaveValue("Now add a subtract function next to add.");
 });
 
 test("a chat: the note opens Plan a run with it, and no run exists yet", async ({ page, botbench }) => {
@@ -76,4 +80,6 @@ test("a chat: the note opens Plan a run with it, and no run exists yet", async (
   await expect(page.getByTestId("run-source-line")).toHaveText("From a chat");
   expect(await runs(page, botbench)).toEqual([]);
   await everyLook(page, "composer opened from a chat");
+  // Crossing 1024px leaves the screen as it was: the note is still in the box.
+  await expect(messageBox(page)).toHaveValue("Add the page's title to the README.");
 });
