@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useId, useMemo, useState, type ReactNode } from "react";
-import type { DriverEvent, StoredEvent } from "../api/client.ts";
+import { RESTART_STOPPED, type DriverEvent, type StoredEvent } from "../api/client.ts";
 import { DiffLine } from "./diff.tsx";
 import { duration as took } from "./evidence.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -520,7 +520,7 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
       return (
         <Line kind={e.type} look="end" label={by === null ? (e.reason === "interrupted" ? "Stopped" : "Error") : `${by}: ${e.reason === "interrupted" ? "Stopped" : "Failed"}`}>
           <Body>
-            {e.reason === "interrupted" ? "Stopped before it finished." : e.detail === null ? "Ended with an error." : "Ended with an error: "}
+            {e.reason === "interrupted" ? (e.detail === RESTART_STOPPED ? `${RESTART_STOPPED}.` : "Stopped before it finished.") : e.detail === null ? "Ended with an error." : "Ended with an error: "}
             {e.reason === "error" && e.detail !== null && <Theirs>{e.detail}</Theirs>}
           </Body>
           {tokens !== false && (
