@@ -240,7 +240,7 @@ test("fully autonomous with the setting on: a task whose transcript asks to skip
   const repoCommands = () => ({ setup: [cmd("printf 'hi\\n' > hello.txt")], checks });
   let tasksRef: ReturnType<typeof createTasks> | null = null;
   const together = createCheckTogether({ db, home, peers: scenePeers(db, scene, config), repoCommands, repoHosts: () => [], remote: () => "origin", onTaskChange: () => {}, onPassed: (id) => void tasksRef?.reconsider(id) });
-  const tasks = createTasks({ db, home, driver: buildReplayDriver(["done"]), broker, model: "haiku", repoCommands, checkTogether: together, onEvent: () => {}, onTaskChange: () => {} });
+  const tasks = createTasks({ db, home, driver: buildReplayDriver(["done"]), broker, model: "haiku", checkFixRounds: 0, repoCommands, checkTogether: together, onEvent: () => {}, onTaskChange: () => {} });
   tasksRef = tasks;
   const runs = createRuns({ db, home, driver: planReplayDriver(loadPlanRecording(), [THREE_TASKS]), broker, model: "haiku", implementerModel: "haiku", reviewers: {}, line: tasks, repoCommands, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {

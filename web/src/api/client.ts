@@ -117,8 +117,9 @@ export async function hasSession(): Promise<boolean> {
   }
 }
 
-export async function signIn(token: string): Promise<void> {
-  await request("POST", "/api/sign-in", { token });
+/** Sign this device in with the login token, or with a one-time code from Add a device on a signed-in one. */
+export async function signIn(with_: { token: string } | { code: string }): Promise<void> {
+  await request("POST", "/api/sign-in", with_);
 }
 
 export const getDriver = (): Promise<DriverState> => request("GET", "/api/driver");
@@ -190,6 +191,8 @@ export interface Review {
   problem: string | null;
   diffChars: number;
   diffCut: boolean;
+  /** How many parts of the diff the reviewer was sent and the characters they held; null when it was sent none, or for a review from before parts. */
+  diffSent: { parts: number; chars: number } | null;
   startedAt: string;
   endedAt: string;
   durationMs: number;
@@ -431,6 +434,19 @@ export interface FileChange {
   protected: boolean;
 }
 
+/** One round of fixes for a failing check: the round of checks it was sent, how it ended, and whether it changed the work. */
+export interface CheckFix {
+  round: number;
+  checkRound: number;
+  outcome: "finished" | "failed" | "stopped";
+  changed: boolean;
+  problem: string | null;
+  fromCommit: string;
+  headCommit: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
 export interface TaskDetail extends TaskSummary {
   /** For a task of a run from an issue whose owner allowed them, the network hosts its commands may reach; empty otherwise. */
   issueHosts: string[];
@@ -441,6 +457,12 @@ export interface TaskDetail extends TaskSummary {
   evidence: Evidence[];
   /** How many commands each round of setup and checks holds, recorded as it starts. */
   commandLists: CommandList[];
+  /** The rounds of fixes for a failing check on the latest version of the work, in order. */
+  checkFixes: CheckFix[];
+  /** What came of those rounds, in a plain line, once they are over; null before, or with none. */
+  checkFixLine: string | null;
+  /** Every request Botbench refused without asking during the task, in full, oldest first. */
+  refused: string[];
   /** Who reviews the task, when its run names a reviewer. */
   reviewer: ReviewerChoice | null;
   /** Its latest review, once there is one. */
@@ -746,6 +768,35 @@ export type PeersView =
   | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[]; checkedAt: string }
   | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
 /** The view for each repository the owner has used. Reading it never holds up anything else. */
+/** How a watched repository's polls stand (src/engine/watch.ts). `said` is what gh printed: program output, shown as such. */
+export interface WatchStatus {
+  path: string;
+  repository: string | null;
+  label: string;
+  intervalMinutes: number;
+  state: "waiting" | "checking" | "checked" | "failed";
+  checkedAt: string | null;
+  problem: string | null;
+  said: string | null;
+  nextAt: string | null;
+}
+/** An open issue with the watched label, proposed as a run. Its title and author are outside text, shown as plain text. */
+export interface Proposal {
+  id: number;
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  author: string | null;
+  /** How GitHub said the author relates to the repository when the issue was first seen; null when it did not say. */
+  authorRelation: AuthorRelation | null;
+  repoPath: string;
+  firstSeenAt: string;
+}
+export const getWatch = (): Promise<{ watches: WatchStatus[]; proposals: Proposal[] }> => request("GET", "/api/watch", undefined, 30_000);
+export const getProposal = async (id: number): Promise<Proposal> => (await request<{ proposal: Proposal }>("GET", `/api/watch/proposals/${id}`, undefined, 30_000)).proposal;
+export const dismissProposal = async (id: number): Promise<void> => void (await request<{ dismissed: true }>("POST", `/api/watch/proposals/${id}/dismiss`, {}, 30_000));
+
 export const getPeers = async (): Promise<PeersView[]> => (await request<{ views: PeersView[] }>("GET", "/api/peers", undefined, 90_000)).views;
 export const getPeersOf = async (repo: string): Promise<PeersView> => (await request<{ view: PeersView }>("GET", `/api/peers?path=${encodeURIComponent(repo)}`, undefined, 90_000)).view;
 
@@ -1000,6 +1051,8 @@ export interface StreamHandlers {
   onRun?(announcement: RunAnnouncement): void;
   /** Called when an agent's sign-in moved on, or it was signed out. */
   onAgent?(announcement: { driver: string; state: string }): void;
+  /** Called when the issue watch's proposals or a watched repository's state changed. */
+  onWatch?(): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -1061,6 +1114,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("agent", (message) => {
       alive();
       handlers.onAgent?.(JSON.parse((message as MessageEvent<string>).data) as { driver: string; state: string });
+    });
+    source.addEventListener("watch", () => {
+      alive();
+      handlers.onWatch?.();
     });
     source.onmessage = (message) => {
       alive();
@@ -1154,3 +1211,5 @@ export interface SignedInDevice {
 export const listDevices = async (): Promise<SignedInDevice[]> => (await request<{ devices: SignedInDevice[] }>("GET", "/api/devices", undefined, 10_000)).devices;
 export const signOutDevice = (id: number): Promise<unknown> => request("POST", `/api/devices/${id}/sign-out`, {}, 10_000);
 export const signOutOtherDevices = (): Promise<unknown> => request("POST", "/api/devices/sign-out-others", {}, 10_000);
+/** A new one-time code for adding a device, which replaces the last one; 8 symbols, and when it stops working. */
+export const newPairingCode = (): Promise<{ code: string; expiresAt: string }> => request("POST", "/api/devices/pairing", {}, 10_000);

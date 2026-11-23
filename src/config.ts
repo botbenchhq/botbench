@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_REFINE_ROUNDS, MAX_REFINE_ROUNDS } from "./engine/refine.ts";
+import { DEFAULT_CHECK_FIX_ROUNDS, MAX_CHECK_FIX_ROUNDS } from "./engine/check-fix.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +17,7 @@ import { roleProblem } from "./engine/roles.ts";
 import { BRANCH_PREFIX, remoteNameProblem } from "./worktrees.ts";
 import { DEFAULT_LIMIT_MS, type StationCommand } from "./engine/stations.ts";
 import { workbenchProblem } from "./workbench.ts";
+import { labelProblem } from "./github.ts";
 import { USAGE_LIMIT_WAIT_MS } from "./engine/usage-limit.ts";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -118,7 +120,23 @@ export interface RepositoryConfig {
    * run ends without a pull request. A run that keeps its work on this Mac pushes nothing either way. Off when absent.
    */
   claimIssues?: boolean;
+  /**
+   * Watch this repository's open issues for a label (engine/watch.ts, ADR 0008): every `intervalMinutes` (10 when
+   * absent), Botbench lists with the owner's gh the open issues carrying `label` and proposes each new one on Work, for
+   * the owner to start or dismiss. It never starts a run by itself. Only people who can apply labels to the repository
+   * should be able to apply this one: the label is what makes an issue a proposal. Not watched when absent.
+   */
+  watch?: WatchConfig;
 }
+/** What a repository's watch is set to. */
+export interface WatchConfig {
+  label: string;
+  intervalMinutes?: number;
+}
+/** How often a watched repository is read when its settings say nothing, in minutes. */
+export const WATCH_INTERVAL_MINUTES = 10;
+const MAX_WATCH_INTERVAL_MINUTES = 1440;
+const WATCH_SETTINGS = ["label", "intervalMinutes"] as const;
 /** A command Botbench runs itself: its text, or its text with its own time limit in seconds (10 minutes when none is given). */
 export type CommandConfig = string | { command: string; timeoutSeconds?: number };
 const MAX_TIMEOUT_SECONDS = 86_400;
@@ -163,6 +181,8 @@ export interface AutonomyConfig {
   mode?: RunMode;
   /** After a review with concerns, how many rounds of fixes the builder may be asked for before the task is Ready for review. 0 to 5; 2 when absent. */
   maxRefineRounds?: number;
+  /** When a check fails on the committed work, how many rounds of fixes for it the builder gets on each version of the work before the task goes on with the check failed. 0 to 5; 2 when absent. */
+  maxCheckFixRounds?: number;
   /**
    * How long, in whole seconds, a builder or a planner may send nothing while it works before Botbench stops it and
    * everything it started. Time spent waiting on the owner's answer to a request does not count. 0 turns the limit
@@ -180,7 +200,7 @@ const OFFER_STANDING_AFTER = 3;
 const SILENCE_LIMIT_SECONDS = 600;
 const MAX_SILENCE_LIMIT_SECONDS = 86_400;
 const MAX_USAGE_LIMIT_WAIT_SECONDS = 86_400;
-const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "silenceLimitSeconds", "usageLimitWaitSeconds"] as const;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "maxCheckFixRounds", "silenceLimitSeconds", "usageLimitWaitSeconds"] as const;
 
 /** How long a builder or planner may send nothing before it is stopped, in milliseconds; 0 when the limit is off. */
 export function silenceLimitMs(config: Config): number {
@@ -196,6 +216,11 @@ export function usageLimitWaitMs(config: Config): number {
 /** How many rounds of fixes a run started now allows after a review with concerns. */
 export function maxRefineRounds(config: Config): number {
   return config.autonomy?.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS;
+}
+
+/** How many rounds of fixes for a failing check the builder gets on each version of a task's work. */
+export function maxCheckFixRounds(config: Config): number {
+  return config.autonomy?.maxCheckFixRounds ?? DEFAULT_CHECK_FIX_ROUNDS;
 }
 
 /** How many approvals of the same command earn the offer of standing permission. */
@@ -297,6 +322,11 @@ function validate(c: Json, where: string): Config {
           if (typeof list !== "boolean") fail(`repository "${repo}": "claimIssues" must be true or false: whether a run started from an issue, set to open pull requests, first pushes a claim that tells other workbenches you started on it.`);
           continue;
         }
+        if (setting === "watch") {
+          const problem = watchProblem(list);
+          if (problem !== null) fail(`repository "${repo}": ${problem}`);
+          continue;
+        }
         if (setting === "preapproved") {
           if (!Array.isArray(list) || !list.every((command) => typeof command === "string")) return fail(`repository "${repo}": "${setting}" must be a list of commands.`);
           const problem = list.map(entryProblem).find((p) => p !== null);
@@ -330,6 +360,8 @@ function validate(c: Json, where: string): Config {
     if (autonomy.mode !== undefined && !isRunMode(autonomy.mode)) fail(`"autonomy.mode" must be "manual", "semi" or "full": the mode a new run is given when none is chosen.`);
     const rounds = autonomy.maxRefineRounds;
     if (rounds !== undefined && !(typeof rounds === "number" && Number.isSafeInteger(rounds) && rounds >= 0 && rounds <= MAX_REFINE_ROUNDS)) fail(`"autonomy.maxRefineRounds" must be a whole number from 0 to ${MAX_REFINE_ROUNDS}: how many rounds of fixes the builder may be asked for after a review with concerns.`);
+    const fixes = autonomy.maxCheckFixRounds;
+    if (fixes !== undefined && !(typeof fixes === "number" && Number.isSafeInteger(fixes) && fixes >= 0 && fixes <= MAX_CHECK_FIX_ROUNDS)) fail(`"autonomy.maxCheckFixRounds" must be a whole number from 0 to ${MAX_CHECK_FIX_ROUNDS}: how many rounds of fixes the builder gets when a check fails on its work.`);
     const silence = autonomy.silenceLimitSeconds;
     if (silence !== undefined && !(typeof silence === "number" && Number.isSafeInteger(silence) && silence >= 0 && silence <= MAX_SILENCE_LIMIT_SECONDS)) fail(`"autonomy.silenceLimitSeconds" must be a whole number of seconds from 0 to ${MAX_SILENCE_LIMIT_SECONDS}: how long a builder or planner may send nothing while it works before Botbench stops it. 0 turns the limit off.`);
     const wait = autonomy.usageLimitWaitSeconds;
@@ -338,7 +370,31 @@ function validate(c: Json, where: string): Config {
   return c as unknown as Config;
 }
 
-const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues"] as const;
+const REPOSITORY_SETTINGS = ["preapproved", "setup", "checks", "allowedHosts", "remote", "baseBranch", "protectedPaths", "claimIssues", "watch"] as const;
+
+/** What is wrong with a repository's "watch", as a sentence that names the setting, or null. */
+function watchProblem(watch: unknown): string | null {
+  if (!isObject(watch)) return `"watch" must be an object with a "label", such as { "label": "botbench", "intervalMinutes": ${WATCH_INTERVAL_MINUTES} }: the label that makes an open issue a proposed run on Work, and how many minutes apart Botbench looks.`;
+  const unknown = Object.keys(watch).find((key) => !(WATCH_SETTINGS as readonly string[]).includes(key));
+  if (unknown !== undefined) return `"watch" has unknown setting "${unknown}". Known settings: ${WATCH_SETTINGS.join(", ")}.`;
+  if (typeof watch.label !== "string" || watch.label === "") return `"watch" needs a "label": the name of the label that makes an open issue a proposed run on Work. ${labelProblem(undefined)}`;
+  const label = labelProblem(watch.label);
+  if (label !== null) return `"watch.label" ${label}`;
+  const minutes = watch.intervalMinutes;
+  if (minutes !== undefined && !(typeof minutes === "number" && Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= MAX_WATCH_INTERVAL_MINUTES)) return `"watch.intervalMinutes" must be a whole number of minutes from 1 to ${MAX_WATCH_INTERVAL_MINUTES}: how long Botbench waits between two looks at the repository's labelled issues. ${WATCH_INTERVAL_MINUTES} when left out.`;
+  return null;
+}
+
+/** A repository's watch with its interval filled in, or null when it is not watched. */
+export function repositoryWatch(config: Config, repo: string): Required<WatchConfig> | null {
+  const watch = repositorySettings(config, repo).watch;
+  return watch === undefined ? null : { label: watch.label, intervalMinutes: watch.intervalMinutes ?? WATCH_INTERVAL_MINUTES };
+}
+
+/** Every watched repository, by the path its settings are keyed by, in the settings file's order. */
+export function watchedRepositories(config: Config): ({ path: string } & Required<WatchConfig>)[] {
+  return Object.entries(config.repositories ?? {}).flatMap(([repo, settings]) => (settings.watch === undefined ? [] : [{ path: repo, label: settings.watch.label, intervalMinutes: settings.watch.intervalMinutes ?? WATCH_INTERVAL_MINUTES }]));
+}
 
 const PROTECTED_RULE = 'must be a list of paths inside the repository, such as ["test/recordings/", "package-lock.json"]: relative to its top folder, without "..", "*" or a leading "/".';
 

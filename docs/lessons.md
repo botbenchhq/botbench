@@ -2,6 +2,11 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-23: a builder was stopped for silence during its own long test run, and its scratch copy was committed (task 17 of run 16)
+Inside Botbench's sandbox the engine tests that run check commands are skipped, so the builder made an unconfined scratch copy of `src` and `test` inside the task's copy to exercise them, then started the whole suite there in the foreground. It printed nothing for 10 minutes, Botbench stopped it for silence, and Botbench's commit of the copy took the scratch folder with it (later deleted). Rules going forward:
+- A run that may take minutes goes in the background, or is cut to the files changed; nothing in the foreground waits longer than the silence limit.
+- Scratch work inside a task's copy is committed with everything else when the turn ends. Keep it out of the copy where the sandbox allows, or delete it before the turn can end, and check `git show --stat` for it after a stop.
+
 ## 2026-11-22: a day of work went on things around the product before the product had proven its value (owner correction)
 The owner: "we need to be doing least effort to prove value… you should get to functional milestones that you can then do into a browser test, like, hey, is this doing what we have as our North Star, yes or no?" Rules going forward:
 - State the North Star in one sentence and the next functional milestone toward it. Each milestone has ONE end-to-end test that answers yes or no.
