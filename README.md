@@ -6,15 +6,19 @@ Botbench runs on your Mac and hands coding work to the agents you already use. Y
 
 It is for developers on macOS who use Claude Code. If a teammate runs their own Botbench on the same GitHub repository, each of you sees the other's pushed branches and open pull requests before starting your own work. It is early and private, it is not a hosted service, and it is not a security sandbox. It never merges a pull request.
 
-<!-- CAPTURE: a 20 to 30 second screen recording at phone size, from a real task in a practice repository: type the task in the message box, Send, the approval card appears, Allow once, the task reads Ready for review with its changed file and branch, Accept. Upload it to GitHub and put its <video> tag here, above the two screenshots. -->
+<!-- CAPTURE: a 20 to 30 second screen recording at phone size, from a real task in a practice repository: type the task in the message box, Send, the approval card appears, Allow once, the task reads Ready for review with its changed file and branch, Accept. Upload it to GitHub and put its <video> tag here, above the screenshots. -->
+
+<img src="docs/images/desktop-work.png" alt="Botbench on a desktop screen, dark theme: a column of chats and work on the left, each row an issue on jon-lange/botbench with its run number and state; on the right a finished task whose reviewer, Codex, raised concerns in three rounds, with the one changed file, docs/reviews/design-vs-paperclip.md, the note it was accepted with, and its branch botbench/dev3/run-6/task-6" width="100%">
+
+*On a desktop screen, from a real run on this repository.*
 
 <p>
-  <img src="docs/images/approval-card.png" alt="A task titled by its own words, showing one approval card: Claude Code asks to run a command, sh make-marker.sh, with its folder and reason, Allow once, Deny, and Deny and say what to do instead; below it the transcript line Needs input, Wants to run sh make-marker.sh" width="260">
+  <img src="docs/images/approval-card.png" alt="A task titled by its own words, showing one approval card: Claude Code asks to run a command, sh make-marker.sh, with its folder and reason, Allow once, Deny, and Deny and say what to do instead; below it the transcript line Needs input, Wants to run sh make-marker.sh" width="200">
   &nbsp;
-  <img src="docs/images/ready-for-review.png" alt="The same task, ready for review: the command ran once you allowed it, no checks set up, marker.txt added, the task's branch, and Nothing has been merged or pushed" width="260">
+  <img src="docs/images/ready-for-review.png" alt="The same task, ready for review: the command ran once you allowed it, no checks set up, marker.txt added, the task's branch, and Nothing has been merged or pushed" width="200">
 </p>
 
-*Left: Claude Code waits for your answer before running a command. Right: the finished task with its checks, changed files and branch, waiting for your decision. Both at phone size.*
+*On a phone. Left: Claude Code waits for your answer before running a command. Right: the finished task with its checks, changed files and branch, waiting for your decision.*
 
 <!-- CAPTURE: a new docs/images/ready-for-review.png of the same screen. The current one predates named workbenches and shows the branch botbench/run-1/task-1; a new task's branch is botbench/<workbench>/run-1/task-1. -->
 
@@ -34,6 +38,10 @@ It is for developers on macOS who use Claude Code. If a teammate runs their own 
 3. Using a tool never asks, in any mode: the agent reads, searches and edits inside its copy, and a shell command that runs inside the sandbox goes without asking. An action or change that reaches outside the copy waits for your answer: a short list of dangerous commands (a push, sudo, deleting or writing outside the copy), a file outside the copy, or a command that could not be kept inside the sandbox. A fully autonomous run refuses these instead. Web search and fetch follow your Web access setting (Allow by default). If you would rather be asked before every command, turn on Ask before every command in Settings; commands you allowed in advance or chose Always allow for still go without asking then.
 4. Botbench commits the work and runs the checks you set for the repository. If you chose a reviewer (Codex, Grok or Antigravity), it reads the change; with concerns, Claude Code gets the review and makes a round of fixes, up to the run's limit, and the checks and the review run again.
 5. You read the diff, the checks and the transcript, then Accept (the branch is kept, and opened as a pull request if the run says so) or Reject (you choose whether to keep the branch). A fully autonomous run accepts a task without you only when at least one check ran and every check passed, the reviewer (if there is one) said it looks right and named what it checked, nothing was refused that is on the always-ask list or would have reached outside the task's copy, and every changed file was expected from the plan and none is under a protected path. Otherwise it waits for you and says why.
+
+<img src="docs/images/desktop-review.png" alt="A task's review section on a desktop screen: Codex, a different vendor from the builder, raised 5 concerns, then 3, then 3; Claude Code addressed 6 and explained 2; the page lists what the reviewer checked in each round, and the line that the reviewers still disagree after 2 rounds: needs your judgment" width="100%">
+
+*The reviewer is another vendor's agent. Here Codex reviewed Claude Code's work in three rounds, and the task waited for a person to decide.*
 
 ## Is it for you?
 
@@ -96,6 +104,8 @@ The token is printed only on the first start. Later, read it with `cat ~/.botben
 
 **3. Sign in.** Open http://127.0.0.1:4780 in a browser on the Mac, paste the token and choose Sign in. You arrive on Chat. On a fresh installation it reads "Tap + to choose a repository, or just ask a question." and "Claude Code is signed in." If it says "Connect an agent in Settings → Agents." instead, run `claude auth login` in a terminal. Settings (the gear, top right) → Agents shows each agent's state.
 
+<img src="docs/images/desktop-settings.png" alt="Settings on a desktop screen, Agents section: Claude Code, Codex, Grok and Antigravity, each with its version, signed in with a subscription, what it does here, and the state Available" width="100%">
+
 <img src="docs/images/agents-available.png" alt="Settings: links to Permissions and Usage, then Agents: Claude Code, version 2.1.322, signed in with a subscription, plans and builds tasks, Available; Codex, version 0.171.0, reviews a run's tasks, Available" width="260">
 
 **4. Make a practice repository**, in a second terminal:
@@ -144,7 +154,11 @@ Two developers, each with their own Mac, their own Botbench and their own agents
 
 Apart from a claim, nothing is written to GitHub for this, and nothing another workbench wrote is put in a prompt to your agents. It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. Checking two branches together is not built yet: see [What's next](#whats-next).
 
-<!-- CAPTURE: two screenshots from two real installations on one repository, no made-up workbench. 1) The Work screen's "Other workbenches" section with a teammate's open pull request. 2) The task screen's "Your decision" with the line "<workbench>'s open pull request #<n> also changes <files>, so the two may conflict when both are merged." -->
+<img src="docs/images/desktop-peers.png" alt="The Work screen on a desktop, Other workbenches: two branches pushed by teammates, botbench/dev2/run-19/issue-70 and botbench/dev3/run-15/issue-72, each with its workbench name, the issue it started on, how long ago, and the repository" width="100%">
+
+*Two other workbenches, each started on an issue, seen from a third.*
+
+<!-- CAPTURE: a screenshot from two real installations of the task screen's "Your decision" with the line "<workbench>'s open pull request #<n> also changes <files>, so the two may conflict when both are merged." -->
 
 ## Questions you may have
 
