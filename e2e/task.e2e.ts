@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, openNewTask, openRow, signIn, startTaskIn, test, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, nav, openCanDo, openDetails, openNewTask, openRow, openWork, signIn, startTaskIn, test, watchRequests } from "./helpers.ts";
 import type { Page } from "@playwright/test";
 
 /** The Folder path field of the Repository view, with Another folder chosen. */
@@ -32,18 +32,20 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
 
   // The empty Tasks view and the composer are drawn without a model: see "the navigation reaches Tasks…" below.
-  const nav = page.getByRole("navigation", { name: "Screens" });
   const prompt = "Create a file named hello.txt containing exactly: hi";
   await startTaskIn(page, repo, prompt);
 
   // The task screen: the state in words, then the transcript as it happens.
-  await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
   await expect(page.getByTestId("task-status")).toHaveText(/^(Queued|Working)\./);
-  await expect(page.getByTestId("task-repo")).toHaveText(repo);
+  // The repository by its name; its full path and, while the task is worked on, the branch are in Details.
+  await expect(page.getByTestId("task-name")).toHaveText(`Task 1 · ${path.basename(repo)}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Create a file named hello.txt containing…");
+  await expect((await openDetails(page)).getByTestId("task-repo")).toHaveText(repo);
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Working. Claude Code is working in a separate copy of the project.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
-  await expect(page.getByTestId("branch")).toHaveValue(/^botbench\/run-\d+\/task-\d+$/);
+  await expect(page.getByTestId("task-details").getByTestId("branch")).toHaveValue(/^botbench\/run-\d+\/task-\d+$/);
   await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
   // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
   const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();
@@ -95,8 +97,11 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await page.getByRole("button", { name: "Copy branch name" }).click();
   await expect(page.getByTestId("branch-copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
-  await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
+  // Ready for review: the branch is where the decision needs it, no longer in Details.
+  await expect(page.getByTestId("task-details").getByTestId("branch")).toHaveCount(0);
+  await expect(page.getByTestId("not-merged")).toHaveText("Nothing has been merged or pushed.");
+  await expect((await openCanDo(page)).getByTestId("can-do-text")).toHaveText(
+    "Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
   );
   // The screen's one primary action is Accept, beside Reject; nothing claims to merge, push, approve or stop.
   await expect(page.locator(".ds-button--primary")).toHaveText(["Accept"]);
@@ -119,20 +124,20 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await file.click();
   await expect(page.getByTestId("diff")).toHaveCount(0);
 
-  // The list shows the task, newest first, with its state in words, and leads back to it.
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  const rows = page.getByTestId("task-list").getByRole("link");
+  // Work shows the task with its state in words, and leads back to it.
+  await openWork(page);
+  const rows = page.getByTestId("board-group").getByRole("link");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Ready for review");
   await expect(rows.first()).toContainText(prompt);
-  await checkDesign(page, "tasks, with one");
-  await copyShot(page, "tasks");
+  await checkDesign(page, "work, with one task");
+  await copyShot(page, "work");
   await rows.first().click();
   await expect(page.getByTestId("branch")).toHaveValue(branch);
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
 
   // The turn screen is still there and still works as the first screen.
-  await nav.getByRole("link", { name: "Chat" }).click();
+  await nav(page).getByRole("link", { name: "Chat" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
 
@@ -141,21 +146,26 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("the navigation reaches Tasks, which says there are none yet; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
+test("the navigation is Chat and Work, and Work says there is nothing yet; Tasks leads there; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
-  // The navigation lists the screens that exist, and gets to each.
-  const nav = page.getByRole("navigation", { name: "Screens" });
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Chat");
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Tasks", level: 1 })).toBeVisible();
-  await expect(page.getByTestId("task-list-state")).toHaveText("No tasks yet");
-  await checkDesign(page, "tasks, none yet");
+  // The navigation lists the two destinations, and gets to each.
+  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
+  await openWork(page);
+  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Work");
+  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
+  await checkDesign(page, "work, none yet");
+  // The old addresses of the lists lead to Work.
+  for (const old of ["#/tasks", "#/runs"]) {
+    await page.evaluate((to) => (window.location.hash = to), old);
+    await expect(page).toHaveURL(/#\/work$/);
+    await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
+  }
   await openNewTask(page);
-  // New task is an action of the Tasks view: it opens the composer on the home screen with One task chosen.
-  await expect(nav.locator('[aria-current="page"]')).toHaveText("Chat");
-  await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository for the task, or None to just chat.");
+  // New task opens the composer on the home screen with One task chosen.
+  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
+  await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
 
   // The path is checked as it is typed, and the answer is in words.
   const field = await folderField(page);
@@ -268,10 +278,9 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
   try {
     await signIn(page, botbench);
     await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
-    const nav = page.getByRole("navigation", { name: "Screens" });
     await startTaskIn(page, repo, "Create hello.txt\nand a second line");
 
-    await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+    await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
     await expect(page.getByTestId("task-status")).toContainText("Failed. The task's copy of the project could not be created");
     await expect(page.getByTestId("task-status")).toContainText("inside the repository");
     // What the task was asked is still shown; there is no transcript, no file list and no branch to show.
@@ -282,9 +291,9 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await expect(page.getByRole("button")).toHaveCount(0);
     await checkDesign(page, "task, failed");
 
-    await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-    await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Create hello\.txt.*Failed.*Task 1 · /);
-    await expect(page.getByTestId("task-list")).not.toContainText("second line");
+    await openWork(page);
+    await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Create hello\.txt.*Failed.*Task 1 · /);
+    await expect(page.getByTestId("board-group")).not.toContainText("second line");
     expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
   } finally {
@@ -324,7 +333,7 @@ test("a repository git cannot read in time: the screen leaves Checking and says 
     await closeContext(page);
     await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription(/could not be read in time/);
-    await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toHaveCount(0);
+    await expect(page.getByTestId("task-name")).toHaveCount(0);
     await page.getByRole("button", { name: "Choose a Repository" }).click();
 
     // A path typed while an older one is still being checked takes its place: the older request is given up.

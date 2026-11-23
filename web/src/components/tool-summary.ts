@@ -207,3 +207,13 @@ export function confinedWords(confined: { hosts: string[]; files: boolean } | un
   if (hosts) sentences.push(`Its output says a connection to ${confined.hosts.join(", ")} was not allowed. The agent's commands reach only the hosts allowed for this repository in Botbench's settings file, and none when no host is.`);
   return { note, sentences };
 }
+
+/**
+ * Whether a step group is drawn open. The reader's own choice stands. Otherwise it is open while the reply it belongs to
+ * is still arriving, so the calls are seen as they happen, and stays open while any call in it failed, was not run, did
+ * not finish or waits for an answer; once the reply has finished well it folds to its one line, one tap from the calls.
+ */
+export function stepGroupOpen({ touched, live, states }: { touched: boolean | null; live: boolean; states: readonly CallState[] }): boolean {
+  if (touched !== null) return touched;
+  return live || states.some((state) => state !== "done");
+}

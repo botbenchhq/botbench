@@ -142,6 +142,10 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     setView(on);
     if (sheetRef.current !== null && !sheetRef.current.open) sheetRef.current.showModal();
   };
+  // Coming from New task or New run with no repository remembered, the owner came to work in one: the sheet opens on it.
+  useEffect(() => {
+    if (arrived.opens !== null) openSheet(arrived.opens);
+  }, [arrived.opens]);
 
   /** Dictation: offered only when the Mac can transcribe and this browser can record. */
   const [canDictate, setCanDictate] = useState(false);
@@ -458,32 +462,35 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     issue: issueWords(issue.attached),
   };
   const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
-  const label = chatting ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
+  // Come to start a task or a run, the box is named for it while the repository is still to be chosen.
+  const label = repo.kind === "none" ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
   const builderDown = builder.state !== "ready";
   const name = repoName(repo, known);
 
   return (
-    <Frame current="turn" fill banner={connected ? undefined : <StreamBanner />}>
+    <Frame
+      current="turn"
+      fill
+      banner={connected ? undefined : <StreamBanner />}
+      actions={
+        conversation.length > 0 && (
+          <button type="button" aria-label="New chat" disabled={running} onClick={newChat} className="ds-app-header__action">
+            <Icon name="plus" className="ds-app-header__icon" />
+          </button>
+        )
+      }
+    >
       <main className="flex min-h-0 min-w-0 flex-col">
-        <div className="ds-container py-md">
-          <PageHeader
-            title="Chat"
-            action={
-              conversation.length > 0 ? (
-                <button type="button" disabled={running} onClick={newChat} className="ds-button">
-                  New chat
-                </button>
-              ) : undefined
-            }
-          >
-            {problem !== null && (
-              <p data-testid="driver-state" className="ds-page-header__description">
-                {problem}
-              </p>
-            )}
-          </PageHeader>
-        </div>
+        {/* The screen is its transcript and its message box: the view's one h1 is for assistive technology only. */}
+        <PageHeader title="Chat" hidden />
+        {problem !== null && (
+          <div className="ds-container pt-md">
+            <p data-testid="driver-state" className="ds-composer__reason">
+              {problem}
+            </p>
+          </div>
+        )}
 
         <div ref={scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
           <div ref={setLog} className="ds-container pb-lg">
@@ -511,19 +518,15 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   </>
                 }
               />
-            ) : chatting ? (
-              <div className="ds-empty-state ds-empty-state--compact">
-                <h2 className="ds-empty-state__title">{agents.choice.pick.kind === "one" ? `Ask ${agentName(agents.choice.pick.agent)} anything` : "Ask several agents at once"}</h2>
-              </div>
             ) : (
-              <div className="ds-empty-state ds-empty-state--compact" data-testid="composer-about">
-                <h2 className="ds-empty-state__title">{kind === "task" ? `New task in ${name}` : `New run in ${name}`}</h2>
-                <p className="ds-empty-state__body">
+              // An empty chat shows nothing above the box. Work in a repository says, in one muted line, where and what follows.
+              !chatting && (
+                <p data-testid="composer-about" className="ds-composer__reason pt-md">
                   {kind === "task"
-                    ? "Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched."
-                    : `Claude Code plans tasks first, reading a copy it cannot change. ${mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
+                    ? `A task in ${name}: Claude Code works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
+                    : `A run in ${name}: Claude Code plans tasks first, reading a copy it cannot change. ${mode === "full" ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}`}
                 </p>
-              </div>
+              )
             )}
           </div>
         </div>

@@ -91,8 +91,8 @@ test("LIVE the refine loop: Codex raises a defect in Claude Code's first build, 
   // Built, checked, reviewed, perhaps fixed and reviewed again, until it is Ready for review.
   await denyWhile(page, botbench, () => expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./, { timeout: 1_000 }));
   await page.getByTestId("run-tasks").getByRole("link").first().click();
-  await expect(page.getByRole("heading", { name: /^Task \d+$/, level: 1 })).toBeVisible();
-  const taskId = Number(/Task (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
+  const taskId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
   const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as TaskBody;
   test.info().annotations.push({ type: "loop", description: JSON.stringify({ outcome: task.reviewOutcome, reviews: task.reviews.map((r) => r.verdict ?? r.outcome), fixes: task.refinements.map((r) => `${r.outcome}${r.changed ? ", changed" : ", unchanged"}`), line: task.reviewLine, checks: task.evidence.filter((row) => row.kind === "check").map((row) => `${row.round}:${row.outcome}`) }) });

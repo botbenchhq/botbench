@@ -294,7 +294,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const planning = run?.status === "planning";
   const gate = run?.status === "awaiting_plan_approval";
   const building = run?.status === "running";
-  const working = planning && attemptId !== null && !shown.some((e) => e.type === "turn_ended" && e.id === shown.at(-1)?.id) ? (asking === undefined ? "Claude Code is planning." : "Claude Code is paused until you answer.") : null;
+  const working = planning && attemptId !== null && !shown.some((e) => e.type === "turn_ended" && e.id === shown.at(-1)?.id) ? (asking === undefined ? "Claude Code is planning." : "") : null;
   const transcript = (
     // The planning prompt is Botbench's own, with the owner's words inside it, so the row says Botbench wrote it.
     <Transcript events={shown} working={working} modelName={nameOf} promptBy="Botbench, to Claude Code" folded={!planning} />
@@ -312,7 +312,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   );
 
   return (
-    <Frame current={null} banner={connected ? undefined : <StreamBanner />}>
+    <Frame current={null} banner={connected ? undefined : <StreamBanner />} showing={waiting.map((approval) => approval.id)}>
       <Page>
         {/* The page header comes first and holds the view's one h1, also while the run is being read or cannot be. */}
         <PageHeader title={`Run ${id}`}>
@@ -380,7 +380,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
               </Alert>
             )}
 
-            {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} onSignedOut={onSignedOut} />}
+            {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="run" onSignedOut={onSignedOut} />}
 
             {gate && (
               <section aria-labelledby="plan-heading" className="ds-stack ds-gap-lg">

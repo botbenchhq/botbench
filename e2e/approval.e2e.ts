@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, checkDesign, expect, primaries, signIn, startTaskIn, test, token, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, checkDesign, expect, nav, openCanDo, openDetails, openWork, primaries, signIn, startTaskIn, tallShot, test, token, watchRequests } from "./helpers.ts";
 import type { Botbench } from "./botbench.ts";
 
 // Approvals in the real client, at a phone's size: a real Botbench process, a real temporary repository,
@@ -18,9 +18,8 @@ function scriptRepo(botbench: Botbench): string {
 }
 
 async function startTask(page: Page, repo: string): Promise<void> {
-  const nav = page.getByRole("navigation", { name: "Screens" });
   await startTaskIn(page, repo, PROMPT);
-  await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 }
 
 test("LIVE: a task that needs the repository's script shows one pending approval in the tray without a reload; the card opens from any screen, Allow resumes the task, and the changed file appears", async ({ page, botbench }) => {
@@ -32,39 +31,49 @@ test("LIVE: a task that needs the repository's script shows one pending approval
 
   // The tray is on every screen and empty while nothing waits. It is not a control until something does.
   const tray = page.getByTestId("approval-tray");
-  const nav = page.getByRole("navigation", { name: "Screens" });
   await expect(tray).toBeEmpty();
   await expect(tray.getByRole("link")).toHaveCount(0);
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
+  await openWork(page);
   await expect(tray).toBeEmpty();
-  await checkDesign(page, "tasks, tray with nothing waiting");
+  await checkDesign(page, "work, tray with nothing waiting");
 
   await startTask(page, repo);
   await expect(tray).toBeEmpty();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
 
-  // The request arrives by itself: the tray counts it in words and the task says what it is waiting for.
-  await expect(tray).toHaveText("1 approval is waiting. Open it.", { timeout: 120_000 });
-  await expect(page.getByTestId("task-status")).toHaveText("Needs input. Claude Code asked for permission and is paused until you allow or deny.");
-  await expect(page.locator('[data-event="permission_request"]')).toContainText("sh make-marker.sh");
-  // The call itself waits in the transcript, open, in the approval tone: the status set's Needs input, with its paused icon.
+  // The request arrives by itself, as its card on the task's screen. The card is the one place that says so: the header's
+  // tray is not drawn here, and only tells a screen reader, once, that the approval is on this screen.
+  await expect(page.getByTestId("approval-card")).toBeVisible({ timeout: 120_000 });
+  await expect(tray).toHaveText("An approval is waiting on this screen.");
+  await expect(tray.getByRole("link")).toHaveCount(0);
+  await expect(page.locator(".ds-app-header__tray")).toHaveCount(0);
+  await expect(page.getByTestId("task-status")).toHaveCount(0);
+  await expect(page.locator('[data-event="permission_request"]')).toHaveCount(0);
+  await expect(page.getByText(/until you answer|until you allow or deny/)).toHaveCount(0);
+  // The call itself waits in the transcript as one line, in the approval tone: the status set's Needs input, with its paused icon. Its details are one tap away.
   const asked = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator(".ds-tool-call");
   await expect(asked).toHaveAttribute("data-state", "awaiting-approval");
   await expect(asked.locator(".ds-tool-call__status")).toHaveText("Needs input");
   await expect(asked.locator(".ds-tool-call__title")).toHaveText(/^Needs input\s*Wants to run\s*sh make-marker\.sh$/);
-  await expect(asked.locator("details").first()).toHaveAttribute("open");
+  await expect(asked.locator("details").first()).not.toHaveAttribute("open");
+  await asked.locator("summary").first().click();
+  await expect(asked.locator(".ds-tool-call__body pre").first()).toHaveText("sh make-marker.sh");
+  await asked.locator("summary").first().click();
+  await expect(asked.locator("details").first()).not.toHaveAttribute("open");
+  // Haiku was asked for and Haiku answered: no model line.
+  await expect(page.getByTestId("task-model")).toHaveCount(0);
   expect(await asked.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el).color)).toBe(token("approval"));
   expect(await asked.locator(".ds-tool-call__status").evaluate((el) => getComputedStyle(el, "::before").maskImage), "the paused icon of Needs input").toContain("circle-pause");
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "the card came without a reload").toBe(true);
 
-  // On the other screens the tray says the same, and the list says which task waits.
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
+  // On the other screens the tray says it, and Work says which task waits.
+  await openWork(page);
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
-  await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Needs input.*Task 1 · /);
+  await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Needs input.*Task 1 · /);
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
-  await checkDesign(page, "tasks, tray with one waiting");
+  await checkDesign(page, "work, tray with one waiting");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u7-tray.png") });
-  await nav.getByRole("link", { name: "Chat" }).click();
+  await nav(page).getByRole("link", { name: "Chat" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
 
@@ -72,7 +81,7 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   const open = tray.getByRole("link");
   await open.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
   const card = page.getByTestId("approval-card");
   await expect(card).toBeVisible();
   await expect(card).toBeFocused();
@@ -80,8 +89,10 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
   expect(await card.getByTestId("approval-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
   await expect(card.getByTestId("approval-directory")).toHaveText("The top folder of the task's copy");
-  await expect(card.getByTestId("approval-role")).toHaveText("Build");
-  await expect(card.getByTestId("approval-task")).toHaveText("Task 1 · Run the command `sh make-marker.sh` with your Bash tool, exa…");
+  // The screen is this task's: the card names neither the task nor the step.
+  await expect(card.getByTestId("approval-role")).toHaveCount(0);
+  await expect(card.getByTestId("approval-task")).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Run the command `sh make-marker.sh` with…");
   // The agent's own reason is shown when the CLI passed one on, and no row stands empty when it did not.
   const reason = card.getByTestId("approval-reason");
   if ((await reason.count()) > 0) expect(((await reason.textContent()) ?? "").trim().length).toBeGreaterThan(0);
@@ -112,10 +123,12 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(card.locator("summary")).toHaveText("Deny and say what to do instead");
   await expect(card.getByLabel("What Claude Code should do instead")).toBeHidden();
   await checkDesign(page, "task, with an approval card");
-  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u7-approval-card.png"), fullPage: true });
+  if (SHOTS) await tallShot(page, path.join(SHOTS, "u7-approval-card.png"));
 
-  // Nothing has run while the card waited.
-  const branch = await page.getByTestId("branch").inputValue();
+  // Nothing has run while the card waited. The full path and, while the task is worked on, its branch are in Details.
+  const details = await openDetails(page);
+  await expect(details.getByTestId("task-repo")).toHaveText(repo);
+  const branch = await details.getByTestId("branch").inputValue();
   const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
   expect(git(worktree, "status", "--porcelain")).toBe("");
 
@@ -133,8 +146,12 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(files.getByRole("listitem")).toHaveCount(1);
   await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added.*\+1 line added.*−0 lines removed/);
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
-  await expect(page.getByTestId("not-merged")).toHaveText(
-    "Nothing has been merged or pushed. Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
+  // One sentence, and what Claude Code may do here one tap away, every word of it kept.
+  await expect(page.getByTestId("not-merged")).toHaveText("Nothing has been merged or pushed.");
+  await expect(page.getByTestId("branch")).toHaveValue(branch);
+  if (SHOTS) await tallShot(page, path.join(SHOTS, "task-ready-for-review.png"));
+  await expect((await openCanDo(page)).getByTestId("can-do-text")).toHaveText(
+    "Claude Code may read and change files inside this task's copy of the project without asking. Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions), and Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
   );
   await checkDesign(page, "task, finished after an approval");
 
@@ -154,7 +171,7 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   const card = page.getByTestId("approval-card");
   await expect(card).toBeVisible({ timeout: 120_000 });
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
-  await expect(page.getByTestId("approval-tray")).toHaveText("1 approval is waiting. Open it.");
+  await expect(page.getByTestId("approval-tray")).toHaveText("An approval is waiting on this screen.");
 
   const note = "Not in this task <b>please</b>.";
   // Declining with a note is its own step: the disclosure holds the note and the button that sends it.
@@ -169,8 +186,8 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   // The transcript says it was declined, with the note as text, and shows what the agent was told.
   const resolved = page.locator('[data-event="permission_resolved"]');
   await expect(resolved).toContainText("You denied it");
-  // The row that records the question does not say the command ran.
-  await expect(page.locator('[data-event="permission_request"]')).toContainText("Botbench asked you first.");
+  // No row of its own for the asking: the call's line and the answer's row say it.
+  await expect(page.locator('[data-event="permission_request"]')).toHaveCount(0);
   const refused = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first().locator(".ds-tool-call");
   await expect(refused).toHaveAttribute("data-state", "declined");
   await expect(refused.locator(".ds-tool-call__title")).toHaveText(/^Denied\s*Did not run\s*sh make-marker\.sh$/);

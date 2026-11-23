@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { checkDesign, expect, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
+import { checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The runs board, Settings and the appearance choice in the real client, at a phone's size: a real Botbench process,
@@ -13,14 +13,10 @@ async function shot(page: Page, name: string): Promise<void> {
   if (SHOTS) await tallShot(page, path.join(SHOTS, name));
 }
 
-const nav = (page: Page) => page.getByRole("navigation", { name: "Screens" });
 const selector = (page: Page) => page.getByRole("group", { name: "Show" });
 const group = (page: Page) => page.getByTestId("board-group");
 
-async function openBoard(page: Page): Promise<void> {
-  await nav(page).getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Runs", level: 1 })).toBeVisible();
-}
+const openBoard = openWork;
 
 async function openSettings(page: Page): Promise<void> {
   // Settings is the header's action, on every signed-in screen: the tab bar keeps to the app's main destinations.
@@ -43,8 +39,8 @@ test("with no runs and no tasks, the board is the first-run state, in words, wit
   await signIn(page, botbench);
   await openBoard(page);
   const empty = page.getByTestId("board-empty");
-  await expect(empty.getByRole("heading", { name: "No runs yet" })).toBeVisible();
-  await expect(empty).toContainText("A run makes a list of tasks from a prompt or a spec file");
+  await expect(empty.getByRole("heading", { name: "No work yet" })).toBeVisible();
+  await expect(empty).toContainText("A task you start from Chat, and a run with its plan of tasks, is listed here.");
   await expect(primaryControls(page)).toHaveCount(1);
   await expect(empty.getByRole("link", { name: "New run" })).toHaveClass(/ds-button--primary/);
   // An empty board shows no group selector: there is nothing to choose between.
@@ -52,8 +48,10 @@ test("with no runs and no tasks, the board is the first-run state, in words, wit
   await checkDesign(page, "board, empty");
   await shot(page, "u16-board-empty.png");
   await empty.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
+  // New run came to work in a repository: the sheet opens on Repository, and Send waits for one.
+  await expect(page.locator("dialog.ds-sheet").getByRole("heading", { name: "Repository" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeAttached();
   expect(foreign).toEqual([]);
 });
 
@@ -109,9 +107,11 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   // Grok and Antigravity, each with the state its own probe reports.
   for (const key of ["grok", "antigravity"]) await expect(page.getByTestId(`agent-${key}`).getByTestId("agent-state")).toHaveText(/^(Available|Signed out|Not installed|Unsupported version|Unavailable)$/);
   await expect(page.getByText("Gemini CLI")).toHaveCount(0);
-  // Settings is no tab: the tab bar keeps its five destinations.
-  await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
+  // Settings is no tab: the tab bar keeps its two destinations. Its first rows lead to Permissions and Usage.
+  await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Chat", "Work"]);
   await expect(page.locator('.ds-tab-bar__item[aria-current="page"]')).toHaveCount(0);
+  await expect(page.getByTestId("settings-links").getByRole("link")).toHaveText([/^Permissions/, /^Usage/]);
+  expect(await page.getByTestId("settings-links").locator("svg use").evaluateAll((uses) => uses.map((use) => use.getAttribute("href")!.split("#")[1])), "each row ends with a chevron").toEqual(["ds-icon-chevron-right", "ds-icon-chevron-right"]);
   await checkDesign(page, "settings");
   await shot(page, "u16-settings.png");
 });
@@ -136,7 +136,7 @@ test("Appearance: Light changes the page, its browser bar and its logo, is remem
   await expect(bar).toHaveCount(1);
   await expect(bar).toHaveAttribute("content", THEME_COLOR.light);
   await expect(mark).toHaveAttribute("src", /mark-light/);
-  expect(await mark.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), "the light mark loaded").toBe(true);
+  await expect.poll(() => mark.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), { message: "the light mark loaded" }).toBe(true);
   expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(token("surface", "light"));
   expect(await root.evaluate((el) => getComputedStyle(el).colorScheme)).toBe("light");
   expect(await pageMode(page)).toBe("light");
@@ -252,6 +252,15 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { branch: string };
     expect(botbenchBranches(repo)).toEqual([task.branch]);
     expect(worktreeCount(repo)).toBe(2);
+    // The task is titled by its own words and its repository by name; the full path and the branch are in Details, closed.
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Create hello.txt");
+    await expect(page.getByTestId("task-name")).toHaveText(`Task ${taskId} · repo`);
+    await expect(page.getByTestId("task-details")).not.toHaveAttribute("open");
+    await expect(page.getByTestId("task-repo")).toBeHidden();
+    const details = await openDetails(page);
+    await expect(details.getByTestId("task-repo")).toHaveText(repo);
+    await expect(details.getByTestId("branch")).toHaveValue(task.branch);
+    await expect(page.getByTestId("branch")).toHaveCount(1);
     const discard = page.getByRole("button", { name: "Discard" });
     await expect(discard).toBeVisible();
     await expect(discard).not.toHaveClass(/ds-button--primary/);
@@ -280,7 +289,7 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     expect(checkoutState(repo)).toEqual(before);
 
     // The Activity list says what the owner did.
-    await nav(page).getByRole("link", { name: "Permissions" }).click();
+    await openFromSettings(page, "Permissions");
     await expect(page.getByText("You discarded")).toBeVisible();
 
     // A stand-alone task is a run of one: it is on the board, under Finished.
@@ -289,6 +298,7 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     await expect(group(page).getByRole("link")).toHaveAttribute("href", `#/tasks/${taskId}`);
     await expect(group(page).locator(".ds-badge")).toHaveText("Failed");
     await checkDesign(page, "board, a stand-alone task that failed");
+    await shot(page, "work.png");
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);
     fs.rmSync(dir, { recursive: true, force: true });

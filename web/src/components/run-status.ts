@@ -1,5 +1,6 @@
 import type { RunDetail, RunStatus, RunSummary } from "../api/client.ts";
 import { LOOKS, type Look } from "./looks.ts";
+import { folderName } from "../app/composer.ts";
 
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 
@@ -31,7 +32,8 @@ const finished = (tasks: readonly { status: string }[]): number => tasks.filter(
 /** What a list says under a run's title. */
 export function runFacts(run: RunSummary): string {
   const count = run.readyCount > 0 ? `${tasksWord(run.readyCount)} ready for review` : run.status === "running" ? `${run.finishedCount} of ${tasksWord(run.taskCount)} finished` : run.taskCount > 0 ? `${tasksWord(run.taskCount)} planned` : "No plan yet";
-  return `Run ${run.id} · ${count} · ${run.repo}`;
+  // The repository by its name: its full path is on the run's own screen.
+  return `Run ${run.id} · ${count} · ${folderName(run.repo)}`;
 }
 
 /** A run's state as a sentence that says only what is so. */
@@ -48,6 +50,7 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
     case "running":
       // A task that waits for an answer holds up the tasks after it.
       if (run.waitingOnApproval) return `Needs input. Claude Code asked for permission while building a task and is paused until you allow or deny; the tasks after it wait. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
+      if (run.tasks.some((task) => task.status === "reviewing")) return `In review. The run's reviewer is reading a task's changes. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
       return `Working. Botbench builds the tasks one at a time, in plan order, each by Claude Code in a separate copy of the project. ${finished(run.tasks)} of ${tasksWord(run.tasks.length)} finished.`;
     case "awaiting_decision":
       return `Ready for review. Every task has been built or has stopped; each says how it went.${run.tasks.some((task) => task.status === "awaiting_decision") ? " Accept or reject each task that is ready for review." : ""}`;

@@ -5,6 +5,7 @@ import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.ts
 import { runFacts, runLook, runWord } from "../components/run-status.ts";
 import { StatusBadge } from "../components/status.tsx";
 import { statusLook, statusWord } from "../components/task-status.ts";
+import { folderName } from "../app/composer.ts";
 
 type Groups = BoardGroup[];
 
@@ -20,7 +21,7 @@ function Row({ item }: { item: BoardItem }) {
   const [href, look, word, facts] =
     item.kind === "run"
       ? [`#/runs/${item.id}`, runLook(item), runWord(item), runFacts(item)]
-      : [`#/tasks/${item.id}`, statusLook(item), statusWord(item), `Task ${item.id}${item.checks === null ? "" : ` · ${checksWords(item.checks)}`} · ${item.repo}`];
+      : [`#/tasks/${item.id}`, statusLook(item), statusWord(item), `Task ${item.id}${item.checks === null ? "" : ` · ${checksWords(item.checks)}`} · ${folderName(item.repo)}`];
   return (
     <li className="ds-list__row">
       <a href={href} className="ds-list__link">
@@ -55,8 +56,8 @@ function FirstRun({ driver }: { driver: DriverState | "failed" | null }) {
     <div data-testid="board-empty" className="ds-empty-state">
       {usable ? (
         <>
-          <h2 className="ds-empty-state__title">No runs yet</h2>
-          <p className="ds-empty-state__body">A run makes a list of tasks from a prompt or a spec file, for you to edit and approve. Botbench then builds each task in a separate copy of the project and shows you what it did, for you to accept or reject.</p>
+          <h2 className="ds-empty-state__title">No work yet</h2>
+          <p className="ds-empty-state__body">A task you start from Chat, and a run with its plan of tasks, is listed here. Botbench builds each task in a separate copy of the project and shows you what it did, for you to accept or reject.</p>
           {driver === "failed" && <p className="ds-empty-state__body">Botbench could not check Claude Code just now. New run says so if it cannot be used.</p>}
           <div className="ds-empty-state__action">
             <NewLink href="#/turn?start=run">New run</NewLink>
@@ -81,7 +82,7 @@ function FirstRun({ driver }: { driver: DriverState | "failed" | null }) {
 }
 
 /**
- * The runs board (unit 16): what needs you, what is running, what finished. One group is shown at a time, chosen with
+ * Work, the runs board (unit 16): runs and the tasks started on their own, by what needs you, what is running and what finished. One group is shown at a time, chosen with
  * the selector, which counts each group; at first it is the first group that holds anything. It is read again whenever
  * live updates come up and each time a run or a task reaches a state or an approval is asked for or answered.
  */
@@ -132,11 +133,9 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const current = groups?.find((group) => group.name === shown);
 
   return (
-    <Frame current="runs">
+    <Frame current="work">
       <Page>
-        <PageHeader title="Runs" action={groups !== null && !empty ? <NewLink href="#/turn?start=run">New run</NewLink> : undefined}>
-          <p className="ds-page-header__description">What needs you first, then what is running, then what has finished. A task you start on its own is here too.</p>
-        </PageHeader>
+        <PageHeader title="Work" action={groups !== null && !empty ? <NewLink href="#/turn?start=run">New run</NewLink> : undefined} />
         {failed !== null && (
           <Alert tone="error" role="alert">
             {failed}

@@ -5,7 +5,14 @@ import { DeviceSettings } from "../app/device-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
+import { Icon } from "../components/icon.tsx";
 import { ModePicker } from "../components/mode-choice.tsx";
+
+/** The screens reached from Settings, first on it: each its own screen, with a link back. */
+const LINKED: readonly { href: string; name: string; about: string }[] = [
+  { href: "#/trust", name: "Permissions", about: "What is always allowed, and what ran" },
+  { href: "#/usage", name: "Usage", about: "How much each agent did" },
+];
 
 /** An agent's state in a word or two, from the probe: what the CLI itself reported. */
 function agentState(agent: AgentState): string {
@@ -100,6 +107,20 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
           <PageHeader title="Settings">
             <p className="ds-page-header__description">Each change is saved as you make it.</p>
           </PageHeader>
+
+          <ul data-testid="settings-links" className="ds-list">
+            {LINKED.map((link) => (
+              <li key={link.href} className="ds-list__row">
+                <a href={link.href} className="ds-list__link">
+                  <span className="ds-list__body">
+                    <span className="ds-list__primary">{link.name}</span>
+                    <span className="ds-list__secondary">{link.about}</span>
+                  </span>
+                  <Icon name="chevron-right" className="ds-list__icon" />
+                </a>
+              </li>
+            ))}
+          </ul>
 
           <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-agents`}>
             <h2 className="ds-settings-row__heading" id={`${id}-agents`}>

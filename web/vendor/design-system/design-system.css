@@ -19,6 +19,8 @@
     --ds-color-surface: #FAFAF9;
     --ds-color-surface-raised: #FFFFFF;
     --ds-color-surface-sunken: #F3F2EF;
+    /* The resting fill of a secondary control: a quiet tone that shows on the page and on a raised card. */
+    --ds-color-fill: #ECEBE7;
     --ds-color-on-surface: #171717;
     --ds-color-muted: #737373;
     --ds-color-border: #E5E5E5;
@@ -110,6 +112,7 @@
     --ds-color-surface: #141413;
     --ds-color-surface-raised: #1C1C1A;
     --ds-color-surface-sunken: #0E0E0D;
+    --ds-color-fill: #2A2A27;
     --ds-color-on-surface: #EDEDEB;
     --ds-color-muted: #A3A3A0;
     --ds-color-border: #2E2E2B;
@@ -142,6 +145,7 @@
       --ds-color-surface: #141413;
       --ds-color-surface-raised: #1C1C1A;
       --ds-color-surface-sunken: #0E0E0D;
+      --ds-color-fill: #2A2A27;
       --ds-color-on-surface: #EDEDEB;
       --ds-color-muted: #A3A3A0;
       --ds-color-border: #2E2E2B;
@@ -854,10 +858,9 @@
   }
 
   .ds-app-header__name {
-    font-family: var(--ds-font-mono);
-    font-size: var(--ds-text-mono);
+    font-size: var(--ds-text-ui);
     font-weight: var(--ds-weight-semibold);
-    line-height: var(--ds-leading-mono);
+    line-height: var(--ds-leading-ui);
   }
 
   .ds-app-header__back {
@@ -1633,7 +1636,7 @@
     padding: var(--ds-space-xs) var(--ds-space-lg);
     border-width: var(--ds-border-width);
     border-radius: var(--ds-radius-md);
-    background-color: var(--ds-color-surface-sunken);
+    background-color: var(--ds-color-fill);
     color: var(--ds-color-on-surface);
     font-weight: var(--ds-weight-medium);
     line-height: var(--ds-leading-ui);
@@ -1654,8 +1657,10 @@
     background-color: transparent;
   }
 
+  /* The danger colour has no pair on the fill, and the danger border already draws the button, so it rests on the raised surface. */
   .ds-button--danger {
     border-color: var(--ds-color-danger);
+    background-color: var(--ds-color-surface-raised);
     color: var(--ds-color-danger);
   }
 
@@ -1686,8 +1691,9 @@
 
   /* A touch screen has no hover, and would otherwise keep this look after a tap. */
   /*
-   * The secondary button already has the sunken fill, so hover draws the strong border on it and pressed lifts it
-   * to the raised fill. A quiet button takes the sunken fill on hover and when pressed, with no border on hover.
+   * The secondary button rests on the fill token, so hover draws the strong border on it and pressed sinks it
+   * to the sunken surface. A quiet button takes the fill on hover and when pressed, with no border on hover.
+   * Muted text has no pair on the fill: text on a button is the main text colour.
    */
   @media (hover: hover) {
     .ds-button:hover {
@@ -1696,7 +1702,7 @@
 
     .ds-button--quiet:hover {
       border-color: transparent;
-      background-color: var(--ds-color-surface-sunken);
+      background-color: var(--ds-color-fill);
     }
 
     .ds-button--primary:hover {
@@ -1712,11 +1718,11 @@
 
   .ds-button:active {
     border-color: var(--ds-color-border-strong);
-    background-color: var(--ds-color-surface-raised);
+    background-color: var(--ds-color-surface-sunken);
   }
 
   .ds-button--quiet:active {
-    background-color: var(--ds-color-surface-sunken);
+    background-color: var(--ds-color-fill);
   }
 
   .ds-button--primary:active {
@@ -2851,13 +2857,19 @@
     transition: border-color var(--ds-duration-fast) var(--ds-ease);
   }
 
+  /* One ring, on the block: the textarea inside it draws none of its own. */
   .ds-composer__box:has(> .ds-composer__input:focus-visible) {
     border-color: var(--ds-color-focus);
+    outline: var(--ds-border-width) solid var(--ds-color-focus);
   }
 
   .ds-composer__box > .ds-composer__input {
     border-color: transparent;
     background-color: transparent;
+  }
+
+  .ds-composer__box > .ds-composer__input:focus-visible {
+    outline-style: none;
   }
 
   /*
@@ -2996,7 +3008,7 @@
 }
 
 /*
- * Context list: the rows of the Add context sheet. A rounded group of rows divided by a 1px border.
+ * Context list: the rows of the Add context sheet. Rows divided by a 1px line, with no frame of their own: the sheet is the frame.
  * Each row is a button that shows a setting's name and its current value, and opens the setting's own view.
  * The chevron is drawn here, so the markup holds only the words.
  */
@@ -3006,8 +3018,6 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    border-width: var(--ds-border-width);
-    border-radius: var(--ds-radius-md);
   }
 
   .ds-context-list > li + li {
@@ -3029,13 +3039,13 @@
 
   /* The shade of a pressed row follows the group's rounded corners. Nothing clips the row, so its focus ring shows whole. */
   .ds-context-list > li:first-child > .ds-context-list__button {
-    border-start-start-radius: calc(var(--ds-radius-md) - var(--ds-border-width));
-    border-start-end-radius: calc(var(--ds-radius-md) - var(--ds-border-width));
+    border-start-start-radius: var(--ds-radius-md);
+    border-start-end-radius: var(--ds-radius-md);
   }
 
   .ds-context-list > li:last-child > .ds-context-list__button {
-    border-end-start-radius: calc(var(--ds-radius-md) - var(--ds-border-width));
-    border-end-end-radius: calc(var(--ds-radius-md) - var(--ds-border-width));
+    border-end-start-radius: var(--ds-radius-md);
+    border-end-end-radius: var(--ds-radius-md);
   }
 
   .ds-context-list__button::after {

@@ -1,5 +1,6 @@
 import { LOOKS, type Look } from "./looks.ts";
-import type { TaskStatus, TaskSummary } from "../api/client.ts";
+import type { ModelList, PullRequestView, TaskDecision, TaskStatus, TaskSummary } from "../api/client.ts";
+import { firstLine } from "../../../src/shorten.ts";
 
 const STATUS_WORD: Record<TaskStatus, string> = {
   queued: "Queued",
@@ -72,4 +73,25 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
     case "cancelled":
       return `Cancelled. ${task.reason ?? "Its run was cancelled."}`;
   }
+}
+
+/**
+ * A task's title on its own screen: the first line of its prompt, cut at a word boundary to about two lines of the
+ * title size on a phone (the whole prompt is the first row of the transcript); its number until the prompt is read.
+ */
+export const taskTitle = (id: number, prompt: string | null): string => (prompt === null || prompt.trim() === "" ? `Task ${id}` : firstLine(prompt, 40));
+
+/** What has left the machine, in one sentence that is true before a decision, after one, and after a push for a pull request. */
+export const notMergedLine = (task: { decision: Pick<TaskDecision, "decision"> | null; pullRequest: Pick<PullRequestView, "pushed"> }): string =>
+  task.pullRequest.pushed ? "Nothing has been merged. The branch was pushed for its pull request." : "Nothing has been merged or pushed.";
+
+/**
+ * Whether the model a session reports is not the one asked for, by the agent's own list, where an alias and the full
+ * name it stands for are the same model. Nothing is claimed while nothing has answered, when Claude Code's own default
+ * was asked for, or while the list is not known.
+ */
+export function answeredOther(list: ModelList | null, answered: string | null, requested: string | null): boolean {
+  if (answered === null || requested === null || answered === requested || list === null) return false;
+  const entry = list.models.find((model) => model.id === requested || model.resolved === requested);
+  return entry === undefined || (answered !== entry.id && answered !== entry.resolved);
 }

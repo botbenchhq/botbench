@@ -1,13 +1,12 @@
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, signIn, startTaskIn, test } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, openDetails, openWork, signIn, startTaskIn, test } from "./helpers.ts";
 
 // An approval across a restart, in the real client at a phone's size: a real Botbench process that is stopped and
 // started again on the same data, and the owner's Claude Code on its cheapest model asking for real.
 
 const MARKER_SCRIPT = '#!/bin/sh\necho ran > "$(dirname "$0")/marker.txt"\n';
 const PROMPT = "Run the command `sh make-marker.sh` with your Bash tool, exactly once. Then reply with the single word: done";
-const PARKED_STATUS = "Needs input. Claude Code asked for permission before Botbench restarted and is stopped. Your answer starts it again where it left off.";
 const PARKED_CARD = "Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.";
 
 test("LIVE: a task waits on an approval, Botbench is restarted, and after a reload, still signed in, the card is still there and says it predates the restart; Allow resumes the task, which finishes with its changed file and exactly one approval", async ({ page, botbench }) => {
@@ -16,16 +15,15 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   const before = checkoutState(repo);
   await signIn(page, botbench);
 
-  const nav = page.getByRole("navigation", { name: "Screens" });
   await startTaskIn(page, repo, PROMPT);
-  await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 
   const card = page.getByTestId("approval-card");
   await expect(card).toBeVisible({ timeout: 120_000 });
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
   // A card asked in this run of Botbench says nothing about a restart.
   await expect(card.getByTestId("approval-parked")).toHaveCount(0);
-  const branch = await page.getByTestId("branch").inputValue();
+  const branch = await (await openDetails(page)).getByTestId("branch").inputValue();
   const worktree = path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1");
 
   // Botbench stops and starts again. The device stays signed in across the restart, so the owner only reloads.
@@ -35,17 +33,18 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
-  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
-  await expect(page.getByTestId("task-list").getByRole("link")).toHaveText(/Needs input.*Task 1 · /);
+  await openWork(page);
+  await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Needs input.*Task 1 · /);
   await tray.getByRole("link").click();
-  await expect(page.getByRole("heading", { name: "Task 1" })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 
   // The same card, and it says in words that it was asked before the restart and what answering does.
   await expect(card).toBeVisible();
   await expect(card.getByTestId("approval-command")).toHaveText("sh make-marker.sh");
   await expect(card.getByTestId("approval-directory")).toHaveText("The top folder of the task's copy");
   await expect(card.getByTestId("approval-parked")).toHaveText(PARKED_CARD);
-  await expect(page.getByTestId("task-status")).toHaveText(PARKED_STATUS);
+  // The card says it; the task's own status line is not repeated beside it.
+  await expect(page.getByTestId("task-status")).toHaveCount(0);
   // No control beyond the two the card always had.
   await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny"]);
   await expect(page.getByRole("button", { name: /resume|retry|restart/i })).toHaveCount(0);

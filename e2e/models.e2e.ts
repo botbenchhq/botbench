@@ -12,7 +12,6 @@ const CONFIGURED = "haiku";
 const CHEAP = "claude-haiku-4-5-20251001";
 // The name Claude Code itself reports for that id. Botbench shows the name and keeps the id one tap away.
 const NAME = "Haiku [\\d.]+";
-const NAMED_ROW = new RegExp(`^Model${NAME}$`);
 // As long as a model name may be, and unbroken: the screen must wrap it wherever it shows it.
 const UNKNOWN = `botbench-no-such-model-${"1".repeat(77)}`;
 
@@ -113,12 +112,14 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   await messageBox(page).fill("Reply with exactly the word: lynx");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator('[data-event="text"]').last()).toContainText(/lynx/i, { timeout: 120_000 });
-  await expect(page.locator('[data-event="turn_ended"]').last().locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 60_000 });
+  // A reply with no step of its own has no row after it.
+  await expect(page.getByText(/^Worked for/)).toHaveCount(0);
   // The model that answered is the one asked for: it is named in the chip only, and the transcript has no row for it.
   await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
   await expect(chip(page)).toHaveAccessibleName(new RegExp(`^Model: ${NAME} , Claude Code$`));
   expect(JSON.parse(turnsSent[1]!)).toMatchObject({ model: CHEAP });
-  // Send is the one primary action; New chat, which begins again, sits beside the title.
+  // Send is the one primary action; New chat, which begins again, is a quiet icon in the header.
   expect(await primaries(page)).toEqual(["Send"]);
   await expect(page.getByRole("button", { name: "New chat" })).toBeVisible();
   await checkDesign(page, "chat, with the model that answered");
@@ -141,7 +142,7 @@ test("LIVE: in the composer a name the CLI does not know is reported in its word
   expect(foreign, "requests to anything but Botbench").toEqual([]);
 });
 
-test("LIVE: for a task a model is picked, and the task screen names the model that was asked for and the one that answered", async ({ page, botbench }) => {
+test("LIVE: for a task a model is picked and sent, and the task screen names a model only when the one that answered is not the one asked for", async ({ page, botbench }) => {
   const repo = path.join(path.dirname(botbench.home), "sample-repo");
   initRepo(repo);
   const before = checkoutState(repo);
@@ -159,9 +160,9 @@ test("LIVE: for a task a model is picked, and the task screen names the model th
   await checkDesign(page, "composer, a task with a model picked");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u25-new-task-model.png"), fullPage: true });
   await page.getByRole("button", { name: "Send" }).click();
-  // Before anything has answered, the screen says what was asked for and no more.
-  await expect(page.getByRole("heading", { name: /^Task \d+$/ })).toBeVisible();
-  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^(not started yet|${NAME} \\(no reply yet\\))\\. You asked for: ${NAME}\\.$`));
+  // Before anything has answered, nothing is claimed about the model.
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
+  await expect(page.getByTestId("task-model")).toHaveCount(0);
 
   // This test is about the model, so any command the agent wants to run is declined, as an owner could.
   await expect(async () => {
@@ -172,11 +173,9 @@ test("LIVE: for a task a model is picked, and the task screen names the model th
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
 
-  // The fact is labelled Model, so its value does not repeat the word.
-  await expect(page.locator("dt", { hasText: "Model" })).toHaveCount(1);
-  await expect(page.getByTestId("task-model")).toHaveText(new RegExp(`^${NAME}\\. You asked for: ${NAME}\\.$`));
-  await expect(page.locator('[data-event="session_started"] summary')).toHaveText(NAMED_ROW);
-  await expect(page.locator('[data-event="session_started"]')).toContainText(`Model id: ${CHEAP}`);
+  // The model that answered is the one asked for: the screen has no model line, and the transcript no row for it.
+  await expect(page.getByTestId("task-model")).toHaveCount(0);
+  await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
   const taskId = Number(/#\/tasks\/(\d+)$/.exec(page.url())![1]);
   expect(((await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { requestedModel: string | null }).requestedModel).toBe(CHEAP);
   await checkDesign(page, "task, with its model");

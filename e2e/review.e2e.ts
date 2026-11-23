@@ -77,8 +77,8 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   // Claude Code builds it, then Codex reviews it.
   await denyWhile(page, botbench, () => expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./, { timeout: 1_000 }));
   await page.getByTestId("run-tasks").getByRole("link").first().click();
-  await expect(page.getByRole("heading", { name: /^Task \d+$/, level: 1 })).toBeVisible();
-  const taskId = Number(/Task (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
+  const taskId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
 
   // Codex's review is on the task, under the checks, before any decision: its verdict line, its detail one tap away.

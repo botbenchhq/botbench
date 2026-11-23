@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, checkDesign, copyShot, expect, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Botbench process whose settings offer standing
@@ -32,7 +32,7 @@ const test = base.extend<{ repo: string }>({
 
 async function startTask(page: Page, repo: string, prompt: string, id: number): Promise<void> {
   await startTaskIn(page, repo, prompt);
-  await expect(page.getByRole("heading", { name: `Task ${id}` })).toBeVisible();
+  await expect(page.getByTestId("task-name")).toHaveText(new RegExp(`^Task ${id} · `));
 }
 
 const shape = (list: Locator): Promise<string[]> => list.evaluate((el) => [el.tagName, ...new Set([...el.children].map((child) => child.tagName))]);
@@ -48,13 +48,12 @@ async function cardOf(page: Page, id: number): Promise<Locator> {
 
 test("Permissions starts empty in words, with nothing to tap and nothing in the tray", async ({ page, botbench }) => {
   await signIn(page, botbench);
-  const nav = page.getByRole("navigation", { name: "Screens" });
-  // Permissions is a screen of its own in the navigation. With nothing granted and nothing logged it says so in words.
-  await expect(nav.getByRole("link")).toHaveText(["Chat", "Runs", "Tasks", "Permissions", "Usage"]);
-  await nav.getByRole("link", { name: "Permissions" }).click();
-  await expect(page.getByRole("heading", { name: "Permissions", level: 1 })).toBeVisible();
+  // Permissions is a screen of its own, reached from Settings, with a link back. With nothing granted and nothing logged it says so in words.
+  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await openFromSettings(page, "Permissions");
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Activity"]);
-  await expect(nav.getByRole("link", { name: "Permissions" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
+  await expect(nav(page).locator('[aria-current="page"]')).toHaveCount(0);
   await expect(page.getByTestId("grants-none")).toHaveText("Nothing is always allowed. After you have allowed the same command once, its request offers Always allow.");
   await expect(page.getByTestId("log-none")).toHaveText("Nothing has been asked, allowed or run yet.");
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
@@ -69,7 +68,6 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   const before = checkoutState(repo);
   await signIn(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
-  const nav = page.getByRole("navigation", { name: "Screens" });
   const tray = page.getByTestId("approval-tray");
 
   // The empty Permissions screen is drawn without a model: see "Permissions starts empty in words" above.
@@ -139,7 +137,8 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(confirm).toHaveCount(0);
   await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny", "Always allow…"]);
   expect(await api(page, botbench, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
-  await expect(tray).toHaveText("1 approval is waiting. Open it.");
+  // The card is on this screen: the tray is not drawn, and only tells a screen reader, once, that the approval is here.
+  await expect(tray).toHaveText("An approval is waiting on this screen.");
 
   // Confirming grants it and allows this request. The third run needs no card, and the transcript says why it ran.
   await open.click();
@@ -155,8 +154,8 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(resolved.nth(2)).toContainText("Always allowed");
   await expect(resolved.nth(2)).toContainText("allowed without asking you: you chose Always allow for this command");
   await expect(resolved.nth(2)).not.toContainText("You allowed");
-  await expect(page.locator('[data-event="permission_request"]')).toHaveCount(2);
-  await expect(page.getByTestId("not-merged")).toContainText("Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)");
+  await expect(page.locator('[data-event="permission_request"]')).toHaveCount(0);
+  await expect(await openCanDo(page)).toContainText("Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)");
   expect((await api<{ approvals: { status: string }[] }>(page, botbench, "/api/approvals")).approvals.map((a) => a.status)).toEqual(["allowed", "allowed"]);
   const branch = await page.getByTestId("branch").inputValue();
   expect(fs.readFileSync(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1", "marker.txt"), "utf8")).toBe("ran\nran\nran\n");
@@ -180,7 +179,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 120_000 });
 
   // Trust: the one standing permission, its scope in words and how often it was used.
-  await nav.getByRole("link", { name: "Permissions" }).click();
+  await openFromSettings(page, "Permissions");
   const grants = page.getByTestId("grant-list");
   await expect(grants.getByRole("listitem")).toHaveCount(1);
   expect(await shape(grants)).toEqual(["UL", "LI"]);

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, closeContext, contextSheet, expect, messageBox, openContext, openRow, primaries, SHOTS, signIn, test, tempShot } from "./helpers.ts";
+import { checkDesign, choose, closeContext, contextSheet, expect, messageBox, openContext, openRow, openWork, primaries, SHOTS, signIn, test, tempShot } from "./helpers.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
 
 // The composer on the home screen, at a phone's size, with no model turn: a real Botbench process, real temporary
@@ -111,30 +111,34 @@ test("the composer is one box with no label above it; Add context's rows follow 
   });
 });
 
-test("New task and New run open the composer with their kind chosen; with no repository yet the required chip asks for one and Send says why it is disabled; the old addresses lead there too", async ({ page }) => {
+test("New task and New run open the composer with their kind chosen and the sheet on Repository; with no repository yet the required chip asks for one and Send says why it is disabled; the old addresses lead there too", async ({ page }) => {
   await withKnownRepository(async (botbench) => {
     await signIn(page, botbench);
     const starts: string[] = [];
     page.on("request", (request) => {
       if (request.method() === "POST" && /^\/api\/(tasks|runs|turns)$/.test(new URL(request.url()).pathname)) starts.push(request.url());
     });
-    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Runs", exact: true }).click();
+    await openWork(page);
     await page.getByRole("link", { name: "New run" }).click();
     await expect(page).toHaveURL(/#\/turn$/);
+    // The owner came to start work in a repository: the sheet opens on its view.
+    const sheet = contextSheet(page);
+    await expect(sheet.getByRole("heading", { name: "Repository" })).toBeVisible();
+    await expect(sheet.getByRole("radio", { name: "Another folder…" })).toBeVisible();
+    await closeContext(page);
     const chip = page.getByRole("button", { name: "Choose a Repository" });
     const send = page.getByRole("button", { name: "Send" });
     await expect(chip).toBeVisible();
     await expect(page.locator(".ds-composer__chip")).toHaveCount(1);
     await expect(send).toBeDisabled();
-    await expect(send).toHaveAccessibleDescription("Choose a repository for the run, or None to just chat.");
-    await expect(chip).toHaveAccessibleDescription("Choose a repository for the run, or None to just chat.");
+    await expect(send).toHaveAccessibleDescription("Choose a repository");
+    await expect(chip).toHaveAccessibleDescription("Choose a repository");
     await messageBox(page).fill("Add a changelog");
     await checkDesign(page, "composer, a repository is required");
     await tempShot(page, "composer-required");
 
     // The chip opens the sheet straight on the repository.
     await chip.click();
-    const sheet = contextSheet(page);
     await expect(sheet.getByRole("heading", { name: "Repository" })).toBeVisible();
     await sheet.getByRole("radio", { name: "Another folder…" }).check();
     await sheet.getByLabel("Folder path").fill("relative/path");
@@ -156,9 +160,19 @@ test("New task and New run open the composer with their kind chosen; with no rep
     await page.evaluate(() => localStorage.removeItem("botbench.composer"));
     await page.goto(`${botbench.base}/#/tasks/new`);
     await expect(page).toHaveURL(/#\/turn$/);
-    await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository for the task, or None to just chat.");
+    await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe the task");
+    await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
     await page.goto(`${botbench.base}/#/runs/new`);
     await expect(page).toHaveURL(/#\/turn$/);
-    await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository for the run, or None to just chat.");
+    await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe what to plan");
+    await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
+
+    // On the home screen itself, with no repository, Send is a chat and nothing is required, whatever kind was used last.
+    await page.reload();
+    await expect(page).toHaveURL(/#\/turn$/);
+    await expect(contextSheet(page)).toBeHidden();
+    await expect(page.getByRole("button", { name: "Choose a Repository" })).toHaveCount(0);
+    await messageBox(page).fill("Hello");
+    await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   });
 });

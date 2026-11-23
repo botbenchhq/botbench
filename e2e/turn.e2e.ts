@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { checkDesign, checkWords, copyShot, expect, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
+import { checkDesign, checkWords, copyShot, expect, nav, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
@@ -40,20 +40,19 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
 
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
   await expect(reply(page)).toContainText(/marmot/i, { timeout: 120_000 });
-  await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
-  // No line says the reply completed, and no token count is on a main line: the count is under the quiet "Worked for" row.
-  expect(await page.getByRole("log").innerText(), "what is drawn in the transcript").not.toMatch(/completed|tokens/i);
-  await expect(page.locator('[data-event="usage"]')).toBeHidden();
-  await page.locator('[data-event="turn_ended"] summary').click();
-  await expect(page.locator('[data-event="usage"]')).toHaveText(/^Tokens: \d+ in, \d+ out$/);
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 60_000 });
+  // A reply with no step of its own has no row after it: no line says it completed, how long it took or what it counted
+  // (Usage keeps the counts).
+  await expect(page.locator('[data-event="turn_ended"]')).toHaveCount(0);
+  expect(await page.getByRole("log").innerText(), "what is drawn in the transcript").not.toMatch(/completed|tokens|worked for/i);
   // The model is named once, in the chip: the model that answered is the one asked for, so the transcript has no row for it.
   await expect(page.getByTestId("turn-model")).toHaveCount(0);
   await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByLabel("Message Claude Code")).toHaveValue("");
-  // The transcript is in order: prompt, reply, end.
-  expect(await page.locator("[data-event]").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-event")).filter((k) => ["user_prompt", "text", "turn_ended"].includes(k!)))).toEqual(["user_prompt", "text", "turn_ended"]);
+  // The transcript is in order: prompt, reply.
+  expect(await page.locator("[data-event]").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-event")).filter((k) => ["user_prompt", "text", "turn_ended"].includes(k!)))).toEqual(["user_prompt", "text"]);
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
 
   await checkDesign(page, "turn, with a transcript");
@@ -62,7 +61,8 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   // New chat begins again: the transcript is put away on this device, also after a reload, and the next prompt starts afresh.
   await page.getByRole("button", { name: "New chat" }).click();
   await expect(page.locator("[data-event]")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Ask Claude Code anything" })).toBeVisible();
+  // An empty chat shows nothing above the box, and New chat, a quiet icon in the header, goes until there is something to put away.
+  await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
   await checkDesign(page, "chat, after New chat");
   await page.reload();
@@ -115,17 +115,28 @@ test("LIVE: a chat reply that used a tool shows what the agent did as one plain 
   await copyShot(page, "chat-tool");
 });
 
-test("LIVE: three tool calls in a row are one step group: a line that counts them in plain words, open, with every call a row inside it", async ({ page, botbench }) => {
+test("LIVE: three tool calls in a row are one step group: a line that counts them in plain words and says how long the reply took, folded once the reply is in, with every call a row one tap away", async ({ page, botbench }) => {
   for (const [name, word] of [["a.txt", "otter"], ["b.txt", "badger"], ["c.txt", "stoat"]]) fs.writeFileSync(path.join(botbench.home, "scratch", name!), `The word is ${word}.\n`);
   await signIn(page, botbench);
   await page.getByLabel("Message Claude Code").fill("Use your Read tool three times, on a.txt, b.txt and c.txt in the current directory, before you write anything. Then reply with only the three words those files name.");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator('[data-event="turn_ended"]')).toBeVisible({ timeout: 120_000 });
   const group = page.locator("details.ds-step-group");
+  // The reply's time ends the group's own line once the reply is in: there is no second row for it after the answer.
+  await expect(group.getByTestId("worked-for")).toBeAttached({ timeout: 120_000 });
   await expect(group).toHaveCount(1);
-  // The summary counts what was done, from the calls themselves; the calls stay in view, because seeing them builds trust.
+  await expect(page.locator('[data-event="turn_ended"]')).toHaveCount(0);
+  // The summary counts what was done, from the calls themselves, then the time the reply took.
   await expect(group.locator(".ds-step-group__title")).toHaveText("Read 3 files");
+  await expect(group.getByTestId("worked-for")).toHaveText(/^Worked for (\d+m )?\d+s$/);
+  // Every call went well and the reply is in: the group is folded to its line. The calls are one tap away.
+  await expect(group).not.toHaveAttribute("open");
+  await expect(reply(page).last()).toContainText(/otter/i);
+  await checkDesign(page, "chat, a finished reply with its step group folded");
+  await tempShot(page, "home-reply-group-closed");
+  await group.locator("summary").first().click();
   await expect(group).toHaveAttribute("open");
+  // The tokens of the reply follow the calls, inside the group.
+  await expect(group.locator('[data-event="usage"]')).toHaveText(/^Tokens: \d+ in, \d+ out$/);
   const steps = group.locator('.ds-step-group__steps > [data-event="tool_call"]');
   await expect(steps).toHaveCount(3);
   for (const step of await steps.all()) await expect(step.locator(".ds-tool-call")).toHaveAttribute("data-state", "succeeded");
@@ -133,7 +144,7 @@ test("LIVE: three tool calls in a row are one step group: a line that counts the
   const status = steps.first().locator(".ds-tool-call__status");
   await expect(status).toHaveText("Done");
   expect(await status.evaluate((el) => el.getBoundingClientRect().width), "only the check is drawn").toBeLessThanOrEqual(16);
-  await tempShot(page, "chat-reply-step-group");
+  await tempShot(page, "home-reply-group-open");
   // A step's detail is the second level, with its raw arguments inside it, under their own words: there is no third.
   await steps.first().locator("summary").first().click();
   await expect(steps.first()).toContainText("Technical details");
@@ -150,7 +161,7 @@ test("LIVE: words the owner or the agent wrote are never judged, and the same wo
   await page.getByLabel("Message Claude Code").fill(`Reply with exactly this line and nothing else: ${words}`);
   await page.getByRole("button", { name: "Send" }).click();
   await expect(reply(page).last()).toContainText("broker gate floor hook", { timeout: 120_000 });
-  await expect(page.locator('[data-event="turn_ended"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('[data-event="user_prompt"]')).toContainText(words);
   await checkWords(page, "chat, a transcript that holds the banned words");
   // The same words in an interface label are caught: the check is not blind.
@@ -186,14 +197,14 @@ test("LIVE: a dropped event stream shows a banner, recovers, and the next reply 
   await page.keyboard.press("ControlOrMeta+Enter");
   await expect(reply(page)).toHaveCount(2, { timeout: 120_000 });
   await expect(reply(page).nth(1)).toContainText(/otter/i);
-  await expect(page.locator('[data-event="turn_ended"]')).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 60_000 });
   // Nothing arrived twice across the drop.
   await expect(page.locator('[data-event="user_prompt"]')).toHaveCount(2);
 
   // A client that arrives late gets the stored transcript.
   const before = await page.locator("[data-event]").allTextContents();
   await page.reload();
-  await expect(page.locator('[data-event="turn_ended"]')).toHaveCount(2);
+  await expect(reply(page)).toHaveCount(2);
   expect(await page.locator("[data-event]").allTextContents()).toEqual(before);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
 });
@@ -203,7 +214,10 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
   const prompt = 'Write a 1500 word essay about rivers. <img src=x onerror="window.botbenchXss=1"><b id="injected">bold</b>';
   await page.getByLabel("Message Claude Code").fill(prompt);
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator('[data-event="session_started"]')).toBeVisible({ timeout: 60_000 });
+  // The reply is under way once Botbench has stored the prompt of its attempt. (The model is named only when the one that
+  // answers is not the one asked for, so there is no model row to wait for.)
+  await expect(page.locator('[data-event="user_prompt"]')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
   await page.getByRole("button", { name: "Stop" }).click();
   await expect(page.locator('[data-event="turn_ended"]')).toHaveText(/^StoppedStopped before it finished\./, { timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
@@ -236,8 +250,17 @@ test("the chat box names the agent in its placeholder and for assistive technolo
   const settings = page.getByRole("banner").getByRole("link", { name: "Settings" });
   await expect(settings).toBeVisible();
   await expect(settings).toHaveText("");
+  // An empty chat is the box and nothing above it: the view's one h1 is there for assistive technology only, and New chat
+  // comes only once there is a chat to put away. The navigation is two destinations.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["Chat"]);
+  expect(await page.getByRole("heading", { level: 1 }).evaluate((el) => el.closest(".ds-visually-hidden") !== null), "the h1 is visually hidden").toBe(true);
+  await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toHaveCount(0);
+  await expect(page.getByTestId("composer-about")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
+  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
   await checkDesign(page, "chat, empty");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat.png") });
+  await tempShot(page, "home-empty");
 
   await chip.click();
   await expect(page.locator("dialog.ds-sheet").getByRole("heading", { name: "Model" })).toBeVisible();
