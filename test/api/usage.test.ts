@@ -13,7 +13,6 @@ import { tempDir } from "../support/repo.ts";
 
 test("GET /api/usage needs the owner's sign-in and reports stored usage, with the configured agent present even with no turns", async (t) => {
   const dir = tempDir("botbench-usage-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: {} };
   const server = await startServer({ config, home, signInDelayMs: 1 });

@@ -130,7 +130,6 @@ const commitsOf = (repo: string, base: string, branch: string): string[] => git(
 test("a builder that stays alive and sends nothing is stopped at the limit with its whole process group, and the task is Stopped, not Failed, with Resume offered and no commit the agent did not write", WITHIN, async (t) => {
   const limitMs = await limitFor(500);
   const pids = tempDir("botbench-silence-pids-");
-  t.after(() => fs.rmSync(pids, { recursive: true, force: true }));
   // Two children in the agent's group, which record their numbers outside its copy; the agent prints nothing at all.
   const e = await line(t, [`read go; sleep 600 & echo $! > '${pids}/a'; sleep 600 & echo $! > '${pids}/b'; wait`], limitMs);
 

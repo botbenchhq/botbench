@@ -334,7 +334,6 @@ test("cancelling a run while its task waits for an answer closes the pending app
 
 test("after a restart, a running run's task that was being prepared, before any agent turn, is started again once, and its unstarted tasks are built after it in order; the run reaches its end", { skip: NO_SANDBOX }, async (t) => {
   const dir = tempDir("botbench-build-restart-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const db = openStore(home);
   t.after(() => db.close());
@@ -383,7 +382,6 @@ test("setup evidence is append-only: a row cannot be changed, deleted or replace
 
 test("a database at the previous schema version gains the evidence table and keeps its runs and tasks", (t) => {
   const dir = tempDir("botbench-build-migrate-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home);
   const old = new DatabaseSync(path.join(home, "botbench.sqlite"));
@@ -401,7 +399,6 @@ test("a database at the previous schema version gains the evidence table and kee
 
 test("Botbench runs an owner's command in a directory with a time limit, in its own process group, without the caller's git variables, and keeps the end of a long output", { skip: NO_SANDBOX, timeout: 30_000 }, async (t) => {
   const dir = tempDir("botbench-command-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const before = process.env.GIT_DIR;
   process.env.GIT_DIR = "/somewhere/else";
   t.after(() => (before === undefined ? delete process.env.GIT_DIR : (process.env.GIT_DIR = before)));

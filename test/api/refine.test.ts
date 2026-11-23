@@ -21,7 +21,6 @@ const REPLY = "I changed it.\n\nAddressed:\n- calc.py:2: now returns a + b\n\nNo
 
 test("a task's reviews, its rounds of fixes, the outcome and its plain line are on the task; the run's cap is on the run and in the settings New run reads", async (t) => {
   const dir = tempDir("botbench-refine-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   const base = initRepo(repo, { "README.md": "# Calculator\n" });

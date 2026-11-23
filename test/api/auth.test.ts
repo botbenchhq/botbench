@@ -25,7 +25,6 @@ const hasIpv6Loopback = Object.values(os.networkInterfaces()).flat().some((i) =>
 /** Start the real server on a free port with its data in a temporary directory. */
 async function start(t: T, overrides: Partial<Config> = {}, signInDelayMs = 1): Promise<{ server: BotbenchServer; home: string; token: string }> {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, ...overrides };
   const server = await startServer({ config, home, signInDelayMs });
@@ -301,7 +300,6 @@ test("the token file is owner-only and the token is in no response after sign-in
 
 test("the entry point prints the token only on the start that created it", async (t) => {
   const home = path.join(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-auth-entry-"))), "home");
-  t.after(() => fs.rmSync(path.dirname(home), { recursive: true, force: true }));
   const entry = fileURLToPath(new URL("../../src/server.ts", import.meta.url));
 
   /** Run the real process until it listens, use it, stop it, and return everything it wrote. */

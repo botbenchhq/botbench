@@ -31,7 +31,6 @@ interface Rig {
 
 async function rig(t: T): Promise<Rig> {
   const dir = tempDir("botbench-broker-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const worktree = path.join(dir, "worktree");
   fs.mkdirSync(path.join(worktree, "sub"), { recursive: true });

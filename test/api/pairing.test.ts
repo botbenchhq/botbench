@@ -26,7 +26,6 @@ const IPHONE_SAFARI = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Ap
 
 function tempHome(t: T): string {
   const dir = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-pairing-")));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return path.join(dir, "home");
 }
 

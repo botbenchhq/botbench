@@ -29,7 +29,6 @@ interface Api {
 
 async function start(t: T): Promise<Api> {
   const dir = tempDir("botbench-notes-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   initRepo(repo);
@@ -85,7 +84,7 @@ test("a note to a building task is queued and answered as stored; a second repla
   assert.match(String(note.sentAt), /^\d{4}-\d\d-\d\dT/);
   assert.equal(first.body.replaced, null);
   const shown = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
-  assert.deepEqual(shown.waitingNote, { id: note.id, text: "Use British spelling.", sentAt: note.sentAt, replacedOne: false });
+  assert.deepEqual(shown.waitingNote, { id: note.id, text: "Use British spelling.", sentAt: note.sentAt, replacedOne: false, forRound: false });
   assert.equal(shown.undeliveredNote, null);
 
   const second = await send(api, task.id, { text: "Also say hello in the README." });
@@ -95,7 +94,7 @@ test("a note to a building task is queued and answered as stored; a second repla
   const rows = api.server.db.prepare("SELECT text, state FROM task_notes WHERE task_id = ? ORDER BY id").all(task.id).map((row) => [row.text, row.state]);
   assert.deepEqual(rows, [["Use British spelling.", "replaced"], ["Also say hello in the README.", "waiting"]]);
   const listed = ((await call(api, "GET", "/api/tasks")).body.tasks as Body[]).find((one) => one.id === task.id)!;
-  assert.deepEqual({ ...(listed.waitingNote as Body), id: undefined, sentAt: undefined }, { id: undefined, text: "Also say hello in the README.", sentAt: undefined, replacedOne: true });
+  assert.deepEqual({ ...(listed.waitingNote as Body), id: undefined, sentAt: undefined }, { id: undefined, text: "Also say hello in the README.", sentAt: undefined, replacedOne: true, forRound: false });
 });
 
 test("an empty note, one over the length limit, one that is not text, and a body that is not JSON are refused with a plain reason, and nothing is stored", async (t) => {
@@ -123,11 +122,11 @@ test("an empty note, one over the length limit, one that is not text, and a body
   assert.equal(((await send(api, task.id, { text: indented })).body.note as Body).text, indented);
 });
 
-test("a note to a task that is not building, or to no task, is refused with the reason and the right status, and nothing is stored for it", async (t) => {
+test("a note to a task that is neither building nor ready for review, or to no task, is refused with the reason and the right status, and nothing is stored for it; so is one to a task ready for review whose builder recorded no session to take up", async (t) => {
   const api = await start(t);
   assert.deepEqual(await send(api, 999, { text: "hello" }), { status: 404, body: { error: "No such task." } });
 
-  const at = async (status: TaskStatus): Promise<Task> => {
+  const at = async (status: TaskStatus | "discarded"): Promise<Task> => {
     if (status === "queued") return createTask(api.server.db, { repo: api.repo, prompt: "queued" });
     if (status === "accepted" || status === "rejected") {
       const task = await ready(api);
@@ -136,15 +135,24 @@ test("a note to a task that is not building, or to no task, is refused with the 
       return task;
     }
     if (status === "awaiting_decision") return ready(api);
+    if (status === "discarded") {
+      const task = await building(api);
+      moveTask(api.server.db, task.id, "failed", { reason: "It ended." });
+      const discarded = await call(api, "POST", `/api/tasks/${task.id}/discard`, {});
+      assert.equal(discarded.status, 200, JSON.stringify(discarded.body));
+      return task;
+    }
     const task = await building(api);
     return moveTask(api.server.db, task.id, status, status === "failed" || status === "interrupted" || status === "cancelled" ? { reason: "It ended." } : {});
   };
-  const expected: [TaskStatus, string][] = [
+  // `ready` stores no builder session: a note round would have none to take up (test/engine/note-round.test.ts has one that does).
+  const expected: [TaskStatus | "discarded", string][] = [
     ["queued", "This task has not started yet, so there is nothing for a note to follow. You can send one once Claude Code is working on it."],
-    ["verifying", "Claude Code has finished this task and its checks are running, so a note can no longer reach it."],
-    ["reviewing", "Claude Code has finished this task and it is being reviewed, so a note can no longer reach it."],
-    ["awaiting_decision", "Claude Code has finished this task and it is ready for review, so a note can no longer reach it."],
+    ["verifying", "Botbench is running this task's checks, so a note cannot reach Claude Code now. You can send one once the task is ready for review."],
+    ["reviewing", "This task is being reviewed, so a note cannot reach Claude Code now. You can send one once the task is ready for review."],
+    ["awaiting_decision", "Claude Code recorded no session for this task to take up, so a note cannot reach it."],
     ["failed", "This task failed, so a note can no longer reach Claude Code."],
+    ["discarded", "This task failed, so a note can no longer reach Claude Code."],
     ["interrupted", "This task is stopped, so a note cannot reach Claude Code. Resume it first, if it offers Resume."],
     ["cancelled", "This task was cancelled, so a note can no longer reach Claude Code."],
     ["accepted", "This task was accepted, so a note can no longer reach Claude Code."],
@@ -152,9 +160,13 @@ test("a note to a task that is not building, or to no task, is refused with the 
   ];
   for (const [status, reason] of expected) {
     const task = await at(status);
-    assert.equal((await call(api, "GET", `/api/tasks/${task.id}`)).body.status, status);
+    const shown = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
+    assert.equal(shown.status, status === "discarded" ? "failed" : status);
+    if (status === "discarded") assert.notEqual((shown.remains as Body | null)?.discardedAt ?? null, null, "its copy and branch were discarded");
     assert.deepEqual(await send(api, task.id, { text: "One more thing." }), { status: 409, body: { error: reason } }, status);
     assert.equal(stored(api, task.id), 0, `nothing stored for a task that is ${status}`);
+    // Refused, it stays where it was.
+    assert.equal((await call(api, "GET", `/api/tasks/${task.id}`)).body.status, status === "discarded" ? "failed" : status);
   }
 });
 

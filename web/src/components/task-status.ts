@@ -41,8 +41,14 @@ const waiting = (task: Pick<TaskSummary, "status" | "waitingOnApproval">): boole
 /** Whether the owner's answer to a request from before a restart is stored and the task is being started again to receive it. */
 const resuming = (task: Pick<TaskSummary, "status" | "resuming">): boolean => task.status === "building" && task.resuming;
 
+/** Whether the owner resumed the task, or sent it a note for a round, and its work waits for another task's to end first. */
+const behind = (task: Partial<Pick<TaskSummary, "waitingFor">>): boolean => task.waitingFor != null;
+
 /** A task's station in a word or two, for lists. */
-export const statusWord = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): string => (waiting(task) ? "Needs input" : resuming(task) ? "Resuming" : STATUS_WORD[task.status]);
+export const statusWord = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming"> & Partial<Pick<TaskSummary, "waitingFor">>): string => (waiting(task) ? "Needs input" : resuming(task) ? "Resuming" : behind(task) ? "Waiting" : STATUS_WORD[task.status]);
+
+/** What a task waiting behind another one waits for, for its row: "Waiting for task 12 to finish". */
+export const waitingForWords = (task: Partial<Pick<TaskSummary, "waitingFor">>): string | null => (task.waitingFor == null ? null : `Waiting for task ${task.waitingFor.taskId} to finish`);
 
 /** The look of a station, from the status set. The word says the station; the icon and tone only repeat it. */
 const STATUS_LOOK: Record<TaskStatus, Look> = {
@@ -59,10 +65,10 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
   waiting_for_limit: LOOKS.usageLimit,
   drafted: LOOKS.drafted,
 };
-export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming">): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : STATUS_LOOK[task.status]);
+export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming"> & Partial<Pick<TaskSummary, "waitingFor">>): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : behind(task) ? LOOKS.queued : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date()): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt" | "waitingFor" | "waitingNote" | "onNoteRound" | "noteRoundLine">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date()): string {
   // Why the task needs the owner: a fully autonomous run that did not accept it, or, in any mode, a protected file it changed.
   const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
@@ -71,17 +77,24 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       : "Needs input. Claude Code asked for permission and is paused until you allow or deny.";
   }
   if (resuming(task)) return "Resuming. Your answer is saved. Botbench starts Claude Code again where it left off, after any task that is running now, and gives it your answer.";
+  if (task.waitingFor != null) {
+    const after = task.waitingNote?.forRound === true ? "Claude Code gets your note right after it." : "Botbench takes this task up again right after it.";
+    return `Waiting for task ${task.waitingFor.taskId} to finish. ${after}`;
+  }
   switch (task.status) {
     case "queued":
       return task.ofPlan === null ? "Queued. It starts when the tasks before it have finished." : `Queued. Run ${task.ofPlan} builds its tasks one at a time, in plan order: this one starts when the tasks before it have finished.`;
     case "building":
       // Before its agent starts, Botbench makes the task's copy and runs the repository's setup commands in it.
-      return task.attemptId === null ? "Working. Botbench is preparing a separate copy of the project for Claude Code." : "Working. Claude Code is working in a separate copy of the project.";
+      if (task.attemptId === null) return "Working. Botbench is preparing a separate copy of the project for Claude Code.";
+      return task.onNoteRound === true ? "Working. Claude Code is working on your note in the task's copy of the project." : "Working. Claude Code is working in a separate copy of the project.";
     case "verifying":
       return "Checking. Botbench committed the work to the task's branch and is running this repository's checks on it.";
     case "reviewing":
       return "In review. Botbench committed the work and ran the checks; the run's reviewer is reading the changes. You can decide once its review is in.";
     case "awaiting_decision":
+      // Back after a note that changed nothing: that line says what is so, in place of the sentence about the commit.
+      if (task.noteRoundLine != null) return `Ready for review. ${task.noteRoundLine}${why}`;
       return task.headCommit === task.baseCommit
         ? `Ready for review. No file was changed, so nothing was committed.${why}`
         : `Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.${why}`;

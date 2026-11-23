@@ -106,7 +106,6 @@ test("a notification carries only its fixed text and the screen to open: nothing
 
 test("a task that starts waiting for a usage limit sends one notification with its fixed text; resuming, waiting again or stopping does not send it a second time", async (t) => {
   const home = tempDir("botbench-push-limit-");
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const db = openStore(home);
   t.after(() => db.close());
   // A real HTTP endpoint in the place of the push service, and the real store that records what was sent.

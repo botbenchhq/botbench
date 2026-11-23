@@ -25,7 +25,6 @@ type T = { after(fn: () => unknown): void };
 
 function home(t: T): string {
   const dir = tempDir("botbench-turn-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return path.join(dir, "home");
 }
 

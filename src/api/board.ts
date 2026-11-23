@@ -108,8 +108,8 @@ export async function board(db: DatabaseSync, o: { hidden?: boolean } = {}): Pro
   // A task of a planned run is shown with its run. Only a run of one, or a task from before runs were numbered, is its own row.
   for (const row of db.prepare("SELECT t.id FROM tasks t LEFT JOIN runs r ON r.id = t.run_id WHERE r.id IS NULL OR r.kind = 'single'").all()) {
     const task = getTask(db, Number(row.id))!;
-    const { id, repo, prompt, status, reason, checks, waitingOnApproval, resuming, createdAt, updatedAt } = taskSummary(db, task) as Record<string, unknown> & { prompt: string };
-    const item = { kind: "task", id, repo, title: prompt.trim().split("\n")[0]!, status, reason, checks, waitingOnApproval, resuming, createdAt, updatedAt, ...(await taskMenu(db, task, branches)) };
+    const { id, repo, prompt, status, reason, checks, waitingOnApproval, resuming, restartLine, waitingFor, createdAt, updatedAt } = taskSummary(db, task) as Record<string, unknown> & { prompt: string };
+    const item = { kind: "task", id, repo, title: prompt.trim().split("\n")[0]!, status, reason, checks, waitingOnApproval, resuming, restartLine, waitingFor, createdAt, updatedAt, ...(await taskMenu(db, task, branches)) };
     items.push({ group: taskGroup(item), item });
   }
   for (const chat of listChats(db)) items.push({ group: "chats", item: { kind: "chat", ...chat } });

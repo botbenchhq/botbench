@@ -4,6 +4,10 @@
 export const NOTE_HEADING = "Note for Claude Code";
 export const NOTE_LABEL = "Your note";
 export const NOTE_ABOUT = "Claude Code reads your note as your next message once it finishes what it is doing now, before Botbench commits and checks the work. One note waits at a time: a second note replaces the first until it is delivered.";
+/** On a task that is ready for review: what sending a note does instead of Accept or Reject (src/engine/note-rounds.ts). */
+export const NOTE_ABOUT_READY = "Claude Code carries on where it left off, in the same copy, with your note as your next message. Botbench then commits, checks and reviews the work again, and it comes back here.";
+/** A note sent while the task was ready for review, waiting for Claude Code to be started with it. */
+export const NOTE_WAITING_ROUND = "Your note is waiting. Botbench starts Claude Code with it as soon as it can.";
 export const NOTE_SEND = "Send note";
 export const NOTE_SENDING = "Sending";
 export const NOTE_WAITING = "Your note is waiting. Claude Code gets it when it finishes what it is doing now.";

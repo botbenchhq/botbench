@@ -203,7 +203,6 @@ test("a fully autonomous run's planner is told to decide itself too, recorded on
 test("a pending question survives a restart like a parked approval: still shown, sends no notification, the owner's answer is stored once, and the re-driven attempt's repeated question receives it", async (t) => {
   const dir = tempDir("botbench-question-restart-");
   const home = path.join(dir, "home");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   // A real push endpoint and device, subscribed before the stop, so a notification for the parked question would be seen.
   const endpoint = await startPushEndpoint();
   t.after(() => endpoint.close());

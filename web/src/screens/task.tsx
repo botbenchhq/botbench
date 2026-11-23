@@ -6,7 +6,7 @@ import { DraftPeerCard } from "../components/peer-card.tsx";
 import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { DiffLine } from "../components/diff.tsx";
 import { Icon } from "../components/icon.tsx";
-import { agentName, CHECKS_RISK, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_RISK, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
+import { agentName, CHECKS_LIMITS, CHECKS_LINE, ChecksResult, CommandRounds, FixesEvidence, latestRound, REVIEW_LIMITS, REVIEW_LINE, ReviewEvidence, reviewerWords } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
 import { BranchCopy, ReviewDecision } from "../components/decision.tsx";
@@ -251,6 +251,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
   const peers = usePeersOf(task?.status === "awaiting_decision" ? task.repo : "", onSignedOut);
   const overlaps = task?.status === "awaiting_decision" && task.files !== null ? overlapLines(peers, task.files.map((f) => f.path)) : [];
+  // The review decision is drawn from ready for review on: it carries the checks' and the review's findings, each said once.
+  const decisionShown = task !== null && (task.decision !== null || task.status === "awaiting_decision");
 
   // An agent's draft to the paired workbench from this task waits on its card here, where its approvals are.
   const drafts = (peerCards ?? []).filter((card) => card.direction === "out" && card.taskId === id);
@@ -267,6 +269,11 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
               <p data-testid="task-status" role="status" className="ds-page-header__description">
                 {statusSentence(task)}
               </p>
+              {task.restartLine !== null && (
+                <p data-testid="task-restart" className="ds-page-header__description">
+                  {task.restartLine}
+                </p>
+              )}
             </>
           )}
         </PageHeader>
@@ -275,6 +282,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
           <>
             <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />
             <TaskLines task={task} id={id} />
+            {task.restartLine !== null && <p data-testid="task-restart">{task.restartLine}</p>}
           </>
         )}
         {task !== null &&
@@ -374,7 +382,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
               )
             )}
 
-            <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />
+            {/* On a task that is ready for review the note box comes just before the decision, as the other way on from it. */}
+            {task.status !== "awaiting_decision" && <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />}
             <MoveTask task={task} onMoved={load} onSignedOut={onSignedOut} />
 
             {task.filesProblem !== null && (
@@ -391,7 +400,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                     {task.checkFixLine}
                   </p>
                 )}
-                {task.checks !== "none" && <p>{CHECKS_RISK}</p>}
+                {task.checks !== "none" && <p data-testid="checks-line">{CHECKS_LINE}</p>}
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
             )}
@@ -400,7 +409,8 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             {task.reviewer !== null && (task.review !== null || task.status === "reviewing") && (
               <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">
                 <h2 id="review-heading">{`${agentName(task.reviewer.agent)}'s review`}</h2>
-                <p data-testid="review-by">{`By ${reviewerWords(task.review ?? task.reviewer)}. ${REVIEW_RISK}`}</p>
+                {/* The decision below says it once; only without it is it said here. */}
+                <p data-testid="review-by">{`By ${reviewerWords(task.review ?? task.reviewer)}.${decisionShown ? "" : ` ${REVIEW_LINE}`}`}</p>
                 {task.reviewLine !== null && (
                   <p data-testid="review-outcome" role="status">
                     {task.reviewLine}
@@ -426,7 +436,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </ol>
                 )}
                 {task.status === "reviewing" && <p role="status">{`${agentName(task.reviewer.agent)} is reading the changes.`}</p>}
-                {task.status === "building" && task.reviews.length > task.refinements.length && (
+                {task.status === "building" && !task.onNoteRound && task.reviews.length > task.refinements.length && (
                   <p role="status" data-testid="fixes-working">{`${agentName("claude-code")} is working on fixes: round ${task.reviews.length} of up to ${task.maxRefineRounds}.`}</p>
                 )}
               </section>
@@ -500,8 +510,10 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                 </section>
               )}
 
+            {task.status === "awaiting_decision" && <TaskNote task={task} onChanged={load} onSignedOut={onSignedOut} />}
+
             {/* One section from ready for review on: Accept and Reject, then, once decided, the result in their place. */}
-            {(task.decision !== null || task.status === "awaiting_decision") && (
+            {decisionShown && (
               <ReviewDecision task={task} onDecided={load} onSignedOut={onSignedOut}>
                 {overlaps.map((line) => (
                   <p key={line} data-testid="peer-overlap">
@@ -555,6 +567,9 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                   </div>
                 </dl>
                 {branchInDetails && <BranchCopy branch={task.branch!} />}
+                {/* The full limits of the checks and the review, once, rather than under every result. */}
+                {task.checks !== null && task.checks !== "none" && <p data-testid="checks-limits">{CHECKS_LIMITS}</p>}
+                {task.reviewer !== null && task.review !== null && <p data-testid="review-limits">{`${agentName(task.reviewer.agent)}'s review: ${REVIEW_LIMITS}`}</p>}
               </div>
             </details>
           </>

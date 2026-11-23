@@ -255,7 +255,6 @@ test("a restart during a round of fixes for a failing check takes the round up a
 
 test("rounds of fixes for a failing check are append-only, and a version of the work they made may have its checks recorded", (t) => {
   const dir = tempDir("botbench-check-fix-store-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const at = new Date().toISOString();
@@ -276,7 +275,6 @@ test("rounds of fixes for a failing check are append-only, and a version of the 
 
 test("a round that ended the loop is found for the next start to hand the task on; a changed or stopped one, or one a review came after, is not", (t) => {
   const dir = tempDir("botbench-check-fix-ended-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const db = openStore(path.join(dir, "home"));
   t.after(() => db.close());
   const at = new Date().toISOString();

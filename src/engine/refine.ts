@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { now } from "../store/db.ts";
+import { noteRoundSinceReview } from "./note-rounds.ts";
 import { taskReviews } from "./review.ts";
 import { agentName } from "./roles.ts";
 
@@ -224,12 +225,15 @@ export function refineCap(db: DatabaseSync, taskId: number): number {
 
 /**
  * The round of fixes a task's builder is on, read from the store: the round of its latest review when that review has
- * no round of fixes after it. Null when the task has no review: its builder is on the task's first build.
+ * no round of fixes after it. Null when the task has no review (its builder is on the task's first build), and when the
+ * owner's note started a round after that review (engine/note-rounds.ts): the builder is then on the note's round, or
+ * on fixes for a check that failed after it.
  */
 export function refineRoundOf(db: DatabaseSync, taskId: number): number | null {
   const reviews = taskReviews(db, taskId);
   if (reviews.length === 0) return null;
   const round = reviews.at(-1)!.round;
+  if (noteRoundSinceReview(db, taskId, reviews.length)) return null;
   return db.prepare("SELECT 1 FROM refinements WHERE task_id = ? AND round = ?").get(taskId, round) ? null : round;
 }
 

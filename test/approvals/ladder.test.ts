@@ -29,7 +29,6 @@ interface Rig {
 
 async function rig(t: T, offerStandingAfter?: number): Promise<Rig> {
   const dir = tempDir("botbench-ladder-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const repo = path.join(dir, "repo");
   fs.mkdirSync(repo);
@@ -258,7 +257,7 @@ test("declines, requests that ended unanswered and pre-approved runs do not adva
   assert.equal((await decide(r, a, "npm test", "toolu_8"))?.approvals, 3);
 
   // The count is read from the approvals and the log, and nothing else holds it.
-  assert.deepEqual(r.db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name), ["action_log", "approvals", "attempts", "browser_sessions", "chat_attempts", "chat_members", "chat_rounds", "chat_titles", "check_fixes", "claim_takeovers", "combined_check_commands", "combined_checks", "combined_requirements", "command_lists", "command_processes", "decisions", "deliveries", "device_pairing", "events", "evidence", "first_use", "grant_revocations", "grants", "hidden_rows", "issue_claims", "issue_fetches", "owner_settings", "peer_cards", "peer_drafts", "peer_invites", "peer_kind_settings", "peer_messages", "peer_pairing_ends", "peer_pairings", "peer_send_outcomes", "plan_tasks", "push_sent", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "task_handoffs", "task_notes", "tasks", "watched_issues", "workbench_names"]);
+  assert.deepEqual(r.db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((row) => row.name), ["action_log", "approvals", "attempts", "browser_sessions", "chat_attempts", "chat_members", "chat_rounds", "chat_titles", "check_fixes", "claim_takeovers", "combined_check_commands", "combined_checks", "combined_requirements", "command_lists", "command_processes", "decisions", "deliveries", "device_pairing", "events", "evidence", "first_use", "grant_revocations", "grants", "hidden_rows", "issue_claims", "issue_fetches", "note_rounds", "owner_settings", "peer_cards", "peer_drafts", "peer_invites", "peer_kind_settings", "peer_messages", "peer_pairing_ends", "peer_pairings", "peer_send_outcomes", "plan_tasks", "push_sent", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "task_handoffs", "task_notes", "tasks", "watched_issues", "workbench_names"]);
   // An approval marked allowed with no decision of the owner's in the log is not counted.
   assert.equal(approvalCount(r.db, { ...key, words: ["npm", "run", "lint"] }), 0);
   const { answer } = await a.ask("npm run lint", "toolu_9");
@@ -680,7 +679,6 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 
 test("a database at schema version 7 gains revocations, the standing log rules and the paging index, and keeps its tasks, approvals, grants and log", (t) => {
   const dir = tempDir("botbench-ladder-v7-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   fs.mkdirSync(home, { recursive: true });
   const old = new DatabaseSync(path.join(home, DB_FILE));

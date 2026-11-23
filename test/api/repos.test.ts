@@ -29,7 +29,6 @@ async function start(t: T, dir: string, repositories?: Config["repositories"]) {
 
 function workspace(t: T): string {
   const dir = fs.realpathSync(tempDir("botbench-repos-api-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
 
