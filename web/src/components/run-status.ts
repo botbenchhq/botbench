@@ -38,7 +38,7 @@ export function runFacts(run: RunSummary): string {
 
 /** What a task's row on the run screen says under its title: why it ended, for a task that failed, was stopped or was cancelled; else nothing. */
 export const runTaskNote = (task: { status: string; reason: string | null }): string | null =>
-  (task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") && task.reason !== null ? task.reason : null;
+  (task.status === "failed" || task.status === "cancelled" || task.status === "interrupted" || task.status === "drafted") && task.reason !== null ? task.reason : null;
 
 /** A run's state as a sentence that says only what is so. */
 export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingOnApproval" | "tasks" | "attemptId" | "mode">): string {
@@ -61,6 +61,7 @@ export function runSentence(run: Pick<RunDetail, "status" | "reason" | "waitingO
     case "awaiting_decision":
       return `Ready for review. Every task has been built or has stopped; each says how it went.${run.tasks.some((task) => task.status === "awaiting_decision") ? " Accept or reject each task that is ready for review." : ""}`;
     case "done":
+      if (nothingReviewed(run) && run.tasks.some((task) => task.status === "drafted")) return "Nothing to review. No task changed a file: each one that drafted a message for another workbench left it on its card for your Send, and any other failed, was stopped or was cancelled. Each task's own screen says what it did.";
       if (nothingReviewed(run)) return "Nothing to review. Every task failed, was stopped or was cancelled before it was ready for review, so there is nothing to decide. Each task's own screen says why. A task Botbench's restarts stopped can be resumed, and what a task left can be discarded.";
       const sent = run.tasks.some((task) => task.pullRequest?.pushed === true) ? "Nothing has been merged; the accepted tasks' branches were pushed for their pull requests." : "Nothing has been merged or pushed.";
       if (run.tasks.some((task) => task.decision?.decidedBy === "mode")) return `Done. Every task that was built is decided: this run is fully autonomous, so each task that qualified was accepted without you, and you decided the rest. ${sent}`;

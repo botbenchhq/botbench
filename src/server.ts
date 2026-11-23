@@ -264,7 +264,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const watch = startWatch({ db, config, run: options.watchGh ?? runGh, onProposed: () => push.issueProposed(), onChange: stream.announceWatch });
   const updates = createUpdates({ db, home, installDir: options.installDir ?? ROOT, busy: () => workUnderWay(db, turns, chat), notifyUpdated: (version) => push.updated(version), options: options.updates ?? null });
   // Pairing with another workbench (src/peers/): its listener starts after the owner's, and only when the settings name one.
-  const peerLink: PeerLink = createPeerLink({ db, home, config, ...(options.peerInviteLifeMs === undefined ? {} : { inviteLifeMs: options.peerInviteLifeMs }) });
+  const peerLink: PeerLink = createPeerLink({ db, home, config, onChange: stream.announcePeers, ...(options.peerInviteLifeMs === undefined ? {} : { inviteLifeMs: options.peerInviteLifeMs }) });
   const ctx = { peerLink, updates, db, home, config, driver, reviewers, builders,agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, watch, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;

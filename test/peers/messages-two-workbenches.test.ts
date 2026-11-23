@@ -143,7 +143,7 @@ test("two workbenches ask and answer over their listeners, behind both owners, w
 
   // ---- The friction record, per pairing and per thread.
   const record = (await bob.api("GET", "/api/peers/friction")).body;
-  assert.match(record.shown, /server produced the card/);
+  assert.match(record.shown, /^when a signed-in device first drew the card/);
   const pairing = record.pairings.find((p: any) => p.pairingId === id);
   assert.ok(pairing.cardsAnswered >= 4);
   assert.ok(pairing.threadsAnswered >= 1);
@@ -174,8 +174,25 @@ test("an agent's draft on one workbench is a card for its owner, sent only on Se
   assert.match(alice.prompts()[0]!, /```botbench-peer-message/, "the builder was told how to draft");
   await new Promise((resolve) => setTimeout(resolve, 1500));
   assert.equal((await cards(bob)).length, 0, "nothing left before Send");
+  // The builder changed no file and drafted a message: the task ends there, as drafted, not as failed.
+  const drafted = await until("the task to end", async () => {
+    const t = (await alice.api("GET", `/api/tasks/${started.body.taskId}`)).body;
+    return t.status === "building" ? undefined : t;
+  });
+  assert.equal(drafted.status, "drafted");
+  assert.match(drafted.reason, /^Claude Code changed no file and drafted a message for another workbench instead\./);
+  // A signed-in device drew the card: once, and the record's wait counts from then.
+  assert.equal((await alice.api("POST", `/api/peers/pairings/${id}/cards/${draft.messageId}/seen`, { direction: "in" })).status, 404, "named by its direction too");
+  assert.equal((await alice.api("POST", `/api/peers/pairings/${id}/cards/${draft.messageId}/seen`, { direction: "out" })).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await alice.api("POST", `/api/peers/pairings/${id}/cards/${draft.messageId}/seen`, { direction: "out" })).status, 200, "a second draw changes nothing");
+  const before = (await alice.api("GET", "/api/peers/friction")).body.pairings.find((p: any) => p.pairingId === id).threadRecords[0].cards[0];
+  assert.ok(before.seenAt !== null);
   assert.equal((await alice.api("POST", `/api/peers/pairings/${id}/drafts/${draft.messageId}/send`, {})).status, 200);
   await until("the draft to be a card for bob", async () => (await cards(bob)).some((c) => c.messageId === draft.messageId && c.text === draft.text));
   const friction = (await alice.api("GET", "/api/peers/friction")).body.pairings.find((p: any) => p.pairingId === id);
   assert.equal(friction.sentAsDrafted, 1);
+  const card = friction.threadRecords[0].cards[0];
+  assert.equal(card.seenAt, before.seenAt, "seen once");
+  assert.ok(card.waitedMs >= 0 && card.waitedMs < Date.now() - Date.parse(draft.shownAt), "the wait counts from the first draw, not from when the card was made");
 });
