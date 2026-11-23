@@ -82,7 +82,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: unknown, timeoutMs?: number, giveUp?: AbortSignal): Promise<T> {
   const signals = [...(timeoutMs === undefined ? [] : [AbortSignal.timeout(timeoutMs)]), ...(giveUp ? [giveUp] : [])];
   const res = await fetch(path, {
     method,
@@ -403,6 +403,10 @@ export interface TaskSummary {
   pullRequest: PullRequestView;
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
+  /** The owner's note that waits for the builder to finish what it is doing now; `replacedOne` when it took the place of another. */
+  waitingNote: { id: number; text: string; sentAt: string; replacedOne: boolean } | null;
+  /** The latest note, when it was not delivered, with why. */
+  undeliveredNote: { id: number; text: string; sentAt: string; reason: string } | null;
   /** The mode of its run; manual for a task started on its own. */
   mode: RunMode;
   /** What the refine loop came to, and how many reviews and rounds of fixes there were. */
@@ -517,6 +521,14 @@ export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftove
 export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
 /** Take up a stopped task again. Refused (409, with the reason) for a task in any other state. */
 export const resumeTask = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/resume`, {}, 30_000);
+/** A note as the server stored it. */
+export interface TaskNote {
+  id: number;
+  text: string;
+  state: "waiting" | "delivered" | "replaced" | "not_delivered";
+}
+/** The owner's note for a building task's builder; the answer says which waiting note it replaced, if one waited. */
+export const sendTaskNote = (id: number, text: string): Promise<{ note: TaskNote; replaced: TaskNote | null }> => request("POST", `/api/tasks/${id}/notes`, { text }, 30_000);
 export const getTaskDiff = (id: number, file: string): Promise<{ file: string; diff: string; truncated: boolean }> =>
   request("GET", `/api/tasks/${id}/diff?file=${encodeURIComponent(file)}`);
 
@@ -680,6 +692,28 @@ export interface WorkbenchSetting {
 }
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
+
+/** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
+export interface MemoryNote {
+  id: number;
+  text: string;
+  hash: string;
+  savedAt: string;
+  editedAt: string | null;
+}
+
+/** The notes in memory, newest first, with the caps of one note and of the whole store. */
+export interface MemoryList {
+  notes: MemoryNote[];
+  maxNoteChars: number;
+  maxKb: number;
+}
+
+export const getMemory = (): Promise<MemoryList> => request("GET", "/api/memory", undefined, 30_000);
+/** Refused with 409 when the note changed since `hash` was read; nothing is overwritten then. */
+export const editMemoryNote = async (id: number, text: string, hash: string): Promise<MemoryNote> => (await request<{ note: MemoryNote }>("PUT", `/api/memory/${id}`, { text, hash }, 30_000)).note;
+/** The notes as they are after the forget. Refused with 409 when the note changed since `hash` was read. */
+export const forgetMemoryNote = (id: number, hash: string): Promise<MemoryList> => request("DELETE", `/api/memory/${id}`, { hash }, 30_000);
 
 /** Another workbench's open pull request on a repository's remote. Its title, branch, files and workbench are outside text. */
 export interface PeerPullRequest {
@@ -874,7 +908,9 @@ export type LogRule =
   | "web_refused"
   | "bookkeeping"
   | "issue_claim"
-  | "sandboxed";
+  | "sandboxed"
+  /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
+  | "memory";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

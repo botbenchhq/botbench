@@ -21,6 +21,7 @@ import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, word
 import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
 import { LIMIT_CANCELLED } from "./usage-limit.ts";
 import { learningsSection } from "./learnings.ts";
+import { memorySection } from "./memory.ts";
 import { messageIssue, takeOverGiven, type ClaimName } from "./claim-branch.ts";
 import { ownWorkbenches } from "../workbench.ts";
 
@@ -632,7 +633,7 @@ export function createRuns(options: RunsOptions): Runs {
       const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
       const oneTask = { oneTask: run.oneTask };
       // `close` stops only a session it can see: one still being started when Botbench began stopping is sent no turn.
-      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), learnings: learningsSection(run.repo), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
+      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), learnings: learningsSection(run.repo), memory: memorySection(home), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
       if (first === null && !gone()) outcome = { problem: STOPPED };
       else if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };

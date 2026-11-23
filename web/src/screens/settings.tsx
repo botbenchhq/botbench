@@ -3,6 +3,7 @@ import { agentState } from "../app/chat.ts";
 import { ApiError, getAgents, getAskEveryCommand, getChatWebAccess, getDefaultMode, getWorkbench, openEventStream, setAskEveryCommand, setChatWebAccess, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WebAccess, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { DeviceSettings } from "../app/device-settings.tsx";
+import { MemorySettings } from "../app/memory-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
 import { AgentConnection } from "../components/connect-sheet.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
@@ -380,6 +381,8 @@ export function SettingsScreen({ section, onSignedOut }: { section: "agents" | n
           <ChatWebAccess onSignedOut={onSignedOut} />
 
           <WorkbenchName onSignedOut={onSignedOut} />
+
+          <MemorySettings onSignedOut={onSignedOut} />
 
           <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-appearance`}>
             <h2 className="ds-settings-row__heading" id={`${id}-appearance`}>

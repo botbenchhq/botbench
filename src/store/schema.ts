@@ -1588,6 +1588,83 @@ ALTER TABLE tasks ADD COLUMN retry_at TEXT;
 `,
   },
   {
+    // The workbench memory store (engine/memory.ts, ADR 0006) keeps its notes as files under the data folder, not here.
+    // The action log gains `memory`: one entry per write the owner made to it (remember, edit, forget), naming the note
+    // by its number and holding none of its text, and belonging to no task or run. A check cannot be altered in place,
+    // so the action log is made again with every row kept, ids included, and its indexes and triggers put back.
+    name: "memory_log",
+    sql: `
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_memory;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_memory ORDER BY id;
+DROP TABLE action_log_before_memory;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // An owner's note to a task that is building (src/engine/notes.ts): its task, its words and when it was sent, and how
+    // it stands: `waiting` for the builder's turn to end, `delivered` as the next message of the session in `attempt_id`,
+    // `replaced` by a later note before it was delivered, or `not_delivered` with a plain `reason`. One note waits for a
+    // task at a time. A row is only ever added, leaves waiting once with what that change says (`settled_at`, and the
+    // attempt or the reason), and is never changed after or deleted, so every note the owner sent stays known.
+    name: "task_notes",
+    sql: `
+CREATE TABLE task_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  text TEXT NOT NULL CHECK (length(trim(text)) > 0 AND length(text) <= 4000),
+  sent_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('waiting', 'delivered', 'replaced', 'not_delivered')),
+  attempt_id INTEGER REFERENCES attempts (id),
+  reason TEXT,
+  settled_at TEXT,
+  CHECK ((state = 'waiting') = (settled_at IS NULL)),
+  CHECK ((state = 'delivered') = (attempt_id IS NOT NULL)),
+  CHECK ((state = 'not_delivered') = (reason IS NOT NULL))
+);
+CREATE INDEX task_notes_task ON task_notes (task_id, id);
+CREATE UNIQUE INDEX task_notes_one_waiting ON task_notes (task_id) WHERE state = 'waiting';
+CREATE TRIGGER task_notes_written_waiting BEFORE INSERT ON task_notes WHEN NEW.state <> 'waiting'
+BEGIN SELECT RAISE(ABORT, 'a note is first written as waiting'); END;
+CREATE TRIGGER task_notes_words_fixed BEFORE UPDATE OF id, task_id, text, sent_at ON task_notes
+BEGIN SELECT RAISE(ABORT, 'what a note says, its task and when it was sent cannot be changed'); END;
+CREATE TRIGGER task_notes_settled_once BEFORE UPDATE OF state, attempt_id, reason, settled_at ON task_notes WHEN OLD.state <> 'waiting' OR NEW.state = 'waiting'
+BEGIN SELECT RAISE(ABORT, 'a note leaves waiting once, and is never changed after'); END;
+CREATE TRIGGER task_notes_no_delete BEFORE DELETE ON task_notes
+BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
+`,
+  },
+  {
     // Adding a device with a one-time code (src/api/pairing.ts): at most one pairing, the one Settings made last. It holds
     // the SHA-256 of the code, never the code. `used_at` is set by the one sign-in it opened, so a second try is told the
     // code was used; `replaced_hash` is the code this one cancelled, so that code is told it was replaced. The row goes
