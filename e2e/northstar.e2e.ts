@@ -286,8 +286,13 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await expect(page.getByTestId("task-status")).toBeVisible();
 
   // The end of the loop: accepted without the owner, or handed to the owner, which fails here, saying why.
-  await expect(page.getByRole("heading", { name: /^(Accepted without you|Your decision|Accepted|Rejected)$/, level: 2 })).toBeVisible({ timeout: 1_800_000 });
-  await expect(page.getByRole("heading", { name: "Accepted without you", level: 2 }), `the task was not accepted by the mode: ${await page.getByTestId("task-status").textContent()}`).toBeVisible();
+  // The task's decision block (the design system's review decision): "Decision" once a mode decided, "Your decision"
+  // while it waits for the owner, which fails below, saying why.
+  const decision = page.getByTestId("decision");
+  await expect(decision.getByRole("heading", { name: /^(Decision|Your decision)$/, level: 2 })).toBeVisible({ timeout: 1_800_000 });
+  await expect(decision.getByRole("heading", { name: "Decision", level: 2 }), `the task was not accepted by the mode: ${await page.getByTestId("task-status").textContent()}`).toBeVisible();
+  await expect(decision.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted without you");
+  await expect(decision.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
   await expect(page.getByTestId("decided-by")).toHaveText(/^Accepted without you, as this run is fully autonomous: every check passed, the reviewer said it looks right and what it checked, and /);
 
   // The checks: the first build's failed, the round of fixes for it passed, and so did the work after the review's round.
