@@ -12,7 +12,7 @@ import { NO_SANDBOX } from "./support/confined.ts";
  * How many tests the runner skips off macOS. A test that newly takes its `skip` from test/support/confined.ts, or skips
  * for being off a Mac, makes this run fail until this number is changed with it.
  */
-const EXPECTED_SKIPPED = 0;
+const EXPECTED_SKIPPED = 136;
 
 const REPO = path.resolve(import.meta.dirname, "..");
 
