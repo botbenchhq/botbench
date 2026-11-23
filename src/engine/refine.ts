@@ -101,7 +101,8 @@ export function reviewOutcome(r: LoopRecord): ReviewOutcome {
   return loopVerdict(last) === "looks_right" && fix === null ? "satisfied" : "unresolved";
 }
 
-const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+/** "1 round", "2 rounds". */
+export const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 /** The plain line about the loop on the task: what the reviewer raised, what the builder did, and how it stands. Empty with no review. */
 export function outcomeLine(r: LoopRecord): string {
