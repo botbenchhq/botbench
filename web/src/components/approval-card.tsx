@@ -32,7 +32,7 @@ export function stepWord(role: string): string {
  * `here`: every request waiting is shown on this screen by its card, so the
  * tray is not drawn and only says, to a screen reader, that it is here.
  */
-export function ApprovalTray({ here }: { here: boolean }) {
+export function ApprovalTray({ here, peerCards = 0 }: { here: boolean; peerCards?: number }) {
   const { pending, problem, open } = useContext(ApprovalsContext);
   const oldest = pending?.[0];
   return (
@@ -40,6 +40,12 @@ export function ApprovalTray({ here }: { here: boolean }) {
       {here ? (
         // The card on this screen shows the request: the tray would say it again, so only a screen reader hears it, once.
         <span className="ds-visually-hidden">{pending!.length === 1 ? "An approval is waiting on this screen." : `${pending!.length} approvals are waiting on this screen.`}</span>
+      ) : oldest === undefined && peerCards > 0 ? (
+        // No approval waits, but a card about the paired workbench's messages does: it leads Work's Needs you.
+        <a href="#/work" className="ds-pending-tray__link" data-testid="tray-peer-cards">
+          <span className="ds-pending-tray__count">{peerCards}</span>
+          {peerCards === 1 ? " message with the paired workbench waits for you. Open it." : " messages with the paired workbench wait for you. Open them."}
+        </a>
       ) : oldest === undefined ? (
         pending === null && problem !== null && <span className="ds-pending-tray__text">{problem}</span>
       ) : (
@@ -49,6 +55,16 @@ export function ApprovalTray({ here }: { here: boolean }) {
         </a>
       )}
     </div>
+  );
+}
+
+/** Who asked, on a card of work given a paired workbench's message (ADR 0004 decision 10): the server's own line. */
+function AskedBy({ approval }: { approval: Approval }) {
+  const words = approval.askedBy?.words ?? null;
+  return words === null ? null : (
+    <p data-testid="approval-asked-by" data-ds-content="">
+      {words}
+    </p>
   );
 }
 
@@ -173,7 +189,9 @@ function QuestionCard({ approval, question, more, on, onSignedOut }: { approval:
           )}
         </ul>
       )}
-      {approval.outsideText && <p data-testid="approval-outside">This question comes from a run that read a GitHub issue, which people outside this project wrote. Answer it as you would answer them.</p>}
+      <AskedBy approval={approval} />
+      {approval.outsideText && approval.askedBy?.by !== "peer" && <p data-testid="approval-outside">This question comes from a run that read a GitHub issue, which people outside this project wrote. Answer it as you would answer them.</p>}
+      {approval.outsideText && approval.askedBy?.by === "peer" && <p data-testid="approval-outside">{`This question comes from work given a message from ${approval.askedBy.peerName === null ? "the paired workbench" : `${approval.askedBy.peerName}'s workbench`}, which another person wrote. Answer it as you would answer them.`}</p>}
       {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks this question again.</p>}
       {more > 0 && <p>{more === 1 ? "1 more request of this task waits behind this one." : `${more} more requests of this task wait behind this one.`}</p>}
       {problem !== null && (
@@ -355,7 +373,9 @@ function PermissionCard({ approval, more, on, onSignedOut }: { approval: Approva
       onAllow={() => answer("allow", "")}
       onDecline={(typed) => answer("decline", typed)}
     >
-      {approval.outsideText && <p data-testid="approval-outside">This request comes from a run that read a GitHub issue, which people outside this project wrote. Check the command for anything the issue might have led to.</p>}
+      <AskedBy approval={approval} />
+      {approval.outsideText && approval.askedBy?.by !== "peer" && <p data-testid="approval-outside">This request comes from a run that read a GitHub issue, which people outside this project wrote. Check the command for anything the issue might have led to.</p>}
+      {approval.outsideText && approval.askedBy?.by === "peer" && <p data-testid="approval-outside">{`This request comes from work given a message from ${approval.askedBy.peerName === null ? "the paired workbench" : `${approval.askedBy.peerName}'s workbench`}, which another person wrote. Check the command for anything the message might have led to.`}</p>}
       {approval.parkedAt !== null && <p data-testid="approval-parked">Asked before Botbench restarted. Claude Code is stopped; your answer starts it again where it left off, and counts only if it asks for exactly this again.</p>}
       {more > 0 && <p>{more === 1 ? `1 more request of this ${of} waits behind this one.` : `${more} more requests of this ${of} wait behind this one.`}</p>}
       {offer !== undefined && (

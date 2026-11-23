@@ -33,6 +33,8 @@ export interface Workbench {
   home: string;
   repo: string;
   peerAddress: string;
+  /** The owner's address, for a browser: http://127.0.0.1:<owner port>. */
+  base: string;
   /** Everything every start of this installation wrote, stdout and stderr. */
   output: () => string;
   /** Every prompt the replayed builder of the current start was sent, in order (only with a script). */
@@ -57,6 +59,7 @@ export async function workbench(t: { after(fn: () => unknown): void }, dir: stri
     home,
     repo,
     peerAddress: `127.0.0.1:${peerPort}`,
+    base: `http://127.0.0.1:${ownerPort}`,
     output: () => output,
     prompts: () => (fs.existsSync(promptsFile) ? (JSON.parse(fs.readFileSync(promptsFile, "utf8")) as string[]) : []),
     async start(o) {

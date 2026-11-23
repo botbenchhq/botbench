@@ -287,8 +287,11 @@ export async function interruptTurn(attemptId: number): Promise<void> {
 
 export const getTranscript = (attemptId: number): Promise<Transcript> => request("GET", `/api/attempts/${attemptId}/events`);
 
-/** `waiting_for_limit`: its builder's usage limit was reached; Botbench tries again by itself at `retryAt`. */
-export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit";
+/**
+ * `waiting_for_limit`: its builder's usage limit was reached; Botbench tries again by itself at `retryAt`. `drafted`:
+ * its builder changed no file and drafted a message to a paired workbench, which waits on its card for the owner's Send.
+ */
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit" | "drafted";
 
 /** The owner's decision on a task, as it was recorded. */
 /** One time a list of setup or check commands was run on a task, and how many commands it holds. */
@@ -401,6 +404,8 @@ export interface TaskSummary {
   outsideText: boolean;
   /** The issue its run was started from, or null. */
   issue: IssueLink | null;
+  /** The paired workbench's message the owner gave this task, with its thread; null for any other task. */
+  givenMessage: { pairingId: string; messageId: string; contextId: string | null; peerName: string } | null;
   /** The run whose approved plan queued this task, or null for a task started on its own. */
   ofPlan: number | null;
   /** The commands this task may run without asking, as the owner listed them when starting it. */
@@ -991,6 +996,8 @@ export interface Approval {
   question: Question | null;
   /** The owner's answer to a question, as given; null until there is one. */
   answer: string | null;
+  /** Who asked (ADR 0004 decision 10); `words` is the card's line for work given a paired workbench's message, else null. */
+  askedBy: { by: "owner" | "agent" | "peer"; pairingId: string | null; peerName: string | null; peerFingerprint: string | null; words: string | null };
 }
 
 /** Claude Code's question to the owner, as its card shows it. Every word is the agent's: shown as plain text, never as markdown or HTML. */
@@ -1159,6 +1166,8 @@ export interface StreamHandlers {
   onAgent?(announcement: { driver: string; state: string }): void;
   /** Called when the issue watch's proposals or a watched repository's state changed. */
   onWatch?(): void;
+  /** Called when a paired workbench's cards, messages or pairing may have changed. */
+  onPeers?(): void;
 }
 
 const RECONNECT_MS = [500, 1000, 2000, 5000];
@@ -1224,6 +1233,10 @@ export function openEventStream(after: number, handlers: StreamHandlers): () => 
     source.addEventListener("watch", () => {
       alive();
       handlers.onWatch?.();
+    });
+    source.addEventListener("peers", () => {
+      alive();
+      handlers.onPeers?.();
     });
     source.onmessage = (message) => {
       alive();
@@ -1343,3 +1356,131 @@ export interface UpdateStatus {
 export const getUpdate = (): Promise<UpdateStatus> => request("GET", "/api/update", undefined, 30_000);
 export const startUpdate = (): Promise<UpdateStatus> => request("POST", "/api/update", {}, 30_000);
 export const setUpdateMode = (mode: UpdateMode): Promise<UpdateStatus> => request("PUT", "/api/update", { mode }, 30_000);
+/*
+ * Pairing with another workbench and the messages between the two (Peers P5, ADR 0004). Everything the other workbench
+ * sent, and its name, is outside text: shown as plain text only.
+ */
+
+export type PairingState = "waiting_for_owner" | "waiting_for_peer" | "in_force" | "ended";
+export interface Pairing {
+  id: string;
+  state: PairingState;
+  /** The pairing's state in a sentence, as the server words it. */
+  words: string;
+  role: "inviter" | "joiner";
+  peer: { name: string; fingerprint: string; address: string };
+  ownFingerprint: string;
+  repository: string;
+  createdAt: string;
+  endedAt: string | null;
+}
+export interface PeerOverview {
+  /** The listener for paired workbenches, "127.0.0.1:4790"; null when the settings file leaves it off. */
+  listening: string | null;
+  /** This workbench's fingerprint, once its key exists. */
+  fingerprint: string | null;
+  pairings: Pairing[];
+  invites: { id: string; repository: string; expiresAt: string }[];
+}
+export interface PastedInvite {
+  id: string;
+  name: string;
+  fingerprint: string;
+  repository: string;
+  address: string;
+  expiresAt: string;
+  ownFingerprint: string;
+}
+export type MessageKind = "question" | "answer";
+export interface PeerCard {
+  pairingId: string;
+  messageId: string;
+  contextId: string;
+  kind: MessageKind;
+  direction: "in" | "out";
+  peer: { name: string; fingerprint: string };
+  title: string;
+  line: string;
+  text: string;
+  outsideText: boolean;
+  note: string | null;
+  askedBy: string | null;
+  choices: ("answer" | "give" | "dismiss" | "send" | "dont_send")[];
+  shownAt: string;
+  taskId: number | null;
+  runId: number | null;
+}
+export type SendState = "sending" | "delivered" | "refused" | "not_delivered" | "not_sent_switched_off" | "not_sent_ended";
+export interface PeerMessage {
+  messageId: string;
+  contextId: string;
+  parentId: string | null;
+  kind: MessageKind;
+  direction: "in" | "out";
+  text: string;
+  sentAt: string;
+  words: string;
+  state: SendState | "received";
+}
+export interface SentPeerMessage {
+  pairingId: string;
+  messageId: string;
+  contextId: string;
+  kind: MessageKind;
+  state: SendState;
+  words: string;
+}
+export interface KindSettings {
+  send: Record<MessageKind, boolean>;
+  receive: Record<MessageKind, boolean>;
+  peerReceives: Record<MessageKind, boolean>;
+}
+export interface CardFriction {
+  messageId: string;
+  direction: "in" | "out";
+  kind: string;
+  decision: string | null;
+  waitedMs: number | null;
+  sentAsDrafted: boolean | null;
+  seenAt: string | null;
+}
+export interface ThreadFriction {
+  contextId: string;
+  cardsAnswered: number;
+  waitsMs: number[];
+  sentAsDrafted: number | null;
+  reachedAnswer: boolean;
+  cards: CardFriction[];
+}
+export interface PairingFriction {
+  pairingId: string;
+  peer: string;
+  cardsAnswered: number;
+  waitsMs: number[];
+  sentAsDrafted: number | null;
+  threads: number;
+  threadsAnswered: number;
+  threadRecords: ThreadFriction[];
+}
+
+const pairingPath = (id: string): string => `/api/peers/pairings/${encodeURIComponent(id)}`;
+export const getPeerOverview = (): Promise<PeerOverview> => request("GET", "/api/peers/pairings", undefined, 15_000);
+export const makeInvite = (repo: string): Promise<{ id: string; invite: string; repository: string; expiresAt: string }> => request("POST", "/api/peers/invites", { repo }, 30_000);
+export const withdrawInvite = (id: string): Promise<unknown> => request("POST", `/api/peers/invites/${encodeURIComponent(id)}/withdraw`, {}, 15_000);
+export const pasteInvite = async (invite: string, repo: string): Promise<PastedInvite> => (await request<{ join: PastedInvite }>("POST", "/api/peers/joins", { invite, repo }, 30_000)).join;
+export const confirmInvite = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `/api/peers/joins/${encodeURIComponent(id)}/confirm`, {}, 60_000)).pairing;
+export const confirmPairing = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `${pairingPath(id)}/confirm`, {}, 15_000)).pairing;
+export const refusePairing = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `${pairingPath(id)}/refuse`, {}, 15_000)).pairing;
+export const endPairing = async (id: string): Promise<Pairing> => (await request<{ pairing: Pairing }>("POST", `${pairingPath(id)}/end`, {}, 15_000)).pairing;
+export const getPeerCards = async (): Promise<PeerCard[]> => (await request<{ cards: PeerCard[] }>("GET", "/api/peers/cards", undefined, 15_000)).cards;
+export const getPeerMessages = async (pairingId: string): Promise<PeerMessage[]> => (await request<{ messages: PeerMessage[] }>("GET", `${pairingPath(pairingId)}/messages`, undefined, 15_000)).messages;
+export const sendPeerMessage = async (pairingId: string, o: { kind: MessageKind; text: string; parentId?: string }): Promise<SentPeerMessage> => (await request<{ message: SentPeerMessage }>("POST", `${pairingPath(pairingId)}/messages`, o, 30_000)).message;
+export const answerPeerCard = async (pairingId: string, messageId: string, text: string): Promise<SentPeerMessage> => (await request<{ message: SentPeerMessage }>("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/answer`, { text }, 30_000)).message;
+export const givePeerCard = (pairingId: string, messageId: string, repo: string, allowHosts: boolean): Promise<{ taskId: number }> => request("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/give`, { repo, allowHosts }, 60_000);
+export const dismissPeerCard = (pairingId: string, messageId: string): Promise<unknown> => request("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/dismiss`, {}, 15_000);
+export const seePeerCard = (pairingId: string, direction: "in" | "out", messageId: string): Promise<unknown> => request("POST", `${pairingPath(pairingId)}/cards/${encodeURIComponent(messageId)}/seen`, { direction }, 15_000);
+export const sendPeerDraft = async (pairingId: string, messageId: string, text?: string): Promise<SentPeerMessage> => (await request<{ message: SentPeerMessage }>("POST", `${pairingPath(pairingId)}/drafts/${encodeURIComponent(messageId)}/send`, text === undefined ? {} : { text }, 30_000)).message;
+export const dontSendPeerDraft = (pairingId: string, messageId: string): Promise<unknown> => request("POST", `${pairingPath(pairingId)}/drafts/${encodeURIComponent(messageId)}/dont-send`, {}, 15_000);
+export const getPeerKinds = async (pairingId: string): Promise<KindSettings> => (await request<{ kinds: KindSettings }>("GET", `${pairingPath(pairingId)}/kinds`, undefined, 15_000)).kinds;
+export const setPeerKind = async (pairingId: string, direction: "send" | "receive", kind: MessageKind, allowed: boolean): Promise<KindSettings> => (await request<{ kinds: KindSettings }>("POST", `${pairingPath(pairingId)}/kinds`, { direction, kind, allowed }, 15_000)).kinds;
+export const getPeerFriction = async (): Promise<PairingFriction[]> => (await request<{ pairings: PairingFriction[] }>("GET", "/api/peers/friction", undefined, 15_000)).pairings;

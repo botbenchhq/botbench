@@ -118,6 +118,7 @@ const NOT_READY: Record<Exclude<TaskStatus, "awaiting_decision" | "accepted" | "
   failed: "failed",
   cancelled: "was cancelled",
   waiting_for_limit: "is waiting for a usage limit to reset",
+  drafted: "changed no file and ended with a message drafted for another workbench, so there is nothing to accept or reject",
 };
 
 function ready(task: Task): void {
@@ -328,7 +329,7 @@ async function keepLearning(db: DatabaseSync, task: Task, note: string): Promise
  */
 
 /** The states a task ends in without ever being ready for review. */
-export const ENDED_UNREVIEWED: ReadonlySet<TaskStatus> = new Set(["failed", "interrupted", "cancelled"]);
+export const ENDED_UNREVIEWED: ReadonlySet<TaskStatus> = new Set(["failed", "interrupted", "cancelled", "drafted"]);
 
 /** The rule a discard is logged under. */
 const DISCARDED = "owner_discarded" as const;
@@ -377,7 +378,7 @@ export async function discardTask(db: DatabaseSync, input: DiscardInput): Promis
   if (!task) throw new TaskError(404, "No such task.");
   if (task.status === "awaiting_decision") throw new TaskError(409, `Task ${task.id} is ready for review: accept or reject it instead.`);
   if (task.status === "accepted" || task.status === "rejected") throw new TaskError(409, `Task ${task.id} was already ${task.status}, and its copy was removed then.`);
-  if (!ENDED_UNREVIEWED.has(task.status)) throw new TaskError(409, `Task ${task.id} ${NOT_READY[task.status as keyof typeof NOT_READY]}. Only a task that failed, was stopped or was cancelled can be discarded.`);
+  if (!ENDED_UNREVIEWED.has(task.status)) throw new TaskError(409, `Task ${task.id} ${NOT_READY[task.status as keyof typeof NOT_READY]}. Only a task that failed, was stopped, was cancelled or drafted a message can be discarded.`);
   if (deciding.has(task.id)) throw new TaskError(409, `Task ${task.id} is being discarded already.`);
   deciding.add(task.id);
   try {

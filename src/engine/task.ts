@@ -40,7 +40,11 @@ import { BUILDER_AGENTS, CARRY_ON, currentBuilder, earlierRecord, handoffProblem
  * `waiting_for_limit` is a builder's turn that ended on its agent's usage limit: its work is committed, and at the time
  * stored with it Botbench resumes its session once and it goes back to `building` (engine/usage-limit.ts).
  */
-export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit";
+/**
+ * `drafted`: the builder changed no file and wrote a message to a paired workbench, which waits on its card for the
+ * owner's Send (Peers P5). Its work is the draft, so it neither failed nor waits for a decision; it ends there.
+ */
+export type TaskStatus = "queued" | "building" | "verifying" | "reviewing" | "awaiting_decision" | "accepted" | "rejected" | "interrupted" | "failed" | "cancelled" | "waiting_for_limit" | "drafted";
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
@@ -50,7 +54,7 @@ export type ChecksMark = "passed" | "failed" | "none";
  */
 const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   queued: ["building", "interrupted", "failed", "cancelled"],
-  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled", "waiting_for_limit"],
+  building: ["building", "verifying", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled", "waiting_for_limit", "drafted"],
   // To building: a check failed, and the builder is sent it for a round of fixes (engine/check-fix.ts).
   verifying: ["verifying", "building", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
@@ -62,6 +66,7 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   // Only by the owner's Resume of a task whose builder changed no file (`changedNothing`).
   failed: ["building"],
   cancelled: [],
+  drafted: [],
   // Back to work at its stored time, by Botbench itself; or ended by a cancel of its run.
   waiting_for_limit: ["building", "cancelled"],
 };
@@ -356,6 +361,12 @@ export function stageOf(db: DatabaseSync, task: Task): "setup" | "turn" | "check
 /** The reason a task fails with when its builder's turn ended and its branch holds no change from its base. */
 export const CHANGED_NOTHING = "Claude Code finished without changing any file.";
 
+/** The reason a task ends `drafted` with: its builder changed no file and drafted a message to a paired workbench. */
+export const DRAFTED_NOTHING_CHANGED = "Claude Code changed no file and drafted a message for another workbench instead. It leaves this Mac only if you press Send on its card.";
+
+/** Whether the builder's reply in this task made a card for a draft to a paired workbench that still waits for the owner (src/peers/drafts.ts). */
+const draftedACard = (db: DatabaseSync, taskId: number): boolean => db.prepare("SELECT 1 FROM peer_drafts d JOIN peer_cards c ON c.pairing_id = d.pairing_id AND c.direction = 'out' AND c.message_id = d.message_id WHERE d.task_id = ? AND c.decided_at IS NULL").get(taskId) !== undefined;
+
 /** Whether a task failed because its builder changed no file: the one failed task the owner can resume. */
 export const changedNothing = (task: Pick<Task, "status" | "reason">): boolean => task.status === "failed" && task.reason !== null && task.reason.startsWith(CHANGED_NOTHING);
 
@@ -390,6 +401,7 @@ const STANDS: Record<TaskStatus, string> = {
   failed: "failed",
   cancelled: "was cancelled",
   waiting_for_limit: "is waiting for a usage limit to reset, and Botbench tries again by itself at the time it shows",
+  drafted: "ended with a message drafted for another workbench, and changed no file",
 };
 
 const MAX_PATH = 4096;
@@ -748,6 +760,8 @@ export function createTasks(options: TasksOptions): Tasks {
     // Nothing to check or review: the task fails, saying so, and the owner can resume it or discard it. A round of fixes
     // that changes nothing is another matter (`refined`): the build before it did change the work.
     if (!made.changed) {
+      // A reply that drafted a message to a paired workbench and changed nothing did what it was asked: it ends there.
+      if (draftedACard(db, task.id)) return void move(task.id, "drafted", { headCommit: made.headCommit, reason: DRAFTED_NOTHING_CHANGED });
       const last = reply.trim() === "" ? "It wrote no message." : `Its last message: ${reply.trim().length > 600 ? `${reply.trim().slice(0, 600)}…` : reply.trim()}`;
       return void move(task.id, "failed", { headCommit: made.headCommit, reason: `${CHANGED_NOTHING} ${last}` });
     }

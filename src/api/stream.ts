@@ -50,6 +50,8 @@ export interface EventStream {
   announceAgent(driver: string, state: string): void;
   /** Tell every client that the issue watch's proposals or a watched repository's state changed. Carries nothing: clients read them from their route. */
   announceWatch(): void;
+  /** Tell every client that a paired workbench's cards, messages or pairing may have changed. Carries nothing: clients read them from their routes. */
+  announcePeers(): void;
   clients(): number;
   /** End every open stream. */
   close(): void;
@@ -136,10 +138,14 @@ export function createEventStream(db: DatabaseSync, heartbeatMs = DEFAULT_HEARTB
     for (const res of cursors.keys()) res.write("event: watch\ndata: {}\n\n");
   };
 
+  const announcePeers = (): void => {
+    for (const res of cursors.keys()) res.write("event: peers\ndata: {}\n\n");
+  };
+
   const close = (): void => {
     for (const res of [...cursors.keys()]) res.destroy();
     cursors.clear();
   };
 
-  return { handle, notify, announceTask, announceRun, announceApproval, announceAgent, announceWatch, clients: () => cursors.size, close };
+  return { handle, notify, announceTask, announceRun, announceApproval, announceAgent, announceWatch, announcePeers, clients: () => cursors.size, close };
 }

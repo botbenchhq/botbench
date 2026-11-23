@@ -11,8 +11,9 @@ import { getPairing, maySend, pairingState } from "./pairings.ts";
  * draft the SHA-256 of the text drafted and of the text sent, so the record can say whether it went exactly as drafted.
  * A card closed because its pairing ended was decided by nobody and is not counted as answered.
  *
- * This is the store and one query. No screen shows it, and no card is raised by anything yet: the units that put
- * these cards in front of the owner write them.
+ * The cards are raised by the listener (a peer's message) and by drafts.ts (an agent's draft), and drawn by the
+ * client, which says when a signed-in device first drew each one (`seeCard`); Settings → Paired workbench shows the
+ * record.
  */
 
 export type IncomingDecision = "answered" | "given_to_agent" | "dismissed";
@@ -46,6 +47,21 @@ export function showDraftCard(db: DatabaseSync, c: CardFor & { draft: string; dr
   db.prepare("INSERT INTO peer_cards (pairing_id, direction, message_id, context_id, kind, drafted_at, draft_digest, shown_at) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(c.pairingId, c.messageId, c.contextId, c.kind, iso(c.draftedAt), textDigest(c.draft), iso(at));
 }
 
+/**
+ * A signed-in device drew the card for the first time: the friction record's "shown". Only the first draw of a card
+ * still waiting counts; a later one, or one of a decided card, changes nothing. False when there is no such card.
+ */
+export function seeCard(db: DatabaseSync, pairingId: string, direction: "in" | "out", messageId: string, at: Date = new Date()): boolean {
+  const row = db.prepare("SELECT seen_at, decided_at, shown_at FROM peer_cards WHERE pairing_id = ? AND direction = ? AND message_id = ?").get(pairingId, direction, messageId);
+  if (row === undefined) return false;
+  if (row.seen_at === null && row.decided_at === null) {
+    // Never earlier than the card itself, should the two clocks of one Mac's calls disagree by a moment.
+    const when = iso(at) < String(row.shown_at) ? String(row.shown_at) : iso(at);
+    db.prepare("UPDATE peer_cards SET seen_at = ? WHERE pairing_id = ? AND direction = ? AND message_id = ? AND seen_at IS NULL AND decided_at IS NULL").run(when, pairingId, direction, messageId);
+  }
+  return true;
+}
+
 /** The owner's decision on an incoming message's card. */
 export function decideIncomingCard(db: DatabaseSync, pairingId: string, messageId: string, decision: IncomingDecision, at: Date = new Date()): void {
   decide(db, pairingId, "in", messageId, decision, null, at);
@@ -71,8 +87,14 @@ export interface CardFriction {
   direction: "in" | "out";
   kind: string;
   decision: string | null;
-  /** From shown to decided, in milliseconds; null while it waits, and for a card its pairing's end closed. */
+  /**
+   * From shown to decided, in milliseconds; null while it waits, and for a card its pairing's end closed. Shown is when
+   * a signed-in device first drew the card (`seenAt`), or, for a card decided before any device drew it, when the
+   * server made it.
+   */
   waitedMs: number | null;
+  /** When a signed-in device first drew the card; null when none has. */
+  seenAt: string | null;
   /** An outgoing draft: whether the text sent is exactly the text drafted; null when not sent, and on an incoming card. */
   sentAsDrafted: boolean | null;
 }
@@ -94,7 +116,8 @@ export function threadFriction(db: DatabaseSync, pairingId: string, contextId: s
       direction: row.direction === "in" ? "in" : "out",
       kind: String(row.kind),
       decision,
-      waitedMs: byPerson ? Date.parse(String(row.decided_at)) - Date.parse(String(row.shown_at)) : null,
+      waitedMs: byPerson ? Date.parse(String(row.decided_at)) - Date.parse(String(row.seen_at ?? row.shown_at)) : null,
+      seenAt: row.seen_at == null ? null : String(row.seen_at),
       // Sent means the owner pressed Send; a message whose kind was switched off by then never left, so it is no draft "sent as drafted".
       sentAsDrafted: decision === "sent" && db.prepare("SELECT 1 FROM peer_messages WHERE pairing_id = ? AND direction = 'out' AND message_id = ?").get(pairingId, String(row.message_id)) !== undefined ? row.sent_digest === row.draft_digest : null,
     };

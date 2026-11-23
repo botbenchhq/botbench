@@ -57,6 +57,8 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     // Inherited from its run: it read a GitHub issue, written outside the project (engine/intake.ts).
     outsideText: runOutside(db, task.runId).text,
     issue: ((issue) => (issue === null ? null : issueLink(issue)))(runIssue(db, task.runId)),
+    // The paired workbench's message this task was given (Peers P5), with its thread, for the task's Outside text; null for any other task.
+    givenMessage: givenMessageOf(db, task.runId),
     decision: decisionOf(db, task.id),
     pullRequest: deliveryOf(db, task),
     resumeNote: resumeNote(db, task),
@@ -72,6 +74,13 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     ...loopCounts(db, task.id),
     createdAt, updatedAt,
   };
+}
+
+function givenMessageOf(db: DatabaseSync, runId: number | null): { pairingId: string; messageId: string; contextId: string | null; peerName: string } | null {
+  if (runId === null) return null;
+  const row = db.prepare("SELECT r.peer_pairing_id, r.peer_message_id, r.peer_name, m.context_id FROM runs r LEFT JOIN peer_messages m ON m.pairing_id = r.peer_pairing_id AND m.message_id = r.peer_message_id AND m.direction = 'in' WHERE r.id = ? AND r.peer_pairing_id IS NOT NULL").get(runId);
+  if (row === undefined) return null;
+  return { pairingId: String(row.peer_pairing_id), messageId: String(row.peer_message_id), contextId: row.context_id == null ? null : String(row.context_id), peerName: String(row.peer_name) };
 }
 
 function notesOf(db: DatabaseSync, taskId: number): { waitingNote: Record<string, unknown> | null; undeliveredNote: Record<string, unknown> | null } {

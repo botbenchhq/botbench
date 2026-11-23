@@ -95,8 +95,12 @@ export interface PeerRow {
   title: string | null;
   branch: string | null;
   workbench: string;
-  /** What follows the workbench's name on the second line, starting with " · ". */
+  /** What follows the workbench's name on the second line, starting with " · ", up to the repository. */
   rest: string;
+  /** The repository as its remote names it (host/owner/name): outside text, so it is drawn apart from Botbench's words. */
+  repository: string;
+  /** What follows the repository, if anything. */
+  after: string;
 }
 
 /**
@@ -105,11 +109,11 @@ export interface PeerRow {
  * viewer's own, and another workbench may keep the same repository in a folder of any name.
  */
 export function peerRows(view: Extract<PeersView, { state: "ready" }>, now: number = Date.now()): PeerRow[] {
-  const where = ` · ${view.repository}`;
+  const repository = view.repository;
   return [
-    ...view.pullRequests.map((pr): PeerRow => ({ key: `pr ${pr.number}`, kind: "pull-request", url: pr.url, lead: `Pull request #${pr.number}: `, title: pr.title, branch: null, workbench: pr.workbench, rest: `${pr.closes.length === 0 ? "" : ` · Closes ${pr.closes.map((n) => `#${n}`).join(", ")}`}${where} (opens GitHub in a new tab)` })),
-    ...view.claims.map((c): PeerRow => ({ key: `claim ${c.branch}`, kind: "claim", url: null, lead: "", title: null, branch: c.branch, workbench: c.workbench, rest: ` · Started on issue #${c.issue} ${agoWords(c.startedAt, now)}${where}` })),
-    ...view.branches.map((b): PeerRow => ({ key: `branch ${b.branch}`, kind: "branch", url: null, lead: "", title: null, branch: b.branch, workbench: b.workbench, rest: ` · Pushed, no pull request yet${where}` })),
+    ...view.pullRequests.map((pr): PeerRow => ({ key: `pr ${pr.number}`, kind: "pull-request", url: pr.url, lead: `Pull request #${pr.number}: `, title: pr.title, branch: null, workbench: pr.workbench, rest: `${pr.closes.length === 0 ? "" : ` · Closes ${pr.closes.map((n) => `#${n}`).join(", ")}`} · `, repository, after: " (opens GitHub in a new tab)" })),
+    ...view.claims.map((c): PeerRow => ({ key: `claim ${c.branch}`, kind: "claim", url: null, lead: "", title: null, branch: c.branch, workbench: c.workbench, rest: ` · Started on issue #${c.issue} ${agoWords(c.startedAt, now)} · `, repository, after: "" })),
+    ...view.branches.map((b): PeerRow => ({ key: `branch ${b.branch}`, kind: "branch", url: null, lead: "", title: null, branch: b.branch, workbench: b.workbench, rest: " · Pushed, no pull request yet · ", repository, after: "" })),
   ];
 }
 

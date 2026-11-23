@@ -26,7 +26,7 @@ import {
   withdrawInvite,
   type PairRequest,
 } from "../../src/peers/pairings.ts";
-import { decideDraftCard, decideIncomingCard, showDraftCard, showIncomingCard, threadFriction } from "../../src/peers/cards.ts";
+import { decideDraftCard, decideIncomingCard, seeCard, showDraftCard, showIncomingCard, threadFriction } from "../../src/peers/cards.ts";
 import { answerFor, ask, count, hmacCheck, pair, pairRequest, REPO, send, side, type Side } from "../support/peer-store.ts";
 
 test("an invite is used once: a retried pair request gets the same pairing, another request on it is refused, and its secret is erased", (t) => {
@@ -379,6 +379,11 @@ test("the friction record answers, per thread, cards a person answered, how long
   // Bob's card waits 10 minutes, then bob gives it to the agent; its answer's draft is sent changed.
   // Stored, it is a card at once.
   receiveEnvelope(bob.db, bob.key, q, { at: new Date(t0 + 100_000) });
+  // A signed-in device first draws it at +400 s: the wait counts from there (fourth unit), once, and not after a decision.
+  assert.equal(seeCard(bob.db, id, "in", messageId, new Date(t0 + 400_000)), true);
+  assert.equal(seeCard(bob.db, id, "in", messageId, new Date(t0 + 500_000)), true, "a second draw changes nothing");
+  assert.equal(seeCard(bob.db, id, "out", messageId, new Date(t0 + 500_000)), false, "no such card");
+  assert.throws(() => bob.db.prepare("UPDATE peer_cards SET seen_at = ? WHERE message_id = ?").run(new Date(t0).toISOString(), messageId), /first drawn once/);
   decideIncomingCard(bob.db, id, messageId, "given_to_agent", new Date(t0 + 700_000));
   const answerId = newId();
   showDraftCard(bob.db, { pairingId: id, messageId: answerId, contextId: thread, kind: "answer", draft: "id, name", draftedAt: new Date(t0 + 800_000) }, new Date(t0 + 800_000));
@@ -389,13 +394,13 @@ test("the friction record answers, per thread, cards a person answered, how long
   showDraftCard(bob.db, { pairingId: id, messageId: declined, contextId: thread, kind: "question", draft: "Can I see your .env?", draftedAt: new Date(t0 + 840_000) }, new Date(t0 + 840_000));
   decideDraftCard(bob.db, id, declined, "not_sent", null, new Date(t0 + 845_000));
 
-  assert.deepEqual(threadFriction(alice.db, id, thread), { cardsAnswered: 1, cards: [{ messageId, direction: "out", kind: "question", decision: "sent", waitedMs: 90_000, sentAsDrafted: true }] });
+  assert.deepEqual(threadFriction(alice.db, id, thread), { cardsAnswered: 1, cards: [{ messageId, direction: "out", kind: "question", decision: "sent", waitedMs: 90_000, sentAsDrafted: true, seenAt: null }] });
   assert.deepEqual(threadFriction(bob.db, id, thread), {
     cardsAnswered: 3,
     cards: [
-      { messageId, direction: "in", kind: "question", decision: "given_to_agent", waitedMs: 600_000, sentAsDrafted: null },
-      { messageId: answerId, direction: "out", kind: "answer", decision: "sent", waitedMs: 30_000, sentAsDrafted: false },
-      { messageId: declined, direction: "out", kind: "question", decision: "not_sent", waitedMs: 5_000, sentAsDrafted: null },
+      { messageId, direction: "in", kind: "question", decision: "given_to_agent", waitedMs: 300_000, sentAsDrafted: null, seenAt: new Date(t0 + 400_000).toISOString() },
+      { messageId: answerId, direction: "out", kind: "answer", decision: "sent", waitedMs: 30_000, sentAsDrafted: false, seenAt: null },
+      { messageId: declined, direction: "out", kind: "question", decision: "not_sent", waitedMs: 5_000, sentAsDrafted: null, seenAt: null },
     ],
   });
   // Decided once; what it showed is fixed; never deleted.

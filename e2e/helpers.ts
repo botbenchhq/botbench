@@ -180,7 +180,9 @@ export async function startRunIn(page: Page, repo: string, prompt: string, optio
   if (options.review) {
     const sheet = await openRow(page, "Review");
     // The reviewer and model as the option's value: the agent and the model id, apart by a space.
-    await sheet.locator(`input[name="review"][value="${options.review}"]`).check();
+    // A click, not check(): choosing an option goes back to the rows by itself, so the radio may be gone before check()
+    // could read it. The row says what was chosen.
+    await sheet.locator(`input[name="review"][value="${options.review}"]`).click();
     await backToRows(sheet);
   }
   if (options.delivery) await choose(page, "When accepted", options.delivery);

@@ -33,7 +33,7 @@ import {
 import { transaction } from "../store/db.ts";
 const atomicIn = (db: DatabaseSync) => <T>(fn: () => T): T => (db.isTransaction ? fn() : transaction(db, fn));
 import type { GivenMessage } from "../engine/task.ts";
-import { decideIncomingCard } from "./cards.ts";
+import { decideIncomingCard, seeCard } from "./cards.ts";
 import { PeerError } from "./errors.ts";
 import { pairingScope } from "./scope.ts";
 import { postToPeer, type PeerRoute } from "./transport.ts";
@@ -122,6 +122,8 @@ export interface PeerLink {
   kinds(pairingId: unknown): KindSettings;
   setKind(input: { pairingId: unknown; direction: unknown; kind: unknown; allowed: unknown }): KindSettings;
   friction(): PairingRecord[];
+  /** A signed-in device drew a card for the first time (the friction record's "shown"). Throws 404 when there is no such card. */
+  seeCard(pairingId: unknown, direction: unknown, messageId: unknown): void;
   /** Give it to Claude Code, first step: check the card and the copy, and say what the task is given. */
   prepareGive(pairingId: unknown, messageId: unknown, repo: unknown, allowHosts: unknown): Promise<{ repo: string; prompt: string; given: GivenMessage }>;
   /** Give it to Claude Code, last step, in the write that stores the task: the card is decided, naming it. Throws (409) when it was decided meanwhile. */
@@ -136,6 +138,12 @@ export interface PeerLinkOptions {
   inviteLifeMs?: number;
   /** The longest wait between two tries of an outgoing confirmation or notice. */
   maxRetryMs?: number;
+  /**
+   * Called when anything the owner's peer screens show may have changed: a card, a message or its state, a pairing or
+   * a setting, whoever changed it (the peer, an agent's draft, the owner, a retry). Carries nothing; the screens read
+   * their routes again.
+   */
+  onChange?: () => void;
 }
 
 interface Join {
@@ -169,6 +177,32 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
   const expiries = new Set<NodeJS.Timeout>();
   let passing = false;
   let closed = false;
+
+  /**
+   * One cheap reading of everything the peer screens show, compared at each tick: the newest message and card, how many cards are decided, how many sends were stopped and pairings ended, and each pairing's
+   * confirmations. When it moves, `onChange` is told.
+   */
+  let seenVersion = "";
+  const changed = (): void => {
+    if (o.onChange === undefined) return;
+    try {
+      const row = db
+        .prepare(
+          `SELECT (SELECT max(id) FROM peer_messages) AS m, (SELECT max(id) FROM peer_cards) AS c, (SELECT count(*) FROM peer_cards WHERE decided_at IS NOT NULL) AS d,
+                  (SELECT count(*) FROM peer_send_outcomes) AS s, (SELECT count(*) FROM peer_pairing_ends) AS e, (SELECT count(*) FROM peer_kind_settings) AS k,
+                  (SELECT group_concat(id || coalesce(owner_confirmed_at, '') || coalesce(peer_confirmed_at, ''), ',') FROM peer_pairings) AS p,
+                  (SELECT count(*) FROM peer_invites WHERE state = 'open') AS i`,
+        )
+        .get();
+      const version = JSON.stringify(row);
+      if (version === seenVersion) return;
+      seenVersion = version;
+    } catch (err) {
+      console.error(`Reading what changed for the paired workbench failed: ${words(err)}`);
+      return;
+    }
+    o.onChange();
+  };
 
   const track = <T>(p: Promise<T>): Promise<T> => {
     inFlight.add(p);
@@ -325,6 +359,7 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
     }
   };
   function kick(): void {
+    changed();
     if (!closed && bound !== null) void track(pass());
   }
 
@@ -435,7 +470,10 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
       sweep();
       const sweeper = setInterval(sweep, SWEEP_MS);
       sweeper.unref();
-      const ticker = setInterval(() => void track(pass()), 1000);
+      const ticker = setInterval(() => {
+        changed();
+        void track(pass());
+      }, 1000);
       ticker.unref();
       abort.signal.addEventListener("abort", () => {
         clearInterval(sweeper);
@@ -559,13 +597,19 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
       kick();
       return sent;
     },
-    dismissCard: (pairingId, messageId) => dismissCard(db, pairingId, messageId),
+    dismissCard(pairingId, messageId) {
+      dismissCard(db, pairingId, messageId);
+      changed();
+    },
     sendDraft(pairingId, messageId, edited) {
       const sent = sendDraft(db, ownKey(), pairingId, messageId, edited, { roundTrips });
       kick();
       return sent;
     },
-    dontSendDraft: (pairingId, messageId) => dontSendDraft(db, pairingId, messageId),
+    dontSendDraft(pairingId, messageId) {
+      dontSendDraft(db, pairingId, messageId);
+      changed();
+    },
     cards: () => waitingCards(db),
     messages: (pairingId) => pairingMessages(db, pairingId),
     kinds: (pairingId) => kindSettings(db, pairingOf(String(pairingId)).id),
@@ -575,6 +619,9 @@ export function createPeerLink(o: PeerLinkOptions): PeerLink {
       return settings;
     },
     friction: () => frictionRecord(db),
+    seeCard(pairingId, direction, messageId) {
+      if (typeof pairingId !== "string" || (direction !== "in" && direction !== "out") || typeof messageId !== "string" || !seeCard(db, pairingId, direction, messageId)) throw new PeerError(404, "There is no card by that id.");
+    },
     async prepareGive(pairingId, messageId, repoInput, allowHosts) {
       const p = pairingOf(String(pairingId));
       if (pairingState(p) === "ended") throw new PeerError(409, `The pairing with ${p.peerName} has ended.`);
