@@ -6,7 +6,14 @@ import { reviewAssignment } from "./review.ts";
 import { protectedWords, unexpectedWords } from "./scope.ts";
 
 /*
- * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it). A mode is about the
+ * The three modes of a run, chosen when it starts. While the run has not finished the owner may make its mode stricter
+ * (fully autonomous to semi-autonomous or manual, semi-autonomous to manual), never looser; a trigger refuses any other
+ * change, and each change is in the run's history as the owner's (`tightenMode` in run.ts, `modeChanges` here). Making
+ * a mode stricter only takes away what the run did without the owner: the broker and the engine read the mode from the
+ * store for each request and each result, so from the next one a request that ran or was refused may ask, and a result
+ * the mode would have accepted waits for the owner. A request already waiting stays for the owner, a turn under way
+ * finishes, and the safety floor and the rules for a run that read outside text are the same in every mode, so none
+ * of them is loosened by the change. A mode is about the
  * owner's decisions, not about tools: in every mode using a tool never asks (a read, an edit inside the task's copy, a
  * confined command the safety floor does not name, the CLI's own bookkeeping, the web as the owner's setting Web
  * access allows), and an action or change that matters outside the copy asks (approvals/gate.ts).
@@ -30,6 +37,23 @@ export const isRunMode = (value: unknown): value is RunMode => typeof value === 
 
 /** A mode in the words a sentence uses: "this run is …". */
 export const MODE_WORDS: Record<RunMode, string> = { manual: "manual", semi: "semi-autonomous", full: "fully autonomous" };
+
+/**
+ * The modes a run may be made stricter to now, strictest last: none for a manual run or one that has finished. The
+ * store's trigger `runs_mode_stricter_only` holds the same rule. `status` is a run's (engine/run.ts `RunStatus`).
+ */
+export function stricterModes(mode: RunMode, status: string): RunMode[] {
+  if (status === "done" || status === "cancelled" || status === "failed") return [];
+  return RUN_MODES.slice(0, RUN_MODES.indexOf(mode)).reverse();
+}
+
+/** Each change of a run's mode the owner made, oldest first, with when and what the run screen says of it. */
+export function modeChanges(db: DatabaseSync, runId: number): { at: string; from: RunMode; to: RunMode; words: string }[] {
+  return db
+    .prepare("SELECT ts, mode_from, mode_to FROM run_events WHERE run_id = ? AND mode_to IS NOT NULL ORDER BY id")
+    .all(runId)
+    .flatMap((row) => (isRunMode(row.mode_from) && isRunMode(row.mode_to) ? [{ at: String(row.ts), from: row.mode_from, to: row.mode_to, words: `You changed the mode from ${MODE_WORDS[row.mode_from]} to ${MODE_WORDS[row.mode_to]}.` }] : []));
+}
 
 /** The mode of a run by its id; manual for a task of no run, as every task was before modes. */
 export function runModeOf(db: DatabaseSync, runId: number | null): RunMode {
