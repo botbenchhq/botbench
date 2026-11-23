@@ -30,8 +30,8 @@ keywords = ["/users/"]
 tags = ["personal-data"]
 
 [[rules.allowlists]]
-description = "placeholder account names in tests and docs"
-regexes = ['''^(?:owner|me|you|someone|mira|x|o|name|username)$''']
+description = "placeholder account names in tests and docs, and macOS's /Users/Shared, which is no account (the Codex live test and capture write there: outside the task's copy and every place Botbench's profile denies)"
+regexes = ['''^(?:owner|me|you|someone|mira|x|o|name|username|Shared)$''']
 
 # Older commits that hold the owner's own home folder path, from before this rule: a test line in
 # test/drivers/launch.test.ts (since replaced with /Users/owner) and a stray test file, .t/h/.gitconfig, removed again

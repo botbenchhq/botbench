@@ -63,8 +63,23 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await sheet.getByRole("radio", { name: "shipment-tracking-api" }).click();
     await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
     await expect(sheet.locator('[data-row="repository"]')).toBeFocused();
+    // Codex is offered as the builder only where the installed Codex can build (the server's check of the agents): the
+    // Builder row follows what to do then.
+    const codexBuilds = await page.evaluate(async () => ((await (await fetch("/api/agents")).json()) as { agents: { agent: string; roles: string[] }[] }).agents.some((a) => a.agent === "codex" && a.roles.includes("builder")));
+    const builderRow = codexBuilds ? ["Builder Claude Code"] : [];
     // A task in a repository: what to do, its mode (always Manual for a task on its own), its commands and the model.
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do One task", "Mode Manual", "Allowed commands 1 command", expect.stringMatching(/^Model .+/)]);
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do One task", ...builderRow, "Mode Manual", "Allowed commands 1 command", expect.stringMatching(/^Model .+/)]);
+    if (codexBuilds) {
+      // Codex can be chosen to build; the sentence under the box names who builds, and Claude Code is the choice again after.
+      await choose(page, "Builder", "Codex");
+      await expect.poll(() => rows(page)).toContain("Builder Codex");
+      await closeContext(page);
+      await expect(page.getByTestId("composer-about")).toContainText("Codex works on a new branch");
+      await tempShot(page, "composer-builder-codex");
+      await openContext(page);
+      await choose(page, "Builder", "Claude Code");
+      await expect.poll(() => rows(page)).toContain("Builder Claude Code");
+    }
 
     // A task on its own cannot take another mode, and says so.
     await openRow(page, "Mode");
@@ -75,7 +90,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
 
     // A run adds its spec file, review, and what happens when a task is accepted.
     await choose(page, "What to do", "Plan a run");
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Keep the branch", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Keep the branch", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
     await openRow(page, "Mode");
     await sheet.getByRole("radio", { name: "Fully autonomous" }).check();
     await expect(sheet.getByRole("radio", { name: "Fully autonomous" })).toHaveAccessibleDescription(/^Accepts work without you /);
@@ -110,7 +125,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await expect(box).toHaveAttribute("aria-label", "Describe what to plan");
     await openContext(page);
     // Fully autonomous is not remembered: the mode is Settings' default again (Manual), as a new visit should start.
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
     // Escape closes the sheet and gives the focus back to Add context.
     await page.keyboard.press("Escape");
     await expect(contextSheet(page)).toBeHidden();
