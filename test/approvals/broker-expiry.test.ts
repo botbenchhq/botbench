@@ -104,8 +104,10 @@ function agent(b: Bench, o: { mode?: RunMode; limit?: number | null; role?: stri
 }
 
 const rulesOf = (b: Bench, approvalId: number): string[] => b.db.prepare("SELECT rule FROM action_log WHERE approval_id = ? ORDER BY id").all(approvalId).map((row) => String(row.rule));
-const onlyPending = (b: Bench): Approval => {
-  const pending = listApprovals(b.db, "pending");
+/** The one approval waiting, once the request has crossed the socket and been written: up to two seconds on a busy machine. */
+const onlyPending = async (b: Bench): Promise<Approval> => {
+  let pending = listApprovals(b.db, "pending");
+  for (const until = Date.now() + 2000; pending.length === 0 && Date.now() < until; pending = listApprovals(b.db, "pending")) await sleep(5);
   assert.equal(pending.length, 1, "one approval waits");
   return pending[0]!;
 };
@@ -117,7 +119,7 @@ test("in a run with a one-minute limit, a pending approval is declined by Botben
   const a = agent(b, { limit: 1 });
   const asked = a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   assert.equal(Date.parse(approval.expiresAt!) - Date.parse(approval.createdAt), MINUTE_MS, "it expires a minute after it was asked");
   // Measured from the stored time, so a slow machine does not make it look early.
   const left = Date.parse(approval.expiresAt!) - Date.now();
@@ -158,7 +160,7 @@ test("a run with no limit never expires an approval, and an approval the owner a
   const free = agent(b, { limit: null });
   const waiting = free.ask("git push origin main");
   await sleep(20);
-  const unlimited = onlyPending(b);
+  const unlimited = (await onlyPending(b));
   assert.equal(unlimited.expiresAt, null);
   assert.equal(await within(waiting, MINUTE_MS * 3), "waiting", "it still waits for the owner");
   assert.equal(getApproval(b.db, unlimited.id)!.status, "pending");
@@ -168,12 +170,12 @@ test("a run with no limit never expires an approval, and an approval the owner a
   const limited = agent(b, { limit: 1 });
   const allowed = limited.ask("git push origin main");
   await sleep(20);
-  const first = onlyPending(b);
+  const first = (await onlyPending(b));
   b.broker.answer(first.id, "allow");
   assert.equal((await allowed).decision, "allow");
   const declined = limited.ask("npm publish");
   await sleep(20);
-  const second = onlyPending(b);
+  const second = (await onlyPending(b));
   b.broker.answer(second.id, "decline", "Not this week.");
   assert.deepEqual([(await declined).decision, (await declined).note], ["decline", "Not this week."]);
   // Long past their minute: neither is changed, and neither has an expiry on record.
@@ -190,7 +192,7 @@ test("an expiry cannot overwrite the owner's answer: answered at the last moment
   const a = agent(b, { limit: 1 });
   const asked = a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   // Just before its time, measured from the stored time.
   await sleep(Math.max(0, Date.parse(approval.expiresAt!) - Date.now() - 60));
   assert.equal(getApproval(b.db, approval.id)!.status, "pending", "still waiting at the last moment");
@@ -208,7 +210,7 @@ test("an answer given after the limit, before the timer has run, is refused: the
   const a = agent(b, { limit: 1 });
   const asked = a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   // Past its time without giving the timer a turn: nothing else runs while this waits.
   const due = Date.parse(approval.expiresAt!);
   while (Date.now() <= due) {
@@ -228,7 +230,7 @@ test("past the limit, an answer is refused even when Botbench's denial cannot be
   const a = agent(b, { limit: 1 });
   const asked = a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   // The store refuses the expiry's record, as a full disk would.
   b.db.exec("CREATE TRIGGER refuse_expiry BEFORE INSERT ON action_log WHEN NEW.rule = 'expired_unanswered' BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END");
   const due = Date.parse(approval.expiresAt!);
@@ -249,7 +251,7 @@ test("the expiry timer survives a restart: an approval past its limit when Botbe
   const a = agent(b, { limit: 1 });
   const asked = a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   // Botbench stops with the approval pending, and stays stopped past its minute.
   await b.restart({ before: () => sleep(MINUTE_MS * 2) });
   assert.equal((await asked).decision, "decline", "the stopping Botbench let its waiter go");
@@ -279,7 +281,7 @@ test("a restart before the limit has passed neither loses the expiry nor brings 
   const a = agent(b, { limit: 2 });
   void a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   await b.restart();
   await sleep(MINUTE_MS);
   assert.deepEqual([getApproval(b.db, approval.id)!.storedDecision, getApproval(b.db, approval.id)!.expiredAt], [null, null], "not before its time");
@@ -294,7 +296,7 @@ test("an owner's answer stored for a parked approval before its limit is never o
   const a = agent(b, { limit: 1 });
   void a.ask("git push origin main");
   await sleep(20);
-  const approval = onlyPending(b);
+  const approval = (await onlyPending(b));
   await b.restart();
   b.broker.answer(approval.id, "allow");
   await sleep(MINUTE_MS * 2);
@@ -307,7 +309,7 @@ test("within one task, the same request as one the owner declined is declined at
   const a = agent(b);
   const first = a.ask("git push origin main", { cwd: "sub" });
   await sleep(20);
-  const declined = onlyPending(b);
+  const declined = (await onlyPending(b));
   b.broker.answer(declined.id, "decline", "Open a pull request instead.");
   await first;
   const cards = b.changes.length;
@@ -325,7 +327,7 @@ test("within one task, the same request as one the owner declined is declined at
   // With no note, the agent is told there was none.
   const quiet = a.ask("npm publish", { cwd: "sub" });
   await sleep(20);
-  b.broker.answer(onlyPending(b).id, "decline");
+  b.broker.answer((await onlyPending(b)).id, "decline");
   await quiet;
   assert.match((await a.ask("npm publish", { cwd: "sub" })).refused!, /You left no note\./);
 });
@@ -335,12 +337,12 @@ test("the same command in another task, another folder or as another role still 
   const a = agent(b, { limit: 1 });
   const first = a.ask("git push origin main");
   await sleep(20);
-  b.broker.answer(onlyPending(b).id, "decline", "No.");
+  b.broker.answer((await onlyPending(b)).id, "decline", "No.");
   await first;
   const asks = async (who: Agent, command: string, cwd?: string): Promise<Approval> => {
     const answer = who.ask(command, cwd === undefined ? {} : { cwd });
     await sleep(20);
-    const pending = onlyPending(b);
+    const pending = (await onlyPending(b));
     b.broker.answer(pending.id, "allow");
     assert.equal((await answer).decision, "allow");
     return pending;
@@ -357,7 +359,7 @@ test("the same command in another task, another folder or as another role still 
   // Superseded before: the CLI stopped waiting, so it is asked again.
   const left = a.ask("npm audit fix --force", { callId: "gone" });
   await sleep(20);
-  const gone = onlyPending(b);
+  const gone = (await onlyPending(b));
   a.supersede("gone");
   await left;
   assert.equal(getApproval(b.db, gone.id)!.status, "superseded");
@@ -365,7 +367,7 @@ test("the same command in another task, another folder or as another role still 
   // Expired before: nobody answered it, so it is asked again.
   const expiring = a.ask("git push --tags");
   await sleep(20);
-  const lapsed = onlyPending(b);
+  const lapsed = (await onlyPending(b));
   assert.equal((await expiring).expired, true);
   assert.equal(getApproval(b.db, lapsed.id)!.status, "declined");
   await asks(a, "git push --tags");
@@ -397,7 +399,7 @@ test("neither the expiry nor the repeat refusal ever allows: not in a fully auto
   // The owner declines a third; asked again, it is refused as a repeat.
   const third = granted.ask("rm -rf node_modules/.cache");
   await sleep(20);
-  b.broker.answer(onlyPending(b).id, "decline");
+  b.broker.answer((await onlyPending(b)).id, "decline");
   outcomes.push(await third);
   outcomes.push(await granted.ask("rm -rf node_modules/.cache"));
   assert.deepEqual(outcomes.map((o) => o.decision), ["decline", "decline", "decline", "decline"]);
@@ -408,4 +410,40 @@ test("neither the expiry nor the repeat refusal ever allows: not in a fully auto
   // Nothing either path wrote is an allow, an allowed approval or a grant.
   assert.equal(b.db.prepare("SELECT count(*) AS n FROM approvals WHERE status = 'allowed' OR stored_decision = 'allow'").get()!.n, 0);
   assert.equal(b.db.prepare("SELECT count(*) AS n FROM action_log WHERE rule = 'owner_allowed' OR (rule = 'standing_granted' AND grant_id <> ?)").get(grantId)!.n, 0);
+});
+
+test("who asked is still written on every approval: one the owner's work asks names the owner, one of work given a peer's message names that peer, and its expiry and its log rows name the peer too", async (t) => {
+  const b = await bench(t);
+  const at = new Date().toISOString();
+  // A pairing and a run the owner gave bob's message to, as Give it to Claude Code starts one, with a one-minute limit.
+  const pairing = "11111111-2222-3333-4444-555555555555";
+  const fingerprint = "f".repeat(24);
+  b.db.prepare("INSERT INTO peer_pairings (id, role, pairing_key, own_key, peer_key, peer_name, peer_fingerprint, peer_address, repository, created_at, owner_confirmed_at, peer_confirmed_at) VALUES (?, 'joiner', ?, ?, ?, 'bob', ?, 'https://192.168.1.5:7443', 'botbench', ?, ?, ?)").run(pairing, "k".repeat(64), "a".repeat(43), "b".repeat(43), fingerprint, at, at, at);
+  const repo = path.join(b.dir, "repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const runId = Number(b.db.prepare("INSERT INTO runs (kind, repo_path, prompt, status, mode, outside_text, base_commit, approval_limit_minutes, peer_pairing_id, peer_message_id, peer_name, peer_fingerprint, created_at, updated_at) VALUES ('planned', ?, 'Answer bob', 'planning', 'semi', 1, ?, 1, ?, ?, 'bob', ?, ?, ?)").run(repo, "0".repeat(40), pairing, "22222222-3333-4444-5555-666666666666", fingerprint, at, at).lastInsertRowid);
+  const taskId = approvePlan(b.db, runId, storePlan(b.db, runId, [{ title: "t", criteria: ["c"] }]).planVersion, null, "owner").tasks[0]!.id;
+  const worktree = path.join(b.dir, "worktree-peer");
+  fs.mkdirSync(path.join(worktree, "sub"), { recursive: true });
+  const peers = agent(b, { same: { taskId, runId, worktree } });
+  // On the always-ask list, so it asks in a semi-autonomous run.
+  const command = ["git", "push", "origin", "main"].join(" ");
+
+  const asked = peers.ask(command);
+  const approval = await onlyPending(b);
+  assert.deepEqual({ ...approval.askedBy, words: approval.askedBy.words !== null }, { by: "peer", pairingId: pairing, peerName: "bob", peerFingerprint: fingerprint, words: true });
+  assert.ok(approval.expiresAt !== null, "it has its run's time limit");
+  const answer = await asked;
+  assert.deepEqual([answer.decision, answer.expired], ["decline", true]);
+  const rows = b.db.prepare("SELECT rule, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log WHERE approval_id = ? ORDER BY id").all(approval.id).map((row) => ({ ...row }));
+  assert.deepEqual(rows, ["asked_owner", "expired_unanswered"].map((rule) => ({ rule, asked_by: "peer", asked_by_pairing_id: pairing, asked_by_peer_name: "bob", asked_by_peer_fingerprint: fingerprint })));
+
+  // The owner's own work, in a run with no limit: asked by the owner, with no time, still waiting until answered.
+  const mine = agent(b);
+  const waiting = mine.ask(command);
+  const own = await onlyPending(b);
+  assert.deepEqual([own.askedBy.by, own.askedBy.pairingId, own.expiresAt], ["owner", null, null]);
+  b.broker.answer(own.id, "decline");
+  assert.equal((await waiting).decision, "decline");
+  assert.deepEqual(rulesOf(b, own.id), ["asked_owner", "owner_declined"]);
 });

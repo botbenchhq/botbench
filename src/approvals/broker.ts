@@ -819,6 +819,20 @@ export function createBroker(options: {
   /** Whether an approval is past its time limit and unanswered: then no answer of the owner's is taken, even if denying it could not be written. */
   const overdue = (approval: Approval): boolean => approval.status === "pending" && approval.storedDecision === null && approval.expiresAt !== null && Date.parse(approval.expiresAt) <= Date.now();
   const OVERDUE = "Nobody answered it in time, so Botbench denies it: its run's approval time limit passed. It was not run.";
+  /**
+   * The owner's answer to approval `id`, written in one transaction. Should its time pass between the check above and the
+   * write, the store refuses the allow (`approvals_no_allow_past_expiry`): Botbench then declines it, and the owner is
+   * told so, as for any answer given too late.
+   */
+  const inTime = <R>(id: number, write: () => R): R => {
+    try {
+      return transaction(db, write);
+    } catch (err) {
+      if (err instanceof ApprovalError || !/never allowed/.test(words(err))) throw err;
+      expireOverdue(id);
+      throw new ApprovalError(409, OVERDUE);
+    }
+  };
 
   /** When an approval of this request expires:its run's limit after `askedAt`, or null for none. A limit that cannot be read is none: the owner is still asked. */
   const expiryOf = (r: ApprovalRequest, askedAt: string): string | null => {
@@ -1283,7 +1297,7 @@ export function createBroker(options: {
     // Past its time, an approval is Botbench's to deny, whether or not its timer has run yet.
     expireOverdue(id);
     // The decision and its log entry are one write: neither exists without the other.
-    const stored = transaction(db, () => {
+    const stored = inTime(id, () => {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.expiredAt !== null) throw new ApprovalError(409, "Nobody answered it in time, so Botbench denied it when its run's approval time limit passed. It was not run.");
@@ -1415,7 +1429,7 @@ export function createBroker(options: {
   const grantStanding = (id: number): { approval: Approval; grant: StandingGrant } => {
     expireOverdue(id);
     // The answer, the grant and their log entries are one write: none exists without the others.
-    const grantId = transaction(db, () => {
+    const grantId = inTime(id, () => {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
