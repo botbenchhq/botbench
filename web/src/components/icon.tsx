@@ -28,6 +28,7 @@ export type IconName =
   | "cpu"
   | "mic"
   | "chevron-left"
+  | "ellipsis"
   | "info"
   | "chevron-right"
   | "message";

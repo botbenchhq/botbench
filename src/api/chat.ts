@@ -12,6 +12,7 @@ import { REVIEW_LIMIT_MS } from "../engine/review.ts";
 import { agentName, chatPrompt, comparePrompt, type ChatEntry } from "../engine/roles.ts";
 import { checkRepository, TaskError } from "../engine/task.ts";
 import { now, transaction } from "../store/db.ts";
+import { recordChat } from "../engine/chats.ts";
 import { sharedGitDir } from "../worktrees.ts";
 import { SCRATCH_DIR, TurnError, type Turns } from "./turns.ts";
 
@@ -295,7 +296,7 @@ export function createChat(o: ChatOptions): Chat {
     }
   };
 
-  const send: Chat["send"] = async ({ message, conversation, agents, compare, repository: attached }) => {
+  const sendOnce: Chat["send"] = async ({ message, conversation, agents, compare, repository: attached }) => {
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
     if (agents.length < 1 || agents.length > MAX_ASKED) throw new TurnError(400, `Ask between 1 and ${MAX_ASKED} agents.`);
     if (new Set(agents.map((a) => a.agent)).size !== agents.length) throw new TurnError(400, "Each agent can be asked once per message.");
@@ -376,6 +377,13 @@ export function createChat(o: ChatOptions): Chat {
 
     const roundId = Number(db.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES (?, ?, ?, ?)").run(round.kind, round.message, round.compares, now()).lastInsertRowid);
     return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt(agent)) : askOne(driverOf(agent)!, model ?? null, roundId, prompt(agent), repository))));
+  };
+
+  /** Send, then record which chat the replies belong to, so the chat is a row of the Work list (engine/chats.ts). */
+  const send: Chat["send"] = async (o) => {
+    const replies = await sendOnce(o);
+    recordChat(db, o.conversation, replies.map((reply) => reply.attemptId));
+    return replies;
   };
 
   const interrupt = async (attemptId: number): Promise<boolean> => {

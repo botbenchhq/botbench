@@ -51,7 +51,7 @@ test("a fresh data directory gets the current schema with owner-only permissions
   assert.equal(mode(dbFile), 0o600);
   for (const name of fs.readdirSync(home)) assert.equal(mode(path.join(home, name)), 0o600, `${name} is owner-only`);
   assert.equal(schemaVersion(first), CURRENT);
-  assert.deepEqual(tableNames(first), ["action_log", "approvals", "attempts", "browser_sessions", "chat_attempts", "chat_rounds", "claim_takeovers", "combined_check_commands", "combined_checks", "combined_requirements", "command_lists", "command_processes", "decisions", "deliveries", "device_pairing", "events", "evidence", "first_use", "grant_revocations", "grants", "issue_claims", "issue_fetches", "owner_settings", "plan_tasks", "push_sent", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "task_notes", "tasks", "workbench_names"]);
+  assert.deepEqual(tableNames(first), ["action_log", "approvals", "attempts", "browser_sessions", "chat_attempts", "chat_members", "chat_rounds", "chat_titles", "claim_takeovers", "combined_check_commands", "combined_checks", "combined_requirements", "command_lists", "command_processes", "decisions", "deliveries", "device_pairing", "events", "evidence", "first_use", "grant_revocations", "grants", "hidden_rows", "issue_claims", "issue_fetches", "owner_settings", "plan_tasks", "push_sent", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "task_notes", "tasks", "workbench_names"]);
   assert.deepEqual(columnNames(first, "attempts"), ["id", "driver", "model", "resume_cursor", "status", "pgid", "created_at", "updated_at"]);
   assert.deepEqual(columnNames(first, "events"), ["id", "attempt_id", "turn", "ts", "type", "payload"]);
   const schemaBefore = schemaSql(first);
@@ -122,7 +122,7 @@ test("a database at an older schema version is migrated forward and keeps its ro
   const db = openStore(home);
   t.after(() => db.close());
   assert.equal(schemaVersion(db), CURRENT);
-  assert.deepEqual(tableNames(db), ["action_log", "approvals", "attempts", "browser_sessions", "chat_attempts", "chat_rounds", "claim_takeovers", "combined_check_commands", "combined_checks", "combined_requirements", "command_lists", "command_processes", "decisions", "deliveries", "device_pairing", "events", "evidence", "first_use", "grant_revocations", "grants", "issue_claims", "issue_fetches", "owner_settings", "plan_tasks", "push_sent", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "task_notes", "tasks", "workbench_names"]);
+  assert.deepEqual(tableNames(db), ["action_log", "approvals", "attempts", "browser_sessions", "chat_attempts", "chat_members", "chat_rounds", "chat_titles", "claim_takeovers", "combined_check_commands", "combined_checks", "combined_requirements", "command_lists", "command_processes", "decisions", "deliveries", "device_pairing", "events", "evidence", "first_use", "grant_revocations", "grants", "hidden_rows", "issue_claims", "issue_fetches", "owner_settings", "plan_tasks", "push_sent", "push_subscriptions", "refinements", "reviews", "run_events", "runs", "schema_version", "task_events", "task_notes", "tasks", "workbench_names"]);
   assert.deepEqual({ ...db.prepare("SELECT * FROM attempts").get() }, {
     id: 1, driver: "codex", model: "gpt-mini", resume_cursor: "cursor-abc", status: "ended", pgid: 4242,
     created_at: "2026-11-20T10:00:00.000Z", updated_at: "2026-11-20T10:05:00.000Z",
@@ -158,14 +158,13 @@ test("the usage_limit_wait migration gives each task a stored time to try again,
   assert.throws(() => moveTask(db, 1, "verifying") && moveTask(db, 1, "waiting_for_limit", { retryAt: at }), /cannot move to waiting_for_limit/);
 });
 
-test("the latest migration adds the device pairing table, which holds at most one pairing and only 64-character hashes", (t) => {
+test("the device_pairing migration adds the device pairing table, which holds at most one pairing and only 64-character hashes", (t) => {
   const home = tempDir(t);
   const old = new DatabaseSync(path.join(home, DB_FILE));
-  migrate(old, MIGRATIONS.slice(0, MIGRATIONS.length - 1));
+  migrate(old, MIGRATIONS.slice(0, MIGRATIONS.findIndex((m) => m.name === "device_pairing")));
   old.close();
   const db = openStore(home);
   t.after(() => db.close());
-  assert.equal(MIGRATIONS.at(-1)!.name, "device_pairing");
   assert.equal(schemaVersion(db), CURRENT);
   assert.deepEqual(columnNames(db, "device_pairing"), ["id", "code_hash", "expires_at", "used_at", "replaced_hash"]);
   const hash = "a".repeat(64);
@@ -185,6 +184,37 @@ test("a migration that fails part-way leaves the schema and its version untouche
   assert.throws(() => migrate(db, broken), /half-done/);
   assert.equal(schemaVersion(db), 1);
   assert.deepEqual(schemaSql(db), before);
+});
+
+test("the list_rows migration only adds its own tables, index and triggers: every other table, index and trigger, and every row, is as it was", (t) => {
+  const home = tempDir(t);
+  const db = new DatabaseSync(path.join(home, DB_FILE));
+  t.after(() => db.close());
+  const at = MIGRATIONS.findIndex((m) => m.name === "list_rows");
+  assert.ok(at > 0, "the list_rows migration exists");
+  migrate(db, MIGRATIONS.slice(0, at));
+  // A chat, as one stood before the migration.
+  const attempt = Number(db.prepare("INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('codex', 'ended', ?, ?)").run(now(), now()).lastInsertRowid);
+  const round = Number(db.prepare("INSERT INTO chat_rounds (kind, message, created_at) VALUES ('ask', 'Hi', ?)").run(now()).lastInsertRowid);
+  db.prepare("INSERT INTO chat_attempts (attempt_id, round_id, created_at) VALUES (?, ?, ?)").run(attempt, round, now());
+  const before = schemaSql(db) as { type: string; name: string; sql: string }[];
+  const rowsOf = (table: string): unknown[] => db.prepare(`SELECT * FROM ${table}`).all();
+  const keptRows = Object.fromEntries((tableNames(db) as string[]).map((table) => [table, table === "schema_version" ? null : rowsOf(table)]));
+
+  migrate(db, MIGRATIONS.slice(0, at + 1));
+  const after = schemaSql(db) as { type: string; name: string; sql: string }[];
+  assert.deepEqual(after.filter((entry) => before.some((b) => b.type === entry.type && b.name === entry.name)), before, "nothing that was there changed");
+  const added = after.filter((entry) => !before.some((b) => b.type === entry.type && b.name === entry.name)).map((entry) => `${entry.type} ${entry.name}`).sort();
+  assert.deepEqual(added, ["index chat_members_chat", "table chat_members", "table chat_titles", "table hidden_rows", "trigger chat_members_no_delete", "trigger chat_members_no_update"]);
+  for (const [table, rows] of Object.entries(keptRows)) if (rows !== null) assert.deepEqual(rowsOf(table), rows, `${table} keeps its rows`);
+
+  // What the new tables allow: chat members are append-only, a chat's name is one trimmed line of at most 80 characters.
+  db.prepare("INSERT INTO chat_members (attempt_id, chat_id, created_at) VALUES (?, ?, ?)").run(attempt, attempt, now());
+  assert.throws(() => db.prepare("UPDATE chat_members SET chat_id = chat_id").run(), /append-only/);
+  assert.throws(() => db.prepare("DELETE FROM chat_members").run(), /append-only/);
+  for (const bad of ["", " padded", "two\nlines", "x".repeat(81)]) assert.throws(() => db.prepare("INSERT INTO chat_titles (chat_id, title, updated_at) VALUES (?, ?, ?)").run(attempt, bad, now()), /CHECK/, JSON.stringify(bad));
+  db.prepare("INSERT INTO chat_titles (chat_id, title, updated_at) VALUES (?, ?, ?)").run(attempt, "x".repeat(80), now());
+  assert.throws(() => db.prepare("INSERT INTO hidden_rows (kind, item_id, hidden_at) VALUES ('branch', 1, ?)").run(now()), /CHECK/);
 });
 
 test("a database from a newer Botbench is refused, not downgraded", (t) => {

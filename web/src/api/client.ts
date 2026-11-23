@@ -798,17 +798,46 @@ export const getCheckTogether = (taskId: number): Promise<CheckTogetherView> => 
 export const startCheckTogether = (taskId: number, pullRequest: number): Promise<{ running: number }> => request("POST", `/api/tasks/${taskId}/check-together`, { pullRequest }, 90_000);
 export const setCheckTogetherRequired = (path: string, required: boolean): Promise<{ path: string; required: boolean }> => request("PUT", "/api/repos/check-together", { path, required }, 30_000);
 export const listRuns = async (): Promise<RunSummary[]> => (await request<{ runs: RunSummary[] }>("GET", "/api/runs", undefined, 30_000)).runs;
-/** One row of the board: a planned run, or a task started on its own (a run of one). */
-export type BoardItem = ({ kind: "run" } & RunSummary) | { kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; createdAt: string; updatedAt: string };
-export type BoardGroupName = "needs-you" | "running" | "finished";
-/** One group of the board: its real count, and its items (Finished sends only its newest). */
+/** What a run's or a task's More menu offers besides Open and Hide, read as things are now. */
+export interface RowMenuFacts {
+  /** Its branch, while git still has it; for a run, only when it has exactly one. */
+  branch: string | null;
+  /** Its pull request, while it is open; for a run, only when it has exactly one. */
+  pullRequest: { number: number; url: string } | null;
+}
+/** A chat as the Work list shows it: named by its first attempt. */
+export interface ChatItem {
+  id: number;
+  /** The owner's name for it, else the first line of its first message. */
+  title: string;
+  /** Whether the title is one the owner gave it. */
+  named: boolean;
+  agents: string[];
+  /** Its attempts, oldest first: what the Chat screen shows as this chat. */
+  attempts: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+/** One row of the board: a planned run, a task started on its own (a run of one), or a chat. */
+export type BoardItem =
+  | ({ kind: "run"; cancellable: boolean } & RunSummary & RowMenuFacts)
+  | ({ kind: "task"; id: number; repo: string; title: string; status: TaskStatus; reason: string | null; checks: ChecksMark | null; waitingOnApproval: boolean; resuming: boolean; discardable: boolean; createdAt: string; updatedAt: string } & RowMenuFacts)
+  | ({ kind: "chat" } & ChatItem);
+export type BoardGroupName = "needs-you" | "running" | "finished" | "chats";
+/** One group of the board: its real count, and its items (Finished and Chats send only their newest). */
 export interface BoardGroup {
   name: BoardGroupName;
   total: number;
   items: BoardItem[];
 }
-/** The board's groups in order, the one that needs the owner first, each newest change first. */
-export const getBoard = async (): Promise<BoardGroup[]> => (await request<{ groups: BoardGroup[] }>("GET", "/api/board", undefined, 30_000)).groups;
+/** The board's groups in order, the one that needs the owner first, each newest change first; with `hidden`, only the rows hidden from it. `hidden` counts the hidden rows. */
+export const getBoard = (hidden = false): Promise<{ groups: BoardGroup[]; hidden: number }> => request("GET", hidden ? "/api/board?hidden=1" : "/api/board", undefined, 30_000);
+/** Hide a row from the Work list, or show it there again. Nothing of the run, task or chat is changed. */
+export const setRowHidden = (kind: BoardItem["kind"], id: number, hidden: boolean): Promise<{ kind: string; id: number; hidden: boolean }> => request("POST", hidden ? "/api/board/hide" : "/api/board/show", { kind, id }, 30_000);
+/** A chat as the Chat screen opens it. */
+export const getChat = (id: number): Promise<ChatItem> => request("GET", `/api/chats/${id}`, undefined, 30_000);
+/** Give a chat a name of the owner's; an empty one gives it back its first message. */
+export const renameChat = (id: number, title: string): Promise<ChatItem> => request("POST", `/api/chats/${id}/rename`, { title }, 30_000);
 export const getRun = (id: number): Promise<RunDetail> => request("GET", `/api/runs/${id}`, undefined, 30_000);
 /** The whole plan as it should be: how a task is edited, added and deleted. */
 export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Promise<RunDetail> => request("PATCH", `/api/runs/${id}/plan`, { planVersion, tasks }, 30_000);
