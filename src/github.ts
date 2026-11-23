@@ -259,7 +259,8 @@ export function githubRetryDelay(head: ApiHead, o: { attempt: number; now: numbe
     if (wait !== null) return wait;
   }
   const reset = head.headers["x-ratelimit-reset"];
-  if (remaining === "0" && reset !== undefined && /^\d{1,12}$/.test(reset.trim())) {
+  // A 429 that names a reset is waited out too, whether or not it says how many requests remain.
+  if ((remaining === "0" || head.status === 429) && reset !== undefined && /^\d{1,12}$/.test(reset.trim())) {
     const wait = named(Number(reset.trim()) * 1000 - o.now);
     if (wait !== null) return wait;
   }

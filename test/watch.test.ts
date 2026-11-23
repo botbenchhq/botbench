@@ -93,6 +93,8 @@ test("after GitHub's limit the watch waits until retry-after or x-ratelimit-rese
   assert.equal(githubRetryDelay(limit, o), 3025_000);
   assert.equal(githubRetryDelay(parseApiHead(RECORDED_SECONDARY)!, o), 60_000);
   assert.equal(githubRetryDelay({ status: 429, headers: { "retry-after": "Tue, 20 Aug 2013 14:52:41 GMT" } }, o), 120_000);
+  // A 429 with a reset and no count of what remains waits until the reset.
+  assert.equal(githubRetryDelay({ status: 429, headers: { "x-ratelimit-reset": String(Math.floor(at / 1000) + 300) } }, o), 300_000);
   // A 429 that names no wait, and a 403 whose reset cannot be believed: the backoff, doubling, capped.
   assert.equal(githubRetryDelay({ status: 429, headers: {} }, o), 60_000);
   assert.equal(githubRetryDelay({ status: 429, headers: {} }, { ...o, attempt: 3 }), 240_000);
