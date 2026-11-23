@@ -14,7 +14,10 @@ async function codeShown(page: Page): Promise<string> {
 
 /** What Chrome's own QR reader finds in the QR code as drawn on the screen, from a screenshot of its pixels. */
 async function readQr(page: Page): Promise<string[]> {
-  const png = await page.getByTestId("pairing-qr").screenshot();
+  // Centred, so the fixed tab bar at the foot of the screen does not cover part of it in the screenshot.
+  const qr = page.getByTestId("pairing-qr");
+  await qr.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const png = await qr.screenshot();
   return page.evaluate(async (bytes) => {
     const Detector = (globalThis as unknown as { BarcodeDetector?: new (o: { formats: string[] }) => { detect(image: ImageBitmap): Promise<{ rawValue: string }[]> } }).BarcodeDetector;
     if (Detector === undefined) return ["this Chrome has no BarcodeDetector"];
