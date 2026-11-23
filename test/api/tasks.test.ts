@@ -364,17 +364,20 @@ test("a repository git cannot read in time is answered as not usable with the re
   assert.deepEqual(gitProcesses(repo), [], "no git process is left for the folder");
 });
 
-test("a task or a run asked of another agent than Claude Code is refused, before any row exists: only Claude Code works in a repository", async (t) => {
+test("a task or a run asked of another agent than Claude Code and Codex is refused, and so is Codex while it cannot build, before any row exists", async (t) => {
   const { server, base, headers, dir } = await start(t);
   const repo = path.join(dir, "repo");
   initRepo(repo);
-  for (const [route, body] of [
-    ["/api/tasks", { repo, prompt: "Add a README", agent: "codex" }],
-    ["/api/runs", { repo, prompt: "Plan a README", agent: "grok", mode: "manual", delivery: "branch" }],
+  for (const [route, body, words] of [
+    ["/api/tasks", { repo, prompt: "Add a README", agent: "grok" }, /^Only Claude Code and Codex can work on a repository as a task\. Grok and Antigravity answer in a chat\.$/],
+    ["/api/runs", { repo, prompt: "Plan a README", agent: "antigravity", mode: "manual", delivery: "branch" }, /^Only Claude Code and Codex can work on a repository as a task\./],
+    // This server's Codex is a review replayed from a real session, which cannot build.
+    ["/api/tasks", { repo, prompt: "Add a README", agent: "codex" }, /^Codex cannot be the builder: /],
+    ["/api/runs", { repo, prompt: "Plan a README", agent: "codex", mode: "manual", delivery: "branch" }, /^Codex cannot be the builder: /],
   ] as const) {
     const res = await post(base, headers, route, body);
     assert.equal(res.status, 400, route);
-    assert.match(String(res.body.error), /^Only Claude Code can work on a repository as a task\. Codex, Grok and Antigravity answer in a chat\.$/);
+    assert.match(String(res.body.error), words);
   }
   assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM tasks").get()!.n), 0);
   assert.equal(Number(server.db.prepare("SELECT count(*) AS n FROM runs").get()!.n), 0);

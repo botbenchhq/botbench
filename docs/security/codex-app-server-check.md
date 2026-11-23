@@ -5,7 +5,7 @@
 - **(c) Codex's own sandbox, never asking, plus a `PreToolUse` hook that asks Botbench.** This is the recommended builder shape. It mirrors how Claude Code is driven.
 - **(a) The whole `codex app-server` inside Botbench's `sandbox-exec` profile**, as Grok is run, with Codex's own sandbox off and `approvalPolicy: "untrusted"`. This one works too, but its commands can read Codex's sign-in.
 
-Until a driver is built on one of them, the Codex driver stays as it was: `edits: false`, `permissionRequests: false`, review and chat only on `codex exec` (`src/drivers/codex.ts`, `CODEX_CAPABILITIES`).
+**What was built (B19 in `docs/security/threat-model.md`):** neither of those, but the shape the owner chose: `on-request` in Codex's own sandbox under Botbench's profile, with **every** approval request taken for what this check found it to be, an escalation. Each becomes one card saying Codex asks to run it outside its sandbox, decided by the owner every time (refused in a fully autonomous run); no grant, mode or confinement rule ever answers one, and anything but the owner's own allow is a decline (`src/drivers/codex-app-server.ts`). What stays in the sandbox never asks, so the gap measured in (b) remains: a command the sandbox refuses without asking produces no item. Review and chat stay on `codex exec` (`src/drivers/codex.ts`, `CODEX_CAPABILITIES`).
 
 ## 1. The finding, confirmed live (2026-11-23)
 

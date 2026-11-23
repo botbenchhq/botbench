@@ -31,7 +31,7 @@ export type DriverEvent =
    * The CLI is waiting for permission to run a tool call, and the turn stands still until `respondToRequest` answers `id`.
    * `reason` is the agent's own account of why, when the CLI passes one on.
    */
-  | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
+  | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null; /** The agent asks to run this outside its own sandbox (Codex's approval requests): the owner decides it every time. */ escalation?: true }
   /**
    * A permission request ended: the owner allowed or declined it (`note` is the owner's, for the agent), Botbench let it
    * run on the run's pre-approved list without asking the owner (`preapproved`) or on a standing permission the owner

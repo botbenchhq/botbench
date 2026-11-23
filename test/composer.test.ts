@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
-import { arrive, blocked, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { chatOffer, readKnownAgents } from "../web/src/app/chat.ts";
+import { arrive, blocked, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -327,4 +328,29 @@ test("a repository to read is never remembered, nor mistaken for the repository 
   const read = readRemembered(JSON.stringify({ ...remembered, read: { kind: "known", path: OTHER_REPO }, repository: OTHER_REPO }));
   assert.deepEqual(read, remembered);
   assert.equal("read" in read, false);
+});
+
+test("Builder is a row of a task and a run only once Codex can build; choosing Codex sends it as the builder, on its own default model, and Claude Code still plans", () => {
+  const known = { reviewOffered: false, commandsKnown: false };
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known, builderOffered: true }), ["repository", "kind", "builder", "mode", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, builderOffered: true }).slice(0, 3), ["repository", "kind", "builder"]);
+  assert.equal(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }).includes("builder"), false);
+  assert.equal(rowsFor({ repo: { kind: "none" }, kind: "task", ...known, builderOffered: true }).includes("builder"), false, "a chat has no builder");
+  assert.deepEqual(sendFor(inRepo(), { ...extras, builder: "codex" }), { do: "task", repo: REPO, prompt: "Add a README", model: undefined, preapproved: ["npm test"], agent: "codex" });
+  assert.deepEqual(sendFor(inRepo(), { ...extras, builder: null }), { do: "task", repo: REPO, prompt: "Add a README", model: "haiku", preapproved: ["npm test"] });
+  const run = sendFor(inRepo({ kind: "run", buildModel: { ok: true, model: "sonnet" } }), { ...extras, builder: "codex" });
+  assert.equal(run.do, "run");
+  assert.ok(run.do === "run" && run.agent === "codex" && run.model === "haiku" && !("buildModel" in run), JSON.stringify(run));
+  assert.equal(builderName(null), "Claude Code");
+  assert.equal(builderName("codex"), "Codex");
+});
+
+test("the agents' check says which agent other than Claude Code can build, and a list kept on the device never does", () => {
+  const offered = chatOffer([
+    { agent: "claude-code", roles: ["planner", "builder"], installed: true, version: "2", supported: true, signedIn: true, billing: "subscription", problem: null },
+    { agent: "codex", roles: ["reviewer", "builder"], installed: true, version: "0.171.0", supported: true, signedIn: true, billing: "subscription", problem: null },
+    { agent: "grok", roles: ["reviewer"], installed: true, version: "1", supported: true, signedIn: true, billing: "subscription", problem: null },
+  ]);
+  assert.deepEqual(offered.map((a) => [a.agent, a.builds ?? false]), [["claude-code", false], ["codex", true], ["grok", false]]);
+  assert.equal(readKnownAgents(JSON.stringify(offered))!.some((a) => a.builds === true), false);
 });
