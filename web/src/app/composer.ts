@@ -102,13 +102,31 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit: OnLimit; updateWithMain?: UpdateWithMain; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; source?: RunSourceRef } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit: OnLimit; updateWithMain?: UpdateWithMain; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; source?: RunSourceRef; approvalLimitMinutes?: number } & ({ prompt: string } | { specPath: string } | {}));
 
 /** The usage-limit view's question and its two choices (docs/product/voice.md); Wait is the default. */
 export const LIMIT_WORDS = {
   title: "When the builder reaches its usage limit",
   wait: { name: "Wait for it to reset", value: "Wait", description: "The task waits, its work kept, and Botbench tries the same agent once more by itself when the limit resets." },
   switch: { name: "Switch to the next agent", value: "Switch", description: "The task moves at once to the next agent on the list in Settings, in the same copy and on the same branch, with a note of what was done so far. With no agent left to take it, it waits." },
+} as const;
+
+/** The approval time limits a run can be started with, in minutes; null for none, which is the default. */
+export const APPROVAL_LIMITS: readonly (number | null)[] = [null, 15, 60, 240, 1440];
+
+/** An approval time limit in words: "Off", "15 minutes", "1 hour", "4 hours", "1 day". */
+export function limitName(minutes: number | null): string {
+  if (minutes === null) return "Off";
+  if (minutes % 1440 === 0) return minutes === 1440 ? "1 day" : `${minutes / 1440} days`;
+  if (minutes % 60 === 0) return minutes === 60 ? "1 hour" : `${minutes / 60} hours`;
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+/** What the Approval time limit view and the run's screen say of it (docs/product/voice.md). */
+export const APPROVAL_LIMIT_WORDS = {
+  hint: "If nobody answers a request of this run in this time, Botbench denies it and tells the agent nobody answered. Nothing is ever allowed this way. It cannot be changed once the run starts.",
+  off: "Requests wait for your answer, however long that takes.",
+  on: (minutes: number): string => `A request nobody answers within ${limitName(minutes).toLowerCase()} is denied.`,
 } as const;
 
 /** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
@@ -173,7 +191,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: string[]; builder?: Builder | null }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: string[]; builder?: Builder | null; approvalLimitMinutes?: number | null }): Send {
   // Sent only when it is not the server's default (ask).
   const main = extras.updateWithMain === undefined || extras.updateWithMain === "ask" ? {} : { updateWithMain: extras.updateWithMain };
   const stop = blocked(f);
@@ -191,9 +209,11 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   // Codex builds on its own default model: the models chosen here are Claude Code's, which still plans a run.
   const codex = extras.builder === "codex";
   if (f.kind === "task") return prompt === null ? { do: "focus" } : codex ? { do: "task", repo, prompt, model: undefined, preapproved: extras.preapproved, agent: "codex" } : { do: "task", repo, prompt, model, preapproved: extras.preapproved };
+  // Sent only when the owner chose one: left out, the run has none.
+  const limit = extras.approvalLimitMinutes === undefined || extras.approvalLimitMinutes === null ? {} : { approvalLimitMinutes: extras.approvalLimitMinutes };
   // A run made from a task or a chat sends the note alone: no spec file and no issue (blocked() has checked the note).
   const source = sourceOf(f);
-  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...main, source: source.ref };
+  if (source !== null) return { do: "run", repo, prompt: f.text, model, ...(codex ? { agent: "codex" as const } : f.buildModel !== null && f.buildModel.ok ? { buildModel: f.buildModel.model ?? null } : {}), preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...main, source: source.ref, ...limit };
   const spec = f.specPath.trim();
   const issue = f.issue ? { issue: { fetchId: f.issue.fetchId, allowHosts: f.issue.allowHosts } } : {};
   if (prompt === null && spec === "" && !f.issue) return { do: "focus" };
@@ -201,11 +221,11 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
-  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...main, ...takeOver };
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, onLimit: extras.onLimit ?? "wait", ...main, ...takeOver, ...limit };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "limit" | "main" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "limit" | "approvalLimit" | "main" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
@@ -233,6 +253,8 @@ export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean;
     ...(run ? (["delivery"] as const) : []),
     // What a builder's usage limit does in the run: Wait (the default) or Switch to the next agent.
     ...(run ? (["limit"] as const) : []),
+    // Off unless chosen; for a run only, whose requests may wait while nobody is looking.
+    ...(run ? (["approvalLimit"] as const) : []),
     // What happens when main moved on as a task is handed to you: Ask (the default), bring it up to date, or Off.
     ...(run ? (["main"] as const) : []),
     ...(f.commandsKnown ? (["commands"] as const) : []),

@@ -2607,4 +2607,111 @@ CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.check
 BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work'); END;
 `,
   },
+  {
+    // An approval time limit, one reminder, and no second card for what the owner already declined (#156 items 2 to 4;
+    // src/approvals/broker.ts, src/push.ts). A run may be started with an approval time limit in whole minutes
+    // (`approval_limit_minutes`, 1 to 1440), NULL for none, as every run before this; chosen when it starts and never
+    // changed. An approval of such a run is written with when it expires (`expires_at`), fixed then; a question and a
+    // chat's approval never expire. Nobody having answered by then, Botbench declines it, once, as its own answer and
+    // never the owner's (`expired_at`): a live one ends declined, a parked one has the decline stored for its resumed
+    // task. Only a pending approval with no answer stored, at or past its time by the store's own clock, can expire, and
+    // only into a decline; past its time, one with no answer can no longer be allowed, nor answered by the owner. The action log gains
+    // `expired_unanswered` (that decline, naming the approval) and `repeat_declined` (a task's request refused without a
+    // card because the owner had declined the same one in that task, naming that earlier approval). The record of
+    // notifications sent gains approvals, so each is sent once across a restart, and a reminder, under its own title,
+    // once. A check cannot be altered in place, so the action log and that record are made again with every row kept,
+    // ids and who asked included, and the log's indexes and triggers put back.
+    name: "approval limits and reminders",
+    sql: `
+ALTER TABLE runs ADD COLUMN approval_limit_minutes INTEGER CHECK (approval_limit_minutes IS NULL OR (typeof(approval_limit_minutes) = 'integer' AND approval_limit_minutes BETWEEN 1 AND 1440));
+CREATE TRIGGER runs_approval_limit_fixed BEFORE UPDATE OF approval_limit_minutes ON runs WHEN NEW.approval_limit_minutes IS NOT OLD.approval_limit_minutes
+BEGIN SELECT RAISE(ABORT, 'a run''s approval time limit is chosen when it starts and never changed'); END;
+ALTER TABLE approvals ADD COLUMN expires_at TEXT;
+ALTER TABLE approvals ADD COLUMN expired_at TEXT;
+CREATE TRIGGER approvals_expiry_asked BEFORE INSERT ON approvals
+WHEN NEW.expired_at IS NOT NULL OR (NEW.expires_at IS NOT NULL AND (NEW.question IS NOT NULL OR NEW.chat = 1 OR NEW.expires_at <= NEW.created_at))
+BEGIN SELECT RAISE(ABORT, 'an approval is first written unexpired, a question or a chat''s approval never expires, and one that expires does so after it is asked'); END;
+CREATE TRIGGER approvals_expiry_fixed BEFORE UPDATE OF expires_at ON approvals WHEN NEW.expires_at IS NOT OLD.expires_at
+BEGIN SELECT RAISE(ABORT, 'when an approval expires is fixed when it is asked'); END;
+CREATE TRIGGER approvals_expired_once BEFORE UPDATE OF expired_at ON approvals
+WHEN OLD.expired_at IS NOT NULL OR NEW.expired_at IS NULL OR OLD.expires_at IS NULL
+  OR NEW.expired_at < OLD.expires_at OR strftime('%Y-%m-%dT%H:%M:%fZ', 'now') < OLD.expires_at
+  OR OLD.status <> 'pending' OR OLD.stored_decision IS NOT NULL
+  OR NOT (NEW.status = 'declined' OR (NEW.status = 'pending' AND NEW.stored_decision IS 'decline'))
+BEGIN SELECT RAISE(ABORT, 'an approval expires once, unanswered, after its time, and only into a decline'); END;
+CREATE TRIGGER approvals_no_answer_past_expiry BEFORE UPDATE OF status, stored_decision ON approvals
+WHEN OLD.expires_at IS NOT NULL AND OLD.stored_decision IS NULL AND strftime('%Y-%m-%dT%H:%M:%fZ', 'now') >= OLD.expires_at
+  AND NEW.expired_at IS NULL AND (NEW.status IN ('allowed', 'declined') OR NEW.stored_decision IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'an approval past its time limit with no answer is Botbench''s to decline: it is never allowed, nor answered by the owner, after its time'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP TRIGGER action_log_peer_asked;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_expiry;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused', 'peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings', 'handoff', 'expired_unanswered', 'repeat_declined')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'handoff' OR (task_id IS NOT NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule NOT IN ('peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused') OR (task_id IS NULL AND run_id IS NULL AND attempt_id IS NULL AND approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule NOT IN ('peer_message', 'peer_kind_refused', 'peer_send_attempt', 'peer_send_over_limit', 'peer_settings') OR (approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_settings' OR (asked_by = 'owner' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'peer_invite' OR asked_by = 'owner'),
+  CHECK (rule <> 'expired_unanswered' OR (approval_id IS NOT NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'repeat_declined' OR (approval_id IS NOT NULL AND task_id IS NOT NULL AND detail IS NOT NULL)),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log_before_expiry ORDER BY id;
+DROP TABLE action_log_before_expiry;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+-- The rebuilt table loses the triggers of the one before it: put back the peer rule ("peer messages").
+CREATE TRIGGER action_log_peer_asked BEFORE INSERT ON action_log
+WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
+  AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))
+BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
+
+ALTER TABLE push_sent RENAME TO push_sent_before_approvals;
+CREATE TABLE push_sent (
+  subject TEXT NOT NULL CHECK (subject IN ('task', 'run', 'approval')),
+  subject_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  PRIMARY KEY (subject, subject_id, title)
+);
+INSERT INTO push_sent (subject, subject_id, title, sent_at) SELECT subject, subject_id, title, sent_at FROM push_sent_before_approvals;
+DROP TABLE push_sent_before_approvals;
+`,
+  },
 ];

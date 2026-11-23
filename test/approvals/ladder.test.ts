@@ -236,7 +236,9 @@ test("declines, requests that ended unanswered and pre-approved runs do not adva
   await decide(r, a, "npm test", "toolu_1");
   await decide(r, a, "npm test", "toolu_2");
   assert.equal(approvalCount(r.db, key), 2);
-  for (const id of ["toolu_3", "toolu_4", "toolu_5"]) assert.equal(await decide(r, a, "npm test", id, "decline"), null);
+  // Each decline in a task of its own, in the same repository: within one task a request the owner declined is not
+  // asked again (the repeat refusal, test/approvals/broker-expiry.test.ts), and the count is the repository's.
+  for (const id of ["toolu_3", "toolu_4", "toolu_5"]) assert.equal(await decide(r, agent(r), "npm test", id, "decline"), null);
   assert.equal(approvalCount(r.db, key), 2, "a decline is not an approval");
 
   // A request the CLI stopped waiting for.
@@ -364,7 +366,9 @@ test("AE6: a request the floor catches, or one the splitter cannot read, never o
   r.db.prepare("INSERT INTO grants (kind, role, repo_path, cwd, words, run_id, task_id, created_at) VALUES ('standing', 'implementer', ?, '.', '[\"git\",\"push\"]', NULL, ?, 't')").run(r.repo, a.taskId);
   const forged = Number(r.db.prepare("SELECT max(id) AS id FROM grants").get()!.id);
   r.db.prepare("INSERT INTO action_log (ts, task_id, grant_id, rule, tool, command, cwd) VALUES ('t', ?, ?, 'standing_granted', 'Bash', 'git push', '.')").run(a.taskId, forged);
-  const pushed = await a.ask("git push", "toolu_forged");
+  // Asked in another task of the same repository, which the grant would cover: in `a` the owner declined git push above,
+  // and a request declined in its own task is not asked again.
+  const pushed = await agent(r).ask("git push", "toolu_forged");
   assert.equal(await settled(pushed.answer), false, "the floor is asked before any grant");
   assert.equal(actionLog(r.db).findLast((e) => e.rule === "asked_owner")!.detail, "Always asks: git-push.");
   assert.equal(rules(r.db).includes("standing"), false);

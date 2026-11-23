@@ -222,6 +222,119 @@ test("the list_rows migration only adds its own tables, index and triggers: ever
   assert.throws(() => db.prepare("INSERT INTO hidden_rows (kind, item_id, hidden_at) VALUES ('branch', 1, ?)").run(now()), /CHECK/);
 });
 
+test("the approval limits and reminders migration keeps every row, id, index and trigger, and adds only the limit, the expiry, the two log rules and approvals to what was sent", (t) => {
+  const home = tempDir(t);
+  const db = new DatabaseSync(path.join(home, DB_FILE));
+  t.after(() => db.close());
+  const at = MIGRATIONS.findIndex((m) => m.name === "approval limits and reminders");
+  assert.ok(at > 0, "the migration exists");
+  migrate(db, MIGRATIONS.slice(0, at));
+  // A run, its task, an attempt, an approval the owner declined with its log, rows asked by an agent and by a paired
+  // peer, and a notification sent, as they stood before. Times are around the real clock: the store checks expiry by it.
+  const t0 = new Date(Date.now() - 3_600_000).toISOString();
+  db.prepare("INSERT INTO runs (kind, repo_path, prompt, status, base_commit, created_at, updated_at) VALUES ('planned', '/r', 'p', 'planning', ?, ?, ?)").run("0".repeat(40), t0, t0);
+  db.prepare("INSERT INTO tasks (repo_path, prompt, status, created_at, updated_at, run_id) VALUES ('/r', 'p', 'building', ?, ?, 1)").run(t0, t0);
+  db.prepare("INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('claude-code', 'running', ?, ?)").run(t0, t0);
+  const pairing = "11111111-2222-3333-4444-555555555555";
+  db.prepare("INSERT INTO peer_pairings (id, role, pairing_key, own_key, peer_key, peer_name, peer_fingerprint, peer_address, repository, created_at) VALUES (?, 'joiner', ?, ?, ?, 'bob', ?, 'https://192.168.1.5:7443', 'botbench', ?)").run(pairing, "k".repeat(64), "a".repeat(43), "b".repeat(43), "f".repeat(24), t0);
+  db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at) VALUES (1, 1, 'implementer', 'Bash', 'git push', '.', 'call-1', 'pending', ?)").run(t0);
+  db.prepare("UPDATE approvals SET status = 'declined', note = 'not yet', resolved_at = ? WHERE id = 1").run(t0);
+  db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (1, 1, 'implementer', 'Bash', 'ls', '.', 'call-p', 'pending', ?, 'peer', ?, 'bob', ?)").run(t0, pairing, "f".repeat(24));
+  for (const rule of ["asked_owner", "owner_declined"]) db.prepare("INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, command, cwd) VALUES (?, 1, 1, 1, ?, 'Bash', 'git push', '.')").run(t0, rule);
+  db.prepare("INSERT INTO action_log (ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, 1, 1, 2, 'asked_owner', 'Bash', 'ls', '.', 'peer', ?, 'bob', ?)").run(t0, pairing, "f".repeat(24));
+  db.prepare("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd, detail, asked_by) VALUES (?, 1, 'mode_allowed', 'Bash', 'npm test', '.', 'why', 'agent')").run(t0);
+  // A gap in the ids, as a database that lived has: every id is kept as it was, not renumbered.
+  db.prepare("INSERT INTO action_log (id, ts, task_id, rule, tool, command, cwd) VALUES (40, ?, 1, 'auto_worktree_edit', 'Edit', 'a.txt', '.')").run(t0);
+  db.prepare("INSERT INTO push_sent (subject, subject_id, title, sent_at) VALUES ('task', 1, 'A task failed', ?)").run(t0);
+  const logBefore = db.prepare("SELECT id, rule, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log ORDER BY id").all().map((row) => ({ ...row }));
+  assert.deepEqual(logBefore.map((row) => [row.id, row.asked_by]), [[1, "owner"], [2, "owner"], [3, "peer"], [4, "agent"], [40, "owner"]]);
+  const before = schemaSql(db) as { type: string; name: string; sql: string }[];
+  const rowsOf = (table: string): unknown[] => db.prepare(`SELECT * FROM ${table}`).all().map((row) => ({ ...row }));
+  const keptRows = Object.fromEntries((tableNames(db) as string[]).map((table) => [table, table === "schema_version" ? null : rowsOf(table)]));
+
+  migrate(db, MIGRATIONS.slice(0, at + 1));
+  const after = schemaSql(db) as { type: string; name: string; sql: string }[];
+  // Every index and trigger there was is there, as it was; only the tables given a column or a new check have new SQL.
+  const changed = ["table action_log", "table approvals", "table push_sent", "table runs"];
+  for (const entry of before) {
+    const now = after.find((a) => a.type === entry.type && a.name === entry.name);
+    assert.ok(now, `${entry.type} ${entry.name} is kept`);
+    if (!changed.includes(`${entry.type} ${entry.name}`)) assert.deepEqual(now, entry, `${entry.type} ${entry.name} is unchanged`);
+  }
+  const added = after.filter((entry) => !before.some((b) => b.type === entry.type && b.name === entry.name)).map((entry) => `${entry.type} ${entry.name}`).sort();
+  assert.deepEqual(added, ["trigger approvals_expired_once", "trigger approvals_expiry_asked", "trigger approvals_expiry_fixed", "trigger approvals_no_answer_past_expiry", "trigger runs_approval_limit_fixed"]);
+  // The log's three indexes, its two append-only triggers and the trigger naming a peer are on the new table.
+  const onLog = after.filter((entry) => entry.type !== "table" && /\bON action_log\b/.test(entry.sql)).map((entry) => entry.name).sort();
+  assert.deepEqual(onLog, ["action_log_approval", "action_log_grant", "action_log_no_delete", "action_log_no_update", "action_log_peer_asked", "action_log_task"]);
+  // Who asked is kept on every row, with its id, and its checks still hold.
+  assert.deepEqual(db.prepare("SELECT id, rule, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log ORDER BY id").all().map((row) => ({ ...row })), logBefore);
+  const logSql = after.find((entry) => entry.type === "table" && entry.name === "action_log")!.sql;
+  for (const column of ["asked_by", "asked_by_pairing_id", "asked_by_peer_name", "asked_by_peer_fingerprint"]) assert.match(logSql, new RegExp(`\\b${column}\\b`), column);
+  assert.throws(() => db.prepare("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd, asked_by) VALUES (?, 1, 'asked_owner', 'Bash', 'x', '.', 'peer')").run(t0), /CHECK/, "a peer row names its pairing, name and fingerprint");
+  assert.throws(() => db.prepare("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd, asked_by) VALUES (?, 1, 'asked_owner', 'Bash', 'x', '.', 'someone')").run(t0), /CHECK/);
+  assert.throws(() => db.prepare("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd, asked_by_peer_name) VALUES (?, 1, 'asked_owner', 'Bash', 'x', '.', 'bob')").run(t0), /CHECK/, "only a peer row names a peer");
+  assert.throws(() => db.prepare("DELETE FROM action_log WHERE id = 40").run(), /append-only/);
+  // Every row is kept, ids included; the new columns of an old row are empty.
+  for (const [table, rows] of Object.entries(keptRows)) {
+    if (rows === null) continue;
+    const extra = table === "runs" ? ["approval_limit_minutes"] : table === "approvals" ? ["expires_at", "expired_at"] : [];
+    assert.deepEqual(rowsOf(table).map((row) => { const kept = { ...(row as Record<string, unknown>) }; for (const column of extra) { assert.equal(kept[column], null, `${table}.${column} is empty`); delete kept[column]; } return kept; }), rows, `${table} keeps its rows`);
+  }
+  const next = Number(db.prepare("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd) VALUES (?, 1, 'auto_worktree_edit', 'Edit', 'b.txt', '.')").run(t0).lastInsertRowid);
+  assert.equal(next, 41, "a new row comes after the highest id kept");
+
+  // A run's limit is whole minutes from 1 to 1440, or none, and never changes.
+  for (const bad of [0, 1441, 1.5, 0.5]) assert.throws(() => db.prepare("INSERT INTO runs (kind, repo_path, prompt, status, base_commit, approval_limit_minutes, created_at, updated_at) VALUES ('planned', '/r', 'p', 'planning', ?, ?, ?, ?)").run("0".repeat(40), bad, t0, t0), /CHECK/, String(bad));
+  db.prepare("INSERT INTO runs (kind, repo_path, prompt, status, base_commit, approval_limit_minutes, created_at, updated_at) VALUES ('planned', '/r', 'p', 'planning', ?, 1, ?, ?)").run("0".repeat(40), t0, t0);
+  assert.throws(() => db.prepare("UPDATE runs SET approval_limit_minutes = 5 WHERE id = 2").run(), /never changed/);
+  assert.throws(() => db.prepare("UPDATE runs SET approval_limit_minutes = NULL WHERE id = 2").run(), /never changed/);
+
+  // An approval is written unexpired, its time is fixed, and it expires once, after its time, unanswered, into a decline only.
+  const ask = (call: string, expires: string | null): number => Number(db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at, expires_at) VALUES (1, 1, 'implementer', 'Bash', 'git push', '.', ?, 'pending', ?, ?)").run(call, t0, expires).lastInsertRowid);
+  assert.throws(() => db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at, expired_at) VALUES (1, 1, 'implementer', 'Bash', 'x', '.', 'c', 'pending', ?, ?)").run(t0, t0), /first written unexpired/);
+  assert.throws(() => db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at, expires_at) VALUES (1, 1, 'implementer', 'Bash', 'x', '.', 'c', 'pending', ?, ?)").run(t0, t0), /after it is asked/);
+  assert.throws(() => db.prepare("INSERT INTO approvals (task_id, attempt_id, role, tool, command, cwd, tool_call_id, status, created_at, expires_at, chat) VALUES (NULL, 1, 'implementer', 'Bash', 'x', '.', 'c', 'pending', ?, ?, 1)").run(t0, new Date(Date.now() + 60_000).toISOString()), /never expires/, "a chat's approval");
+  // `due` has passed by the real clock; `later` has not.
+  const due = new Date(Date.now() - 60_000).toISOString();
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  const live = ask("call-2", due);
+  assert.throws(() => db.prepare("UPDATE approvals SET expires_at = ? WHERE id = ?").run(later, live), /fixed when it is asked/);
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'declined', expired_at = ? WHERE id = ?").run(t0, live), /only into a decline/, "not stamped before its time");
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'allowed', expired_at = ? WHERE id = ?").run(due, live), /only into a decline|never allowed/, "never into an allow");
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ?").run(due, live), /never allowed/, "past its time, no allow without expiring either");
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'declined', resolved_at = ? WHERE id = ?").run(due, live), /nor answered by the owner/, "past its time, not the owner's decline either: only Botbench's expiry");
+  db.prepare("UPDATE approvals SET status = 'declined', resolved_at = ?, expired_at = ? WHERE id = ?").run(due, due, live);
+  assert.throws(() => db.prepare("UPDATE approvals SET expired_at = ? WHERE id = ?").run(later, live), /already answered|expires once/, "never twice");
+  const early = ask("call-6", later);
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'declined', resolved_at = ?, expired_at = ? WHERE id = ?").run(later, later, early), /only into a decline/, "not before its time, whatever time it is stamped with");
+  db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ?").run(t0, early);
+  const none = ask("call-3", null);
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'declined', expired_at = ? WHERE id = ?").run(due, none), /only into a decline/, "one with no limit never expires");
+  // A parked one expires into a stored decline, never once the owner's answer is stored.
+  const parked = ask("call-4", due);
+  db.prepare("UPDATE approvals SET parked_at = ? WHERE id = ?").run(t0, parked);
+  assert.throws(() => db.prepare("UPDATE approvals SET stored_decision = 'allow', stored_at = ?, expired_at = ? WHERE id = ?").run(due, due, parked), /only into a decline|never allowed/);
+  assert.throws(() => db.prepare("UPDATE approvals SET stored_decision = 'allow', stored_at = ? WHERE id = ?").run(due, parked), /never allowed/, "past its time, the owner's allow is not stored");
+  db.prepare("UPDATE approvals SET stored_decision = 'decline', stored_at = ?, expired_at = ? WHERE id = ?").run(due, due, parked);
+  assert.throws(() => db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ?").run(due, parked), /stored answer|never allowed/, "its resumed task is declined");
+  // The owner's answer stored in time stands, even when its task resumes after the limit.
+  const answered = ask("call-5", later);
+  db.prepare("UPDATE approvals SET parked_at = ? WHERE id = ?").run(t0, answered);
+  db.prepare("UPDATE approvals SET stored_decision = 'allow', stored_at = ? WHERE id = ?").run(t0, answered);
+  assert.throws(() => db.prepare("UPDATE approvals SET expired_at = ? WHERE id = ?").run(due, answered), /expires once, unanswered/);
+
+  // The two new rules name their approval and say why; approvals are recorded among the notifications sent.
+  for (const rule of ["expired_unanswered", "repeat_declined"]) {
+    assert.throws(() => db.prepare("INSERT INTO action_log (ts, task_id, rule, tool, command, cwd, detail) VALUES (?, 1, ?, 'Bash', 'x', '.', 'why')").run(t0, rule), /CHECK/, rule);
+    db.prepare("INSERT INTO action_log (ts, task_id, approval_id, rule, tool, command, cwd, detail) VALUES (?, 1, 1, ?, 'Bash', 'x', '.', 'why')").run(t0, rule);
+  }
+  assert.throws(() => db.prepare("INSERT INTO action_log (ts, run_id, approval_id, rule, tool, command, cwd, detail) VALUES (?, 1, 1, 'repeat_declined', 'Bash', 'x', '.', 'why')").run(t0), /CHECK/, "a repeat refusal belongs to a task");
+  assert.throws(() => db.prepare("UPDATE action_log SET detail = 'x'").run(), /append-only/);
+  db.prepare("INSERT INTO push_sent (subject, subject_id, title, sent_at) VALUES ('approval', 1, 'An approval is waiting', ?)").run(t0);
+  assert.throws(() => db.prepare("INSERT INTO push_sent (subject, subject_id, title, sent_at) VALUES ('approval', 1, 'An approval is waiting', ?)").run(t0), /UNIQUE/);
+  assert.throws(() => db.prepare("INSERT INTO push_sent (subject, subject_id, title, sent_at) VALUES ('chat', 1, 'x', ?)").run(t0), /CHECK/);
+});
+
 test("a database from a newer Botbench is refused, not downgraded", (t) => {
   const home = tempDir(t);
   const newer = new DatabaseSync(path.join(home, DB_FILE));

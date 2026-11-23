@@ -78,4 +78,6 @@ export interface PermissionResponse {
   chat?: boolean;
   /** With an allow of an agent's question (AskUserQuestion): the owner's answer, keyed by the question's text. Ignored for any other tool. */
   answers?: Record<string, string>;
+  /** True when a decline is Botbench's because nobody answered within the run's approval time limit; `refused` says so. The transcript then says that, and not that the owner declined or was never asked. */
+  expired?: boolean;
 }

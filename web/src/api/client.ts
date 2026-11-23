@@ -695,6 +695,8 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   reviewer: ReviewerChoice | null;
   /** What becomes of each task the run accepts. */
   delivery: Delivery;
+  /** How many minutes a request of the run waits for the owner before Botbench denies it; null for no limit. */
+  approvalLimitMinutes: number | null;
   baseCommit: string;
   /** The plan's version. A decision names the version it was made on, and is refused when the plan has changed since. */
   planVersion: number;
@@ -780,8 +782,8 @@ export interface RunAnnouncement {
  * Exactly one of `prompt` and `specPath`. `preapproved` is exactly what the run's builders may use without asking.
  * `takeOver`: other workbenches' old claims on the run's issue the owner confirmed taking over, by branch.
  */
-export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: string[]; agent?: string; source?: RunSourceRef }): Promise<{ runId: number }> =>
-  request("POST", "/api/runs", { repo: o.repo, ...(o.source === undefined ? {} : { source: { [o.source.kind]: o.source.id } }), ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.onLimit === undefined ? {} : { onLimit: o.onLimit }), ...(o.updateWithMain === undefined ? {} : { updateWithMain: o.updateWithMain }), ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }) }, 30_000);
+export const startRun = (o: { repo: string; prompt?: string; specPath?: string; issue?: IssueChoice; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; onLimit?: OnLimit; updateWithMain?: UpdateWithMain; takeOver?: string[]; agent?: string; source?: RunSourceRef; approvalLimitMinutes?: number }): Promise<{ runId: number }> =>
+  request("POST", "/api/runs", { repo: o.repo, ...(o.source === undefined ? {} : { source: { [o.source.kind]: o.source.id } }), ...(o.agent === undefined ? {} : { agent: o.agent }), ...(o.prompt === undefined ? {} : { prompt: o.prompt }), ...(o.specPath === undefined ? {} : { specPath: o.specPath }), ...(o.issue === undefined ? {} : { issue: o.issue }), ...withModel(o.model), ...(o.buildModel === undefined ? {} : { buildModel: o.buildModel }), preapproved: o.preapproved, reviewer: o.reviewer, mode: o.mode, delivery: o.delivery, oneTask: o.oneTask, ...(o.onLimit === undefined ? {} : { onLimit: o.onLimit }), ...(o.updateWithMain === undefined ? {} : { updateWithMain: o.updateWithMain }), ...(o.takeOver === undefined || o.takeOver.length === 0 ? {} : { takeOver: o.takeOver }), ...(o.approvalLimitMinutes === undefined ? {} : { approvalLimitMinutes: o.approvalLimitMinutes }) }, 30_000);
 
 /** The issue a run is started from: the reading the owner was shown, and whether its commands may reach the repository's allowed hosts. */
 export interface IssueChoice {
@@ -1179,7 +1181,11 @@ export type LogRule =
   /** An agent's draft refused without a card: its run had sent its most messages to other workbenches. */
   | "peer_send_over_limit"
   /** The owner changed what a paired workbench may send or receive. */
-  | "peer_settings";
+  | "peer_settings"
+  /** Nobody answered a request within its run's approval time limit, so Botbench denied it. */
+  | "expired_unanswered"
+  /** A request the owner had already denied in the same task was denied again without a card. */
+  | "repeat_declined";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

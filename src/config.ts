@@ -234,12 +234,25 @@ export interface AutonomyConfig {
    * passed, Botbench waits this many whole seconds instead. 1800 (30 minutes) when absent; from 1 to 86,400 (a day).
    */
   usageLimitWaitSeconds?: number;
+  /**
+   * How long, in whole seconds, a request or a task Ready for review waits for the owner before Botbench sends one
+   * reminder to the owner's devices (src/push.ts). One reminder each, never more. 3600 (an hour) when absent; from 1
+   * to 86,400 (a day).
+   */
+  reminderAfterSeconds?: number;
 }
 const OFFER_STANDING_AFTER = 3;
 const SILENCE_LIMIT_SECONDS = 600;
 const MAX_SILENCE_LIMIT_SECONDS = 86_400;
 const MAX_USAGE_LIMIT_WAIT_SECONDS = 86_400;
-const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "maxCheckFixRounds", "silenceLimitSeconds", "usageLimitWaitSeconds"] as const;
+const REMINDER_AFTER_SECONDS = 3600;
+const MAX_REMINDER_AFTER_SECONDS = 86_400;
+const AUTONOMY_SETTINGS = ["offerStandingAfter", "mode", "maxRefineRounds", "maxCheckFixRounds", "silenceLimitSeconds", "usageLimitWaitSeconds", "reminderAfterSeconds"] as const;
+
+/** How long a request or a task Ready for review waits for the owner before its one reminder, in milliseconds. */
+export function reminderAfterMs(config: Config): number {
+  return (config.autonomy?.reminderAfterSeconds ?? REMINDER_AFTER_SECONDS) * 1000;
+}
 
 /** How long a builder or planner may send nothing before it is stopped, in milliseconds; 0 when the limit is off. */
 export function silenceLimitMs(config: Config): number {
@@ -444,6 +457,8 @@ function validate(c: Json, where: string): Config {
     if (silence !== undefined && !(typeof silence === "number" && Number.isSafeInteger(silence) && silence >= 0 && silence <= MAX_SILENCE_LIMIT_SECONDS)) fail(`"autonomy.silenceLimitSeconds" must be a whole number of seconds from 0 to ${MAX_SILENCE_LIMIT_SECONDS}: how long a builder or planner may send nothing while it works before Botbench stops it. 0 turns the limit off.`);
     const wait = autonomy.usageLimitWaitSeconds;
     if (wait !== undefined && !(typeof wait === "number" && Number.isSafeInteger(wait) && wait >= 1 && wait <= MAX_USAGE_LIMIT_WAIT_SECONDS)) fail(`"autonomy.usageLimitWaitSeconds" must be a whole number of seconds from 1 to ${MAX_USAGE_LIMIT_WAIT_SECONDS}: how long Botbench waits before it tries a builder again once its usage limit was reached, when the agent gives no time it resets.`);
+    const reminder = autonomy.reminderAfterSeconds;
+    if (reminder !== undefined && !(typeof reminder === "number" && Number.isSafeInteger(reminder) && reminder >= 1 && reminder <= MAX_REMINDER_AFTER_SECONDS)) fail(`"autonomy.reminderAfterSeconds" must be a whole number of seconds from 1 to ${MAX_REMINDER_AFTER_SECONDS}: how long a request or a task ready for review waits for you before Botbench sends you one reminder.`);
   }
   return c as unknown as Config;
 }

@@ -290,7 +290,8 @@ export class AcpTurnSession implements DriverSession {
     } else if (words(given.refused) !== null) {
       this.answerPermission(request, "reject");
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "denied", note: words(given.refused) });
-      this.refused.push(`Botbench refused it without asking the owner: ${words(given.refused)}`);
+      // An expiry is Botbench's decline after the owner was asked and nobody answered: its words say so themselves.
+      this.refused.push(given.expired === true ? words(given.refused)! : `Botbench refused it without asking the owner: ${words(given.refused)}`);
     } else {
       this.answerPermission(request, "reject");
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "declined", note: words(given.note) });

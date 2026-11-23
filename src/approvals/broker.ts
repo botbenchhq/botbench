@@ -201,7 +201,11 @@ export type LogRule =
   /** A fully autonomous run's agent asked a question nobody was asked: the question in `command`, what the agent was told in `detail`. */
   | "question_unasked"
   /** A task was handed to another agent (engine/handoff.ts): `command` names the agents, `detail` the line the owner reads. */
-  | "handoff";
+  | "handoff"
+  /** Nobody answered an approval within its run's approval time limit, so Botbench declined it: its own answer, never the owner's. Names the approval. */
+  | "expired_unanswered"
+  /** A task's request was declined without a card because the owner had declined the same one in that task. Names that earlier approval. */
+  | "repeat_declined";
 /** How many approvals of the same command earn the offer of standing permission, when the owner's config does not say. */
 export const OFFER_STANDING_AFTER = 3;
 
@@ -260,6 +264,10 @@ export interface Approval {
   question: Question | null;
   /** The owner's answer to a question, as given; null until there is one. */
   answer: string | null;
+  /** When Botbench declines it if nobody has answered: set when it was asked in a run with an approval time limit; null otherwise, and for a question. */
+  expiresAt: string | null;
+  /** When Botbench declined it because nobody answered in time; null when it did not. Such a decline is never the owner's. */
+  expiredAt: string | null;
   /** Who asked (ADR 0004 decision 10); for a peer, its card's line "Asked by Claude Code, working on a message from bob's workbench". */
   askedBy: AskedBy & { words: string | null };
 }
@@ -332,6 +340,8 @@ export interface Answer {
   chat?: true;
   /** Set when the owner answered an agent's question: the answer, keyed by the question's text, as the CLI takes it. */
   answers?: Record<string, string>;
+  /** Set when Botbench declined the request because nobody answered within its run's approval time limit; `refused` says so. */
+  expired?: true;
 }
 
 /** The answer as a driver's `respondToRequest` takes it. */
@@ -348,8 +358,23 @@ export function permissionResponse(answer: Answer): PermissionResponse {
     bookkeeping: answer.bookkeeping !== undefined,
     chat: answer.chat !== undefined,
     ...(answer.answers === undefined ? {} : { answers: answer.answers }),
+    expired: answer.expired !== undefined,
   };
 }
+
+/** How long a minute of a run's approval time limit is, unless a test asks the broker for a shorter one. */
+export const MINUTE_MS = 60_000;
+
+/** A run's approval time limit in words: "1 minute", "90 minutes". */
+export const limitWords = (minutes: number): string => `${minutes} minute${minutes === 1 ? "" : "s"}`;
+
+/** What the agent, the transcript and the log are told when nobody answered an approval in time. Botbench's decline, and it says so. */
+export const expiredWords = (minutes: number | null): string =>
+  `Nobody answered this request within the run's approval time limit${minutes === null ? "" : ` of ${limitWords(minutes)}`}, so Botbench denied it. It was not run.`;
+
+/** What the agent, the transcript and the log are told when the owner already denied the same request in this task. */
+export const repeatWords = (note: string | null): string =>
+  `You denied this same request earlier in this task, so Botbench denied it again without asking you. ${note === null ? "You left no note." : `Your note then: “${note}”`} Do not try to get the same thing done another way.`;
 
 /** An answer that cannot be taken; `status` is the HTTP answer for it. */
 export class ApprovalError extends Error {
@@ -470,6 +495,8 @@ function toApproval(row: Record<string, unknown>): Approval {
     target: text(row.target),
     question: parseStoredQuestion(row.question),
     answer: text(row.answer),
+    expiresAt: text(row.expires_at),
+    expiredAt: text(row.expired_at),
     askedBy: { ...askedByOfRow(row), words: row.asked_by === "peer" ? `Asked by ${row.builder_agent === "codex" ? "Codex" : "Claude Code"}, working on a message from ${String(row.asked_by_peer_name)}'s workbench` : null },
   };
 }
@@ -674,10 +701,14 @@ export function createBroker(options: {
    * A Read inside it is allowed without asking (gate.ts). Left out, there is none.
    */
   sessionOutput?: (o: { driver: string; session: string; worktree: string }) => string | null;
+  /** How long a minute of a run's approval time limit lasts, in milliseconds: `MINUTE_MS` when left out. Tests ask for a short one; the clock is never changed. */
+  minuteMs?: number;
 }): Broker {
   const { db } = options;
   const offerStandingAfter = options.offerStandingAfter ?? OFFER_STANDING_AFTER;
   if (!Number.isSafeInteger(offerStandingAfter) || offerStandingAfter < 1) throw new Error(`offerStandingAfter must be a whole number of at least 1, not ${String(options.offerStandingAfter)}.`);
+  const minuteMs = options.minuteMs ?? MINUTE_MS;
+  if (!Number.isSafeInteger(minuteMs) || minuteMs < 1) throw new Error(`minuteMs must be a whole number of at least 1, not ${String(options.minuteMs)}.`);
   const floorSettings: FloorSettings & { dataDir: string } = { home: os.homedir(), dataDir: options.home, ...(options.floor ? { extra: options.floor } : {}) };
   const socketPath = path.join(options.home, SOCKET_FILE);
   /** Admissions by the hash of their secret: the secret itself is held only by the admission and the CLI child. */
@@ -709,6 +740,126 @@ export function createBroker(options: {
     } catch (err) {
       console.error(`An approval change could not be announced: ${words(err)}`);
     }
+  };
+
+  /** How soon an expiry whose write failed is tried again. */
+  const EXPIRE_RETRY_MS = 1000;
+  /** The timer of each approval that expires, by its id. The store is what counts: a timer only ever reads it again. */
+  const timers = new Map<number, NodeJS.Timeout>();
+
+  /** Set the timer that ends approval `id` at `expiresAt` (at once when that has passed). */
+  const arm = (id: number, expiresAt: string): void => {
+    if (closed) return;
+    clearTimeout(timers.get(id));
+    // A limit is at most a day, well inside what a timer can wait.
+    const timer = setTimeout(() => {
+      timers.delete(id);
+      expire(id);
+    }, Math.max(0, Date.parse(expiresAt) - Date.now()));
+    timer.unref();
+    timers.set(id, timer);
+  };
+
+  /**
+   * Nobody answered approval `id` within its run's approval time limit: Botbench declines it, as its own answer and
+   * never the owner's, with one `expired_unanswered` entry. Read again in the write, so an approval the owner answered,
+   * or whose answer is stored, is left as it is: an expiry never overwrites an answer, and only ever declines. One asked
+   * in this process is declined and its waiting request told why; a parked one, asked before a restart, has the decline
+   * stored for its task to be resumed with, as an answer of the owner's to a parked approval is stored.
+   */
+  const expire = (id: number): void => {
+    let ended: { parked: boolean; told: string } | null = null;
+    try {
+      ended = transaction(db, (): { parked: boolean; told: string } | null => {
+        const row = db.prepare("SELECT a.status, a.stored_decision, a.parked_at, a.expires_at, a.question, a.task_id, a.run_id, a.attempt_id, a.tool, a.command, a.cwd, r.approval_limit_minutes AS minutes FROM approvals a LEFT JOIN tasks t ON t.id = a.task_id LEFT JOIN runs r ON r.id = COALESCE(a.run_id, t.run_id) WHERE a.id = ?").get(id);
+        if (row === undefined || row.status !== "pending" || row.stored_decision !== null || row.question !== null || typeof row.expires_at !== "string") return null;
+        if (Date.parse(row.expires_at) > Date.now()) {
+          // Not yet: woken early, it waits on.
+          arm(id, row.expires_at);
+          return null;
+        }
+        const parked = row.parked_at !== null;
+        // Pending, not parked and waited for by nobody here: not this process's to end.
+        if (!parked && !waiters.has(id)) return null;
+        const told = expiredWords(int(row.minutes));
+        const at = now();
+        const changed = parked
+          ? db.prepare("UPDATE approvals SET stored_decision = 'decline', stored_at = ?, expired_at = ? WHERE id = ? AND status = 'pending' AND stored_decision IS NULL").run(at, at, id)
+          : db.prepare("UPDATE approvals SET status = 'declined', resolved_at = ?, expired_at = ? WHERE id = ? AND status = 'pending' AND stored_decision IS NULL").run(at, at, id);
+        if (Number(changed.changes) !== 1) return null;
+        appendLog(db, { taskId: int(row.task_id), runId: int(row.run_id), attemptId: Number(row.attempt_id), approvalId: id, rule: "expired_unanswered", tool: String(row.tool), command: String(row.command), cwd: String(row.cwd), detail: told });
+        return { parked, told };
+      });
+    } catch (err) {
+      // It stays pending and nothing was allowed; an answer of the owner's is refused as too late. Tried again in a
+      // second, until the write works or Botbench stops.
+      console.error(`Approval ${id} could not be ended after its time limit, so Botbench tries again in a second: ${words(err)}`);
+      arm(id, new Date(Date.now() + EXPIRE_RETRY_MS).toISOString());
+      return;
+    }
+    if (ended === null) return;
+    if (!ended.parked) {
+      waiters.get(id)?.({ decision: "decline", note: null, approvalId: id, refused: ended.told, expired: true });
+      waiters.delete(id);
+    }
+    announce(id);
+    if (ended.parked) {
+      const approval = getApproval(db, id);
+      if (approval) tellStored(approval);
+    }
+  };
+
+  /** Deny approval `id` now if its time has passed and its timer has not run yet, so no answer given after the limit is taken. */
+  const expireOverdue = (id: number): void => {
+    let due: unknown;
+    try {
+      due = db.prepare("SELECT expires_at FROM approvals WHERE id = ? AND status = 'pending' AND stored_decision IS NULL").get(id)?.expires_at;
+    } catch (err) {
+      console.error(`Whether approval ${id} is past its time limit could not be read: ${words(err)}`);
+      return;
+    }
+    // The timer is left as it is: should this write fail, it tries again, and on an approval already ended it does nothing.
+    if (typeof due === "string" && Date.parse(due) <= Date.now()) expire(id);
+  };
+
+  /** Whether an approval is past its time limit and unanswered: then no answer of the owner's is taken, even if denying it could not be written. */
+  const overdue = (approval: Approval): boolean => approval.status === "pending" && approval.storedDecision === null && approval.expiresAt !== null && Date.parse(approval.expiresAt) <= Date.now();
+  const OVERDUE = "Nobody answered it in time, so Botbench denies it: its run's approval time limit passed. It was not run.";
+  /**
+   * The owner's answer to approval `id`, written in one transaction. Should its time pass between the check above and the
+   * write, the store refuses the answer (`approvals_no_answer_past_expiry`): Botbench then declines it, and the owner is
+   * told so, as for any answer given too late.
+   */
+  const inTime = <R>(id: number, write: () => R): R => {
+    try {
+      return transaction(db, write);
+    } catch (err) {
+      if (err instanceof ApprovalError || !/never allowed/.test(words(err))) throw err;
+      expireOverdue(id);
+      throw new ApprovalError(409, OVERDUE);
+    }
+  };
+
+  /** When an approval of this request expires:its run's limit after `askedAt`, or null for none. A limit that cannot be read is none: the owner is still asked. */
+  const expiryOf = (r: ApprovalRequest, askedAt: string): string | null => {
+    // Read in the approval's own write: one that cannot be read throws, and the request is then denied as any approval
+    // that cannot be recorded is, never left waiting without the limit its run was given.
+    const row = r.taskId !== null ? db.prepare("SELECT r.approval_limit_minutes AS minutes FROM tasks t JOIN runs r ON r.id = t.run_id WHERE t.id = ?").get(r.taskId) : r.runId === undefined || r.runId === null ? undefined : db.prepare("SELECT approval_limit_minutes AS minutes FROM runs WHERE id = ?").get(r.runId);
+    const minutes = int(row?.minutes);
+    return minutes === null ? null : new Date(Date.parse(askedAt) + minutes * minuteMs).toISOString();
+  };
+
+  /**
+   * The approval of the owner's that declined this same request in this task, if there is one: same task, role, tool,
+   * command and directory, declined by the owner (with the owner's own entry in the log). One that expired, was
+   * superseded or allowed is none; a directory nobody reported is not known to be the same. Throws when it cannot be read.
+   */
+  const declinedBefore = (r: ApprovalRequest, cwd: string): { id: number; note: string | null } | null => {
+    if (r.taskId === null || cwd === "") return null;
+    const row = db
+      .prepare("SELECT a.id, a.note FROM approvals a WHERE a.task_id = ? AND a.role = ? AND a.tool = ? AND a.command = ? AND a.cwd = ? AND a.status = 'declined' AND a.expired_at IS NULL AND a.question IS NULL AND EXISTS (SELECT 1 FROM action_log l WHERE l.approval_id = a.id AND l.rule = 'owner_declined') ORDER BY a.id DESC LIMIT 1")
+      .get(r.taskId, r.role, r.tool, r.command, cwd);
+    return row === undefined ? null : { id: Number(row.id), note: text(row.note) };
   };
 
   /**
@@ -981,7 +1132,9 @@ export function createBroker(options: {
             : carried.find((a) => a.role === r.role && a.tool === r.tool && a.question === null && a.command === r.command && a.cwd === cwd);
       if (match) {
         const decision = match.storedDecision!;
-        const ownerRule = match.question !== null ? "owner_answered" : decision === "allow" ? "owner_allowed" : "owner_declined";
+        // A decline Botbench stored because nobody answered in time has its own entry, not the owner's.
+        const expired = match.expiredAt !== null;
+        const ownerRule = expired ? "expired_unanswered" : match.question !== null ? "owner_answered" : decision === "allow" ? "owner_allowed" : "owner_declined";
         try {
           // Used up before it is handed over: whatever happens next, this answer is never given a second time.
           transaction(db, () => {
@@ -995,6 +1148,15 @@ export function createBroker(options: {
           return deny(`The owner's stored answer could not be applied: ${words(err)}`);
         }
         announce(match.id);
+        if (expired) {
+          let told = expiredWords(null);
+          try {
+            told = text(db.prepare("SELECT detail FROM action_log WHERE approval_id = ? AND rule = 'expired_unanswered'").get(match.id)?.detail) ?? told;
+          } catch (err) {
+            console.error(`What the agent was to be told of approval ${match.id} could not be read: ${words(err)}`);
+          }
+          return Promise.resolve({ decision: "decline", note: null, approvalId: match.id, refused: told, expired: true });
+        }
         // A question's answer goes back keyed by the text the agent asked this time, which is the stored one.
         return Promise.resolve({ decision, note: match.note, approvalId: match.id, refused: null, ...(question !== null && match.answer !== null ? { answers: { [question.text]: match.answer } } : {}) });
       }
@@ -1081,6 +1243,24 @@ export function createBroker(options: {
       }
       return Promise.resolve({ decision: "allow", note: null, approvalId: null, refused: null, ...(standing ? { standing: { grantId: grant.id } } : { preapproved: { grantId: grant.id } }) });
     }
+    // What would ask the owner, and the owner already declined in this task, is declined again without a card. Only ever a
+    // decline; one that cannot be checked is asked as before.
+    let earlier: { id: number; note: string | null } | null = null;
+    try {
+      earlier = declinedBefore(r, cwd);
+    } catch (err) {
+      console.error(`Whether the owner already declined a request of task ${r.taskId} could not be read, so it is asked: ${words(err)}`);
+    }
+    if (earlier !== null) {
+      const told = repeatWords(earlier.note);
+      try {
+        appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId: earlier.id, rule: "repeat_declined", tool: r.tool, command: r.command, cwd, detail: told });
+      } catch (err) {
+        return deny(`${told} It could not be recorded as such: ${words(err)}`);
+      }
+      if (ticket && ticket.resumes !== null && ticket.taskId !== null) supersedeWhere("After the restart the agent's first request was one Botbench refused, so the owner's stored answer was not used.", stillCarried, ticket.taskId, ticket.resumes);
+      return Promise.resolve({ decision: "decline", note: earlier.note, approvalId: null, refused: told });
+    }
     const escalation = r.escalation === true;
     const always = [escalation ? "Codex asked to run this outside its sandbox." : null, verdict.floor !== undefined ? `Always asks: ${verdict.floor}.` : null].filter((line) => line !== null).join(" ") || null;
     const asksBecause = askWords(verdict.why, { tool: r.tool, chat: ticket?.chat === true, ...(verdict.floor === undefined ? {} : { floor: verdict.floor }) });
@@ -1092,11 +1272,14 @@ export function createBroker(options: {
       console.error(`Where a ${shorten(r.tool, 100)} request is aimed could not be worked out: ${words(err)}`);
     }
     let id: number;
+    const askedAt = now();
+    let expiresAt: string | null = null;
     try {
       id = transaction(db, () => {
+        expiresAt = r.chat === true ? null : expiryOf(r, askedAt);
         const inserted = db
-          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target, escalation, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, now(), asksBecause, target, escalation ? 1 : 0, ...askedByValues(askedByFor(db, r.taskId, r.runId)));
+          .prepare("INSERT INTO approvals (task_id, run_id, chat, attempt_id, role, tool, command, cwd, reason, tool_call_id, status, created_at, asks_because, target, escalation, expires_at, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(r.taskId, r.runId ?? null, r.chat === true ? 1 : 0, r.attemptId, r.role, r.tool, r.command, cwd, typeof r.reason === "string" ? shorten(r.reason, MAX_REASON) : null, r.toolCallId, askedAt, asksBecause, target, escalation ? 1 : 0, expiresAt, ...askedByValues(askedByFor(db, r.taskId, r.runId)));
         const approvalId = Number(inserted.lastInsertRowid);
         appendLog(db, { taskId: r.taskId, runId: r.runId ?? null, attemptId: r.attemptId, approvalId, rule: "asked_owner", tool: r.tool, command: r.command, cwd, detail: always });
         return approvalId;
@@ -1105,6 +1288,7 @@ export function createBroker(options: {
       return deny(`The approval could not be recorded: ${words(err)}`);
     }
     const waiting = new Promise<Answer>((resolve) => waiters.set(id, resolve));
+    if (expiresAt !== null) arm(id, expiresAt);
     announce(id);
     return waiting;
   };
@@ -1114,10 +1298,14 @@ export function createBroker(options: {
     if (decision !== "allow" && decision !== "decline") throw new ApprovalError(400, 'The decision must be "allow" or "decline".');
     const kept = typeof note === "string" && note.trim() !== "" ? note.trim().slice(0, MAX_NOTE) : null;
     const status: ApprovalStatus = decision === "allow" ? "allowed" : "declined";
+    // Past its time, an approval is Botbench's to deny, whether or not its timer has run yet.
+    expireOverdue(id);
     // The decision and its log entry are one write: neither exists without the other.
-    const stored = transaction(db, () => {
+    const stored = inTime(id, () => {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
+      if (current.expiredAt !== null) throw new ApprovalError(409, "Nobody answered it in time, so Botbench denied it when its run's approval time limit passed. It was not run.");
+      if (overdue(current)) throw new ApprovalError(409, OVERDUE);
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
       if (current.storedDecision !== null) throw new ApprovalError(409, `This approval already has your answer (${current.storedDecision}); Botbench is resuming its task.`);
       if (current.question !== null) throw new ApprovalError(409, "This is a question from Claude Code: answer it with one of its choices or your own words.");
@@ -1243,11 +1431,13 @@ export function createBroker(options: {
   };
 
   const grantStanding = (id: number): { approval: Approval; grant: StandingGrant } => {
+    expireOverdue(id);
     // The answer, the grant and their log entries are one write: none exists without the others.
-    const grantId = transaction(db, () => {
+    const grantId = inTime(id, () => {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
+      if (overdue(current)) throw new ApprovalError(409, OVERDUE);
       const found = eligibility(current);
       if (typeof found === "string") throw new ApprovalError(409, `Always allow is not available for this request: ${found}. Nothing was allowed; answer it with Allow or Decline.`);
       const answered = db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ? AND status = 'pending'").run(now(), id);
@@ -1389,6 +1579,9 @@ export function createBroker(options: {
             // Nothing re-drives a chat: its requests from before this start end here, unanswered, and say why.
             supersedeWhere(CHAT_RESTARTED, "chat = 1");
             db.prepare("UPDATE approvals SET parked_at = ? WHERE status = 'pending' AND parked_at IS NULL").run(now());
+            // Each one with a time limit and no answer gets its timer back from the stored time: one whose time passed while
+            // Botbench was stopped is declined at once, after this start's engines are in place to resume its task.
+            for (const row of db.prepare("SELECT id, expires_at FROM approvals WHERE status = 'pending' AND stored_decision IS NULL AND expires_at IS NOT NULL ORDER BY id").all()) arm(Number(row.id), String(row.expires_at));
           } catch (err) {
             return reject(new Error(`The approvals left pending by the last run could not be marked: ${words(err)}`));
           }
@@ -1478,6 +1671,9 @@ export function createBroker(options: {
     if (closed) return;
     closed = true;
     tickets.clear();
+    // What still waits for its time is kept in the store; the next start arms it again.
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
     // Only what this broker is waiting on: the store may be shared with a Botbench that is still running.
     for (const id of [...waiters.keys()]) supersedeWhere(null, "id = ?", id);
     // Should the rows not have been writable, still nobody is left waiting: a request with no broker is declined.
