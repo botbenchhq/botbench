@@ -581,13 +581,27 @@ The Codex driver (U17) applies its own permissions profile to meet R27. Grok and
 
 ### Autonomy and delivery (added 22 November 2026, owner direction)
 
-North Star: from my phone I hand Botbench a piece of work, walk away, and come back to a branch I can trust, built and reviewed by more than one vendor's agent.
+North Star (owner, 22 November 2026): **two developers, each with their own Botbench and their own agents, deliver one piece of work together** — their workbenches aware of each other, their changes compatible and reviewable, with far less coordination between the two people. The single-owner line (from my phone I hand Botbench a piece of work, walk away, and come back to a branch I can trust, built and reviewed by more than one vendor's agent) is the foundation each developer stands on, not the goal.
 
 - **Review and refine.** Another vendor's agent reviews the builder's diff; its concerns go back to the builder, which fixes or explains; the reviewer looks again. Capped rounds.
 - **Three modes per run.** Manual: every step asks. Semi-autonomous: confined commands run without asking; the owner approves the plan and makes the final decision. Fully autonomous: no plan approval, and the task is accepted without the owner when every configured check passed and the reviewer is satisfied; dangerous actions are refused, never asked. It refuses to start on a repository with no checks.
 - **Deliver.** A run can be set to open a pull request for each accepted task. Botbench itself pushes the task's branch and opens the pull request with the owner's own `git` and `gh`; agents never hold the credentials. Never the default branch, never by force, never a merge. A ledger makes a restart unable to open a second one.
 - **Intake (next).** A GitHub issue or the owner's feedback becomes a run. Outside text is untrusted: a run that read it is marked, and its commands lose pre-approved and standing permissions.
 - **Composer.** Chat, New task and New run become one message box; repository, mode and review are set from an add-context sheet; voice input is transcribed on the owner's Mac.
+
+### Milestone 6: Peers — two workbenches on one repository (added 22 November 2026)
+
+The owner's North Star test on 22 November ran two Botbench installations as two developers on this repository: six GitHub issues, eight pull requests, coordination only through GitHub. It worked, and it showed what two workbenches lack: every installation numbers its runs from 1, so branch names collide on the shared remote; neither can see what the other is working on; one issue can be taken twice; and two changes that are each correct can still fail to fit together.
+
+Built in this order, each step proven by two real installations on one repository before the next starts:
+
+- **P1. A workbench has a name, and its branches carry it.** `botbench/<workbench>/run-N/task-M`. Old branch names keep working. Two installations can never produce the same branch name.
+- **P2. Each workbench sees the others' work on the shared remote.** Read-only, through `gh`: open pull requests and pushed branches from other workbenches, the issue each belongs to, and the files each touches. The composer warns before starting work on an issue another workbench already has, or on files an open pull request from another workbench changes. No new trust boundary: it reads what GitHub already shows the owner.
+- **P3. Taking an issue is visible.** When a run starts from an issue, the workbench says so where the other can see it (the smallest write to GitHub that does this, behind the owner's choice), and releases it when the run ends without a pull request.
+- **P4. A shared check for work that must fit together.** Two issues are linked as one piece of work with one check that both branches must pass together (a merged scratch branch, run in the confinement). "Compatible" is something that ran, not something two agents said.
+- **P5. Workbenches talk directly.** Pairing, typed messages scoped to one repository, questions and interface proposals between the two developers' agents, each owner approving what leaves and what is acted on. Messages are outside text. This needs its own decision record and threat review before any code (`docs/product/peers-concept.md`).
+
+One end-to-end test per step, run on two installations. P1 to P3 need no new transport and no new trust boundary beyond one small write to GitHub.
 
 ### Milestone 4: Every subscription
 
