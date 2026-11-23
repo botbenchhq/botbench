@@ -24,10 +24,12 @@ const RULE_WORDS: Record<LogRule, string> = {
   owner_accepted: "You accepted",
   owner_rejected: "You rejected",
   owner_discarded: "You discarded",
-  mode_allowed: "Ran without asking: the run's mode",
+  mode_allowed: "Ran without asking: kept in the task's copy",
   mode_refused: "Refused without asking: fully autonomous",
   mode_accepted: "Accepted without you: fully autonomous",
   delivery: "Pull request",
+  web_allowed: "Ran without asking: Web access is Allow",
+  web_refused: "Refused without asking: Web access is Off",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();

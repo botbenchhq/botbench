@@ -3,27 +3,23 @@ import { initRepo } from "../test/support/repo.ts";
 import { SHOTS, checkDesign, expect, signIn, startTaskIn, test } from "./helpers.ts";
 
 // U27 in the real client, at a phone's size: a real Botbench process, a real temporary repository, and the owner's
-// Claude Code on its cheapest model running, once the owner allows it, a command that tries to reach the network.
+// Claude Code on its cheapest model running a command that tries to reach the network. It runs without a card: it is kept
+// inside the task's copy and nothing in it is on the always-ask list, so the sandbox, not an approval, is the control.
 // The transcript says in plain words that the command was kept from it; the raw detail stays one level down.
 
 const COMMAND = "curl -sS -m 15 -o /dev/null https://example.com";
 const PROMPT = `Run the command \`${COMMAND}\` with your Bash tool, exactly once, even if it fails. Do not retry it. Then reply with the single word: done`;
 
-test("LIVE: a command the owner allowed that tries to reach a host the repository does not allow is shown in the transcript as kept from the network, in plain words, with its output and technical details behind it", async ({ page, botbench }) => {
+test("LIVE: a command that runs without asking and tries to reach a host the repository does not allow is shown in the transcript as kept from the network, in plain words, with its output and technical details behind it", async ({ page, botbench }) => {
   const repo = path.join(path.dirname(botbench.home), "sample-repo");
   initRepo(repo, { "README.md": "# Sample\n" });
   await signIn(page, botbench);
   await startTaskIn(page, repo, PROMPT);
   await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 
-  // The permission check still asks first, with the sandbox on.
-  const card = page.getByTestId("approval-card");
-  await expect(card).toBeVisible({ timeout: 120_000 });
-  await expect(card.getByTestId("approval-command")).toHaveText(COMMAND);
-  const allow = card.getByRole("button", { name: "Allow once" });
-  await expect(allow).toBeEnabled();
-  await allow.click();
-  await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 120_000 });
+  // No card: the command runs confined, with the sandbox on.
+  await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 240_000 });
+  await expect(page.getByTestId("approval-card")).toHaveCount(0);
 
   // One row, the design system's tool call: Failed, a plain verb and the real command, and why in a plain note; open without a tap.
   const row = page.locator('[data-event="tool_call"]').filter({ hasText: COMMAND }).first().locator(".ds-tool-call");

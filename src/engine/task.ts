@@ -408,7 +408,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const issue = runIssue(db, task.runId);
     return issue === null ? task.prompt : `${task.prompt}\n\n${outsideTextPrompt(issue)}`;
   };
-  /** Whether the builder's driver runs every shell command confined: only then may a run's mode let one run without asking. */
+  /** Whether the builder's driver runs every shell command confined: only then may a command run without asking. */
   const confined = driver.capabilities.confinedCommands === true;
   /**
    * The builder's way to the permission gate, the same for its build, a round of fixes, a resume and an answer after a
@@ -789,7 +789,7 @@ export function createTasks(options: TasksOptions): Tasks {
         void broker
           .request({ taskId: id, attemptId: session.attemptId, role: IMPLEMENTER, tool: event.name, command: summarize(event.name, event.input), input: event.input, reason: event.reason, toolCallId: event.toolCallId })
           // A request the CLI has stopped waiting for has no one to tell.
-          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined }) : undefined))
+          .then((answer) => (asking.has(event.id) ? session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, bookkeeping: answer.bookkeeping !== undefined }) : undefined))
           .catch(report(`Answering a permission request of task ${id}`));
       }
       if (event.type === "permission_resolved") {

@@ -3,11 +3,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { now } from "../store/db.ts";
 
 /*
- * "Web access in chat": what Claude Code's own web tools (WebFetch, WebSearch) may do in a chat, as the owner chose in
- * Settings. Allow, the default: they run without a card, each one shown in the transcript and written to the action
- * log. Ask: each one is put to the owner as an approval card. Off: each one is refused, saying where to turn it on.
- * It applies to a chat only; a task's and a run's requests keep their own rules. A web tool reaches the site or the
- * search provider through the CLI itself, outside the confinement of commands, which has no network in a chat.
+ * "Web access": what Claude Code's own web tools (WebFetch, WebSearch) may do, in a chat, a task or a run, as the owner
+ * chose in Settings (kept under its first name, `chat_web_access`, from when it was for chats only). Allow, the
+ * default: they run without a card, each one shown in the transcript and written to the action log; a fetch of this
+ * Mac, the local network or anything but a public web page still asks. Ask: each one is put to the owner as an approval
+ * card. Off: each one is refused, saying where to turn it on. A fully autonomous run refuses what would ask. A run that
+ * read outside text (a GitHub issue) does not follow the setting: each of its web tools asks. A web tool reaches the
+ * site or the search provider through the CLI itself, outside the confinement of commands.
  */
 
 export const WEB_ACCESS = ["allow", "ask", "off"] as const;
@@ -25,15 +27,15 @@ export function chatWebAccess(db: DatabaseSync): WebAccess {
 }
 
 export function setChatWebAccess(db: DatabaseSync, value: WebAccess): void {
-  if (!isWebAccess(value)) throw new Error(`Web access in chat is allow, ask or off, not ${JSON.stringify(value)}.`);
+  if (!isWebAccess(value)) throw new Error(`Web access is allow, ask or off, not ${JSON.stringify(value)}.`);
   db.prepare("INSERT INTO owner_settings (name, value, updated_at) VALUES ('chat_web_access', ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(value, now());
 }
 
 /** What the owner sees for each value, in Settings and in the log. */
 export const WEB_ACCESS_WORDS: Record<WebAccess, string> = { allow: "Allow", ask: "Ask", off: "Off" };
 
-/** What Claude Code is told, and the transcript says, when web access in chat is off. */
-export const WEB_OFF = "Web access in chat is off, so Botbench refused this without asking you. You can switch it on in Settings, under Web access in chat.";
+/** What Claude Code is told, and the transcript says, when web access is off. */
+export const WEB_OFF = "Web access is off, so Botbench refused this without asking you. You can switch it on in Settings, under Web access.";
 
 /**
  * Whether a fetch is aimed at a public web page: an http or https address whose host is a dotted name that is not this

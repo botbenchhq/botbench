@@ -102,6 +102,8 @@ test("a run started from an issue is marked, its planner is given the issue as o
   assert.equal(bare.prompt, null);
   await r.runs.idle();
   assert.match(r.planner.prompts[1]!, /<work>\n\(No message of the owner's own: the work is the problem the GitHub issue below describes\.\)\n<\/work>/);
+  // Semi-autonomous does not wait for plan approval, but a run started from a stranger's issue always does.
+  assert.equal(getRun(r.db, bare.id)!.status, "awaiting_plan_approval");
 
   const approved = r.runs.approve(run.id, getRun(r.db, run.id)!.planVersion);
   for (const task of approved.tasks) assert.equal(runOutside(r.db, task.runId).text, true);

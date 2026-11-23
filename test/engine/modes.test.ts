@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { taskDecision } from "../../src/engine/decision.ts";
-import type { RunMode } from "../../src/engine/modes.ts";
+import { setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
 import { createRun, createRuns, getRun, RunError, runTasks, storePlan, type Run, type Runs } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
 import { createTasks, getTask, type Tasks } from "../../src/engine/task.ts";
@@ -77,24 +77,75 @@ test("semi-autonomous: a builder's command runs confined without asking, the tas
   const log = actionLog(e.db, id);
   const ran = log.filter((entry) => entry.rule === "mode_allowed");
   assert.deepEqual(ran.map(({ tool, command, cwd }) => ({ tool, command, cwd })), [{ tool: "Bash", command: "sh other.sh", cwd: "." }]);
-  assert.match(ran[0]!.detail!, /semi-autonomous/);
+  assert.match(ran[0]!.detail!, /kept in the task's copy, away from your sign-ins and the network/);
   assert.ok(!log.some((entry) => entry.rule === "asked_owner"));
   // The owner still decides: no decision was made for them.
   assert.equal(taskDecision(e.db, id), null);
   assert.equal(task.reason, null);
 });
 
-test("manual: the same command asks the owner, as it always did", async (t) => {
+test("manual: the plan waits for the owner's approval and each result for the owner's decision, and the builder's confined command runs with no card", async (t) => {
+  const e = await line(t, ["ask", "done", "done"]);
+  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "manual" });
+  await e.runs.idle();
+  const waiting = getRun(e.db, run.id)!;
+  assert.equal(waiting.status, "awaiting_plan_approval", "the plan waits for the owner");
+  assert.deepEqual(runTasks(e.db, run.id), []);
+  e.runs.approve(run.id, waiting.planVersion);
+  await e.tasks.idle();
+  assert.equal(listApprovals(e.db).length, 0, "no card for a command that ran confined");
+  const ran = actionLog(e.db).filter((entry) => entry.rule === "mode_allowed");
+  assert.deepEqual(ran.map((entry) => entry.command), ["sh other.sh"]);
+  for (const task of runTasks(e.db, run.id)) {
+    assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+    assert.equal(taskDecision(e.db, task.id), null, "the owner decides");
+  }
+});
+
+test("manual with Ask before every command on: the same command asks the owner again, and the card says why", async (t) => {
   const e = await line(t, ["ask"]);
+  setAskEveryCommand(e.db, true);
   const run = createRun(e.db, { repo: e.repo, prompt: "Add a file", baseCommit: e.base, mode: "manual" });
   const stored = storePlan(e.db, run.id, ONE);
   e.runs.approve(stored.id, stored.planVersion);
   for (let i = 0; i < 200 && listApprovals(e.db, "pending").length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
   const pending = listApprovals(e.db, "pending");
-  assert.deepEqual(pending.map((a) => a.command), ["sh other.sh"]);
+  assert.deepEqual(pending.map((a) => [a.command, a.asksBecause]), [["sh other.sh", "Ask before every command is on in Settings."]]);
   e.broker.answer(pending[0]!.id, "allow");
   await e.tasks.idle();
   assert.ok(!actionLog(e.db).some((entry) => entry.rule === "mode_allowed"));
+});
+
+test("a task started on its own: a confined command runs with no card, and a command on the always-ask list still asks", async (t) => {
+  const e = await line(t, ["ask", "refused"]);
+  const quiet = await e.tasks.start(e.repo, "Run the other script");
+  await e.tasks.idle();
+  assert.equal(listApprovals(e.db).length, 0);
+  assert.equal(getTask(e.db, quiet.id)!.status, "awaiting_decision", getTask(e.db, quiet.id)!.reason ?? "");
+  assert.deepEqual(actionLog(e.db, quiet.id).filter((entry) => entry.rule === "mode_allowed").map((entry) => entry.command), ["sh other.sh"]);
+
+  const pushing = await e.tasks.start(e.repo, "Push it");
+  for (let i = 0; i < 200 && listApprovals(e.db, "pending").length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  const pending = listApprovals(e.db, "pending");
+  assert.deepEqual(pending.map((a) => [a.taskId, a.command, a.asksBecause]), [[pushing.id, "git push origin HEAD", "On the always-ask list: it sends commits to another computer."]]);
+  e.broker.answer(pending[0]!.id, "decline");
+  await e.tasks.idle();
+});
+
+test("semi-autonomous: building starts without the owner approving the plan, and each result waits for the owner's decision", async (t) => {
+  const e = await line(t, ["done", "done", "done"]);
+  const run = await e.runs.start({ repo: e.repo, prompt: "Add two files and describe them", mode: "semi" });
+  await e.runs.idle();
+  await e.tasks.idle();
+  const events = e.db.prepare("SELECT status, detail FROM run_events WHERE run_id = ? ORDER BY id").all(run.id).map((row) => `${String(row.status)}: ${String(row.detail)}`);
+  assert.ok(events.some((line) => /^running: plan approved by the run's mode, semi-autonomous: 3 tasks queued$/.test(line)), events.join("\n"));
+  const tasks = runTasks(e.db, run.id);
+  assert.equal(tasks.length, 3);
+  for (const task of tasks) {
+    assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+    assert.equal(taskDecision(e.db, task.id), null, "the owner decides");
+  }
+  assert.equal(getRun(e.db, run.id)!.status, "awaiting_decision");
 });
 
 test("fully autonomous: building starts without the owner approving the plan, and each task whose checks pass is accepted without the owner, keeping its branch", async (t) => {

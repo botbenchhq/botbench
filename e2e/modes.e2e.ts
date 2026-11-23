@@ -7,7 +7,8 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // LIVE. The modes, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
 // repository with one check, and the owner's Claude Code planning and building on its cheapest model.
-//   Semi-autonomous: a task that must run a harmless command reaches Ready for review, and no approval card is ever shown.
+//   Semi-autonomous: building starts with no plan approval, a task that must run a harmless command reaches Ready for
+//   review, and no approval card is ever shown.
 //   Fully autonomous: building starts with no plan approval, the check passes, and the task ends accepted without the owner.
 // Everything the engine decides on the way (each refusal, each reason, the store's rules) is tested without a model in
 // test/engine/modes.test.ts, test/approvals/modes.test.ts and test/api/modes.test.ts.
@@ -51,7 +52,7 @@ const runIdOf = async (page: Page): Promise<number> => {
   return Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
 };
 
-test("LIVE modes: semi-autonomous runs a task's command without an approval card; fully autonomous builds without plan approval and accepts the task whose check passed", async ({ page, botbench, repo }) => {
+test("LIVE modes: semi-autonomous builds without plan approval and runs a task's command without an approval card; fully autonomous builds without plan approval and accepts the task whose check passed", async ({ page, botbench, repo }) => {
   test.setTimeout(1_500_000);
   const foreign = watchRequests(page, botbench);
   await signIn(page, botbench);
@@ -64,7 +65,7 @@ test("LIVE modes: semi-autonomous runs a task's command without an approval card
   await expect.poll(async () => ((await (await page.request.get(`${botbench.base}/api/settings`)).json()) as { defaultMode: string }).defaultMode).toBe("semi");
   await checkDesign(page, "settings, default mode");
 
-  // Semi-autonomous: the owner approves a plan whose one task must run a command.
+  // Semi-autonomous: building starts on the planner's plan, whose one task must run a command, without the owner's approval.
   await openComposer(page);
   await chooseRepository(page, repo);
   await choose(page, "What to do", "Plan a run");
@@ -75,22 +76,18 @@ test("LIVE modes: semi-autonomous runs a task's command without an approval card
   await checkDesign(page, "new run, mode");
   await shot(page, "modes-new-run.png");
   await sheet.getByRole("button", { name: "Close Add context" }).click();
-  await messageBox(page).fill("Plan exactly one task: run `ls` once, then create hello.txt holding the single word hi. The README is all there is to read.");
+  await expect(page.getByText("Building starts on the plan without your approval.")).toBeVisible();
+  await messageBox(page).fill("Plan exactly one task, titled: Run ls with your Bash tool once, then create hello.txt holding the word hi. Its criteria: ls was run once with the Bash tool; hello.txt holds the single word hi. The README is all there is to read.");
   await page.getByRole("button", { name: "Send" }).click();
   const semi = await runIdOf(page);
   await expect(page.getByTestId("run-mode")).toHaveText(/^Semi-autonomous: /);
-  await neverAsked(page, botbench, async () => {
-    expect(((await (await page.request.get(`${botbench.base}/api/runs/${semi}`)).json()) as { status: string }).status).toBe("awaiting_plan_approval");
-  });
-  const { planVersion } = (await (await page.request.get(`${botbench.base}/api/runs/${semi}`)).json()) as { planVersion: number };
-  const plan = [{ title: "Run ls with your Bash tool once, then create hello.txt holding the word hi", criteria: ["ls was run once with the Bash tool", "hello.txt holds the single word hi"] }];
-  expect((await page.request.patch(`${botbench.base}/api/runs/${semi}/plan`, { data: { planVersion, tasks: plan } })).status()).toBe(200);
-  await page.getByRole("button", { name: "Approve 1 task" }).click();
   await neverAsked(page, botbench, () => expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./, { timeout: 1_000 }));
   await page.getByTestId("run-tasks").getByRole("link").first().click();
   const semiTask = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
   await expect(page.getByTestId("task-mode")).toHaveText(/^Semi-autonomous: /);
+  const events = (await (await page.request.get(`${botbench.base}/api/runs/${semi}`)).json()) as { status: string };
+  expect(events.status, "no plan approval was asked for").not.toBe("awaiting_plan_approval");
   const log = (await (await page.request.get(`${botbench.base}/api/action-log?taskId=${semiTask}`)).json()) as { entries: { rule: string; command: string }[] };
   expect(log.entries.filter((entry) => entry.rule === "mode_allowed").length, "the command ran, and is in the log under the mode's rule").toBeGreaterThan(0);
   expect(log.entries.filter((entry) => entry.rule === "asked_owner")).toEqual([]);

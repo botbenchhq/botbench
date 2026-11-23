@@ -3,8 +3,8 @@ import type { RunMode } from "../api/client.ts";
 
 /** Each mode in the order it is offered, with its name and what it does in one line. */
 export const MODES: { mode: RunMode; name: string; description: string; warning?: string }[] = [
-  { mode: "manual", name: "Manual", description: "Asks before every command and decision." },
-  { mode: "semi", name: "Semi-autonomous", description: "Runs commands on its own. You approve the plan and the result." },
+  { mode: "manual", name: "Manual", description: "You approve the plan and decide on each result." },
+  { mode: "semi", name: "Semi-autonomous", description: "Builds without waiting for plan approval. You decide on each result." },
   {
     mode: "full",
     name: "Fully autonomous",
@@ -15,8 +15,8 @@ export const MODES: { mode: RunMode; name: string; description: string; warning?
 
 /** A run's mode as the run and task screens say it. */
 export const MODE_SENTENCE: Record<RunMode, string> = {
-  manual: "Manual: you approve the plan, each command that is not allowed in advance, and the result.",
-  semi: "Semi-autonomous: commands run without asking, kept away from your sign-ins and the network. You approve the plan and the result.",
+  manual: "Manual: you approve the plan and decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
+  semi: "Semi-autonomous: building starts without your plan approval (a run started from a GitHub issue still waits for it), and you decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
   full: "Fully autonomous: Botbench builds without asking you, refuses what would need you, and accepts work whose every check passed and that its reviewer, if any, said looks right and named what it checked. The rest waits for you.",
 };
 

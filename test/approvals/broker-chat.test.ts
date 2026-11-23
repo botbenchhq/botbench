@@ -87,7 +87,7 @@ test("chat gate, web access Allow: a fetch and a search run without a card and a
     ["chat_web_access", "WebFetch", null, null, r.attemptId],
     ["chat_web_access", "WebSearch", null, null, r.attemptId],
   ]);
-  assert.match(log[0]!.detail ?? "", /Web access in chat.*Allow/);
+  assert.match(log[0]!.detail ?? "", /Web access is set to Allow/);
 });
 
 test("chat gate, web access Allow: a fetch of this Mac, the local network or anything but a public web address still asks", async (t) => {
@@ -142,7 +142,7 @@ test("chat gate, web access Off: a fetch is refused without a card, saying where
   setChatWebAccess(r.db, "off");
   const answer = await ask(r, "WebFetch", FETCH, JSON.stringify(FETCH));
   assert.equal(answer.decision, "decline");
-  assert.match(answer.refused ?? "", /Web access in chat is off.*Settings/);
+  assert.match(answer.refused ?? "", /Web access is off.*Settings/);
   assert.deepEqual(r.broker.pending(), []);
   assert.deepEqual(rules(r.db), ["chat_web_access"]);
 });
@@ -205,7 +205,7 @@ test("chat gate, the hook: a web tool and a command hear ask, never allow; a rea
   assert.equal((await hook("TodoWrite", { todos: [] })).verdict, "pass");
 });
 
-test("a chat's web setting changes nothing for a task: its fetch still asks", async (t) => {
+test("a task's web tools follow the same setting Web access: Allow runs them logged under the task, Ask puts them to the owner, Off refuses them; its bookkeeping tools pass and run", async (t) => {
   const r = await rig(t);
   const taskId = createTask(r.db, { repo: path.join(r.dir, "repo"), prompt: "fetch it" }).id;
   const worktree = path.join(r.dir, "worktree");
@@ -213,11 +213,38 @@ test("a chat's web setting changes nothing for a task: its fetch still asks", as
   const admission = r.broker.admit({ taskId, role: "implementer", worktree, confined: true });
   const attemptId = Number(r.db.prepare("INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('claude-code', 'running', 'now', 'now')").run().lastInsertRowid);
   admission.bind(attemptId);
-  const answer = r.broker.request({ taskId, attemptId, role: "implementer", tool: "WebFetch", command: JSON.stringify(FETCH), input: FETCH, cwd: ".", reason: null, toolCallId: "toolu_task_fetch" });
-  assert.equal(await waits(answer), true);
+  let n = 0;
+  const taskAsk = (tool: string, input: Record<string, unknown>): Promise<Answer> => r.broker.request({ taskId, attemptId, role: "implementer", tool, command: JSON.stringify(input), input, cwd: ".", reason: null, toolCallId: `toolu_task_${++n}` });
+  // Allow, the default.
+  const allowed = await taskAsk("WebFetch", FETCH);
+  assert.deepEqual([allowed.decision, allowed.web, allowed.approvalId], ["allow", true, null]);
+  assert.equal((await taskAsk("WebSearch", SEARCH)).web, true);
+  // A fetch of this Mac still asks.
+  const local = taskAsk("WebFetch", { url: "http://127.0.0.1:4780/api/settings", prompt: "x" });
+  assert.equal(await waits(local), true);
+  assert.equal(r.broker.pending()[0]!.asksBecause, "It reaches this Mac, your local network, or something that is not a public web page.");
+  r.broker.answer(r.broker.pending()[0]!.id, "decline");
+  await local;
+  // Ask.
+  setChatWebAccess(r.db, "ask");
+  const asked = taskAsk("WebFetch", FETCH);
+  assert.equal(await waits(asked), true);
   assert.equal(r.broker.pending()[0]!.chat, false);
   r.broker.answer(r.broker.pending()[0]!.id, "decline");
-  await answer;
+  await asked;
+  // Off.
+  setChatWebAccess(r.db, "off");
+  const off = await taskAsk("WebSearch", SEARCH);
+  assert.deepEqual([off.decision, off.approvalId], ["decline", null]);
+  assert.match(off.refused ?? "", /Web access is off.*Settings/);
+  assert.deepEqual(actionLog(r.db, taskId).map((e) => e.rule), ["web_allowed", "web_allowed", "asked_owner", "owner_declined", "asked_owner", "owner_declined", "web_refused"]);
+  // The CLI's own to-do list and tool loading: the hook lets them pass, and should the CLI ask, they run.
+  const hook = (tool: string, input: Record<string, unknown>) => askBroker(admission.socketPath, admission.secret, { tool_name: tool, tool_input: input, tool_use_id: `toolu_hook_${++n}`, cwd: worktree });
+  assert.equal((await hook("TodoWrite", { todos: [] })).verdict, "pass");
+  assert.equal((await hook("ToolSearch", { query: "select:WebFetch", max_results: 1 })).verdict, "pass");
+  const todo = await taskAsk("TodoWrite", { todos: [] });
+  assert.deepEqual([todo.decision, todo.bookkeeping, todo.approvalId], ["allow", true, null]);
+  assert.equal(r.broker.pending().length, 0);
 });
 
 test("a request that says it is a chat's, from an agent no chat admitted, gets no web setting: the owner decides", async (t) => {

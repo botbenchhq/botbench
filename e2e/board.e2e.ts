@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The runs board, Settings and the appearance choice in the real client, at a phone's size: a real Botbench process,
@@ -345,6 +345,8 @@ test("LIVE: in light mode, a chat with a tool call, an approval card, a task rea
   await checkDesign(page, "chat with a tool call, light");
   await shot(page, "u16-light-chat.png");
 
+  // A command kept inside the task's copy runs without a card by default: this card needs Ask before every command.
+  await askBeforeEveryCommand(page, botbench);
   const taskId = ((await (await page.request.post(`${botbench.base}/api/tasks`, { data: { repo, prompt: "Run the command `echo hi > hello.txt` with your Bash tool, exactly once. Then reply with the single word: done", preapproved: [] } })).json()) as { taskId: number }).taskId;
   await page.goto(`${botbench.base}/#/tasks/${taskId}`);
   const card = page.getByTestId("approval-card");

@@ -4,14 +4,20 @@ import { loopRecord, NO_ACCOUNT, reviewOutcome as loopOutcome } from "./refine.t
 import { reviewAssignment } from "./review.ts";
 
 /*
- * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it).
- *   manual  the owner approves the plan, every command that is not allowed in advance asks, the owner decides
- *   semi    the owner approves the plan and decides; a command that runs inside the confinement runs without asking
- *   full    the plan is approved by the mode; confined commands run without asking; whatever would ask the owner is
- *           refused instead (the safety floor among it); a task is accepted by the mode when every check passed and
- *           the review is satisfied or there is none, and handed back to the owner, saying why, when not
- * A mode never loosens the safety floor, and broker failure denies in every mode. Nothing is ever merged; an accepted
- * task's branch is pushed only by a run that chose to open a pull request (decision.ts, `acceptedWords`).
+ * The three modes of a run, chosen when it starts and never changed after (a trigger refuses it). A mode is about the
+ * owner's decisions, not about tools: in every mode using a tool never asks (a read, an edit inside the task's copy, a
+ * confined command the safety floor does not name, the CLI's own bookkeeping, the web as the owner's setting Web
+ * access allows), and an action or change that matters outside the copy asks (approvals/gate.ts).
+ *   manual  the owner approves the plan and decides on each result
+ *   semi    building starts without plan approval; the owner decides on each result. A run that read outside text (a
+ *           GitHub issue) still waits for the owner's plan approval: a stranger's text does not start a build alone
+ *   full    no plan approval; whatever would ask the owner is refused instead (the safety floor among it); a task is
+ *           accepted by the mode when every check passed and the review is satisfied or there is none, and handed
+ *           back to the owner, saying why, when not
+ * The owner's setting "Ask before every command" brings back a card for every command of a manual run and of a task
+ * started on its own (which is always manual). A mode never loosens the safety floor, and broker failure denies in
+ * every mode. Nothing is ever merged; an accepted task's branch is pushed only by a run that chose to open a pull
+ * request (decision.ts, `acceptedWords`).
  */
 
 export type RunMode = "manual" | "semi" | "full";
@@ -38,6 +44,18 @@ export function setDefaultMode(db: DatabaseSync, mode: RunMode): void {
   db.prepare("INSERT INTO owner_settings (name, value, updated_at) VALUES ('default_mode', ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(mode, now());
 }
 
+/** Whether the owner chose "Ask before every command" in Settings; off when never chosen. Read from the store for each request. */
+export function askEveryCommand(db: DatabaseSync): boolean {
+  return db.prepare("SELECT value FROM owner_settings WHERE name = 'ask_every_command'").get()?.value === "on";
+}
+
+export function setAskEveryCommand(db: DatabaseSync, on: boolean): void {
+  db.prepare("INSERT INTO owner_settings (name, value, updated_at) VALUES ('ask_every_command', ?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(on ? "on" : "off", now());
+}
+
+/** Whether a run's plan is approved without the owner as soon as it is stored: fully autonomous, and semi-autonomous unless the run read outside text. */
+export const planApprovedByMode = (run: { mode: RunMode; outsideText: boolean }): boolean => run.mode === "full" || (run.mode === "semi" && !run.outsideText);
+
 /**
  * Where a task's review stands: "none" (its run has no reviewer), "satisfied", "unaccounted" (it looks right, but the
  * review does not say what it checked), "unresolved" (concerns, or no verdict in
@@ -55,9 +73,9 @@ export function reviewOutcome(db: DatabaseSync, taskId: number): ReviewOutcome {
   return record.reviews.length === 0 ? "failed" : loopOutcome(record);
 }
 
-/** What a fully autonomous run refused during a task: each refused request's command, oldest first. */
+/** What was refused without asking during a task (by a fully autonomous run, or because Web access is off): each refused request's command, oldest first. */
 export function modeRefusals(db: DatabaseSync, taskId: number): string[] {
-  return db.prepare("SELECT tool, command FROM action_log WHERE task_id = ? AND rule = 'mode_refused' ORDER BY id").all(taskId).map((row) => (row.tool === "Bash" ? String(row.command) : `${String(row.tool)} ${String(row.command)}`.trim()));
+  return db.prepare("SELECT tool, command FROM action_log WHERE task_id = ? AND rule IN ('mode_refused', 'web_refused') ORDER BY id").all(taskId).map((row) => (row.tool === "Bash" ? String(row.command) : `${String(row.tool)} ${String(row.command)}`.trim()));
 }
 
 export interface AcceptFacts {

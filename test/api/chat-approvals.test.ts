@@ -77,7 +77,7 @@ test("Ask: Deny with what to do instead hands Claude Code the note, the fetch is
   await until("the fetch waits for the owner", () => broker.pending().length === 1);
   broker.answer(broker.pending()[0]!.id, "decline", "Do not fetch it. Answer from what you already know.");
   await until("the turn ends", () => !turns.turnRunning(started!.attemptId));
-  assert.deepEqual(claude.responses, [{ decision: "decline", note: "Do not fetch it. Answer from what you already know.", refused: null, files: false, web: false, chat: false }]);
+  assert.deepEqual(claude.responses, [{ decision: "decline", note: "Do not fetch it. Answer from what you already know.", refused: null, files: false, web: false, chat: false, bookkeeping: false }]);
   const all = events(db, started!.attemptId);
   const fetch = all.find((e): e is Extract<DriverEvent, { type: "tool_call" }> => e.type === "tool_call" && e.name === "WebFetch")!;
   const result = all.find((e): e is Extract<DriverEvent, { type: "tool_result" }> => e.type === "tool_result" && e.id === fetch.id)!;
@@ -92,7 +92,7 @@ test("Allow, the default: the fetch runs with no card, and is logged under the s
   await until("the turn ends", () => !turns.turnRunning(started!.attemptId));
   assert.deepEqual(announced, [], "nothing was put to the owner");
   assert.deepEqual(broker.pending(), []);
-  assert.deepEqual(claude.responses, [{ decision: "allow", note: null, refused: null, files: false, web: true, chat: false }]);
+  assert.deepEqual(claude.responses, [{ decision: "allow", note: null, refused: null, files: false, web: true, chat: false, bookkeeping: false }]);
   assert.match(reply(db, started!.attemptId), /Example Domain/);
   assert.deepEqual(actionLog(db).map((e) => [e.rule, e.tool]), [["chat_web_access", "WebFetch"]]);
 });
@@ -102,7 +102,7 @@ test("Off: the fetch is refused without a card, and Claude Code is told where to
   const [started] = await chat.send({ message: PROMPT, conversation: [], agents: [{ agent: "claude-code", model: null }] });
   await until("the turn ends", () => !turns.turnRunning(started!.attemptId));
   assert.deepEqual(announced, []);
-  assert.deepEqual(claude.responses, [{ decision: "decline", note: null, refused: WEB_OFF, files: false, web: false, chat: false }]);
+  assert.deepEqual(claude.responses, [{ decision: "decline", note: null, refused: WEB_OFF, files: false, web: false, chat: false, bookkeeping: false }]);
 });
 
 test("Stop while a fetch waits: the card is no longer answerable", async (t) => {

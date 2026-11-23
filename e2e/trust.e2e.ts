@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Botbench process whose settings offer standing
@@ -67,6 +67,8 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   const foreign = watchRequests(page, botbench);
   const before = checkoutState(repo);
   await signIn(page, botbench);
+  // A command kept inside the task's copy runs without a card by default; standing permission is earned on cards.
+  await askBeforeEveryCommand(page, botbench);
   await page.evaluate(() => ((window as unknown as { botbenchLoadedOnce: boolean }).botbenchLoadedOnce = true));
   const tray = page.getByTestId("approval-tray");
 
@@ -155,7 +157,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(resolved.nth(2)).toContainText("allowed without asking you: you chose Always allow for this command");
   await expect(resolved.nth(2)).not.toContainText("You allowed");
   await expect(page.locator('[data-event="permission_request"]')).toHaveCount(0);
-  await expect(await openCanDo(page)).toContainText("Every shell command waits for your answer first, unless you chose Always allow for it (see Permissions)");
+  await expect(await openCanDo(page)).toContainText("with Ask before every command on in Settings, every one waits for your answer first, unless you chose Always allow for it (see Permissions)");
   expect((await api<{ approvals: { status: string }[] }>(page, botbench, "/api/approvals")).approvals.map((a) => a.status)).toEqual(["allowed", "allowed"]);
   const branch = await page.getByTestId("branch").inputValue();
   expect(fs.readFileSync(path.join(botbench.home, "worktrees", branch.split("/")[1]!, "task-1", "marker.txt"), "utf8")).toBe("ran\nran\nran\n");

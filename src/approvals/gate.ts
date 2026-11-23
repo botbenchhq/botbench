@@ -19,13 +19,15 @@ import { splitPlain } from "./shell.ts";
  *   refuse  a fully autonomous run asks nobody: what would ask the owner is refused instead, saying why
  * The floor is asked before any grant, so no grant gets past it.
  *
- * The run's mode (engine/modes.ts) changes two things and no other. In a semi-autonomous or fully autonomous run a
- * shell command that runs inside the confinement (`confined`: the attempt's driver runs every shell command in its
- * sandbox, and the call is exactly the one the CLI asked about) runs without asking, unless the floor names it; a
- * call that carries anything beside its command that is not known to keep it confined still asks. In a fully
- * autonomous run every "ask" becomes "refuse". The floor's "not a plain command" is no danger of its own: it is why a
- * chained command cannot run on a grant, which is compared word by word. Every other rule of the floor still reads
- * each piece of such a command, so a mode lets a chained command run confined unless one of them names it.
+ * Approvals are for actions and changes, not for using a tool. In every mode a shell command that runs inside the
+ * confinement (`confined`: the attempt's driver runs every shell command in its sandbox, and the call is exactly the
+ * one the CLI asked about) runs without asking, unless the floor names it; a call that carries anything beside its
+ * command that is not known to keep it confined still asks. The one exception is the owner's setting "Ask before every
+ * command" (`askEveryCommand`), which brings back a card for every command of a manual run. The run's mode
+ * (engine/modes.ts) changes one thing here: in a fully autonomous run every "ask" becomes "refuse". The floor's "not a
+ * plain command" is no danger of its own: it is why a chained command cannot run on a grant, which is compared word by
+ * word. Every other rule of the floor still reads each piece of such a command, so a chained command runs confined
+ * unless one of them names it.
  *
  * A run that read outside text loses every grant: what someone outside the project wrote could otherwise steer an agent
  * to a command the owner allowed in advance for other reasons. Confinement is not a grant, so a mode keeps that.
@@ -45,6 +47,8 @@ export interface GateRequest {
   mode?: RunMode;
   /** The call would run inside Botbench's confinement. Left out, it is not known to. */
   confined?: boolean;
+  /** The owner's setting "Ask before every command": in a manual run every shell command asks, confined or not. Left out, off. */
+  askEveryCommand?: boolean;
   /**
    * The run read text from outside the project (a GitHub issue, engine/intake.ts). Then no grant applies: neither the
    * run's pre-approved commands nor any standing permission. What the mode lets run because it is confined still runs.
@@ -62,8 +66,8 @@ export interface GateRequest {
 export type AskWhy =
   /** The safety rules always ask about it; `floor` names the rule. */
   | "floor"
-  /** A manual run asks about every command. */
-  | "manual"
+  /** The owner chose "Ask before every command", and the run is manual. */
+  | "every_command"
   /** A chat's web fetch aimed at this Mac, the local network, or anything but a public web page. */
   | "local_address"
   /** A command that could not be shown to run inside the confinement, so the mode does not let it run. */
@@ -96,7 +100,7 @@ export type GateVerdict =
   | { verdict: "allow"; rule: "preapproved"; grantId: number }
   /** A command the owner gave standing permission: the whole command, for this role, repository and directory. */
   | { verdict: "allow"; rule: "standing"; grantId: number }
-  /** A confined command of a semi-autonomous or fully autonomous run. */
+  /** A confined command the floor does not name, in any mode (unless the owner asked to be asked before every command). */
   | { verdict: "allow"; rule: "mode_confined" }
   /** The owner decides. `floor` is the floor rule that makes this always ask, when one does; `why` is what the card says. */
   | { verdict: "ask"; floor?: string; why: AskWhy }
@@ -132,8 +136,8 @@ export function askWords(why: AskWhy, o: { tool: string; floor?: string; chat?: 
   switch (why) {
     case "floor":
       return `On the always-ask list: ${o.floor === undefined ? "Botbench always asks about this." : `${FLOOR_WORDS[o.floor] ?? o.floor.slice(0, 100)}.`}`;
-    case "manual":
-      return "In Manual mode every command asks you.";
+    case "every_command":
+      return "Ask before every command is on in Settings.";
     case "local_address":
       return "It reaches this Mac, your local network, or something that is not a public web page.";
     case "not_confined":
@@ -153,7 +157,7 @@ export function askWords(why: AskWhy, o: { tool: string; floor?: string; chat?: 
 
 /** The tools that change a file, and the field of their input that names it. */
 const EDIT_TOOLS: Record<string, string> = { Edit: "file_path", Write: "file_path", NotebookEdit: "notebook_path" };
-/** All a read-only role may use: reading and searching files, and the shell, every command of which asks. */
+/** All a read-only role may use: reading and searching files, and the shell, each command of which goes through the gate. */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["Read", "Glob", "Grep", "Bash"]);
 /** The tools that only read, and the field that names where. A search may leave it out and then means the directory it stands in. */
 const READ_TOOLS: Record<string, string> = { Read: "file_path", Glob: "path", Grep: "path" };
@@ -233,10 +237,11 @@ function shellVerdict(request: GateRequest, input: Record<string, unknown>, gran
   if (typeof command !== "string" || command === "") return { verdict: "ask", why: "unknown" };
   if (command.includes("\0")) return { verdict: "deny", reason: "The command holds a NUL character, which no shell can be handed." };
   const rule = floor(command, { worktree: request.worktree, cwd: request.cwd, home: settings.home, real, ...(settings.dataDir === undefined ? {} : { dataDir: settings.dataDir }), ...(settings.extra ? { extra: settings.extra } : {}) });
-  // What the mode lets run: a confined command of a semi-autonomous or fully autonomous run, with nothing beside it that could take it out.
-  const loosened = request.mode === "semi" || request.mode === "full";
-  const byMode = loosened && request.confined === true && Object.keys(input).every((name) => CONFINED_SHELL_FIELDS.has(name));
-  const why: AskWhy = loosened ? "not_confined" : "manual";
+  // What runs without asking: a confined command with nothing beside it that could take it out, unless the owner asked
+  // to be asked before every command of a manual run (a run left without a mode is manual).
+  const everyCommand = request.askEveryCommand === true && (request.mode ?? "manual") === "manual";
+  const byMode = !everyCommand && request.confined === true && Object.keys(input).every((name) => CONFINED_SHELL_FIELDS.has(name));
+  const why: AskWhy = everyCommand ? "every_command" : "not_confined";
   const otherwise: GateVerdict = byMode ? { verdict: "allow", rule: "mode_confined" } : { verdict: "ask", why };
   if (rule === NOT_PLAIN) return byMode ? otherwise : { verdict: "ask", floor: rule, why };
   if (rule !== null) return { verdict: "ask", floor: rule, why: "floor" };

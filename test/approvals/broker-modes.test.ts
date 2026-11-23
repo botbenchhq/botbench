@@ -4,9 +4,13 @@ import path from "node:path";
 import { test } from "node:test";
 import { actionLog, createBroker, listApprovals, type Answer, type Broker } from "../../src/approvals/broker.ts";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
-import type { RunMode } from "../../src/engine/modes.ts";
+import { setChatWebAccess } from "../../src/approvals/web-access.ts";
+import { capIssue, storeIssue } from "../../src/engine/intake.ts";
+import { modeRefusals, setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
 import { approvePlan, createRun, storePlan } from "../../src/engine/run.ts";
+import { parseIssueView } from "../../src/github.ts";
 import { openStore } from "../../src/store/db.ts";
+import { ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../support/replay-issue.ts";
 import { tempDir } from "../support/repo.ts";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -38,11 +42,14 @@ async function rig(t: T): Promise<Rig> {
 
 let n = 0;
 /** A task of a run in `mode`, with an attempt admitted, standing in its copy. `confined` is what its driver says of its commands. */
-function agent(r: Rig, mode: RunMode, confined = true) {
+function agent(r: Rig, mode: RunMode, confined = true, outside = false) {
   const worktree = path.join(r.dir, `worktree-${++n}`);
   fs.mkdirSync(worktree, { recursive: true });
   const real = fs.realpathSync(worktree);
-  const run = createRun(r.db, { repo: path.join(r.dir, "repo"), prompt: "p", baseCommit: "0".repeat(40), mode });
+  const repo = path.join(r.dir, "repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const issue = outside ? storeIssue(r.db, fs.realpathSync(repo), capIssue(parseIssueView(loadIssueCapture().outputs.issue.result.stdout, ISSUE_REPO, ISSUE_NUMBER), "github.com/cli/cli")) : null;
+  const run = createRun(r.db, { repo, prompt: "p", baseCommit: "0".repeat(40), mode, ...(issue === null ? {} : { issue: { fetchId: issue.id, allowHosts: false } }) });
   const stored = storePlan(r.db, run.id, [{ title: "t", criteria: ["c"] }]);
   const taskId = approvePlan(r.db, run.id, stored.planVersion, null, mode === "full" ? "mode" : "owner").tasks[0]!.id;
   const attemptId = Number(r.db.prepare("INSERT INTO attempts (driver, status, created_at, updated_at) VALUES ('claude-code', 'running', 'now', 'now')").run().lastInsertRowid);
@@ -98,6 +105,8 @@ test("fully autonomous: the floor, a tool that is not a command, an edit outside
   const push = await a.ask("Bash", { command: "git push origin main" }, "call-1");
   assert.deepEqual([push.decision, push.approvalId], ["decline", null]);
   assert.match(push.refused!, /\(git-push\)/);
+  // With Web access at Ask, a fetch would ask, so it is refused.
+  setChatWebAccess(r.db, "ask");
   const web = await a.ask("WebFetch", { url: "https://example.com", prompt: "read" }, "call-2");
   assert.match(web.refused!, /WebFetch was refused/);
   const outside = await a.ask("Write", { file_path: "/tmp/botbench-elsewhere.txt", content: "x" }, "call-3");
@@ -108,6 +117,40 @@ test("fully autonomous: the floor, a tool that is not a command, an edit outside
   assert.deepEqual(rulesOf(r, a.taskId), ["mode_refused", "mode_refused", "mode_refused", "mode_refused"]);
   // And a confined, harmless command still runs.
   assert.equal((await a.ask("Bash", { command: "git status" }, "call-5")).byMode, "full");
+  // At Allow, the default, a fetch of a public page runs and is logged; one of this Mac is refused, as it would ask.
+  setChatWebAccess(r.db, "allow");
+  assert.equal((await a.ask("WebFetch", { url: "https://example.com", prompt: "read" }, "call-6")).web, true);
+  assert.match((await a.ask("WebFetch", { url: "http://localhost:4780/", prompt: "read" }, "call-7")).refused!, /WebFetch was refused/);
+  // At Off it is refused, and the refusal counts against an accept without the owner as the mode's own refusals do.
+  setChatWebAccess(r.db, "off");
+  assert.match((await a.ask("WebSearch", { query: "x" }, "call-8")).refused!, /Web access is off/);
+  assert.deepEqual(rulesOf(r, a.taskId).slice(4), ["mode_allowed", "web_allowed", "mode_refused", "web_refused"]);
+  assert.equal(modeRefusals(r.db, a.taskId).length, 6);
+  assert.equal(listApprovals(r.db).length, 0);
+});
+
+test("manual: a confined command the floor does not name runs without a card and is logged; with Ask before every command on it asks again, saying why; unconfined and floor-listed ones ask either way", async (t) => {
+  const r = await rig(t);
+  const a = agent(r, "manual");
+  const ran = await a.ask("Bash", { command: "ls -la src | head -3", description: "List" }, "call-1");
+  assert.deepEqual([ran.decision, ran.byMode, ran.approvalId], ["allow", "manual", null]);
+  assert.deepEqual(rulesOf(r, a.taskId), ["mode_allowed"]);
+  assert.ok((await a.ask("Bash", { command: "git push origin main" }, "call-2")).approvalId !== null, "the floor still asks");
+  assert.ok((await agent(r, "manual", false).ask("Bash", { command: "ls" }, "call-3")).approvalId !== null, "an unconfined agent's command still asks");
+  setAskEveryCommand(r.db, true);
+  const asked = await a.ask("Bash", { command: "ls -la src" }, "call-4");
+  assert.ok(asked.approvalId !== null);
+  assert.equal(listApprovals(r.db).find((x) => x.id === asked.approvalId)!.asksBecause, "Ask before every command is on in Settings.");
+  // The setting is for manual runs and tasks started on their own; a semi-autonomous run is unchanged by it.
+  assert.equal((await agent(r, "semi").ask("Bash", { command: "ls" }, "call-5")).byMode, "semi");
+});
+
+test("a run that read outside text: its web tools ask whatever Web access says, and a confined command still runs", async (t) => {
+  const r = await rig(t);
+  const a = agent(r, "semi", true, true);
+  const fetch = await a.ask("WebFetch", { url: "https://example.com", prompt: "read" }, "call-1");
+  assert.ok(fetch.approvalId !== null, "put to the owner, who said no");
+  assert.equal((await a.ask("Bash", { command: "ls" }, "call-2")).byMode, "semi");
 });
 
 test("broker failure denies in every mode: a broker that has shut down, and a socket that cannot be reached", async (t) => {

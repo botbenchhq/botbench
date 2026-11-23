@@ -1,6 +1,6 @@
 # Botbench
 
-Botbench is a workbench you run on your own Mac. You give it a piece of coding work from a browser on the Mac or on your phone. It has Claude Code, the coding agent you already have, do the work in a separate copy of your repository, asks you before each shell command (or, in a run you made semi-autonomous or fully autonomous, lets the ones that run inside its sandbox go without asking), runs your repository's checks, can have Codex, Grok or Antigravity review the result, and hands back a git branch with the evidence: the diff, the transcript, the check results and each answer you gave. Nothing is ever merged. Nothing is pushed unless you chose, for a run, to have each accepted task opened as a pull request.
+Botbench is a workbench you run on your own Mac. You give it a piece of coding work from a browser on the Mac or on your phone. It has Claude Code, the coding agent you already have, do the work in a separate copy of your repository, lets it use its tools there as it would on its own (reading, editing, and shell commands that run inside its sandbox) and asks you before an action or change that reaches outside that copy (a push, sudo, a write elsewhere), runs your repository's checks, can have Codex, Grok or Antigravity review the result, and hands back a git branch with the evidence: the diff, the transcript, the check results and each answer you gave. Nothing is ever merged. Nothing is pushed unless you chose, for a run, to have each accepted task opened as a pull request.
 
 It is for one developer on macOS. It is early, and built so far for its author's own use. It does not replace your agents, it is not a hosted service, and it is not a security sandbox.
 
@@ -12,20 +12,20 @@ It is for one developer on macOS. It is early, and built so far for its author's
   <img src="docs/images/ready-for-review.png" alt="The same task, ready for review: the command ran once you allowed it, no checks set up, marker.txt added, the branch botbench/run-1/task-1, and Nothing has been merged or pushed" width="260">
 </p>
 
-*From the quickstart below, at phone size. Left: Claude Code waits for your answer before running a command. Right: the finished task with its checks, changed files and branch, waiting for your decision.*
+*At phone size. Left: Claude Code waits for your answer before running a command (as every command does with Ask before every command on in Settings; by default only commands on the always-ask list do). Right: the finished task with its checks, changed files and branch, waiting for your decision.*
 
 ## How a piece of work goes
 
 1. You start a **run** (a prompt or a spec file, and a repository) or a single **task** (a prompt and a repository).
-2. For a run, Claude Code reads the repository and proposes a plan of tasks. You edit it or approve it. Nothing is built before you approve, unless you made the run fully autonomous: then the plan is approved as the planner gave it.
+2. For a run, Claude Code reads the repository and proposes a plan of tasks. You edit it or approve it. In Manual, nothing is built before you approve. A semi-autonomous or fully autonomous run starts building on the plan as the planner gave it; a run started from a GitHub issue always waits for your approval.
 3. Each task is built in a separate copy of your repository (a git worktree) on its own branch, `botbench/run-<n>/task-<n>`. Your own files and branch are not touched.
-4. Every shell command the agent wants to run waits for your answer, unless it starts with the words of a command you allowed for the task or run (further arguments may follow), or is exactly one you chose Always allow for. In a semi-autonomous or fully autonomous run a command that runs inside the sandbox goes without asking; a short list of dangerous commands always asks (and in a fully autonomous run is refused instead).
+4. Using a tool never asks, in any mode: the agent reads, searches and edits inside its copy, and a shell command that runs inside the sandbox goes without asking. An action or change that reaches outside the copy waits for your answer: a short list of dangerous commands (a push, sudo, deleting or writing outside the copy, and the rest of the always-ask list), a file outside the copy, a command that could not be kept inside the sandbox; in a fully autonomous run it is refused instead. Web search and fetch follow your Web access setting (Allow by default). If you would rather be asked before every command, turn on Ask before every command in Settings (for Manual runs and single tasks); a command that starts with the words of one you allowed for the task or run, or is exactly one you chose Always allow for, still goes without asking then.
 5. Botbench commits the work, runs the checks you set for the repository, and keeps their output. A build that changed no file stops there, as failed, for you to resume or discard. If you chose a reviewer (Codex, Grok or Antigravity), it then reads the change; with concerns, Claude Code is given the review and makes a round of fixes, up to the run's limit, and the checks and the review run again. A review is shown as a model's opinion, next to the checks and never counted as one.
 6. You read the diff, the checks and the transcript, and you Accept (the branch is kept, and opened as a pull request if the run says so) or Reject (you choose whether to keep the branch). A fully autonomous run accepts a task without you only when every check passed, the review is satisfied or there is none, and nothing was refused during the task; otherwise it waits for you.
 
 ## Is it for you?
 
-**Use it if** you work on a Mac, use Claude Code with your own sign-in, and want to hand it work and come back to a reviewable branch instead of watching a terminal; if you want each shell command an agent runs to wait for your yes (or, run by run, to go unasked inside a sandbox), with a record of what ran; and if you want the transcripts, approvals and check results kept on your machine.
+**Use it if** you work on a Mac, use Claude Code with your own sign-in, and want to hand it work and come back to a reviewable branch instead of watching a terminal; if you want the agent to work freely inside a sandboxed copy and to wait for your yes before anything that reaches outside it (or before every command, if you choose), with a record of what ran; and if you want the transcripts, approvals and check results kept on your machine.
 
 **Don't use it if:**
 
@@ -106,7 +106,7 @@ Add a file hello.txt that says hello, then run ls to show that it is there.
 
 Any model will do; the chip under the box shows the one in use, and a small one such as Haiku is enough (tap the chip to change it). Choose Send.
 
-**6. Answer the approval.** Within a minute the task shows a card, "Claude Code asks to run a command", with the command it wants to run (the model chooses the exact command). Choose Allow once.
+**6. Watch it work.** Within a minute the transcript shows Claude Code writing `hello.txt` and running `ls`. Neither asks: a command that runs inside the task's copy, in the sandbox, goes without asking. A command on the always-ask list (a push, sudo, deleting outside the copy) would show a card, "Claude Code asks to run a command", with Allow once and Deny. To be asked before every command, turn on Ask before every command in Settings.
 
 **7. Review and accept.** The task reads Ready for review, with "No checks are set up for this repository", `hello.txt` under Changed files, and its branch, for example `botbench/run-1/task-1`. Choose Accept. Botbench keeps the branch and removes the task's copy.
 

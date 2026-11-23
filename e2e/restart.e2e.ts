@@ -1,6 +1,6 @@
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, openDetails, openWork, signIn, startTaskIn, test } from "./helpers.ts";
+import { SHOTS, askBeforeEveryCommand, checkDesign, expect, openDetails, openWork, signIn, startTaskIn, test } from "./helpers.ts";
 
 // An approval across a restart, in the real client at a phone's size: a real Botbench process that is stopped and
 // started again on the same data, and the owner's Claude Code on its cheapest model asking for real.
@@ -14,6 +14,8 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
   initRepo(repo, { "README.md": "# Sample\n", "make-marker.sh": MARKER_SCRIPT });
   const before = checkoutState(repo);
   await signIn(page, botbench);
+  // A command kept inside the task's copy runs without a card by default: the card to park needs Ask before every command.
+  await askBeforeEveryCommand(page, botbench);
 
   await startTaskIn(page, repo, PROMPT);
   await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
