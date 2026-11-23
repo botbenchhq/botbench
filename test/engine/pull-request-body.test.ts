@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
+import { appendLog } from "../../src/approvals/broker.ts";
 import { acceptByMode, decideTask } from "../../src/engine/decision.ts";
 import { messageIssue } from "../../src/engine/claim-branch.ts";
 import { MAX_BODY_FINDINGS, MAX_CREDIT_CHARS, MAX_CREDITS, pullRequestText, referenceCredits } from "../../src/engine/delivery.ts";
@@ -147,6 +148,23 @@ test("accepted by the mode: the section says so, with the recorded reasons, fenc
   assert.ok(section.includes("Findings of the review: none listed."));
   assert.ok(section.includes(`Accepted without the owner (fully autonomous):\n\n\`\`\`text\n${reasons}\n\`\`\``));
   assert.doesNotMatch(section, /Accepted by the owner/);
+});
+
+test("accepted by the mode after refusals: the reasons count them, and the body names each by its first line, fenced, at most ten", async (t) => {
+  const r = await rig(t, { reviewer: true, mode: "full" });
+  r.review("looks_right", "Verdict: looks right\nChecked:\n- calc.py: add returns a + b\nNot checked: nothing left out\nFindings:\n- none");
+  // As the broker logs a request a fully autonomous run refused (src/approvals/broker.ts): a here-document, then ten more.
+  const heredoc = `cat > /tmp/out.py <<'EOF'\n${"print('a line of the script')\n".repeat(100)}EOF`;
+  for (const command of [heredoc, ...Array.from({ length: 10 }, (_, i) => `ls src/part-${i}`)]) appendLog(r.db, { taskId: r.task.id, runId: r.task.runId, attemptId: null, rule: "mode_refused", tool: "Bash", command, cwd: ".", detail: "It only reads files.", refusal: "read_only" });
+  const reasons = "Accepted without you, as this run is fully autonomous: every check passed, the reviewer said it looks right and what it checked, and the 11 commands Botbench refused were not on the always-ask list and would not have reached outside the task's copy. Each is listed under Refused without asking.";
+  r.ready();
+  await acceptByMode(r.db, r.task.id, reasons);
+  const section = reviewOf(body(r));
+  assert.ok(section.includes(`Accepted without the owner (fully autonomous):\n\n\`\`\`text\n${reasons}\n\`\`\``));
+  assert.ok(section.includes("### Refused without asking\n\n```text\n- cat > /tmp/out.py <<'EOF'\n- ls src/part-0\n"), section);
+  assert.ok(section.includes("- ls src/part-8\n```"));
+  assert.doesNotMatch(section, /print\(|part-9/);
+  assert.ok(section.includes("1 more was left out."));
 });
 
 test("reviewer and builder text with a mention, a closing keyword and a closing fence stays inside its fence", async (t) => {

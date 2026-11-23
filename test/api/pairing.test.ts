@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fillLine } from "../support/sign-in-line.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -84,15 +85,18 @@ test("only a signed-in device can make a code; it is 8 symbols with no look-alik
   assert.equal(forged.status, 401);
 
   const cookie = await owner(base, token);
-  const before = Date.now();
   const seen = new Set<string>();
   for (let i = 0; i < 20; i++) {
+    // The code's life starts while it is being made: between the request and its answer, however long a loaded machine takes.
+    const asked = Date.now();
     const { code, expiresAt } = await newCode(base, cookie);
+    const answered = Date.now();
     assert.equal(code.length, PAIRING_CODE_LENGTH);
     assert.ok([...code].every((c) => PAIRING_CODE_ALPHABET.includes(c)), code);
     assert.doesNotMatch(code, /[01IO]/);
-    const lifetime = Date.parse(expiresAt) - before;
-    assert.ok(lifetime > PAIRING_LIFETIME_MS - 5000 && lifetime <= PAIRING_LIFETIME_MS + 5000, `valid for ${lifetime}ms`);
+    const expires = Date.parse(expiresAt);
+    // The stored time is whole milliseconds or seconds: a second's leeway on each side for its rounding.
+    assert.ok(expires >= asked + PAIRING_LIFETIME_MS - 1000 && expires <= answered + PAIRING_LIFETIME_MS + 1000, `expires ${expires - asked}ms after it was asked for, ${expires - answered}ms after the answer`);
     seen.add(code);
   }
   assert.equal(seen.size, 20, "each code is new");
@@ -229,27 +233,39 @@ test("wrong codes and wrong tokens share one slow-down: the same failure count, 
   assert.ok(turn.ms >= 8 * delay - slack, `from sending the fourth wrong guess to the right code's answer took ${turn.ms}ms; the code must wait 8 delays (${8 * delay}ms) after the guess is checked`);
 
   // The right code cleared the count, for tokens too: two wrong tokens now cost one delay between them, as at the start.
-  // Had the count stayed at four, the second would wait 16 delays. The upper bound is half that, far from both, so load
-  // cannot push a real reset past it.
+  // Had the count stayed at four, the second would wait 16 delays. The upper bound is half that plus what two requests
+  // cost this machine right now, measured in this run: a pair of the owner's right tokens, which wait for nothing (the
+  // count is already clear), taken three times and the slowest kept. Load adds the same to both, so it cannot push a
+  // real reset past the bound, and a count that was not reset is still 8 delays beyond it.
+  let requests = 0;
+  for (let i = 0; i < 3; i++) {
+    const free = await pair({ token }, { token });
+    assert.deepEqual(free.statuses, [200, 200]);
+    requests = Math.max(requests, free.ms);
+  }
   const reset = await pair({ token: "wrong-5" }, { token: "wrong-6" });
   assert.deepEqual(reset.statuses, [401, 401]);
   assert.ok(reset.ms >= delay - slack, `after a right code, a second wrong token still waits one delay: took ${reset.ms}ms`);
-  assert.ok(reset.ms < 8 * delay, `after a right code, two wrong tokens took ${reset.ms}ms: the count was not reset (16 delays, ${16 * delay}ms, is what a count of four costs)`);
+  assert.ok(reset.ms < 8 * delay + requests, `after a right code, two wrong tokens took ${reset.ms}ms, and two requests take this machine ${requests}ms now: the count was not reset (16 delays, ${16 * delay}ms, is what a count of four costs)`);
 });
 
 test("codes wait in the same bounded line as tokens: once it is full, even a right code is turned away unchecked and stays unused", async (t) => {
-  const { base, token } = await start(t, { signInDelayMs: 2000 });
+  // A long first wait, so that nothing leaves the line while the test looks, however slow the machine.
+  const delay = 30_000;
+  const { base, token } = await start(t, { signInDelayMs: delay });
   const { code } = await newCode(base, await owner(base, token));
-  assert.equal((await signIn(base, { code: "WRONG-ONE" })).status, 401); // from here each attempt waits two seconds or more
+  assert.equal((await signIn(base, { code: "WRONG-ONE" })).status, 401); // from here each attempt waits the delay or more
   for (let i = 0; i < MAX_WAITING_SIGN_INS; i++) signIn(base, i % 2 === 0 ? { code: `QUEUED${i}` } : { token: `queued-${i}` }).catch(() => undefined);
-  await new Promise((resolve) => setTimeout(resolve, 100)); // let them arrive
-  const began = performance.now();
-  for (const body of [{ code: "OVER-ONE" }, { token }, { code }]) {
+  // The line is full once a wrong guess is turned away. One that arrives before it is full joins the line instead, and
+  // waits there: the test does not wait for it, and the next guess is sent.
+  await fillLine(() => signIn(base, { code: "OVER-ONE" }).then((reply) => reply.status));
+  for (const body of [{ code: "OVER-TWO" }, { token }, { code }]) {
+    const began = performance.now();
     const turnedAway = await signIn(base, body);
     assert.equal(turnedAway.status, 429, JSON.stringify(body));
     assert.equal(turnedAway.setCookie, null);
+    assert.ok(performance.now() - began < delay, "turned away at once, not after the wait");
   }
-  assert.ok(performance.now() - began < 1500, "turned away at once, not after the wait");
 });
 
 test("only the code's SHA-256 is stored, and the code is in no table, no store file and no line the process writes", async (t) => {

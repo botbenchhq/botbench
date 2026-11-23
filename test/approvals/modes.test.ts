@@ -193,38 +193,39 @@ test("a fully autonomous run accepts only when every check passed, the review is
   assert.equal(no({ checks: null, review: "none", refusals: [] }), "It needs your review: No checks ran on it.");
   assert.equal(no({ checks: "passed", review: "unresolved", refusals: [] }), "It needs your review: The reviewer raised concerns.");
   assert.equal(no({ checks: "passed", review: "failed", refusals: [] }), "It needs your review: The review did not finish.");
-  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "git push origin HEAD", kind: "floor" }] }), "It needs your review: Botbench refused something an agent asked to do during this task (git push origin HEAD).");
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "git push origin HEAD", kind: "floor" }] }), "It needs your review: 1 command refused during this task. Each is listed under Refused without asking.");
   assert.equal(no({ checks: "passed", review: "none", refusals: [], protectedFiles: ["test/recordings/a.json"] }), "It needs your review: It changed 1 file under a protected path, which only you can accept: test/recordings/a.json.");
   assert.equal(no({ checks: "passed", review: "satisfied", refusals: [], unexpectedFiles: ["src/server.ts", "notes.txt"] }), "It needs your review: It changed 2 files not expected from the plan: src/server.ts, notes.txt.");
   assert.equal(autoAccept({ checks: "passed", review: "none", refusals: [], protectedFiles: [], unexpectedFiles: [] }).accept, true);
-  assert.equal(no({ checks: "failed", review: "unresolved", refusals: [{ command: "sudo ls", kind: "floor" }, { command: "WebFetch https://x", kind: "network" }] }), "It needs your review: A check failed. The reviewer raised concerns. Botbench refused 2 things an agent asked to do during this task (sudo ls; WebFetch https://x).");
+  assert.equal(no({ checks: "failed", review: "unresolved", refusals: [{ command: "sudo ls", kind: "floor", tool: "Bash" }, { command: "WebFetch https://x", kind: "network", tool: "WebFetch" }] }), "It needs your review: A check failed. The reviewer raised concerns. 2 requests refused during this task. Each is listed under Refused without asking.");
   // A refusal recorded before kinds were blocks, as every refusal did then.
-  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls", kind: null }] }), "It needs your review: Botbench refused something an agent asked to do during this task (ls).");
-  // Only the refusals that block are counted; a harmless one beside them is still named, apart.
-  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "npm test", kind: "unconfined" }] }), "It needs your review: Botbench refused something an agent asked to do during this task (npm test). Botbench also refused, without that keeping it from being accepted: ls src.");
-  assert.equal(no({ checks: "failed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }] }), "It needs your review: A check failed. Botbench also refused, without that keeping it from being accepted: ls src.");
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls", kind: null }] }), "It needs your review: 1 command refused during this task. Each is listed under Refused without asking.");
+  // The refusals that block are counted; a harmless one beside them is counted apart.
+  assert.equal(no({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "npm test", kind: "unconfined" }] }), "It needs your review: 1 command refused during this task. Also 1 command refused that would not have kept it from being accepted. Each is listed under Refused without asking.");
+  assert.equal(no({ checks: "failed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }] }), "It needs your review: A check failed. 1 command refused that would not have kept it from being accepted. Each is listed under Refused without asking.");
 });
 
-test("a fully autonomous run accepts when what was refused was harmless, and its reasons name what was refused", () => {
-  assert.deepEqual(autoAccept({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only" }, { command: "TodoWrite {}", kind: "other" }] }), {
+test("a fully autonomous run accepts when what was refused was harmless, and its reasons count what was refused", () => {
+  assert.deepEqual(autoAccept({ checks: "passed", review: "none", refusals: [{ command: "ls src", kind: "read_only", tool: "Bash" }, { command: "TodoWrite {}", kind: "other", tool: "TodoWrite" }] }), {
     accept: true,
-    reasons: "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and what Botbench refused (ls src; TodoWrite {}) was not on the always-ask list and would not have reached outside the task's copy.",
+    reasons: "Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and the 2 requests Botbench refused were not on the always-ask list and would not have reached outside the task's copy. Each is listed under Refused without asking.",
   });
 });
 
-test("every command a run refused is named in full, with no cut and no trailing ellipsis, however long the list", () => {
-  const long = Array.from({ length: 6 }, (_, i) => ({ command: `git push origin HEAD:refs/heads/botbench/some-long-branch-name-${i} --set-upstream --verbose`, kind: "floor" as const }));
+test("refused commands are counted, never pasted, in the one-line reasons: a here-document of thousands of characters, or any number of them, leaves one short line", () => {
+  const heredoc = `python3 - <<'EOF'\n${"print('a fairly long line of a script')\n".repeat(200)}EOF`;
+  const long = Array.from({ length: 6 }, (_, i) => ({ command: `${heredoc} # ${i}`, kind: "floor" as const }));
   const verdict = autoAccept({ checks: "passed", review: "none", refusals: long });
   assert.equal(verdict.accept, false);
   if (verdict.accept) return;
-  assert.ok(verdict.why.endsWith(`(${long.map((r) => r.command).join("; ")}).`), verdict.why);
-  assert.equal(verdict.why.includes("…"), false);
-  const harmless = Array.from({ length: 6 }, (_, i) => ({ command: `cat some/rather/long/path/to/a/file-number-${i}-that-was-read-outside-the-copy.txt`, kind: "read_only" as const }));
+  assert.equal(verdict.why, "It needs your review: 6 commands refused during this task. Each is listed under Refused without asking.");
+  const harmless = Array.from({ length: 40 }, (_, i) => ({ command: `cat ${heredoc}-${i}`, kind: "read_only" as const }));
   const accepted = autoAccept({ checks: "passed", review: "none", refusals: harmless });
   assert.equal(accepted.accept, true);
   if (!accepted.accept) return;
-  for (const r of harmless) assert.ok(accepted.reasons.includes(r.command), r.command);
-  assert.equal(accepted.reasons.includes("…"), false);
+  assert.equal(accepted.reasons.includes("print("), false, accepted.reasons);
+  assert.match(accepted.reasons, /the 40 commands Botbench refused were not on the always-ask list/);
+  assert.ok(accepted.reasons.length < 300, `${accepted.reasons.length} characters`);
 });
 
 // A run that read outside text (a GitHub issue, engine/intake.ts): no pre-approved command and no standing permission

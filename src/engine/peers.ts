@@ -4,7 +4,7 @@ import { repositoryDelivery, type Config } from "../config.ts";
 import { redact, repoName, type GitHub, type ListedPullRequest } from "../github.ts";
 import { ownWorkbenches, parseTaskBranch } from "../workbench.ts";
 import { remoteTaskBranches } from "../worktrees.ts";
-import { parseClaimBranch } from "./claim-branch.ts";
+import { lockBranch, OLD_CLAIM_MS, parseClaimBranch, parseWorkedBranch, runPrefix } from "./claim-branch.ts";
 import { githubOfRepository } from "./intake.ts";
 import { words } from "./task.ts";
 
@@ -41,13 +41,19 @@ export interface PeerBranch {
   workbench: string;
   branch: string;
 }
-/** Another workbench's claim on an issue (engine/claims.ts): read from its branch's name alone. */
+/** Another workbench's claim on an issue (engine/claims.ts): read from branch names alone. */
 export interface PeerClaim {
   workbench: string;
   branch: string;
   issue: number;
   /** The UTC minute the claim was made, as its branch's name says. */
   startedAt: string;
+  /** When its workbench last said it worked on it: the newest sign of work at the claim's commit, else when it was made. */
+  workedAt: string;
+  /** The workbench whose later claim took this one over while this one holds the issue's lock; null when none did. */
+  takenOverBy: string | null;
+  /** The number of an open pull request of the claim's run (or of its workbench, closing the issue); null while there is none. */
+  pullRequest: number | null;
 }
 export type PeersView =
   | {
@@ -82,14 +88,32 @@ export function otherWork(prs: readonly ListedPullRequest[], branches: readonly 
     return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files, head: heads.get(pr.headRefName) ?? null }];
   });
   const withPr = new Set(prs.map((pr) => pr.headRefName));
+  // Every claim on the remote, this installation's too: a later one of any workbench may have taken another over.
+  const everyClaim = branches.flatMap(({ branch, commit }) => {
+    const claim = parseClaimBranch(branch);
+    return claim === null ? [] : [{ claim, commit }];
+  });
   const claims: PeerClaim[] = [];
   const pushed: PeerBranch[] = [];
-  for (const { branch } of branches) {
+  for (const { branch, commit } of branches) {
     const workbench = withPr.has(branch) ? null : other(branch);
     if (workbench === null) continue;
+    // A sign of work is read with its claim, never listed as work of its own.
+    if (parseWorkedBranch(branch) !== null) continue;
     const claim = parseClaimBranch(branch);
-    if (claim !== null) claims.push({ workbench, branch, issue: claim.issue, startedAt: claim.startedAt });
-    else pushed.push({ workbench, branch });
+    if (claim === null) {
+      pushed.push({ workbench, branch });
+      continue;
+    }
+    const signs = branches.flatMap((b) => {
+      const w = b.commit !== undefined && b.commit === commit ? parseWorkedBranch(b.branch) : null;
+      return w !== null && w.workbench === claim.workbench && w.run === claim.run && w.issue === claim.issue ? [w.startedAt] : [];
+    });
+    const workedAt = [claim.startedAt, ...signs].sort().at(-1)!;
+    const holdsLock = commit !== undefined && heads.get(lockBranch(claim.issue)) === commit;
+    const later = holdsLock ? everyClaim.filter((k) => k.claim.issue === claim.issue && k.claim.workbench !== claim.workbench && Date.parse(k.claim.startedAt) - Date.parse(claim.startedAt) >= OLD_CLAIM_MS).sort((a, b) => a.claim.startedAt.localeCompare(b.claim.startedAt)).at(-1) : undefined;
+    const pr = pullRequests.find((p) => p.workbench === claim.workbench && (p.branch.startsWith(runPrefix(claim)) || p.closes.includes(claim.issue)));
+    claims.push({ workbench, branch, issue: claim.issue, startedAt: claim.startedAt, workedAt, takenOverBy: later?.claim.workbench ?? null, pullRequest: pr?.number ?? null });
   }
   return { pullRequests: pullRequests.sort((a, b) => a.number - b.number), branches: pushed.sort((a, b) => a.branch.localeCompare(b.branch)), claims: claims.sort((a, b) => a.branch.localeCompare(b.branch)) };
 }

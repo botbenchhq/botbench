@@ -5,8 +5,8 @@ import { repositoryClaims, repositoryDelivery, type Config } from "../config.ts"
 import { githubRepoOf, redact, repoName, type GitHub, type RepoRef } from "../github.ts";
 import { now } from "../store/db.ts";
 import { ownWorkbenches, workbenchName } from "../workbench.ts";
-import { claimCommitMessage, deleteRemoteBranchesAt, makeClaimCommit, pushNewBranch, pushNewBranches, remoteAddress, remoteTaskBranches } from "../worktrees.ts";
-import { claimBranchName, claimMessage, claimTimeWords, lockBranch, messageIssue, parseClaimBranch, type ClaimName } from "./claim-branch.ts";
+import { claimCommitMessage, deleteRemoteBranchesAt, makeClaimCommit, pushNewBranch, pushNewBranches, remoteAddress, remoteTaskBranches, replaceRemoteBranchesAt } from "../worktrees.ts";
+import { claimBranchName, claimMessage, claimTimeWords, lockBranch, messageIssue, OLD_CLAIM_MS, parseClaimBranch, parseWorkedBranch, runPrefix, WORKED_EVERY_MS, workedBranchName, type ClaimName } from "./claim-branch.ts";
 import { deliverySteps } from "./delivery.ts";
 import { githubOfRepository, runIssue } from "./intake.ts";
 import { getRun, runTasks, type Run } from "./run.ts";
@@ -39,8 +39,26 @@ import { words } from "./task.ts";
  * `botbench/<workbench>/run-<N>/issue-<number>-at-<time>` with it or neither. So of two workbenches that claim at once,
  * exactly one push is taken. The other's is refused; it reads the remote, finds the named branch at the lock's commit
  * (the holder, by its name alone), and withdraws: the run is stopped, nothing of it was pushed, and its screen names
- * the holder and its claim time. The lock is read again before a delivery pushes the task's branch and before it opens
- * the pull request; a run whose lock another workbench now holds opens none.
+ * the holder and its claim time.
+ *
+ * The claim is read again, from the remote, before a delivery pushes the task's branch and again just before it opens
+ * the pull request, whichever way the delivery started (the owner's accept, a fully autonomous accept, a delivery taken
+ * up again after a restart, Try again), and at each start for every run still going (`recover`). The run goes on only
+ * while its claim still stands: its named branch at the commit Botbench pushed; the lock its own, its own workbench's,
+ * one it took over, or gone; no later claim of another workbench on the issue while this run holds the lock (a later
+ * claim can only be there by a take-over of the lock's holder, since a refused claim pushes nothing); no earlier
+ * take-over of the same lock by another workbench; and no open or merged pull request from another workbench's run that
+ * claimed the issue. Otherwise the run gives the issue up (`withdrawn`, with the reason in plain words, the run stopped)
+ * and nothing more of it is pushed or opened; the task's branch stays on this Mac for the owner to decide. A run that
+ * gives up a lock another workbench took over leaves its claim on the remote as it is, so the issue stays held for the
+ * workbench that took it over. When the remote or GitHub cannot be read then, nothing is sent and the task says why;
+ * Try again reads it again (approach from Paperclip server/src/services/issues.ts `checkout`, where a run that no longer
+ * holds the issue is refused, and `adoptStaleCheckoutRun`, where the holder's run is read again before anything moves).
+ *
+ * While its run is going, a claim also says when its workbench last worked on it: every `WORKED_EVERY_MS` while the run
+ * plans or builds, and on any change of the run, a branch `…/issue-<number>-worked-at-<time>` at the claim's own commit
+ * replaces the one before it, in one atomic push that never forces (`worked`). Another workbench reads the time from
+ * the name alone, as it reads the claim's.
  *
  * Taking over an old claim, after a confirm that names its holder (`claim_takeovers`), only lets the run go ahead while
  * the holder's lock stays: its named branch is pushed alone, and nothing of the holder's is deleted or moved (no force,
@@ -95,8 +113,21 @@ export function claimSteps(db: DatabaseSync, runId: number): ClaimRecord[] {
 /** A run's claim as its screen shows it: the last step; null for a run that claimed nothing. */
 export const claimOf = (db: DatabaseSync, runId: number): { state: ClaimStep; issue: number; branch: string | null; words: string } | null => {
   const last = claimSteps(db, runId).at(-1);
-  return last === undefined ? null : { state: last.step, issue: last.issue, branch: last.branch, words: last.detail };
+  if (last === undefined) return null;
+  // Once the run's pull request is open, the claim stays as the issue's lock, and the screen says the pull request.
+  const opened = last.step === "claimed" ? runPullRequest(db, runId) : null;
+  const words = opened === null ? last.detail : `Pull request #${opened} is open for issue #${last.issue}. The claim's branches stay on the remote as the issue's lock while it is open, so other workbenches see the pull request rather than a start.`;
+  return { state: last.step, issue: last.issue, branch: last.branch, words };
 };
+
+/** The number of the first pull request opened for one of the run's tasks; null while there is none. */
+function runPullRequest(db: DatabaseSync, runId: number): number | null {
+  for (const task of runTasks(db, runId)) {
+    const opened = deliverySteps(db, task.id).find((s) => s.step === "opened");
+    if (opened?.number != null) return opened.number;
+  }
+  return null;
+}
 
 /** The claims of other workbenches a run took over (stored with the run, engine/run.ts createRun), by branch. */
 function takenOver(db: DatabaseSync, runId: number): Map<string, { holder: string; startedAt: string }> {
@@ -148,8 +179,9 @@ export interface Claims {
   runChanged(run: { id: number }): void;
   /**
    * Before a delivery of one of the run's tasks pushes its branch (`push`) or opens its pull request (`pull_request`):
-   * the issue's lock is read again. Null to go on; otherwise why not, in plain words, once this run's claim was
-   * withdrawn because another workbench holds the lock. Never rejects: a lock that cannot be read holds nothing up.
+   * the run's claim is read again from the remote. Null to go on; otherwise why not, in plain words: the claim was given
+   * up (another workbench holds the lock, took the issue over, or has a pull request for it; the claim is gone or was
+   * changed), or the remote or GitHub could not be read, so nothing is sent this time. Never rejects.
    */
   beforeSend(runId: number | null, when: "push" | "pull_request", branch: string): Promise<string | null>;
   /**
@@ -157,12 +189,27 @@ export interface Claims {
    * ended without a pull request while no Botbench was there to release them.
    */
   recover(): void;
+  /** Say again, on the remote, that this workbench is working on the issues of its runs that plan or build, at most every `WORKED_EVERY_MS`. Never throws. */
+  worked(): void;
   /** Resolves once every claim and release in flight has finished. */
   idle(): Promise<void>;
 }
 
 /** Who holds an issue's lock: the named claim branch at the lock's commit, read from its name alone; null when none is. */
 type Holder = ClaimName | null;
+/** Another workbench's pull request for the issue, from a run that claimed it. */
+interface OtherPullRequest {
+  workbench: string;
+  number: number;
+}
+/** Why a run's claim no longer stands (engine/claims.ts `standing`). */
+type Loss =
+  | { why: "lock"; holder: Holder }
+  | { why: "gone" | "moved" }
+  | { why: "taken_over" | "earlier_take_over"; by: ClaimName; pr: OtherPullRequest | null }
+  | { why: "pull_request"; pr: OtherPullRequest };
+/** The most branches of other workbenches' claiming runs asked about for a pull request before one delivery. */
+const MAX_PR_LOOKUPS = 10;
 
 export function createClaims(o: { db: DatabaseSync; config: Config; github: GitHub; clock?: () => Date; onRunChange?: (runId: number) => void; stopRun?: (runId: number) => void }): Claims {
   const { db, config, github } = o;
@@ -246,8 +293,8 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     }
     const namedAt = refs.get(branch);
     const moved = namedAt !== undefined && namedAt !== commit;
-    // Another workbench's lock, at any other commit, is never touched.
-    const mine = [branch, lock].filter((b) => refs.get(b) === commit);
+    // Another workbench's lock, at any other commit, is never touched. This run's signs of work go with its claim.
+    const mine = [branch, lock, ...ownWorked(refs, c)].filter((b) => refs.get(b) === commit);
     const movedWords = "somebody added to it since Botbench pushed it, so it is not Botbench's to delete.";
     if (mine.length === 0) return moved ? left(movedWords) : { gone: true, said: `The branch ${branch} was already gone from the remote ${remote}.`, command: null };
     const found = await claimTarget(config, run.repo, remote);
@@ -277,6 +324,107 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     const detail = `${holderWords(holder, c.issue, mine)}, so ${instead}: when two workbenches start on one issue, the earliest claim goes ahead.${unknownHolderHelp(holder, c.issue)} ${removed.said}`;
     record(run, "withdrawn", { issue: c.issue, remote: c.remote, branch: c.branch, commit: c.commit, detail }, removed.command ?? c.branch);
     return detail;
+  };
+
+  /**
+   * Give the claim up for another reason than a lock another workbench holds (`loss`): the step said with what this run
+   * does instead. A claim whose lock this run holds stays on the remote as it is, so the issue stays held for whoever
+   * took it over or opened its pull request; any other claim is deleted by the release rule.
+   */
+  const giveUp = async (run: Run, c: HeldClaim, loss: Exclude<Loss, { why: "lock" }>, instead: string, refs: ReadonlyMap<string, string>): Promise<string> => {
+    const keep = refs.get(lockBranch(c.issue)) === c.commit && refs.get(c.branch) === c.commit;
+    const removed = keep ? { said: `This workbench's claim stays on the remote ${c.remote} as it is, so the issue stays held for ${loss.why === "pull_request" ? loss.pr.workbench : loss.why === "taken_over" ? loss.by.workbench : "the other workbench"}.`, command: null } : await removeClaim(run, c);
+    const kept = "Your branch is kept here for you to decide.";
+    const pr = (p: OtherPullRequest | null): string => (p === null ? "" : ` and has pull request #${p.number}`);
+    const reason =
+      loss.why === "taken_over" ? `${loss.by.workbench} took issue #${c.issue} over at ${claimTimeWords(loss.by.startedAt)}${pr(loss.pr)}, so ${instead}.`
+      : loss.why === "earlier_take_over" ? `${loss.by.workbench} took issue #${c.issue} over at ${claimTimeWords(loss.by.startedAt)}, before this workbench did (${claimTimeWords(parseClaimBranch(c.branch)!.startedAt)})${pr(loss.pr)}, so ${instead}: when two workbenches take one issue over, the earliest goes ahead.`
+      : loss.why === "pull_request" ? `${loss.pr.workbench} already has pull request #${loss.pr.number} for issue #${c.issue}, so ${instead}.`
+      : loss.why === "gone" ? `This workbench's claim on issue #${c.issue} is no longer on the remote ${c.remote} (the branch ${c.branch} was deleted there), so ${instead}.`
+      : `The branch ${c.branch} of this workbench's claim on issue #${c.issue} was changed on the remote ${c.remote} since Botbench pushed it, so ${instead}.`;
+    const detail = `${reason} ${kept} ${removed.said}`;
+    record(run, "withdrawn", { issue: c.issue, remote: c.remote, branch: c.branch, commit: c.commit, detail }, removed.command ?? c.branch);
+    return detail;
+  };
+
+  /** This run's signs of work on the remote: under its claim's workbench, run and issue, at its claim's commit. */
+  const ownWorked = (refs: ReadonlyMap<string, string>, c: HeldClaim): string[] => {
+    const mine = parseClaimBranch(c.branch);
+    if (mine === null) return [];
+    return [...refs].flatMap(([branch, at]) => {
+      const w = at === c.commit ? parseWorkedBranch(branch) : null;
+      return w !== null && w.workbench === mine.workbench && w.run === mine.run && w.issue === c.issue ? [branch] : [];
+    });
+  };
+
+  /**
+   * An open or merged pull request from another workbench's run that claimed the issue: each of that run's other branches
+   * on the remote (`botbench/<workbench>/run-<N>/…`, at most `MAX_PR_LOOKUPS`) is asked about with the owner's gh, read
+   * only. Null when there is none; throws when gh cannot say.
+   */
+  const othersPullRequest = async (run: Run, c: { issue: number; remote: string }, refs: ReadonlyMap<string, string>): Promise<OtherPullRequest | null> => {
+    const own = ownWorkbenches(db);
+    const claims = [...refs.keys()].flatMap((b) => {
+      const k = parseClaimBranch(b);
+      return k !== null && k.issue === c.issue && !own.has(k.workbench) ? [k] : [];
+    });
+    if (claims.length === 0) return null;
+    // The latest claims first: a take-over's run is the one most likely to have its pull request open.
+    claims.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const heads = claims.flatMap((k) => [...refs.keys()].filter((b) => b.startsWith(runPrefix(k)) && parseClaimBranch(b) === null && parseWorkedBranch(b) === null).map((b) => ({ branch: b, workbench: k.workbench })));
+    if (heads.length === 0) return null;
+    const found = await claimTarget(config, run.repo, c.remote);
+    if ("problem" in found) throw new Error(found.problem);
+    for (const head of heads.slice(0, MAX_PR_LOOKUPS)) {
+      const pr = await github.findPullRequest(found.repo, head.branch);
+      if (pr !== null && pr.state !== "CLOSED") return { workbench: head.workbench, number: pr.number };
+    }
+    return null;
+  };
+
+  /**
+   * Whether the run's claim still stands, from the remote as it is now (`refs`): null while it does, else why not. The
+   * lock is decided first, as it always was; then the claim's own branch; then the later or earlier take-overs; then
+   * another workbench's pull request for the issue. Throws when GitHub cannot be asked.
+   */
+  const standing = async (run: Run, c: HeldClaim, refs: ReadonlyMap<string, string>): Promise<Loss | null> => {
+    const verdict = lockLetsGo(run, refs, c);
+    if (!verdict.go) return { why: "lock", holder: verdict.holder };
+    const namedAt = refs.get(c.branch);
+    if (namedAt === undefined) return { why: "gone" };
+    if (namedAt !== c.commit) return { why: "moved" };
+    const mine = parseClaimBranch(c.branch)!;
+    const own = ownWorkbenches(db);
+    const lockAt = refs.get(lockBranch(c.issue));
+    const others = [...refs].flatMap(([branch, at]) => {
+      const k = parseClaimBranch(branch);
+      return k !== null && k.issue === c.issue && !own.has(k.workbench) ? [{ claim: k, at }] : [];
+    });
+    // A claim made at least OLD_CLAIM_MS after this one while this run holds the lock: the remote refused any other
+    // claim, and only a claim that old may be taken over, so it is a take-over of this one. (A claim branch left by a
+    // run whose lock was deleted by hand is not: it was made before this one held the lock, so its time is not that late.)
+    const later = others.filter((o) => Date.parse(o.claim.startedAt) - Date.parse(mine.startedAt) >= OLD_CLAIM_MS).sort((a, b) => a.claim.startedAt.localeCompare(b.claim.startedAt));
+    if (lockAt === c.commit && later.length > 0) return { why: "taken_over", by: later.at(-1)!.claim, pr: await othersPullRequest(run, c, refs) };
+    // This run went ahead without the lock (a take-over, or a lock deleted by hand): an earlier claim of another
+    // workbench that holds no lock and that this run did not take over got there first the same way.
+    const taken = takenOver(db, run.id);
+    const earlier = others.find((o) => o.claim.startedAt < mine.startedAt && o.at !== lockAt && !taken.has(o.claim.branch));
+    if (lockAt !== c.commit && earlier !== undefined) return { why: "earlier_take_over", by: earlier.claim, pr: await othersPullRequest(run, c, refs) };
+    const pr = await othersPullRequest(run, c, refs);
+    return pr === null ? null : { why: "pull_request", pr };
+  };
+
+  /** The run's claim given up for `loss`, with what it does instead; the run stopped. Returns the step's words. */
+  const lose = async (run: Run, c: HeldClaim, loss: Loss, instead: string, refs: ReadonlyMap<string, string>): Promise<string> => {
+    const why = loss.why === "lock" ? await withdraw(run, c, loss.holder, instead) : await giveUp(run, c, loss, instead, refs);
+    // The run gave way: what it has not built yet is not built either. A run with nothing left to stop stays as it is.
+    if (!STOPPABLE.has(getRun(db, run.id)?.status ?? "")) return why;
+    try {
+      o.stopRun?.(run.id);
+    } catch (err) {
+      report(run.id, "Stopping it after its issue claim gave way")(err);
+    }
+    return why;
   };
 
   /** Whether the issue's lock, as the remote has it now, lets this run go on: its own, nobody's, its own workbench's, or a claim it took over. */
@@ -388,33 +536,116 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
     if (run === null) return null;
     const last = claimSteps(db, runId).at(-1);
     const nothing = when === "push" ? `Botbench did not push the branch ${branch} or open a pull request` : `Botbench opened no pull request: the branch ${branch} it pushed stays on the remote, withdrawn, and no pull request is opened from it`;
-    if (last?.step === "withdrawn") return `This run gave way to an earlier claim on issue #${last.issue}, so ${nothing}. ${last.detail}`;
+    const gaveWay = (step: ClaimRecord): string => `This run gave way to another workbench on issue #${step.issue}, so ${nothing}. ${step.detail}`;
+    if (last?.step === "withdrawn") return gaveWay(last);
     // A push whose end was not known is settled first: it may have lost to another workbench's lock.
     const pending = onRemote(runId);
     if (pending?.step === "claiming") {
       await settle(run, pending);
       const now = claimSteps(db, runId).at(-1);
-      if (now?.step === "withdrawn") return `This run gave way to an earlier claim on issue #${now.issue}, so ${nothing}. ${now.detail}`;
+      if (now?.step === "withdrawn") return gaveWay(now);
     }
+    if ((last?.step === "released" || last?.step === "kept") && last.remote !== null) return afterRelease(run, last, nothing);
     const c = held(runId);
     if (c === null) return null;
-    let verdict: ReturnType<typeof lockLetsGo>;
+    let refs: Map<string, string>;
+    let loss: Loss | null;
     try {
-      verdict = lockLetsGo(run, await remoteRefs(run, c.remote), c);
+      refs = await remoteRefs(run, c.remote);
+      loss = await standing(run, c, refs);
     } catch (err) {
-      report(runId, "Reading the claim on its issue again")(err);
-      return null;
+      // Not known whether the claim still stands: nothing is sent this time, and nothing is given up.
+      return `Botbench could not read the claim on issue #${c.issue} again (${words(err).replace(/\.$/, "")}), so ${nothing}. Try again once the remote and GitHub can be reached.`;
     }
-    if (verdict.go) return null;
-    const why = await withdraw(run, c, verdict.holder, nothing);
-    // The run gave way: what it has not built yet is not built either. A run with nothing left to stop stays as it is.
-    try {
-      o.stopRun?.(runId);
-    } catch (err) {
-      report(runId, "Stopping it after its issue claim gave way")(err);
-    }
-    return why;
+    return loss === null ? null : lose(run, c, loss, nothing, refs);
   };
+
+  /**
+   * Before sending the work of a run whose claim already ended (released or kept after a delivery that failed, then Try
+   * again): the issue is looked at again, read only. Another workbench's lock, or its pull request for the issue, stops
+   * the delivery; so does a remote or GitHub that cannot be read. The run claims nothing again: the pull request itself
+   * is then the sign to others.
+   */
+  const afterRelease = async (run: Run, last: ClaimRecord, nothing: string): Promise<string | null> => {
+    const remote = last.remote!;
+    let refs: Map<string, string>;
+    let pr: OtherPullRequest | null;
+    try {
+      refs = await remoteRefs(run, remote);
+      pr = await othersPullRequest(run, { issue: last.issue, remote }, refs);
+    } catch (err) {
+      return `Botbench could not read the claims on issue #${last.issue} again (${words(err).replace(/\.$/, "")}), so ${nothing}. Try again once the remote and GitHub can be reached.`;
+    }
+    const ended = `This run's claim on issue #${last.issue} ended when its delivery failed`;
+    if (pr !== null) return `${ended}, and ${pr.workbench} has pull request #${pr.number} for the issue now, so ${nothing}. Your branch is kept here for you to decide.`;
+    const lockAt = refs.get(lockBranch(last.issue));
+    if (lockAt !== undefined && lockAt !== last.commit) {
+      const holder = holderOf(refs, last.issue, lockAt);
+      if (holder === null || !(ownWorkbenches(db).has(holder.workbench) || takenOver(db, run.id).has(holder.branch))) return `${ended}, and ${holder === null ? `another workbench holds it now (the branch ${lockBranch(last.issue)} on the remote, which names no workbench's claim)` : `${holder.workbench} started on it at ${claimTimeWords(holder.startedAt)} and holds it now`}, so ${nothing}. Your branch is kept here for you to decide.`;
+    }
+    return null;
+  };
+
+  /** At start, for a run still going whose claim was pushed: read again before anything of it is published; given up when it no longer stands. */
+  const recheck = async (run: Run, c: HeldClaim): Promise<void> => {
+    let refs: Map<string, string>;
+    let loss: Loss | null;
+    try {
+      refs = await remoteRefs(run, c.remote);
+      loss = await standing(run, c, refs);
+    } catch (err) {
+      // Read again before any push of the run's work, which sends nothing while it cannot be read.
+      return report(run.id, "Reading its issue claim again after a restart")(err);
+    }
+    if (loss === null) return work(run, c, refs);
+    await lose(run, c, loss, "this run stopped when Botbench started again, and nothing more of it is pushed or opened", refs);
+  };
+
+  /** When this process last said, for each run, that it works on the run's issue: the time, in milliseconds. */
+  const lastWorked = new Map<number, number>();
+  /**
+   * Say on the remote that this workbench works on the run's issue now: a new sign of work at the claim's commit replaces
+   * the ones before it, at most every `WORKED_EVERY_MS`, and only while the claim's own branch is as Botbench pushed it.
+   * Logged as an `issue_claim` action. A push that fails is said in the server's log and tried at the next turn.
+   */
+  const work = async (run: Run, c: HeldClaim, known?: ReadonlyMap<string, string>): Promise<void> => {
+    // Only for a run still at work on the issue: once its pull request is open, that is the sign.
+    if (!GOING.has(run.status) || runPullRequest(db, run.id) !== null) return;
+    const at = clock();
+    const mine = parseClaimBranch(c.branch);
+    if (mine === null) return;
+    const since = (t: number): boolean => at.getTime() - t < WORKED_EVERY_MS;
+    if (since(lastWorked.get(run.id) ?? Date.parse(mine.startedAt))) return;
+    let refs: ReadonlyMap<string, string>;
+    try {
+      refs = known ?? (await remoteRefs(run, c.remote));
+    } catch (err) {
+      return report(run.id, "Reading the remote before saying it works on its issue")(err);
+    }
+    if (refs.get(c.branch) !== c.commit) return;
+    const before = ownWorked(refs, c);
+    // After a restart, the newest sign already on the remote counts too.
+    const newest = Math.max(Date.parse(mine.startedAt), ...before.map((b) => Date.parse(parseWorkedBranch(b)!.startedAt)));
+    if (since(newest)) {
+      lastWorked.set(run.id, newest);
+      return;
+    }
+    const create = workedBranchName(mine.workbench, run.id, c.issue, at);
+    try {
+      await replaceRemoteBranchesAt({ repo: run.repo, remote: c.remote, create, remove: before, commit: c.commit });
+    } catch (err) {
+      return report(run.id, "Saying on the remote that it works on its issue")(err);
+    }
+    lastWorked.set(run.id, at.getTime());
+    const command = `git push --atomic ${before.map((b) => `--force-with-lease=refs/heads/${b}:${c.commit}`).join(" ")}${before.length === 0 ? "" : " "}${c.remote} ${c.commit}:refs/heads/${create}${before.map((b) => ` :refs/heads/${b}`).join("")}`;
+    appendLog(db, { taskId: null, runId: run.id, attemptId: null, rule: "issue_claim", tool: "git", command, cwd: run.repo, detail: redact(`Botbench pushed the branch ${create} to the remote ${c.remote}, so other workbenches see that this workbench last worked on issue #${c.issue} at ${claimTimeWords(at.toISOString())}.${before.length === 0 ? "" : ` It deleted ${before.join(" and ")}, which said so before.`}`) });
+  };
+
+  /** Runs still going, by the statuses in which this workbench is at work on them: planning and building. */
+  const ACTIVE: ReadonlySet<string> = new Set(["planning", "running"]);
+  const GOING: ReadonlySet<string> = new Set(["planning", "awaiting_plan_approval", "running", "awaiting_decision"]);
+  /** Runs a cancel can still stop: the others have nothing left to build. */
+  const STOPPABLE: ReadonlySet<string> = new Set(["planning", "awaiting_plan_approval", "running"]);
 
   return {
     runChanged(changed) {
@@ -423,6 +654,7 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
         if (run === null) return;
         if (run.status === "planning" && claimSteps(db, run.id).length === 0) after(run.id, () => claim(run), "Claiming its issue");
         else if (endedWithoutPullRequest(db, run)) after(run.id, () => release(getRun(db, run.id)!), "Releasing its issue");
+        else if (GOING.has(run.status) && held(run.id) !== null) after(run.id, () => work(getRun(db, run.id)!, held(run.id)!), "Saying it works on its issue");
       } catch (err) {
         report(changed.id, "Claiming or releasing its issue")(err);
       }
@@ -431,7 +663,7 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
       if (runId === null) return Promise.resolve(null);
       return queue(runId, () => beforeSend(runId, when, branch)).catch((err: unknown) => {
         report(runId, "Reading the claim on its issue again")(err);
-        return null;
+        return `Botbench could not check the claim on this run's issue again (${words(err).replace(/\.$/, "")}), so it sent nothing. Try again.`;
       });
     },
     recover() {
@@ -444,9 +676,23 @@ export function createClaims(o: { db: DatabaseSync; config: Config; github: GitH
           if (run === null || c === null) continue;
           if (endedWithoutPullRequest(db, run)) after(runId, () => release(getRun(db, runId)!), "Releasing its issue after a restart");
           else if (c.step === "claiming") after(runId, () => settle(getRun(db, runId)!, c), "Settling its issue claim after a restart");
+          // Every delivery it takes up again waits behind this in the run's chain; a run resumed meanwhile is stopped
+          // here if its claim no longer stands. A run whose pull request is open has nothing more to send.
+          else if (runPullRequest(db, runId) === null) after(runId, () => recheck(getRun(db, runId)!, c), "Reading its issue claim again after a restart");
         }
       } catch (err) {
         console.error(`Releasing the issue claims left by the last Botbench failed: ${words(err)}`);
+      }
+    },
+    worked() {
+      try {
+        for (const row of db.prepare("SELECT DISTINCT run_id FROM issue_claims ORDER BY run_id").all()) {
+          const runId = Number(row.run_id);
+          const run = getRun(db, runId);
+          if (run !== null && ACTIVE.has(run.status) && held(runId) !== null) after(runId, () => work(getRun(db, runId)!, held(runId)!), "Saying it works on its issue");
+        }
+      } catch (err) {
+        console.error(`Saying on the remote which issues this workbench works on failed: ${words(err)}`);
       }
     },
     async idle() {

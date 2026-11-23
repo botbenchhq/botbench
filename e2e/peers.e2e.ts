@@ -87,7 +87,7 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(others.getByRole("list", { name: "Other workbenches in github.com/botbenchhq/botbench" })).toBeVisible();
   await expect(others.getByTestId("peer-claim")).toHaveCount(2);
   await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #82" })).toContainText(/bob · Started on issue #82 \d+ minutes ago · github\.com\/jon-lange\/botbench/);
-  await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #90" })).toContainText("bob · Started on issue #90 3 hours ago · github.com/botbenchhq/botbench");
+  await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #90" })).toContainText("bob · Started on issue #90 3 hours ago and has shown no work on it for 3 hours: it may have stopped, or be waiting for its owner · github.com/botbenchhq/botbench");
   // This workbench's own branch is not listed.
   await expect(others).not.toContainText(seeded.branch);
   await checkDesign(page, "Work, with another workbench's branch");
@@ -116,7 +116,7 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(page.getByTestId("peer-warning")).toHaveCount(1);
   await expect(page.getByRole("button", { name: /^Take over/ })).toHaveCount(0);
   await messageBox(page).fill("Issue #90 on botbenchhq/botbench");
-  await expect(page.getByTestId("peer-warning")).toHaveText(/^A best-effort match on #90 in your message: bob started on this issue 3 hours ago\.$/);
+  await expect(page.getByTestId("peer-warning")).toHaveText(/^A best-effort match on #90 in your message: bob started on this issue 3 hours ago and has shown no work on it for 3 hours: it may have stopped, or be waiting for its owner\.$/);
   await page.getByRole("button", { name: "Take over bob's claim on issue #90" }).click();
   const dialog = page.getByTestId("take-over-dialog");
   await expect(dialog.getByRole("heading", { name: "Take over bob's claim?" })).toBeVisible();
