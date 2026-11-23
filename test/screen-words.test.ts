@@ -4,7 +4,8 @@ import { trayShows } from "../web/src/components/approval-tray.ts";
 import { runSentence, runTaskNote } from "../web/src/components/run-status.ts";
 import { bannedIn } from "../e2e/voice.ts";
 import { plannerSilenceReason, silenceReason } from "../src/engine/silence.ts";
-import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../web/src/components/task-status.ts";
+import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusLook, statusSentence, statusWord, taskTitle, waitingWords } from "../web/src/components/task-status.ts";
+import { LOOKS } from "../web/src/components/looks.ts";
 import type { PullRequestView, RunDetail, RunTask, TaskSummary } from "../web/src/api/client.ts";
 
 // What the task, run and approval screens say in one line, decided without a browser.
@@ -127,6 +128,23 @@ test("the header's tray is not shown on the screen that already shows every appr
   assert.equal(trayShows({ pending: [], showing: [1], problem: null }), "nothing");
   assert.equal(trayShows({ pending: null, showing: [], problem: "Approvals could not be read." }), "tray");
   assert.equal(trayShows({ pending: null, showing: [], problem: null }), "nothing");
+});
+
+test("a task waiting for a usage limit says so in plain words, naming the time it tries again, with its own label and look", () => {
+  // Built from local times, so the words are the same in any time zone the test runs in.
+  const waiting = { status: "waiting_for_limit" as const, reason: null, baseCommit: "a", headCommit: "b", attemptId: 1, waitingOnApproval: false, parked: false, resuming: false, ofPlan: 3, decision: null, pullRequest: { state: "none" as const, number: null }, retryAt: new Date(2026, 10, 22, 14, 30).toISOString() };
+  assert.equal(statusSentence(waiting, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset. It will try again at 14:30.");
+  // Another day is named.
+  assert.equal(statusSentence({ ...waiting, retryAt: new Date(2026, 10, 24, 8, 0).toISOString() }, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset. It will try again on Tuesday 24 November at 08:00.");
+  // The time has come and the task is being started again.
+  assert.equal(statusSentence(waiting, new Date(2026, 10, 22, 14, 31)), "Waiting for a usage limit to reset. It is trying again now.");
+  assert.equal(statusWord(waiting), "Usage limit");
+  assert.deepEqual(statusLook(waiting), LOOKS.usageLimit);
+  assert.notDeepEqual(LOOKS.usageLimit, LOOKS.stopped);
+  assert.deepEqual(bannedIn(statusSentence(waiting, new Date(2026, 10, 22, 9, 5))), []);
+  // The run screen's row for it, and its transcript, use the same words.
+  assert.equal(waitingWords(waiting.retryAt, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset. It will try again at 14:30.");
+  assert.equal(waitingWords(null, new Date(2026, 10, 22, 9, 5)), "Waiting for a usage limit to reset.");
 });
 
 test("a task stopped because its agent went silent says so in words on the task screen and on the run screen, naming the limit", () => {

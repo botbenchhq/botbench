@@ -1386,4 +1386,13 @@ INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated
 DROP TABLE owner_settings_before_actions;
 `,
   },
+  {
+    // A task whose builder's turn ended on its agent's usage limit waits at `waiting_for_limit` until `retry_at` (an ISO
+    // time), when Botbench resumes its session once (engine/usage-limit.ts). Kept in the store, not only in a timer, so
+    // a restart keeps the wait; empty for every other task, and for every task from before this.
+    name: "usage_limit_wait",
+    sql: `
+ALTER TABLE tasks ADD COLUMN retry_at TEXT;
+`,
+  },
 ];

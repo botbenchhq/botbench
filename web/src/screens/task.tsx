@@ -13,7 +13,7 @@ import { DiscardSection } from "../components/discard.tsx";
 import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
-import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
+import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
@@ -264,7 +264,21 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                   <p data-testid="earlier-sessions">{`This is Claude Code's latest session on this task. ${task.earlierAttempts === 1 ? "Its 1 earlier session is" : `Its ${task.earlierAttempts} earlier sessions are`} kept in Botbench's records, not shown here.`}</p>
                 )}
                 {/* The model is named above when it is not the one asked for; the transcript adds no row of its own for it. */}
-                <Transcript events={shown} working={working} modelName={nameOf} modelDiffers={() => null} />
+                <Transcript
+                  events={shown}
+                  working={working}
+                  modelName={nameOf}
+                  modelDiffers={() => null}
+                  after={
+                    task.status === "waiting_for_limit" && (
+                      <li data-testid="usage-limit-wait" className="ds-message">
+                        <p role="status" className="ds-message__body">
+                          {waitingWords(task.retryAt)}
+                        </p>
+                      </li>
+                    )
+                  }
+                />
               </section>
             ) : (
               attemptId === null && (

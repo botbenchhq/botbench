@@ -34,7 +34,7 @@ The third column is the list the automated guard reads (`e2e/voice.ts`): every t
 | Stopped | Interrupted | `interrupted` |
 | Failed | Failed | `blocked` |
 | Plan → Build → Review; planner, builder, reviewer only where a person needs the distinction | Roles: planner, implementer, reviewer | `implementer`, `role` |
-| usage limit; "Paused · usage limit (resumes 3:14)" only with a real reset time | A rate limit reported by the agent | `rate limit` |
+| usage limit; Usage limit (a task waiting for it), "Waiting for a usage limit to reset. It will try again at 14:30." | A rate limit reported by the agent; a task at `waiting_for_limit`, with the time stored to try again | `rate limit` |
 | Botbench, "the permission check", "the safety rules", "live updates" | The broker, the gate, the safety floor and never-list, the hook, the event stream, the store | `broker`, `gate`, `floor`, `never-list`, `hook`, `stream`, `SSE`, `superseded`, `resume cursor`, `pgid`, `admission`, `schema`, `migration` |
 | Task, Run, Plan, Branch, Usage, Connect | The same | |
 | Botbench | The product, which was called Smelt before it was renamed. The old name stays only in code that reads an old installation, never on screen | `Smelt` |
@@ -78,7 +78,7 @@ On screen since reviews say what they checked: each review shows its verdict lin
 
 On screen since scope checks: on the task, under Changed files, the marks "Protected" and "Not expected from the plan" beside a file, with one line over the list ("1 file is under a protected path, which only you can accept. 2 files were not expected from the plan: the task's words, its checks and its tests do not name them."); and as a reason under "It needs your review:", "It changed 1 file under a protected path, which only you can accept: test/recordings/a.json." or "It changed 2 files not expected from the plan: …".
 
-Not on screen yet, reserved for when the behaviour exists (no state is shown before it is real): the paused state for a usage limit.
+On screen since a task waits for a usage limit: the status Usage limit (a clock, in the warning tone; never Stopped or Needs input, as it goes on by itself and asks nothing), and on the task, at the end of its transcript and in its run's row the sentence "Waiting for a usage limit to reset. It will try again at 14:30." ("on Tuesday 24 November at 08:00" on another day; "It is trying again now." once the time has come), in the device's own time. The run reads "Waiting for a usage limit to reset. Botbench tries the task again by itself, and the tasks after it wait. 1 of 3 tasks finished." The reply that ended on the limit reads "Stopped" with "Stopped here because the usage limit was reached.", after the row "Usage limit" that says when it resets. The notification is "A task is waiting for a usage limit", sent once per task. A second limit after the one try stops the task: "Claude Code reached its usage limit again when Botbench tried once more after waiting for it to reset, so Botbench stopped this task instead of waiting a second time. …"; Resume and a decision on a waiting task are refused saying it "is waiting for a usage limit to reset".
 
 The one allowed use of a banned word is the phrase "a git worktree" in helper text. The guard lets through that phrase, and a file path inside a sentence (a path is a fact about the machine), and nothing else.
 

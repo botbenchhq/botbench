@@ -19,6 +19,7 @@ import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
+import { LIMIT_CANCELLED } from "./usage-limit.ts";
 
 /*
  * Runs and the plan gate. A run is a piece of work the owner gave as a prompt or a spec file, against one repository.
@@ -343,6 +344,11 @@ export function cancelRun(db: DatabaseSync, runId: number): Run {
     writeRun(db, runId, "cancelled", { detail: "cancelled by the owner" });
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id").all(runId)) {
       moveTaskIn(db, Number(row.id), "cancelled", { reason: "The run was cancelled before this task started." });
+    }
+    // A task waiting for a usage limit has nothing at work and its work is committed: it ends here, in the same write,
+    // so no restart can find it waiting under a cancelled run, and it is never resumed.
+    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'waiting_for_limit' ORDER BY id").all(runId)) {
+      moveTaskIn(db, Number(row.id), "cancelled", { reason: LIMIT_CANCELLED });
     }
     return getRun(db, runId)!;
   });

@@ -3,7 +3,8 @@ import { once } from "node:events";
 import { test } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
-import { blank, claudeArgs, managedSettingsProblem, parseClaudeLine, parseModelList, parsePermissionRequest, repositoryInstructions, sandboxRefusal, shellWatch } from "../../src/drivers/claude-code.ts";
+import type { DriverEvent } from "../../src/drivers/events.ts";
+import { blank, claudeArgs, limitedEnd, managedSettingsProblem, parseClaudeLine, parseModelList, parsePermissionRequest, repositoryInstructions, sandboxRefusal, shellWatch } from "../../src/drivers/claude-code.ts";
 import { unreadablePaths } from "../../src/confinement.ts";
 import { modelNameProblem } from "../../src/drivers/contract.ts";
 import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../../src/approvals/permission-proxy.ts";
@@ -216,6 +217,31 @@ test("output lines recorded from Claude Code 2.1.322 become normalized events", 
   // Lines that carry nothing for the transcript.
   assert.deepEqual(parseClaudeLine(`{"type":"control_response","response":{"subtype":"success","request_id":"int-1","response":{"still_queued":[]}}}`), []);
   assert.deepEqual(parseClaudeLine(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"session_id":"${session}"}`), []);
+});
+
+// No capture in test/recordings/ holds a rate_limit_event whose status is "rejected": no real usage limit was reached
+// while recording. The lines below take the shape the CLI documents for that event, the same shape as the "allowed"
+// line recorded above (rate_limit_info.status, rate_limit_info.resetsAt in seconds since 1970), and are not a capture.
+const REJECTED = (resetsAt: string) => `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":${resetsAt},"rateLimitType":"five_hour"},"session_id":"s"}`;
+
+test("a rate_limit_event with status rejected is read as the limit reached, with its reset time as an ISO time, or null when it gives none", () => {
+  assert.deepEqual(parseClaudeLine(REJECTED("1795734000")), [{ type: "rate_limit", limited: true, status: "rejected", resetsAt: "2026-11-26T23:00:00.000Z" }]);
+  assert.deepEqual(parseClaudeLine(REJECTED('"soon"')), [{ type: "rate_limit", limited: true, status: "rejected", resetsAt: null }]);
+  assert.deepEqual(parseClaudeLine(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}`), [{ type: "rate_limit", limited: true, status: "rejected", resetsAt: null }]);
+});
+
+test("a turn that ended in error after a rejected rate limit in that turn ends as stopped by the usage limit and carries its reset time; every other end is left as it was", () => {
+  const rejected = parseClaudeLine(REJECTED("1795734000"))[0] as Extract<DriverEvent, { type: "rate_limit" }>;
+  const noTime = { ...rejected, resetsAt: null };
+  const allowed = { ...rejected, limited: false, status: "allowed" };
+  const error = { type: "turn_ended" as const, reason: "error" as const, detail: "Claude AI usage limit reached" };
+  assert.deepEqual(limitedEnd(error, rejected), { ...error, usageLimit: { resetsAt: "2026-11-26T23:00:00.000Z" } });
+  assert.deepEqual(limitedEnd(error, noTime), { ...error, usageLimit: { resetsAt: null } });
+  // No rejected event in the turn: an error stays an error.
+  assert.deepEqual(limitedEnd(error, null), error);
+  assert.deepEqual(limitedEnd(error, allowed), error);
+  // A turn that completed or was stopped is not a limit stop, whatever was reported before it.
+  for (const reason of ["completed", "interrupted"] as const) assert.deepEqual(limitedEnd({ ...error, reason }, rejected), { ...error, reason });
 });
 
 test("a resumed session's result for the CLI's own notice of a background command does not end the turn; the prompt's result does (#111)", () => {

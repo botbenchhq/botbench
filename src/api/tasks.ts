@@ -43,6 +43,8 @@ export function summary(db: DatabaseSync, task: Task): Record<string, unknown> {
     id, repo, prompt, requestedModel, status, reason, branch, baseCommit, headCommit, attemptId,
     // What the checks found: "passed", "failed" (one failed or ran out of time), "none" (no checks are set up), or null before.
     checks,
+    // For a task waiting for its builder's usage limit: when Botbench tries again, as stored. Null for every other task.
+    retryAt: status === "waiting_for_limit" ? task.retryAt : null,
     waitingOnApproval: waitingOnApproval(db, id),
     parked: waiting.some((approval) => approval.parkedAt !== null),
     resuming: pending.length > 0 && waiting.length === 0,

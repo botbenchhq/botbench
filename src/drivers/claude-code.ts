@@ -502,6 +502,20 @@ export function parseClaudeLine(line: string): DriverEvent[] {
   }
 }
 
+type TurnEnded = Extract<DriverEvent, { type: "turn_ended" }>;
+type RateLimit = Extract<DriverEvent, { type: "rate_limit" }>;
+
+/**
+ * How a turn ends once the CLI has said, during it, that the login's limit was reached (a rate_limit_event with status
+ * "rejected"; `limit` is the last such event of the turn, or null): a turn that then ended in error ended on the usage
+ * limit, and carries the time the CLI gave for the reset. Any other end is returned as it is. Pure. No capture in
+ * test/recordings/ holds a rejected event; the shape is the one the CLI documents, the same as the "allowed" one seen.
+ */
+export function limitedEnd(end: TurnEnded, limit: RateLimit | null): TurnEnded {
+  if (end.reason !== "error" || limit === null || !limit.limited) return end;
+  return { ...end, usageLimit: { resetsAt: limit.resetsAt } };
+}
+
 interface AttemptChange {
   status?: AttemptStatus;
   resumeCursor?: ResumeCursor;
@@ -522,6 +536,8 @@ class ClaudeCodeSession implements DriverSession {
   private turn = 0;
   private running: { done: Promise<TurnEndReason>; resolve: (reason: TurnEndReason) => void } | null = null;
   private interrupting = false;
+  /** The CLI's last report in the running turn that the limit was reached, or null (`limitedEnd`). */
+  private limit: RateLimit | null = null;
   private announced = false;
   private closing = false;
   private hasExited = false;
@@ -575,6 +591,7 @@ class ClaudeCodeSession implements DriverSession {
     let resolve!: (reason: TurnEndReason) => void;
     const done = new Promise<TurnEndReason>((r) => (resolve = r));
     this.running = { done, resolve };
+    this.limit = null;
     // The CLI does not echo the prompt back, so the transcript gets it here.
     this.record({ type: "user_prompt", text: prompt });
     this.write({ type: "user", message: { role: "user", content: prompt } });
@@ -702,15 +719,19 @@ class ClaudeCodeSession implements DriverSession {
         this.record(event, { resumeCursor: event.resumeCursor, model: event.model });
       } else if (event.type === "turn_ended") {
         // A result with no turn open is the late echo of a turn already ended here.
-        if (this.running) this.endTurn(this.interrupting ? "interrupted" : event.reason, event.detail);
+        if (this.running) {
+          const ended = limitedEnd({ ...event, reason: this.interrupting ? "interrupted" : event.reason }, this.limit);
+          this.endTurn(ended.reason, ended.detail, undefined, ended.usageLimit);
+        }
       } else {
+        if (event.type === "rate_limit" && event.limited && this.running) this.limit = event;
         this.record(event);
       }
     }
   }
 
   /** Store the end of the running turn together with the status it causes, then release the caller. */
-  private endTurn(reason: TurnEndReason, detail: string | null, status?: AttemptStatus): void {
+  private endTurn(reason: TurnEndReason, detail: string | null, status?: AttemptStatus, usageLimit?: TurnEnded["usageLimit"]): void {
     const running = this.running;
     if (!running) return;
     // A turn that is over waits for no answer. Its end stays the last event of the turn.
@@ -718,7 +739,7 @@ class ClaudeCodeSession implements DriverSession {
     this.running = null;
     if (reason === "interrupted") status = "interrupted";
     if (status) this.status = status;
-    this.record({ type: "turn_ended", reason, detail }, status ? { status } : undefined);
+    this.record({ type: "turn_ended", reason, detail, ...(usageLimit === undefined ? {} : { usageLimit }) }, status ? { status } : undefined);
     running.resolve(reason);
   }
 

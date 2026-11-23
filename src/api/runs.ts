@@ -24,7 +24,7 @@ function title(db: DatabaseSync, run: Run): string {
 /** Whether something of the run waits for the owner's answer: its planner's request while planning, or a builder's while building. */
 const waiting = (db: DatabaseSync, run: Run): boolean =>
   (run.status === "planning" && runWaitingOnApproval(db, run.id)) || (run.status === "running" && runTasks(db, run.id).some((task) => task.status === "building" && waitingOnApproval(db, task.id)));
-const AT_WORK = new Set(["queued", "building", "verifying", "reviewing"]);
+const AT_WORK = new Set(["queued", "building", "verifying", "reviewing", "waiting_for_limit"]);
 
 /** A run as a list shows it. `readyCount` and `decidedCount`: how many of its tasks are ready for review, and decided. */
 export function summary(db: DatabaseSync, run: Run): Record<string, unknown> {
@@ -57,6 +57,7 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
     // A task that is ready for review lists the files its checks left in its copy, which a decision would remove.
     tasks: await Promise.all(runTasks(db, id).map(async (task) => ({
       id: task.id, status: task.status, title: titles.get(task.id) ?? task.prompt.split("\n")[0]!, reason: task.reason, attemptId: task.attemptId, branch: task.branch, checks: task.checks,
+      retryAt: task.status === "waiting_for_limit" ? task.retryAt : null,
       waitingOnApproval: task.status === "building" && waitingOnApproval(db, task.id),
       evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id),
       decision: decisionOf(db, task.id),
