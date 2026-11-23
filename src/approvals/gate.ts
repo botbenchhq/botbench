@@ -64,6 +64,8 @@ export type AskWhy =
   | "floor"
   /** A manual run asks about every command. */
   | "manual"
+  /** A chat's web fetch aimed at this Mac, the local network, or anything but a public web page. */
+  | "local_address"
   /** A command that could not be shown to run inside the confinement, so the mode does not let it run. */
   | "not_confined"
   /** Botbench could not tie the request to the call its check saw: the folder was not reported, or the input differs. */
@@ -126,18 +128,20 @@ const FLOOR_WORDS: Record<string, string> = {
 };
 
 /** Why a request asks the owner, in one plain line for its card. */
-export function askWords(why: AskWhy, o: { tool: string; floor?: string }): string {
+export function askWords(why: AskWhy, o: { tool: string; floor?: string; chat?: boolean }): string {
   switch (why) {
     case "floor":
       return `On the always-ask list: ${o.floor === undefined ? "Botbench always asks about this." : `${FLOOR_WORDS[o.floor] ?? o.floor.slice(0, 100)}.`}`;
     case "manual":
       return "In Manual mode every command asks you.";
+    case "local_address":
+      return "It reaches this Mac, your local network, or something that is not a public web page.";
     case "not_confined":
       return "It could not be shown to run kept away from your sign-ins and the network.";
     case "not_checked":
       return "Botbench could not match it to the request it checked.";
     case "outside_copy":
-      return "Outside the task's copy.";
+      return o.chat === true ? "Outside the chat's folder." : "Outside the task's copy.";
     case "guarded_in_copy":
       return "It changes git's own files or Claude Code's settings in the task's copy.";
     case "other_tool":

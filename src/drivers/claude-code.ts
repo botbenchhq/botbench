@@ -185,12 +185,17 @@ function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean): s
  * with `gated` every shell command asks through the gate. `readOnly` wins over `allowEdits`.
  *
  * Every attempt, of any kind, is denied the tools that outlive the turn (`OUTLIVING_TOOLS`).
+ *
+ * A chat's attempt is `gated` with neither `allowEdits` nor `readOnly`: it keeps the CLI's full set of tools (its web
+ * tools among them), loads no settings file (the agent may write in the chat's folder, and must not leave rules there
+ * for its next turn), and every edit, like every other prompt, is decided by Botbench's gate.
  */
 export function claudeArgs(options: { confinement: AttemptPlace; model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string }): string[] {
   const readOnly = options.readOnly === true;
   const allowEdits = options.allowEdits === true && !readOnly;
-  const inWorktree = allowEdits || readOnly;
-  const gated = options.gated === true && inWorktree;
+  const gated = options.gated === true;
+  // An attempt on a repository's content, and a gated chat, whose folder the agent may write in, load no settings file.
+  const inWorktree = allowEdits || readOnly || gated;
   const args = [
     "-p",
     "--input-format", "stream-json",
@@ -393,7 +398,7 @@ export function shellWatch(): (event: DriverEvent) => boolean {
   const allowed = new Set<string>();
   return (event) => {
     if (event.type === "tool_call" && event.name === "Bash") shellCalls.add(event.id);
-    else if (event.type === "permission_resolved" && (event.decision === "allowed" || event.decision === "preapproved" || event.decision === "standing" || event.decision === "mode")) allowed.add(event.toolCallId);
+    else if (event.type === "permission_resolved" && (event.decision === "allowed" || event.decision === "preapproved" || event.decision === "standing" || event.decision === "mode" || event.decision === "chat")) allowed.add(event.toolCallId);
     else if (event.type === "tool_result" && !event.isError) return shellCalls.has(event.id) && !allowed.has(event.id);
     return false;
   };
@@ -595,7 +600,7 @@ class ClaudeCodeSession implements DriverSession {
     if (given.decision === "allow") {
       // An allow runs the input the owner was shown, unchanged.
       this.answerControl(requestId, { behavior: "allow", updatedInput: request.input });
-      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : "allowed", note: null });
+      this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : given.web === true ? "web" : given.chat === true ? "chat" : "allowed", note: null });
     } else if (words(given.refused) !== null) {
       const why = words(given.refused)!;
       this.answerControl(requestId, { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` });
@@ -868,10 +873,11 @@ export class ClaudeCodeDriver implements Driver {
     if (probe.problem) throw new DriverUnavailableError(probe);
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
 
-    // The gate is for an attempt in a worktree. Its secret travels in the child's environment, never on the command line.
-    const gate = options.allowEdits || options.readOnly ? options.gate : undefined;
-    // A read-only attempt is handed no instructions from the repository: what it needs of them it reads as a file.
-    const instructions = gate && !options.readOnly ? repositoryInstructions(options.cwd) : null;
+    // The gate's secret travels in the child's environment, never on the command line.
+    const gate = options.gate;
+    // A read-only attempt is handed no instructions from the repository: what it needs of them it reads as a file. A
+    // chat has no repository: a CLAUDE.md in its folder is one an agent may have written, and is not handed on.
+    const instructions = gate && options.allowEdits === true && !options.readOnly ? repositoryInstructions(options.cwd) : null;
     let instructionsDir: string | null = null;
     if (instructions !== null) {
       // An owner-only directory for the one file; it goes when the CLI process does.

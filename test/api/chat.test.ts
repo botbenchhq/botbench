@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 import { chatHistory, claudeContinues, createChat, type Chat } from "../../src/api/chat.ts";
+import { createBroker } from "../../src/approvals/broker.ts";
 import { createTurns, TurnError } from "../../src/api/turns.ts";
 import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
@@ -25,11 +26,14 @@ function setup(t: T, sessions: Partial<Record<"codex" | "grok" | "antigravity", 
   const make = (name: "codex" | "grok" | "antigravity"): ChatReplay => chatReplayDriver(name, sessions[name] ?? "chat", o.problem?.[name] === undefined ? {} : { problem: o.problem[name]! });
   const agents = { codex: make("codex"), grok: make("grok"), antigravity: make("antigravity") };
   const claude = new ClaudeCodeDriver();
-  const turns = createTurns({ db, home, driver: claude, onEvent: () => {} });
+  // No Claude Code turn starts here, so the broker is not asked anything and its socket is not opened.
+  const broker = createBroker({ db, home, onChange: () => {} });
+  const turns = createTurns({ db, home, driver: claude, broker, onEvent: () => {} });
   const chat = createChat({ db, home, turns, claude, agents, onEvent: () => {}, ...(o.limitMs === undefined ? {} : { limitMs: o.limitMs }) });
   t.after(async () => {
     await chat.close();
     await turns.close();
+    await broker.close();
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });

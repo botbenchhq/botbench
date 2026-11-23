@@ -8,6 +8,7 @@ import { DriverUnavailableError } from "../../src/drivers/contract.ts";
 import type { DriverEvent, TurnEndReason } from "../../src/drivers/events.ts";
 import { GROK, GROK_CAPABILITIES, grokReader } from "../../src/drivers/grok.ts";
 import type { LineResult } from "../../src/drivers/one-turn.ts";
+import { ReplaySession } from "./replay.ts";
 
 /*
  * Replays sessions captured from real `codex exec`, `grok -p` and `agy` runs through the driver contract, as the agents
@@ -125,6 +126,48 @@ export function chatReplayDriver(agent: Agent, sessions: ChatSession | readonly 
       const at = now();
       const id = Number(options.db.prepare("INSERT INTO attempts (driver, model, status, created_at, updated_at) VALUES (?, ?, 'running', ?, ?)").run(agent, options.model ?? null, at, at).lastInsertRowid);
       return open(options.db, id, script[Math.min(started.length - 1, script.length - 1)]!);
+    },
+  };
+}
+
+/** The chat turns of Claude Code in test/recordings/chat-fetch.json (test/support/capture-chat-fetch.ts). */
+export type ClaudeChatSession = "allowed" | "declined";
+
+export interface ClaudeChatReplay extends Driver {
+  readonly started: StartAttemptOptions[];
+  /** Every answer Botbench gave a permission request, as the driver received it. */
+  readonly responses: unknown[];
+}
+
+/**
+ * Claude Code in a chat, replaying a real chat turn that asked to fetch https://example.com: its `n`th attempt plays
+ * the `n`th of `sessions` (the last for any after). Each recorded call is put to the real permission gate as the CLI's
+ * hook put it, from the chat's folder. The recorded turn continues only after the answer it was given (replay.ts).
+ */
+export function claudeChatReplay(sessions: readonly ClaudeChatSession[]): ClaudeChatReplay {
+  const recording = load("chat-fetch.json") as unknown as { cli: string; sessions: Record<ClaudeChatSession, DriverEvent[]> };
+  const started: StartAttemptOptions[] = [];
+  const responses: unknown[] = [];
+  return {
+    name: "claude-code",
+    capabilities: { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true },
+    started,
+    responses,
+    probe: () => Promise.resolve({ installed: true, version: recording.cli, supported: true, signedIn: true, billing: "subscription", problem: null }),
+    models: () => Promise.resolve({ source: "config", models: [], default: null, cliDefault: null }),
+    startAttempt: (options) => {
+      const events = recording.sessions[sessions[Math.min(started.length, sessions.length - 1)]!];
+      started.push(options);
+      const cursor = (events.find((e) => e.type === "session_started") as { resumeCursor: string }).resumeCursor;
+      const at = now();
+      const attemptId = Number(options.db.prepare("INSERT INTO attempts (driver, model, resume_cursor, status, pgid, created_at, updated_at) VALUES ('claude-code', ?, ?, 'running', NULL, ?, ?)").run(options.model ?? null, cursor, at, at).lastInsertRowid);
+      const session = new ReplaySession(attemptId, options.db, { resumeCursor: cursor, events, hookCwd: () => "." }, options);
+      const respond = session.respondToRequest.bind(session);
+      session.respondToRequest = (id, response) => {
+        responses.push(response);
+        return respond(id, response);
+      };
+      return Promise.resolve(session);
     },
   };
 }

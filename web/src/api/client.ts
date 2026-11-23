@@ -14,7 +14,7 @@ export type DriverEvent =
   | { type: "tool_result"; id: string; output: string; isError: boolean; confined?: { hosts: string[]; files: boolean } }
   | { type: "permission_denied"; id: string; name: string; reason: string | null; code?: string | null }
   | { type: "permission_request"; id: string; toolCallId: string; name: string; input: unknown; reason: string | null }
-  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "declined" | "denied" | "cancelled"; note: string | null }
+  | { type: "permission_resolved"; id: string; toolCallId: string; decision: "allowed" | "preapproved" | "standing" | "mode" | "files" | "web" | "chat" | "declined" | "denied" | "cancelled"; note: string | null }
   | { type: "usage"; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }
   | { type: "rate_limit"; limited: boolean; status: string; resetsAt: string | null }
   | { type: "turn_ended"; reason: TurnEndReason; detail: string | null }
@@ -632,6 +632,10 @@ export const lookUpIssue = async (repo: string, issue: string): Promise<IssuePre
 export const getFirstRun = async (): Promise<boolean> => (await request<{ firstRun: boolean }>("GET", "/api/first-run", undefined, 30_000)).firstRun;
 /** The mode a new run is given unless the owner chooses another in the composer. */
 export const getDefaultMode = async (): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("GET", "/api/settings", undefined, 30_000)).defaultMode;
+/** What Claude Code's web tools may do in a chat: run, ask you each time, or not run. */
+export type WebAccess = "allow" | "ask" | "off";
+export const getChatWebAccess = async (): Promise<WebAccess> => (await request<{ chatWebAccess: WebAccess }>("GET", "/api/settings", undefined, 30_000)).chatWebAccess;
+export const setChatWebAccess = async (value: WebAccess): Promise<WebAccess> => (await request<{ chatWebAccess: WebAccess }>("PUT", "/api/settings", { chatWebAccess: value }, 30_000)).chatWebAccess;
 export const setDefaultMode = async (mode: RunMode): Promise<RunMode> => (await request<{ defaultMode: RunMode }>("PUT", "/api/settings", { defaultMode: mode }, 30_000)).defaultMode;
 /** This installation's workbench name, and whether the settings file sets it (then it is changed there, not here). */
 export interface WorkbenchSetting {
@@ -687,8 +691,10 @@ export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 /** One request an agent made that the owner answers. */
 export interface Approval {
   id: number;
-  /** The task whose agent asks; null when a run's planner asks. */
+  /** The task whose agent asks; null when a run's planner or a chat asks. */
   taskId: number | null;
+  /** True when a chat's Claude Code asks: its card is shown in the chat. */
+  chat: boolean;
   /** The run whose planner asks, when no task does. */
   runId: number | null;
   /** The first line of the task's prompt, or of what the run was given. */

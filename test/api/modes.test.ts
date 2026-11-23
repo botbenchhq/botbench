@@ -89,6 +89,18 @@ test("Settings: the default mode is the settings file's until the owner picks on
   assert.match(String(res.body.error), /cannot be fully autonomous/);
 });
 
+test("Settings: web access in chat is Allow until the owner picks Ask or Off, which is kept; any other value is refused", async (t) => {
+  const api = await start(t);
+  assert.equal((await call(api, "GET", "/api/settings")).body.chatWebAccess, "allow");
+  for (const value of ["ask", "off", "allow"]) {
+    const saved = await call(api, "PUT", "/api/settings", { chatWebAccess: value });
+    assert.deepEqual([saved.status, saved.body.chatWebAccess], [200, value]);
+    assert.equal((await call(api, "GET", "/api/settings")).body.chatWebAccess, value);
+  }
+  assert.equal((await call(api, "PUT", "/api/settings", { chatWebAccess: "always" })).status, 400);
+  assert.equal((await call(api, "GET", "/api/settings")).body.chatWebAccess, "allow");
+});
+
 test("Settings needs the owner's session", async (t) => {
   const api = await start(t);
   const res = await fetch(`${api.base}/api/settings`);
