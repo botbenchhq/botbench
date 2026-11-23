@@ -13,7 +13,7 @@ import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { runSentence, runTaskNote } from "../components/run-status.ts";
-import { offersMerge, statusLook, statusWord } from "../components/task-status.ts";
+import { offersMerge, statusLook, statusWord, waitingWords } from "../components/task-status.ts";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
@@ -105,6 +105,7 @@ function taskFacts(task: RunTask): string {
   if (task.status === "queued") return "Starts when the tasks before it have finished";
   if (task.status === "verifying") return "Botbench is running this repository's checks";
   if (task.status === "reviewing") return "The reviewer is reading the changes";
+  if (task.status === "waiting_for_limit") return waitingWords(task.retryAt);
   if (task.status === "building") return task.waitingOnApproval ? "Claude Code is waiting for your answer" : task.attemptId === null ? "Preparing a separate copy of the project" : "Claude Code is working; open it to watch";
   if (task.decision?.branch === "deleted") return "Branch deleted";
   return task.branch ?? "No branch";

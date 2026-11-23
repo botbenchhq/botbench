@@ -26,6 +26,13 @@ import { ReplaySession } from "./replay.ts";
  */
 
 export type ChatSession = "chat" | "compare" | "review" | "signed-out" | "hang";
+/**
+ * Lines a test wrote in the form the CLI prints, for what no capture holds (a web search). They go through the same
+ * reader; the test that uses them says they are constructed, and no test may read them as what a CLI did.
+ */
+export interface ConstructedSession {
+  lines: readonly string[];
+}
 type Agent = typeof CODEX | typeof GROK | typeof ANTIGRAVITY;
 
 const RECORDINGS = path.resolve(import.meta.dirname, "..", "recordings");
@@ -52,14 +59,14 @@ export interface ChatReplay extends Driver {
 const now = (): string => new Date().toISOString();
 
 /** `agent` whose `n`th attempt plays the `n`th of `sessions` (the last for any after). With `problem`, its probe says it cannot be used. */
-export function chatReplayDriver(agent: Agent, sessions: ChatSession | readonly ChatSession[] = "chat", o: { problem?: string } = {}): ChatReplay {
+export function chatReplayDriver(agent: Agent, sessions: ChatSession | readonly ChatSession[] | ConstructedSession = "chat", o: { problem?: string } = {}): ChatReplay {
   const { capabilities, reader, model } = READERS[agent];
-  const script = typeof sessions === "string" ? [sessions] : sessions;
+  const script: readonly (ChatSession | ConstructedSession)[] = typeof sessions === "string" || !Array.isArray(sessions) ? [sessions as ChatSession | ConstructedSession] : sessions;
   const started: StartAttemptOptions[] = [];
   const prompts: string[] = [];
   const probe = (): Promise<DriverProbe> => Promise.resolve({ installed: true, version: "replay", supported: true, signedIn: o.problem === undefined, billing: "subscription", problem: o.problem ?? null });
 
-  const open = (db: DatabaseSync, attemptId: number, session: ChatSession): DriverSession => {
+  const open = (db: DatabaseSync, attemptId: number, session: ChatSession | ConstructedSession): DriverSession => {
     const listeners = new Set<(event: DriverEvent) => void>();
     let stop: (() => void) | null = null;
     let playing: Promise<TurnEndReason> | null = null;
@@ -73,7 +80,10 @@ export function chatReplayDriver(agent: Agent, sessions: ChatSession | readonly 
       record({ type: "user_prompt", text: prompt });
       const stopped = new Promise<"stopped">((resolve) => (stop = () => resolve("stopped")));
       const read = reader();
-      const events = session === "hang" ? [] : linesOf(agent, session).flatMap((line) => read(line).events);
+      const lines = typeof session === "object" ? session.lines : session === "hang" ? [] : linesOf(agent, session);
+      // A call reported again once it is over is stored once, as OneTurnSession (src/drivers/one-turn.ts) stores it.
+      const called = new Set<string>();
+      const events = lines.flatMap((line) => read(line).events).filter((e) => e.type !== "tool_call" || (!called.has(e.id) && called.add(e.id) !== undefined));
       for (const event of events) {
         if ((await Promise.race([stopped, new Promise((resolve) => setImmediate(resolve))])) === "stopped") break;
         if (event.type === "turn_ended") {

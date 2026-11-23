@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { parseTaskBranch, workbenchProblem } from "./workbench.ts";
+import { isLessonBranch, parseTaskBranch, workbenchProblem } from "./workbench.ts";
 
 /** One task's separate copy of the repository: where it is, the branch it is on, and the commit it started from. */
 export interface Worktree {
@@ -109,10 +110,11 @@ function timeoutWords(dir: string, limitMs: number): string {
 /**
  * Run git in `dir` with an argument array (no shell) and return what it printed. Git runs in its own process group and
  * gets `limitMs` to finish; after that the whole group is killed, so neither it nor a program it started is left running.
+ * `env` adds variables of Botbench's own choosing, such as GIT_INDEX_FILE, to the cleaned environment.
  */
-function git(dir: string, args: string[], limitMs = GIT_WORK_LIMIT_MS): Promise<string> {
+function git(dir: string, args: string[], limitMs = GIT_WORK_LIMIT_MS, env: NodeJS.ProcessEnv = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", ["-C", dir, ...SAFE, ...args], { env: gitEnv(), stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const child = spawn("git", ["-C", dir, ...SAFE, ...args], { env: { ...gitEnv(), ...env }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let stdout = "";
     let stderr = "";
     let stopped: Error | null = null;
@@ -588,6 +590,101 @@ async function pushRef(repo: string, branch: string, args: string[]): Promise<vo
 }
 
 /*
+ * Checking a task together with another workbench's pull request (engine/combined.ts). The work is done in a temporary
+ * copy of its own under Botbench's data folder, never in the repository:
+ * - the copy is a clone of the repository that borrows its objects (`--shared`), so nothing in the repository is written,
+ *   not a ref, not an object, not FETCH_HEAD; the clone has no hard link into it either;
+ * - the other workbench's head is fetched read only from the remote's address into the copy alone; nothing is pushed;
+ * - the merge is made there, on a scratch branch at the task's commit, by Botbench's own identity, with no hook.
+ * The scratch branch lives only in the copy, so removing the copy removes it.
+ */
+
+/** Where the temporary copies for checking together are made: one folder under the data folder, beside the worktrees. */
+export const combinedRoot = (home: string): string => path.join(path.resolve(home), "combined");
+const SCRATCH_BRANCH = "botbench-check-together";
+const PEER_REF = "refs/botbench/peer";
+
+/** What merging the other workbench's head into the task's commit came to, and the commit that head was. */
+export type CombinedMerge = { peerCommit: string; merged: true } | { peerCommit: string; merged: false; conflicts: string[] };
+
+/**
+ * Make the temporary copy at `dir`, a new folder under `combinedRoot(home)`: clone `repo` into it, fetch `peerBranch`
+ * (another workbench's task branch) from `fetchUrl`, start the scratch branch at `taskCommit` and merge that head into
+ * it. Answers the head fetched and whether it merged, with the files in conflict when not. Throws when any step fails
+ * for another reason; the caller removes the copy either way (`removeCombinedCopy`).
+ */
+export async function prepareCombinedCopy(o: { repo: string; home: string; dir: string; fetchUrl: string; peerBranch: string; taskCommit: string }): Promise<CombinedMerge> {
+  checkBase(o.taskCommit);
+  if (parseTaskBranch(o.peerBranch)?.prefix !== "botbench") throw new Error(`${o.peerBranch} is not a Botbench task branch, so it is not fetched.`);
+  const root = combinedRoot(o.home);
+  const dir = path.resolve(o.dir);
+  if (path.dirname(dir) !== root) throw new Error(`${dir} is not a folder for checking together.`);
+  if (fs.existsSync(dir)) throw new Error(`${dir} already exists.`);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  await git(root, ["clone", "--quiet", "--shared", "--no-checkout", "--", path.resolve(o.repo), dir]);
+  // By the address, so the copy has no remote of its own; `--` keeps it from ever being read as an option.
+  const peerCommit = await fetchPeerHead(dir, o.fetchUrl, o.peerBranch);
+  const identity = ["-c", `user.name=${AUTHOR_NAME}`, "-c", `user.email=${AUTHOR_EMAIL}`, "-c", "commit.gpgsign=false"];
+  await git(dir, ["checkout", "--quiet", "--force", "-B", SCRATCH_BRANCH, o.taskCommit]);
+  try {
+    await git(dir, [...identity, "merge", "--quiet", "--no-ff", "--no-edit", "--no-verify", "-m", `Check together with ${o.peerBranch}`, PEER_REF]);
+    return { peerCommit, merged: true };
+  } catch (err) {
+    unlessTimeout(err);
+    const conflicts = (await git(dir, ["diff", "--name-only", "--diff-filter=U", "-z"], GIT_CHECK_LIMIT_MS)).split("\0").filter(Boolean).sort();
+    if (conflicts.length === 0) throw err;
+    return { peerCommit, merged: false, conflicts };
+  }
+}
+
+/**
+ * Fetch `peerBranch` from `fetchUrl` into `dir`, a temporary copy made for it, as `refs/botbench/peer`, and answer the
+ * commit fetched. Only that one branch, from the address of the repository's own remote; never forced (the ref is new
+ * in a new copy, so an existing one is never overwritten); no tags, no submodules, no FETCH_HEAD.
+ */
+async function fetchPeerHead(dir: string, fetchUrl: string, peerBranch: string): Promise<string> {
+  await git(dir, ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--", fetchUrl, `refs/heads/${peerBranch}:${PEER_REF}`], GIT_NETWORK_LIMIT_MS);
+  const peerCommit = (await git(dir, ["rev-parse", "--verify", "--quiet", `${PEER_REF}^{commit}`], GIT_CHECK_LIMIT_MS)).trim();
+  if (!COMMIT_ID.test(peerCommit)) throw new Error(`The head of ${peerBranch} could not be read after it was fetched.`);
+  return peerCommit;
+}
+
+/**
+ * The files another workbench's branch changes, read by git from its commits rather than taken from GitHub's list:
+ * in a temporary copy at `dir` (as for `prepareCombinedCopy`, removed by the caller), `peerBranch` is fetched from
+ * `fetchUrl`, and the files are those that differ between it and where it parted from `baseCommit` (the task's base),
+ * `git diff --name-only <merge-base> <peer head>`. Only paths are read: nothing of the other workbench's commit messages
+ * or file contents leaves git. Answers the head fetched with them.
+ */
+export async function peerChangedFiles(o: { repo: string; home: string; dir: string; fetchUrl: string; peerBranch: string; baseCommit: string }): Promise<{ peerCommit: string; files: string[] }> {
+  checkBase(o.baseCommit);
+  if (parseTaskBranch(o.peerBranch)?.prefix !== "botbench") throw new Error(`${o.peerBranch} is not a Botbench task branch, so it is not fetched.`);
+  const root = combinedRoot(o.home);
+  const dir = path.resolve(o.dir);
+  if (path.dirname(dir) !== root) throw new Error(`${dir} is not a folder for checking together.`);
+  if (fs.existsSync(dir)) throw new Error(`${dir} already exists.`);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  await git(root, ["clone", "--quiet", "--shared", "--no-checkout", "--", path.resolve(o.repo), dir]);
+  const peerCommit = await fetchPeerHead(dir, o.fetchUrl, o.peerBranch);
+  const parted = (await git(dir, ["merge-base", "--", o.baseCommit, peerCommit], GIT_CHECK_LIMIT_MS)).trim();
+  if (!COMMIT_ID.test(parted)) throw new Error(`${o.peerBranch} shares no history with this task's base.`);
+  const files = (await git(dir, ["-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", parted, peerCommit, "--"], GIT_CHECK_LIMIT_MS)).split("\0").filter(Boolean).sort();
+  return { peerCommit, files };
+}
+
+/** Remove a temporary copy for checking together, and its scratch branch with it. A copy that is already gone is fine. */
+export function removeCombinedCopy(home: string, dir: string): void {
+  const at = path.resolve(dir);
+  if (path.dirname(at) !== combinedRoot(home)) throw new Error(`${at} is not a folder for checking together, so it was not removed.`);
+  fs.rmSync(at, { recursive: true, force: true });
+}
+
+/** At start: remove every temporary copy a Botbench that stopped while checking together left, by what is on disk. */
+export function clearCombinedCopies(home: string): void {
+  fs.rmSync(combinedRoot(home), { recursive: true, force: true });
+}
+
+/*
  * Claiming an issue (Peers P3, engine/claims.ts): a branch pushed early that holds one commit Botbench makes itself,
  * with no parent and no files, so nothing of the repository's content or of the owner's unpushed commits leaves with it.
  */
@@ -729,4 +826,108 @@ export async function removePlanningWorktree(o: { repo: string; home: string; ru
   }
   await git(repo, ["worktree", "prune"]).catch((err: unknown) => unlessTimeout(err));
   removeIfEmpty(path.dirname(dir));
+}
+
+/*
+ * Lesson branches (engine/learnings.ts). A rejected task's learning is committed on a branch of its own,
+ * `botbench-lesson/<workbench>/task-<id>` (src/workbench.ts), with git's plumbing alone: a temporary index named by
+ * GIT_INDEX_FILE, hash-object, update-index, write-tree, commit-tree and update-ref. Nothing is checked out, no
+ * worktree is made, and the repository's own index, working folder and current branch are never read from or written
+ * to. Nothing is pushed or merged: the owner reviews the branch and merges it like any change.
+ */
+
+/** File modes a learning may be: a plain file, or one marked as a program. A link (120000) or a submodule is not a file. */
+export const FILE_MODES: ReadonlySet<string> = new Set(["100644", "100755"]);
+/** A path a lesson commit may write: folders and a file name of letters, digits, ".", "_" and "-", never "." or "..". */
+const LESSON_PATH = /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
+/** One entry of a folder in a commit's tree. */
+export interface TreeEntry {
+  /** Its name in the folder. */
+  name: string;
+  mode: string;
+  type: string;
+  oid: string;
+  /** Bytes, for a file; null for anything else. */
+  size: number | null;
+}
+
+/** The commit a lesson branch points at, or null when the branch is not there. */
+export async function lessonBranchCommit(repo: string, branch: string): Promise<string | null> {
+  if (!isLessonBranch(branch)) throw new Error(`${branch} is not a Botbench lesson branch.`);
+  const dir = path.resolve(repo);
+  if (!(await succeeds(dir, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]))) return null;
+  return (await git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], GIT_CHECK_LIMIT_MS)).trim();
+}
+
+/** The entries `git ls-tree -z -l` prints for `pathspec` in `commit`, with their paths in full. */
+async function lsTree(repo: string, commit: string, pathspec: string): Promise<(TreeEntry & { path: string })[]> {
+  const out = await git(path.resolve(repo), ["ls-tree", "-z", "-l", "--full-tree", commit, "--", pathspec]);
+  const entries: (TreeEntry & { path: string })[] = [];
+  for (const record of out.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const [mode = "", type = "", oid = "", size = "-"] = record.slice(0, tab).split(/ +/);
+    const at = record.slice(tab + 1);
+    entries.push({ path: at, name: at.slice(at.lastIndexOf("/") + 1), mode, type, oid, size: type === "blob" && /^\d+$/.test(size) ? Number(size) : null });
+  }
+  return entries;
+}
+
+/**
+ * The entries of the folder `folder` (such as "docs/solutions") in `commit`'s tree, read from git's objects alone.
+ * Empty when the folder is not there. Throws when a part of its path is there and is not a folder: a file or a link.
+ */
+export async function treeFolder(repo: string, commit: string, folder: string): Promise<TreeEntry[]> {
+  checkBase(commit);
+  if (!LESSON_PATH.test(folder)) throw new Error(`Invalid folder ${JSON.stringify(folder)}.`);
+  const parts = folder.split("/");
+  for (let i = 1; i <= parts.length; i += 1) {
+    const at = parts.slice(0, i).join("/");
+    const [entry] = await lsTree(repo, commit, at);
+    if (entry === undefined) return [];
+    if (entry.type !== "tree") throw new Error(`${at} in the commit ${commit} is not a folder (it is a file or a link), so no note is kept there.`);
+  }
+  return (await lsTree(repo, commit, `${folder}/`)).map(({ path: _, ...entry }) => entry);
+}
+
+/** The bytes of the file object `oid`, as text, read from git's objects alone. */
+export async function readBlob(repo: string, oid: string): Promise<string> {
+  if (!COMMIT_ID.test(oid)) throw new Error(`${JSON.stringify(oid)} is not an object id.`);
+  return git(path.resolve(repo), ["cat-file", "blob", oid]);
+}
+
+/**
+ * Commit `text` as the file `file` (mode `mode`) on the lesson branch `branch`: one commit whose parent is `parent`,
+ * holding `parent`'s tree with that one file added or replaced. The branch is moved to it only while it still points
+ * at `expected` (null: only while it is not there), so a commit made on it meanwhile is never lost. A branch checked out
+ * anywhere is not moved. The temporary index and the file's text are written to a folder of their own under the
+ * system's temporary folder, removed whether the commit is made or not. Returns the new commit.
+ */
+export async function commitLessonFile(o: { repo: string; branch: string; parent: string; expected: string | null; file: string; mode: string; text: string; message: string }): Promise<string> {
+  if (!isLessonBranch(o.branch)) throw new Error(`${o.branch} is not a Botbench lesson branch, so nothing is committed on it.`);
+  checkBase(o.parent);
+  if (o.expected !== null) checkBase(o.expected);
+  if (!LESSON_PATH.test(o.file) || o.file.split("/").some((part) => part === "." || part === "..")) throw new Error(`Invalid file name ${JSON.stringify(o.file)}.`);
+  if (!FILE_MODES.has(o.mode)) throw new Error(`Invalid file mode ${JSON.stringify(o.mode)}.`);
+  if (o.message.trim() === "") throw new Error("A commit message is required.");
+  const repo = path.resolve(o.repo);
+  const out = await branchCheckedOutAt(repo, o.branch);
+  if (out.length > 0) throw new Error(`The branch ${o.branch} is checked out at ${out.join(", ")}, so Botbench did not add to it. Switch that folder to another branch, then reject again.`);
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-lesson-"));
+  try {
+    const env = { GIT_INDEX_FILE: path.join(temporary, "index") };
+    const blob = path.join(temporary, "file");
+    fs.writeFileSync(blob, o.text, { flag: "wx", mode: 0o600 });
+    await git(repo, ["read-tree", o.parent], GIT_WORK_LIMIT_MS, env);
+    // No filter the repository names runs: the text is stored as it is.
+    const oid = (await git(repo, ["hash-object", "-w", "--no-filters", "--", blob])).trim();
+    await git(repo, ["update-index", "--add", "--cacheinfo", `${o.mode},${oid},${o.file}`], GIT_WORK_LIMIT_MS, env);
+    const tree = (await git(repo, ["write-tree"], GIT_WORK_LIMIT_MS, env)).trim();
+    const commit = (await git(repo, ["-c", `user.name=${AUTHOR_NAME}`, "-c", `user.email=${AUTHOR_EMAIL}`, "commit-tree", "--no-gpg-sign", "-p", o.parent, "-m", o.message, tree])).trim();
+    await git(repo, ["update-ref", "-m", "Botbench: keep a lesson", `refs/heads/${o.branch}`, commit, o.expected ?? ""]);
+    return commit;
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 }

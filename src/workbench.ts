@@ -58,6 +58,23 @@ export function parseTaskBranch(branch: string): TaskBranch | null {
   return null;
 }
 
+/**
+ * The branch a rejected task's learning is committed on (engine/learnings.ts): `botbench-lesson/<workbench>/task-<id>`.
+ * It sits outside `botbench/`, so it is never taken for a task branch: never decided on, discarded or pushed as one.
+ */
+export const LESSON_PREFIX = "botbench-lesson/";
+export function lessonBranch(workbench: string, taskId: number): string {
+  if (!isWorkbench(workbench)) throw new Error(`Invalid workbench name ${JSON.stringify(workbench)}: ${WORKBENCH_RULE}`);
+  if (!Number.isSafeInteger(taskId) || taskId < 1) throw new Error(`Invalid task id ${JSON.stringify(taskId)}: a task's id is a whole number from 1.`);
+  return `${LESSON_PREFIX}${workbench}/task-${taskId}`;
+}
+const LESSON = /^botbench-lesson\/([^/]+)\/task-[1-9][0-9]{0,15}$/;
+/** Whether `branch` is a lesson branch by its name, and nothing else. */
+export function isLessonBranch(branch: unknown): branch is string {
+  const match = typeof branch === "string" ? LESSON.exec(branch) : null;
+  return match !== null && isWorkbench(match[1]);
+}
+
 type Source = "host" | "owner" | "settings_file";
 /** In a transaction of its own, or in the caller's when one is open. */
 const atomically = <T>(db: DatabaseSync, fn: () => T): T => (db.isTransaction ? fn() : transaction(db, fn));

@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -26,6 +26,8 @@ import { createDeliveries } from "./engine/delivery.ts";
 import { createRuns, getRun } from "./engine/run.ts";
 import { createGitHub, type GitHub } from "./github.ts";
 import { createPeers } from "./engine/peers.ts";
+import { createCheckTogether } from "./engine/combined.ts";
+import { clearCombinedCopies } from "./worktrees.ts";
 import { createClaims } from "./engine/claims.ts";
 import { chooseWorkbench, workbenchName } from "./workbench.ts";
 import { createTasks } from "./engine/task.ts";
@@ -88,6 +90,8 @@ export interface StartOptions {
   github?: GitHub;
   /** Claude Code for chat turns only. The real one unless a test replays a chat turn captured from it. */
   chatClaude?: Driver;
+  /** Claude Code for everything it does here: tasks, runs and chat. The real one unless a test replays turns captured from it. */
+  claudeCode?: Driver;
 }
 
 
@@ -105,7 +109,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
-  const driver = new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
+  const driver = options.claudeCode ?? new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
   // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
   const reviewers = { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
@@ -152,7 +156,20 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
   const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), onEvent: stream.notify, onTaskChange: (task) => {
+  // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
+  const peers = createPeers({ db, config, github });
+  // Checking a task together with another workbench's open pull request, in a temporary copy (engine/combined.ts).
+  // A copy left by a Botbench that stopped while checking is removed first, by what is on disk.
+  clearCombinedCopies(home);
+  const checkTogether = createCheckTogether({
+    db, home, peers,
+    repoCommands: (repo) => repositoryCommands(config, repo),
+    repoHosts: (repo) => repositoryHosts(config, repo),
+    remote: (repo) => repositoryDelivery(config, repo).remote,
+    onTaskChange: stream.announceTask,
+    onPassed: (taskId) => void tasks.reconsider(taskId),
+  });
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
@@ -187,9 +204,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     }, claims });
   // Claims a stopped Botbench left on the remote for runs that ended without a pull request are released now.
   claims.recover();
-  // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
-  const peers = createPeers({ db, config, github });
-  const ctx = { db, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, claims, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, home, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, claims, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -214,6 +229,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
+    // A check together ending now may still ask the tasks to look at its task again, so it stops first.
+    await checkTogether.close();
     await Promise.allSettled([chat.close().then(() => turns.close()), tasks.close(), runs.close(), connect.close(), deliveries.close()]);
     // A claim's push or delete in flight writes its step to the store when it ends; each git call has a time limit.
     await claims.idle();

@@ -82,6 +82,9 @@ export function replayGitHub(o: { existing?: boolean; signedOut?: boolean; hold?
       pullRequests: async () => {
         throw new Error("The delivery replay does not list a repository's pull requests.");
       },
+      openPullRequests: async () => {
+        throw new Error("The delivery replay does not list a repository's open pull requests.");
+      },
     },
   };
 }

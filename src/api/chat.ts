@@ -1,27 +1,41 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { logSandboxedCalls } from "../approvals/broker.ts";
+import { chatWebAccess } from "../approvals/web-access.ts";
 import { CLAUDE_CODE } from "../drivers/claude-code.ts";
 import { makeReviewFolder } from "../drivers/cli-sandbox.ts";
 import { DriverUnavailableError, type Driver, type DriverSession } from "../drivers/contract.ts";
 import type { DriverEvent } from "../drivers/events.ts";
+import { captureNote, MemoryError, memorySection, rememberedNote } from "../engine/memory.ts";
 import { REVIEW_LIMIT_MS } from "../engine/review.ts";
 import { agentName, chatPrompt, comparePrompt, type ChatEntry } from "../engine/roles.ts";
+import { checkRepository, TaskError } from "../engine/task.ts";
 import { now, transaction } from "../store/db.ts";
 import { recordChat } from "../engine/chats.ts";
-import { TurnError, type Turns } from "./turns.ts";
+import { sharedGitDir } from "../worktrees.ts";
+import { SCRATCH_DIR, TurnError, type Turns } from "./turns.ts";
 
 /*
  * Chat with any agent, or several at once. Claude Code keeps a conversation in its own session and is continued from
  * it (api/turns.ts) while it is the only agent that has answered since its last reply. Codex, Grok and Antigravity keep
- * none here (capability `resume: false`): each message to one of them is one turn in the same confinement as a review
- * (a new empty folder, Codex's read-only profile or the process sandbox, no tools for Grok and Antigravity, no network
- * for commands, key variables stripped), and Botbench sends it the chat so far, as data, before the new message
- * (engine/roles.ts, `chatPrompt`). Claude Code is sent the same when another agent answered since its last reply.
+ * none here (capability `resume: false`): each message to one of them is one turn, and Botbench sends it the chat so
+ * far, as data, before the new message (engine/roles.ts, `chatPrompt`). Claude Code is sent the same when another agent
+ * answered since its last reply. Codex and Grok (capability `chatTools`) cannot ask before they act, so their sandbox is
+ * the control: each works in the chat's own folder, the one Claude Code uses, where it reads, writes and runs commands;
+ * reads a repository the owner attached and never changes it; its commands reach no network; and its own web search,
+ * which its provider runs, follows the owner's "Web access in chat" (Allow only: they cannot ask, so Ask is Off for
+ * them). Antigravity answers in a new empty folder with no tools, as a reviewer does (drivers/antigravity.ts says why).
  *
  * What a chat is made of is stored: every attempt a chat started (`chat_attempts`), and each message sent to agents
  * given the conversation by Botbench, or each request to compare answers (`chat_rounds`). Only a chat's own attempts
  * are read back as its conversation, so nothing a task or a review wrote is ever passed on. The owner's device keeps
  * which attempts make up the chat on screen, as before. Nothing an agent writes is run: it is shown as text and passed
  * on as data.
+ *
+ * Memory (engine/memory.ts, ADR 0006): the owner's new message, when it starts "Remember:" or "Remember that", saves
+ * the rest of it as a note before it is sent. Nothing else here is ever saved. Every agent asked is given the notes,
+ * as data, before the conversation.
  */
 
 /** The most agents one message is sent to. */
@@ -59,8 +73,12 @@ export interface ChatAttemptInfo {
 }
 
 export interface Chat {
-  /** Send one message, or a request to compare a round's answers, to each agent asked. Resolves once each has started or is recorded as failed. */
-  send(o: { message: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number }): Promise<ChatReply[]>;
+  /**
+   * Send one message, or a request to compare a round's answers, to each agent asked. Resolves once each has started or
+   * is recorded as failed. `repository`: a repository the owner attached, which the agents asked read and never change;
+   * only an agent with its own tools in a chat (Codex, Grok) can be asked then.
+   */
+  send(o: { message: string; conversation: readonly number[]; agents: readonly ChatTarget[]; compare?: number; repository?: string }): Promise<ChatReply[]>;
   /** Stop a running chat turn of an agent with no conversation of its own. False when no such turn runs in this attempt. */
   interrupt(attemptId: number): Promise<boolean>;
   turnRunning(attemptId: number): boolean;
@@ -166,9 +184,44 @@ export interface ChatOptions {
   limitMs?: number;
 }
 
+/**
+ * What an agent other than Claude Code can do in a chat, in one plain sentence for the screen (docs/product/voice.md).
+ * For one with its own tools, the sandbox is the control, since it cannot ask before it acts, and the sentence says so.
+ * Null for Claude Code, which asks you itself.
+ */
+export function chatScopeWords(driver: Pick<Driver, "name" | "capabilities">): string | null {
+  if (driver.name === CLAUDE_CODE) return null;
+  const name = agentName(driver.name);
+  if (driver.capabilities.chatTools !== true) return `${name} answers from the conversation alone: it cannot read your files or change anything here. Botbench gives it the chat so far.`;
+  return `${name} cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds: in a chat it can read, change and run things only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access is Allow. Botbench gives it the chat so far.`;
+}
+
+/**
+ * The repository a chat was given, checked and resolved once (docs/lessons.md, unit 10): its real path and its shared
+ * git folder, which the agents read and never change. Botbench's data folder may be neither inside it nor around it:
+ * reading the repository would then read Botbench's own files.
+ */
+export async function chatRepository(input: unknown, home: string): Promise<{ path: string; gitDir: string }> {
+  let repo: string;
+  let gitDir: string;
+  try {
+    repo = fs.realpathSync(await checkRepository(input));
+    gitDir = await sharedGitDir(repo);
+  } catch (err) {
+    throw new TurnError(400, err instanceof TaskError ? err.message : `Botbench could not attach that repository: ${words(err)}`);
+  }
+  const data = fs.realpathSync(home);
+  const within = (inner: string, outer: string): boolean => inner === outer || inner.startsWith(`${outer}${path.sep}`);
+  if (within(repo, data) || within(data, repo) || within(gitDir, data) || within(data, gitDir)) throw new TurnError(400, "That folder holds Botbench's own data, or lies inside it, so it cannot be attached to a chat.");
+  return { path: repo, gitDir };
+}
+
 export function createChat(o: ChatOptions): Chat {
   const { db } = o;
   const limitMs = o.limitMs ?? REVIEW_LIMIT_MS;
+  // The chat's own folder, which Claude Code works in too (api/turns.ts): an agent with its own tools reads, writes and runs commands there.
+  fs.mkdirSync(path.join(o.home, SCRATCH_DIR), { recursive: true, mode: 0o700 });
+  const chatFolder = fs.realpathSync(path.join(o.home, SCRATCH_DIR));
   const running = new Map<number, { session: DriverSession; done: Promise<void> }>();
   let closed = false;
 
@@ -191,20 +244,29 @@ export function createChat(o: ChatOptions): Chat {
     return { attemptId: id, turn: 1, agent, model, roundId };
   };
 
-  /** One turn of an agent with no conversation of its own, in a new empty folder, with a time limit. */
-  const askOne = async (driver: Driver, model: string | null, roundId: number, prompt: string): Promise<ChatReply> => {
+  /**
+   * One turn of an agent with no conversation of its own, with a time limit. One with its own tools in a chat works in
+   * the chat's folder, reads `repository` without changing it, and searches the web as the owner's setting allows; any
+   * other answers in a new empty folder, removed afterwards, read-only.
+   */
+  const askOne = async (driver: Driver, model: string | null, roundId: number, prompt: string, repository: { path: string; gitDir: string } | null): Promise<ChatReply> => {
     const name = agentName(driver.name);
-    const folder = makeReviewFolder(o.home);
+    const tools = driver.capabilities.chatTools === true;
+    const folder = tools ? { path: chatFolder, remove: () => {} } : makeReviewFolder(o.home);
     let session: DriverSession;
     try {
-      // Exactly what the review station asks for, in a folder with nothing in it: read-only, no host, no way to ask.
-      session = await driver.startAttempt({ db, cwd: folder.path, readOnly: true, confinement: { dataDir: o.home, allowedHosts: [] }, ...(model === null ? {} : { model }) });
+      const how = tools
+        ? { chatTools: { readable: repository === null ? [] : [repository.path, repository.gitDir] }, webSearch: chatWebAccess(db) === "allow" }
+        : // Exactly what the review station asks for, in a folder with nothing in it: read-only, no host, no way to ask.
+          { readOnly: true };
+      session = await driver.startAttempt({ db, cwd: folder.path, ...how, confinement: { dataDir: o.home, allowedHosts: [] }, ...(model === null ? {} : { model }) });
     } catch (err) {
       folder.remove();
       return failed(driver.name, model, roundId, `${name} could not answer: ${err instanceof DriverUnavailableError ? (err.probe.problem ?? err.message) : words(err)}`);
     }
     join(session.attemptId, roundId);
     session.onEvent(o.onEvent);
+    if (tools) logSandboxedCalls(db, session, { agent: name, taskId: null, cwd: folder.path, where: repository === null ? "the chat's folder" : "the chat's folder, the attached repository read-only" });
     const timer = setTimeout(() => {
       const event: DriverEvent = { type: "error", message: `${name} did not finish within ${minutes(limitMs)} and was stopped.`, raw: null };
       db.prepare("INSERT INTO events (attempt_id, turn, ts, type, payload) VALUES (?, 1, ?, ?, ?)").run(session.attemptId, now(), event.type, JSON.stringify(event));
@@ -234,24 +296,48 @@ export function createChat(o: ChatOptions): Chat {
     }
   };
 
-  const sendOnce: Chat["send"] = async ({ message, conversation, agents, compare }) => {
+  const sendOnce: Chat["send"] = async ({ message, conversation, agents, compare, repository: attached }) => {
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
     if (agents.length < 1 || agents.length > MAX_ASKED) throw new TurnError(400, `Ask between 1 and ${MAX_ASKED} agents.`);
     if (new Set(agents.map((a) => a.agent)).size !== agents.length) throw new TurnError(400, "Each agent can be asked once per message.");
     for (const { agent } of agents) if (driverOf(agent) === undefined) throw new TurnError(400, `Botbench has no agent called ${JSON.stringify(agent)} to ask.`);
     if (compare !== undefined && agents.length !== 1) throw new TurnError(400, "Ask one agent to compare the answers.");
+    let repository: { path: string; gitDir: string } | null = null;
+    if (attached !== undefined) {
+      // Only Claude Code changes a repository, as a task in a separate copy; in a chat the others read it.
+      if (agents.some(({ agent }) => agent === CLAUDE_CODE)) throw new TurnError(400, "Claude Code works on a repository as a task, in a separate copy. Send it without other agents to start one, or remove the repository to chat with it.");
+      const cannot = agents.find(({ agent }) => driverOf(agent)!.capabilities.chatTools !== true);
+      if (cannot !== undefined) throw new TurnError(400, `${agentName(cannot.agent)} cannot read a repository in Botbench: it answers from the conversation alone. Remove the repository to ask it.`);
+      repository = await chatRepository(attached, o.home);
+    }
 
-    // A message to Claude Code alone, while it is the only agent that has answered since its last reply, continues its own session.
+    // The owner's own message, and only it, may save a note to memory (engine/memory.ts): never a request to compare,
+    // never an agent's reply in the conversation, which is not read here.
+    const remembered = compare === undefined ? rememberedNote(message) : null;
+    const remember = (): void => {
+      if (remembered === null) return;
+      try {
+        captureNote(db, o.home, remembered);
+      } catch (err) {
+        if (err instanceof MemoryError) throw new TurnError(err.status, `${err.message} Nothing was sent.`);
+        throw err;
+      }
+    };
+
+    // A message to Claude Code alone, while it is the only agent that has answered since its last reply, continues its
+    // own session. A new chat when there are notes in memory, or one being saved now, is given them as any agent is:
+    // through the conversation Botbench sends, below.
     if (compare === undefined && agents.length === 1 && agents[0]!.agent === CLAUDE_CODE) {
       const continues = claudeContinues(db, conversation);
-      if (continues !== null) {
+      if (continues !== null && !(continues === undefined && (remembered !== null || memorySection(o.home) !== undefined))) {
+        remember();
         const started = await o.turns.start(message, continues, agents[0]!.model, (attemptId) => join(attemptId, null));
         join(started.attemptId, null);
         return [{ ...started, agent: CLAUDE_CODE, model: agents[0]!.model ?? null, roundId: null }];
       }
     }
 
-    /** What each agent is sent: Claude Code keeps its tools in a chat, the others answer from the conversation alone. */
+    /** What each agent is sent: Claude Code, Codex and Grok keep their tools in a chat, Antigravity answers from the conversation alone. */
     let prompt: (agent: string) => string;
     let round: { kind: "ask" | "compare"; message: string; compares: number | null };
     if (compare !== undefined) {
@@ -272,7 +358,13 @@ export function createChat(o: ChatOptions): Chat {
       round = { kind: "compare", message: compared.message, compares: compare };
     } else {
       const history = chatHistory(db, conversation);
-      prompt = (agent) => chatPrompt({ history, message, tools: agent === CLAUDE_CODE }).prompt;
+      // Read once the note this message saves is in memory (below), so the agents are given it too.
+      let memory: string | undefined | null = null;
+      prompt = (agent) => {
+        const tools = agent === CLAUDE_CODE || driverOf(agent)!.capabilities.chatTools === true;
+        if (memory === null) memory = memorySection(o.home);
+        return chatPrompt({ history, message, tools, memory, ...(repository === null ? {} : { repository: repository.path }) }).prompt;
+      };
       round = { kind: "ask", message, compares: null };
     }
 
@@ -281,9 +373,10 @@ export function createChat(o: ChatOptions): Chat {
     const down = probes.findIndex((p) => p.problem !== null);
     if (down !== -1) throw new TurnError(409, `${agentName(agents[down]!.agent)} cannot answer now: ${probes[down]!.problem} Nothing was sent.`);
     if (closed) throw new TurnError(503, "Botbench is shutting down.");
+    remember();
 
     const roundId = Number(db.prepare("INSERT INTO chat_rounds (kind, message, compares, created_at) VALUES (?, ?, ?, ?)").run(round.kind, round.message, round.compares, now()).lastInsertRowid);
-    return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt(agent)) : askOne(driverOf(agent)!, model ?? null, roundId, prompt(agent)))));
+    return Promise.all(agents.map(({ agent, model }) => (agent === CLAUDE_CODE ? askClaude(model, roundId, prompt(agent)) : askOne(driverOf(agent)!, model ?? null, roundId, prompt(agent), repository))));
   };
 
   /** Send, then record which chat the replies belong to, so the chat is a row of the Work list (engine/chats.ts). */

@@ -31,6 +31,11 @@ export interface PeerPullRequest {
   /** Issues of the same repository it closes, as GitHub reports them. */
   closes: number[];
   files: string[];
+  /**
+   * The commit its head branch points at on the remote, as `git ls-remote` read it with the rest of the view; null when
+   * the remote did not list the branch. What a check together with it is compared with (engine/combined.ts).
+   */
+  head: string | null;
 }
 export interface PeerBranch {
   workbench: string;
@@ -45,7 +50,17 @@ export interface PeerClaim {
   startedAt: string;
 }
 export type PeersView =
-  | { state: "ready"; repo: string; repository: string; pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[]; checkedAt: string }
+  | {
+      state: "ready";
+      repo: string;
+      repository: string;
+      pullRequests: PeerPullRequest[];
+      branches: PeerBranch[];
+      claims: PeerClaim[];
+      checkedAt: string;
+      /** True when even gh's list of open pull requests alone was full, so there may be open ones it did not list. */
+      mayBeMore?: boolean;
+    }
   | { state: "unavailable"; repo: string; problem: string; checkedAt: string };
 
 /**
@@ -56,14 +71,15 @@ export type PeersView =
  * The list holds the latest pull requests only (src/github.ts PR_LIST_LIMIT); when it is full, the view asks about the
  * remaining branches one by one (`withoutPullRequest`).
  */
-export function otherWork(prs: readonly ListedPullRequest[], branches: readonly { branch: string }[], own: ReadonlySet<string>): { pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[] } {
+export function otherWork(prs: readonly ListedPullRequest[], branches: readonly { branch: string; commit?: string }[], own: ReadonlySet<string>): { pullRequests: PeerPullRequest[]; branches: PeerBranch[]; claims: PeerClaim[] } {
   const other = (branch: string): string | null => {
     const parsed = parseTaskBranch(branch);
     return parsed?.prefix === "botbench" && parsed.workbench !== null && !own.has(parsed.workbench) ? parsed.workbench : null;
   };
+  const heads = new Map(branches.flatMap(({ branch, commit }) => (commit === undefined ? [] : [[branch, commit] as const])));
   const pullRequests = prs.flatMap((pr) => {
     const workbench = pr.state === "OPEN" ? other(pr.headRefName) : null;
-    return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files }];
+    return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files, head: heads.get(pr.headRefName) ?? null }];
   });
   const withPr = new Set(prs.map((pr) => pr.headRefName));
   const claims: PeerClaim[] = [];
@@ -93,8 +109,11 @@ export async function withoutPullRequest(branches: readonly PeerBranch[], find: 
 }
 
 export interface Peers {
-  /** Other workbenches' work on the repository's remote: from the short-lived cache, or read now. Never rejects. */
-  view(repo: string): Promise<PeersView>;
+  /**
+   * Other workbenches' work on the repository's remote: from the short-lived cache, or read now. `fresh` reads it now
+   * whatever is kept, for a decision that stands on it (engine/combined.ts). Never rejects.
+   */
+  view(repo: string, o?: { fresh?: boolean }): Promise<PeersView>;
 }
 
 /** How long a view is kept before it is read again. */
@@ -120,22 +139,34 @@ export function createPeers(o: { db: DatabaseSync; config: Config; github: GitHu
           throw new Error(`The branches on the remote ${remote} could not be read: ${words(err)}`);
         }),
       ]);
-      const work = otherWork(page.pullRequests, branches, ownWorkbenches(o.db));
+      // The page holds the latest pull requests of every state. When it is full, an older open one may be missing from
+      // it, so the open ones are read on their own too; only when that list is full as well may an open one be unlisted.
+      let listed = page.pullRequests;
+      let mayBeMore = false;
+      if (page.full) {
+        const open = await o.github.openPullRequests(found.repo).catch((err: unknown) => {
+          throw new Error(`The open pull requests of ${repoName(found.repo)} could not be read: ${words(err)}`);
+        });
+        const numbers = new Set(open.pullRequests.map((pr) => pr.number));
+        listed = [...open.pullRequests, ...page.pullRequests.filter((pr) => !numbers.has(pr.number) && pr.state !== "OPEN")];
+        mayBeMore = open.full;
+      }
+      const work = otherWork(listed, branches, ownWorkbenches(o.db));
       // A full list may have left out an older pull request of a pushed branch: those branches are asked about one by one.
       // Full is what gh gave, not what was kept: a fork's pull request on the page still fills it.
       if (page.full) work.branches = await withoutPullRequest(work.branches, (branch) => o.github.findPullRequest(found.repo, branch));
-      return { state: "ready", repo, repository: repoName(found.repo), ...work, checkedAt };
+      return { state: "ready", repo, repository: repoName(found.repo), ...work, checkedAt, mayBeMore };
     } catch (err) {
       return unavailable(words(err));
     }
   };
 
   return {
-    view(repoPath) {
+    view(repoPath, given = {}) {
       const repo = realRepo(repoPath);
       const at = clock();
       const have = kept.get(repo);
-      if (have !== undefined && at - have.at < fresh) return have.view;
+      if (given.fresh !== true && have !== undefined && at - have.at < fresh) return have.view;
       const view = read(repo);
       kept.set(repo, { at, view });
       return view;

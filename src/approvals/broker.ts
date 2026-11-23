@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import type { DriverSession } from "../drivers/contract.ts";
 import { askEveryCommand, isRunMode, type RunMode } from "../engine/modes.ts";
 import { stepWords } from "../engine/roles.ts";
 import { now, transaction } from "../store/db.ts";
@@ -157,6 +158,11 @@ export type LogRule =
   | "web_allowed"
   /** A web tool of a task or a run was refused without asking, because the owner's setting Web access is Off. */
   | "web_refused"
+  /**
+   * A tool call of an agent that cannot ask (Codex, Grok: capability `permissionRequests: false`), which ran without
+   * asking, kept only by its sandbox (threat model, B18). What the sandbox refused is in the agent's own transcript.
+   */
+  | "sandboxed"
   /** One of the CLI's own bookkeeping tools (its to-do list, loading a tool) ran without asking, in any mode. */
   | "bookkeeping"
   /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
@@ -461,6 +467,23 @@ export interface LogWrite {
 /** Add one entry to the action log. The broker writes every entry but the owner's decisions on tasks (engine/decision.ts). */
 export function appendLog(db: DatabaseSync, e: LogWrite): void {
   db.prepare("INSERT INTO action_log (ts, task_id, run_id, attempt_id, approval_id, grant_id, rule, tool, command, cwd, detail, refusal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(now(), e.taskId, e.runId ?? null, e.attemptId, e.approvalId ?? null, e.grantId ?? null, e.rule, e.tool, e.command, e.cwd, e.detail ?? null, e.refusal ?? null);
+}
+
+/**
+ * Write each tool call `session` reports to the action log, once per call, as one that ran without asking under the
+ * agent's own sandbox (`sandboxed`): for an agent that cannot ask Botbench before it acts (B18), whose calls never pass
+ * through the broker. `where` names the place its sandbox kept it to, in words for the log.
+ */
+export function logSandboxedCalls(db: DatabaseSync, session: Pick<DriverSession, "attemptId" | "onEvent">, o: { agent: string; taskId: number | null; runId?: number | null; cwd: string; where: string }): () => void {
+  const seen = new Set<string>();
+  return session.onEvent((event) => {
+    if (event.type !== "tool_call" || seen.has(event.id)) return;
+    seen.add(event.id);
+    const input = event.input;
+    const named = typeof input === "object" && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
+    const command = typeof named?.command === "string" ? named.command : typeof named?.query === "string" ? named.query : JSON.stringify(input ?? null);
+    appendLog(db, { taskId: o.taskId, runId: o.runId ?? null, attemptId: session.attemptId, rule: "sandboxed", tool: shorten(event.name, 200), command: shorten(command, MAX_COMMAND), cwd: o.cwd, detail: `${o.agent} cannot ask you, so it ran this without asking, kept by its own sandbox to ${o.where}.` });
+  });
 }
 
 interface Ticket {

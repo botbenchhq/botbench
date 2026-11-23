@@ -84,3 +84,10 @@ test("a page is full by what gh gave: the real list of jon-lange/botbench held 6
   assert.deepEqual([real.pullRequests.length, real.full], [61, false]);
   // A full page with a fork's pull request among them is read live from a public repository: test/live/peers.live.test.ts.
 });
+
+test("an open pull request carries the head its branch has on the remote, as git ls-remote listed it; none when the remote did not list it", () => {
+  const listed = (number: number, headRefName: string): ListedPullRequest => ({ number, title: "t", url: `https://github.com/jon-lange/botbench/pull/${number}`, state: "OPEN", headRefName, closes: [], files: [] });
+  const head = "0123456789abcdef0123456789abcdef01234567";
+  const work = otherWork([listed(3, "botbench/bob/run-1/task-1"), listed(4, "botbench/bob/run-2/task-2")], [{ branch: "botbench/bob/run-1/task-1", commit: head }], new Set(["alice"]));
+  assert.deepEqual(work.pullRequests.map((pr) => [pr.number, pr.head]), [[3, head], [4, null]]);
+});

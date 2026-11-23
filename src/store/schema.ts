@@ -1469,6 +1469,202 @@ BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
   {
+    // Checking a task together with another workbench's open pull request (engine/combined.ts, Peers P4). One row per
+    // check, written once with everything it found: the two head commits it ran on, whether they merged and, when not,
+    // the files in conflict, and each setup and check command run on the merge with its output. Both tables are
+    // append-only: a result is never changed, only followed by a newer one.
+    //
+    // "Require checking together" for a repository is a list of the owner's changes, append-only, the latest in force.
+    // Every row is the owner's (`set_by`): nothing else writes this table (the API's owner-only route does).
+    name: "combined_checks",
+    sql: `
+CREATE TABLE combined_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  pull_request INTEGER NOT NULL CHECK (pull_request BETWEEN 1 AND 2147483647),
+  workbench TEXT NOT NULL,
+  peer_branch TEXT NOT NULL,
+  peer_commit TEXT CHECK (peer_commit IS NULL OR length(peer_commit) IN (40, 64)),
+  task_commit TEXT NOT NULL CHECK (length(task_commit) IN (40, 64)),
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'conflict', 'not_run')),
+  conflicts TEXT NOT NULL DEFAULT '[]',
+  problem TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  CHECK (outcome = 'not_run' OR peer_commit IS NOT NULL),
+  CHECK (outcome <> 'not_run' OR problem IS NOT NULL)
+);
+CREATE INDEX combined_checks_task ON combined_checks (task_id, id);
+CREATE TABLE combined_check_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  combined_check_id INTEGER NOT NULL REFERENCES combined_checks (id),
+  kind TEXT NOT NULL CHECK (kind IN ('setup', 'check')),
+  position INTEGER NOT NULL,
+  command TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('passed', 'failed', 'timed_out', 'stopped')),
+  exit_code INTEGER,
+  signal TEXT,
+  output TEXT NOT NULL,
+  output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
+  limit_ms INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL
+);
+CREATE INDEX combined_check_commands_check ON combined_check_commands (combined_check_id, id);
+CREATE TRIGGER combined_checks_no_update BEFORE UPDATE ON combined_checks
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_checks_no_delete BEFORE DELETE ON combined_checks
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_check_commands_no_update BEFORE UPDATE ON combined_check_commands
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+CREATE TRIGGER combined_check_commands_no_delete BEFORE DELETE ON combined_check_commands
+BEGIN SELECT RAISE(ABORT, 'a combined check is kept as it ran'); END;
+
+CREATE TABLE combined_requirements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_path TEXT NOT NULL,
+  required INTEGER NOT NULL CHECK (required IN (0, 1)),
+  set_by TEXT NOT NULL CHECK (set_by = 'owner'),
+  set_at TEXT NOT NULL
+);
+CREATE INDEX combined_requirements_repo ON combined_requirements (repo_path, id);
+CREATE TRIGGER combined_requirements_no_update BEFORE UPDATE ON combined_requirements
+BEGIN SELECT RAISE(ABORT, 'the owner''s changes to require checking together are append-only'); END;
+CREATE TRIGGER combined_requirements_no_delete BEFORE DELETE ON combined_requirements
+BEGIN SELECT RAISE(ABORT, 'the owner''s changes to require checking together are append-only'); END;
+`,
+  },
+  {
+    // Codex and Grok have their own tools in a chat and a review and cannot ask before they act (threat model, B18):
+    // each tool call they report is logged as one that ran without asking under the agent's own sandbox (`sandboxed`),
+    // as every agent action that ran is logged. A check cannot be altered in place, so the action log is made again
+    // with every row kept, ids included, and its indexes and triggers put back.
+    name: "sandboxed agent calls in the log",
+    sql: `
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_sandboxed;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_sandboxed ORDER BY id;
+DROP TABLE action_log_before_sandboxed;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // A task whose builder's turn ended on its agent's usage limit waits at `waiting_for_limit` until `retry_at` (an ISO
+    // time), when Botbench resumes its session once (engine/usage-limit.ts). Kept in the store, not only in a timer, so
+    // a restart keeps the wait; empty for every other task, and for every task from before this.
+    name: "usage_limit_wait",
+    sql: `
+ALTER TABLE tasks ADD COLUMN retry_at TEXT;
+`,
+  },
+  {
+    // The workbench memory store (engine/memory.ts, ADR 0006) keeps its notes as files under the data folder, not here.
+    // The action log gains `memory`: one entry per write the owner made to it (remember, edit, forget), naming the note
+    // by its number and holding none of its text, and belonging to no task or run. A check cannot be altered in place,
+    // so the action log is made again with every row kept, ids included, and its indexes and triggers put back.
+    name: "memory_log",
+    sql: `
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_memory;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_memory ORDER BY id;
+DROP TABLE action_log_before_memory;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
+  {
+    // An owner's note to a task that is building (src/engine/notes.ts): its task, its words and when it was sent, and how
+    // it stands: `waiting` for the builder's turn to end, `delivered` as the next message of the session in `attempt_id`,
+    // `replaced` by a later note before it was delivered, or `not_delivered` with a plain `reason`. One note waits for a
+    // task at a time. A row is only ever added, leaves waiting once with what that change says (`settled_at`, and the
+    // attempt or the reason), and is never changed after or deleted, so every note the owner sent stays known.
+    name: "task_notes",
+    sql: `
+CREATE TABLE task_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  text TEXT NOT NULL CHECK (length(trim(text)) > 0 AND length(text) <= 4000),
+  sent_at TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('waiting', 'delivered', 'replaced', 'not_delivered')),
+  attempt_id INTEGER REFERENCES attempts (id),
+  reason TEXT,
+  settled_at TEXT,
+  CHECK ((state = 'waiting') = (settled_at IS NULL)),
+  CHECK ((state = 'delivered') = (attempt_id IS NOT NULL)),
+  CHECK ((state = 'not_delivered') = (reason IS NOT NULL))
+);
+CREATE INDEX task_notes_task ON task_notes (task_id, id);
+CREATE UNIQUE INDEX task_notes_one_waiting ON task_notes (task_id) WHERE state = 'waiting';
+CREATE TRIGGER task_notes_written_waiting BEFORE INSERT ON task_notes WHEN NEW.state <> 'waiting'
+BEGIN SELECT RAISE(ABORT, 'a note is first written as waiting'); END;
+CREATE TRIGGER task_notes_words_fixed BEFORE UPDATE OF id, task_id, text, sent_at ON task_notes
+BEGIN SELECT RAISE(ABORT, 'what a note says, its task and when it was sent cannot be changed'); END;
+CREATE TRIGGER task_notes_settled_once BEFORE UPDATE OF state, attempt_id, reason, settled_at ON task_notes WHEN OLD.state <> 'waiting' OR NEW.state = 'waiting'
+BEGIN SELECT RAISE(ABORT, 'a note leaves waiting once, and is never changed after'); END;
+CREATE TRIGGER task_notes_no_delete BEFORE DELETE ON task_notes
+BEGIN SELECT RAISE(ABORT, 'notes are never deleted'); END;
+`,
+  },
+  {
     // The lists' own state, per installation (src/api/board.ts, src/engine/chats.ts). `chat_members`: which chat each
     // chat attempt belongs to, a chat being named by its first attempt (`chat_id`), recorded as each message is sent;
     // append-only, like the chat itself. `chat_titles`: the name the owner gave a chat, one line, trimmed, at most 80

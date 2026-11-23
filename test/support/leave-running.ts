@@ -6,7 +6,7 @@ import { createRuns, getRun, storePlan, createRun } from "../../src/engine/run.t
 import { createTasks, getTask } from "../../src/engine/task.ts";
 import { openStore } from "../../src/store/db.ts";
 import { sourceHead } from "../../src/worktrees.ts";
-import { buildReplayDriver, type BuildTurn } from "./replay-build.ts";
+import { buildReplayDriver, type AttemptScript } from "./replay-build.ts";
 import { loadPlanRecording, planReplayDriver } from "./replay-plan.ts";
 import { write } from "./repo.ts";
 
@@ -39,10 +39,14 @@ export interface Order {
   setup?: string[];
   checks?: string[];
   /** The recorded turns of this process's attempts, in the order they are started. */
-  script?: BuildTurn[];
+  script?: AttemptScript[];
   /** Which of this process's attempts (from 0) is held, and where: the process is killed while it is held. */
   hold?: number;
+  /** Which turn of the held attempt (from 0) is held; its first when left out. */
+  holdTurn?: number;
   holdAt?: "prompt" | "session";
+  /** A note the owner sends to the task at work while its first turn is held, before anything else is released. */
+  note?: string;
   /** Where the process is killed: while the held attempt's turn is under way, or once a setup or check command that writes `begun.txt` has begun. */
   stopAt: "turn" | "setup" | "checks" | "planning";
   /** The task whose command is awaited for `setup` and `checks`; the newest one when left out. */
@@ -73,7 +77,9 @@ const repoCommands = (): { setup: { command: string; limitMs: number }[]; checks
   checks: (order.checks ?? []).map((command) => ({ command, limitMs: 60_000 })),
 });
 const planner = order.stopAt !== "planning" ? null : planReplayDriver(loadPlanRecording(), [0], () => new Promise<void>(() => {}));
-const driver = buildReplayDriver(order.script ?? [], { hold: order.hold === undefined ? [] : [order.hold], holdAt: order.holdAt ?? "prompt" });
+// A later turn of the held attempt is held as well as its first, so the note can be sent while the first is under way.
+const later = order.hold !== undefined && (order.holdTurn ?? 0) > 0;
+const driver = buildReplayDriver(order.script ?? [], { hold: order.hold === undefined || (later && order.note === undefined) ? [] : [order.hold], holdTurns: later ? [[order.hold!, order.holdTurn!]] : [], holdAt: order.holdAt ?? "prompt" });
 const tasks = createTasks({ db, home: order.home, driver, broker, model: "haiku", repoCommands, onEvent: () => {}, onTaskChange: () => {} });
 const runs = createRuns({ db, home: order.home, driver: planner ?? driver, broker, line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
 
@@ -103,7 +109,13 @@ const until = async (what: string, done: () => boolean): Promise<void> => {
 };
 
 if (order.stopAt === "turn") {
-  await driver.held(order.hold ?? 0);
+  if (order.note !== undefined) {
+    // The owner's note reaches the task while its builder's first turn is under way, as a POST to the task would.
+    await driver.held(order.hold ?? 0);
+    tasks.sendNote(left.taskIds.at(-1)!, order.note);
+    if (later) driver.release(order.hold!);
+  }
+  await driver.held(order.hold ?? 0, order.holdTurn ?? 0);
   const attempt = db.prepare("SELECT id FROM attempts ORDER BY id DESC LIMIT 1").get()!;
   left.attemptId = Number(attempt.id);
   const task = getTask(db, Number(db.prepare("SELECT id FROM tasks WHERE attempt_id = ?").get(left.attemptId)!.id))!;

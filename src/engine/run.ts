@@ -19,6 +19,9 @@ import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
 import { issueFetch, outsideTextPrompt, runIssue } from "./intake.ts";
+import { LIMIT_CANCELLED } from "./usage-limit.ts";
+import { learningsSection } from "./learnings.ts";
+import { memorySection } from "./memory.ts";
 import { messageIssue, takeOverGiven, type ClaimName } from "./claim-branch.ts";
 import { ownWorkbenches } from "../workbench.ts";
 
@@ -348,6 +351,11 @@ export function cancelRun(db: DatabaseSync, runId: number, by = "cancelled by th
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'queued' ORDER BY id").all(runId)) {
       moveTaskIn(db, Number(row.id), "cancelled", { reason: "The run was cancelled before this task started." });
     }
+    // A task waiting for a usage limit has nothing at work and its work is committed: it ends here, in the same write,
+    // so no restart can find it waiting under a cancelled run, and it is never resumed.
+    for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status = 'waiting_for_limit' ORDER BY id").all(runId)) {
+      moveTaskIn(db, Number(row.id), "cancelled", { reason: LIMIT_CANCELLED });
+    }
     return getRun(db, runId)!;
   });
 }
@@ -625,7 +633,7 @@ export function createRuns(options: RunsOptions): Runs {
       const work = run.prompt ?? run.specText ?? (issue === null ? "" : NO_MESSAGE);
       const oneTask = { oneTask: run.oneTask };
       // `close` stops only a session it can see: one still being started when Botbench began stopping is sent no turn.
-      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
+      const first = gone() || closed ? null : await turn(plannerPrompt({ work, ...oneTask, ...(change ? { current: change.current, feedback: change.feedback } : {}), learnings: learningsSection(run.repo), memory: memorySection(home), ...(issue === null ? {} : { outside: outsideTextPrompt(issue) }) }));
       if (first === null && !gone()) outcome = { problem: STOPPED };
       else if (first === null || gone()) outcome = { cancelled: true };
       else if (first.end !== "completed") outcome = { problem: problemOf(first.end) };
