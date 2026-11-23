@@ -40,13 +40,20 @@ interface Api {
 
 async function start(t: T): Promise<Api> {
   const dir = tempDir("botbench-board-api-");
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const [plain, failing, slow] = ["plain", "failing", "slow"].map((name) => path.join(dir, name));
   for (const repo of [plain!, failing!, slow!]) initRepo(repo);
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": {} }, roles: {}, repositories: { [failing!]: { setup: ["echo preparing the copy; exit 1"] }, [slow!]: { setup: ["sleep 60"] } } };
   const server = await startServer({ config, home, signInDelayMs: 1 });
-  t.after(() => server.close());
+  // The server, with the engine an approval sets to work and its broker, is closed before its folder is removed, and a
+  // removal that fails cannot leave it open. A setup that throws before here leaves the folder to tempDir's own removal.
+  t.after(async () => {
+    try {
+      await server.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
   const base = `http://127.0.0.1:${server.port}`;
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const res = await fetch(`${base}/api/sign-in`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ token }) });
