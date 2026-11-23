@@ -228,7 +228,42 @@ export function agyProgram(env: NodeJS.ProcessEnv = process.env): string | null 
  * reads) or from the profile: none can be read by the turn, so none is loaded. Measured on 1.5.14: `agy acp` started
  * the MCP server of `.agents/mcp_config.json` in its working folder and in an added folder, with no trust asked.
  */
-export const AGY_CONFIG_DENIED = '(deny file-read* (regex #"/[._]agents?/(mcp_config|hooks)\\.json$") (regex #"/\\.gemini/(config|antigravity-cli)/(mcp_config|hooks)\\.json$"))';
+export const AGY_CONFIG_DENIED = (() => {
+  // Any case: on a volume that ignores case, `.AGENTS/MCP_CONFIG.JSON` is the same file.
+  const anyCase = (word: string): string => [...word].map((c) => (/[a-z]/i.test(c) ? `[${c.toLowerCase()}${c.toUpperCase()}]` : c === "." ? "\\." : c)).join("");
+  const file = `(${anyCase("mcp_config")}|${anyCase("hooks")})${anyCase(".json")}$`;
+  return `(deny file-read* (regex #"/[._]${anyCase("agent")}[sS]?/${file}") (regex #"/\\.${anyCase("gemini")}/(${anyCase("config")}|${anyCase("antigravity-cli")})/${file}"))`;
+})();
+
+/** The spellings of the folder in which Antigravity looks for a workspace's agents, MCP servers and hooks. */
+const AGENT_FOLDERS = [".agents", "_agents", ".agent", "_agent"];
+
+/**
+ * Why a turn must not start in these folders: a link where Antigravity reads its MCP servers or hooks. The sandbox
+ * decides by the path a file really has, so a link (`.agents -> elsewhere`, or `.agents/mcp_config.json -> x.json`)
+ * would let one be read under another name and start a program nobody was asked about. Null when there is none.
+ */
+export function plantedConfigProblem(folders: readonly string[]): string | null {
+  for (const folder of folders) {
+    let names: string[];
+    try {
+      names = fs.readdirSync(folder);
+    } catch {
+      continue;
+    }
+    for (const name of names.filter((n) => AGENT_FOLDERS.includes(n.toLowerCase()))) {
+      const at = path.join(folder, name);
+      const info = fs.lstatSync(at);
+      if (info.isSymbolicLink()) return `${at} is a link, which could make Antigravity start a program of its own choosing. Remove it, then ask again.`;
+      if (!info.isDirectory()) continue;
+      for (const inner of fs.readdirSync(at)) {
+        if (!["mcp_config.json", "hooks.json"].includes(inner.toLowerCase())) continue;
+        if (fs.lstatSync(path.join(at, inner)).isSymbolicLink()) return `${path.join(at, inner)} is a link, which could make Antigravity start a program of its own choosing. Remove it, then ask again.`;
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * Antigravity starts its own language server and talks to it over this Mac's loopback address (seen on 1.5.14:
@@ -236,12 +271,22 @@ export const AGY_CONFIG_DENIED = '(deny file-read* (regex #"/[._]agents?/(mcp_co
  * listen there or connect there; a command it runs still reaches nothing but Botbench's proxy.
  */
 export const agyLoopback = (program: string): string[] => {
-  const own = `(process-path "${program.replace(/["\\]/g, "")}")`;
+  const own = `(process-path ${quotedPath(program)})`;
   return [`(allow network-bind network-inbound (require-all (local ip "localhost:*") ${own}))`, `(allow network-outbound (require-all (remote ip "localhost:*") ${own}))`];
 };
 
-/** Antigravity runs each command in a terminal of its own (seen on 1.5.14: "failed to create PTY: operation not permitted" without this). */
-export const AGY_TERMINAL = '(allow file-read* file-write* file-ioctl (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$"))';
+/** A path as a string of the sandbox profile language; one that could break out of the string is refused. */
+const quotedPath = (place: string): string => {
+  if (/[\0-\x1f"\\]/.test(place)) throw new Error(`Botbench cannot confine Antigravity with the path ${JSON.stringify(place)}: it holds a quote, a backslash or a control character.`);
+  return `"${place}"`;
+};
+
+/**
+ * Antigravity runs each command in a terminal of its own (seen on 1.5.14: "failed to create PTY: operation not
+ * permitted" without this). Only its own program may open a terminal device: a command uses the one it was given, and
+ * can open none of the owner's other terminals.
+ */
+export const agyTerminal = (program: string): string => `(allow file-read* file-write* file-ioctl (require-all (require-any (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+$")) (process-path ${quotedPath(program)})))`;
 
 /** Where Antigravity reaches Google: its sign-in, its model and its search, as its program names them. */
 export const AGY_PROVIDER: readonly string[] = ["googleapis.com", "google.com"];
@@ -256,7 +301,7 @@ export function agyToolsProfile(o: { dataDir: string; profile: string; folder: s
   const home = o.home ?? os.homedir();
   const unreadable = unreadablePaths({ dataDir: o.dataDir, home, ...(o.env ? { env: o.env } : {}) });
   const data = new Set(bothPaths(o.dataDir));
-  return toolsProfile({ home, unreadable, secrets: unreadable.filter((place) => !data.has(place)), own: [o.profile], folder: o.folder, readOnly: o.readOnly, temp: o.temp, proxyPort: o.proxyPort, ownProgram: o.program, extra: [KEYCHAIN_DENIED, AGY_CONFIG_DENIED, AGY_TERMINAL, ...agyLoopback(o.program)] });
+  return toolsProfile({ home, unreadable, secrets: unreadable.filter((place) => !data.has(place)), own: [o.profile], folder: o.folder, readOnly: o.readOnly, temp: o.temp, proxyPort: o.proxyPort, ownProgram: o.program, extra: [KEYCHAIN_DENIED, AGY_CONFIG_DENIED, agyTerminal(o.program), ...agyLoopback(o.program)] });
 }
 
 /** The models session/new lists in `availableModels`, in its order. Null when it lists none. */
@@ -301,23 +346,25 @@ const commandOf = (raw: unknown): string => (isObject(raw) && typeof raw.Command
  * Botbench's permission check, which lets a confined command run that the floor does not name; so does anything
  * outside, which asks the owner there.
  */
-export function agyDecide(request: AcpToolRequest, o: { folder: string; writable: boolean; readable: readonly string[]; dataDir: string; kept: readonly string[] }): AcpDecision {
+export function agyDecide(request: AcpToolRequest, o: { folder: string; writable: boolean; readable: readonly string[]; dataDir: string; profile?: string; kept: readonly string[] }): AcpDecision {
   if (!o.kept.includes(request.name)) return { answer: "deny", why: `Botbench did not give Antigravity the tool ${request.name}.` };
   const paths = request.paths.map((place) => resolvedPath(place, o.folder));
   const open = [o.folder, ...o.readable];
   // Botbench's data folder holds the sign-in Antigravity uses and every other agent's work: only the working folder and the read-only places in it may be named.
-  if (paths.some((place) => inside(place, [o.dataDir]) && !inside(place, open))) return { answer: "deny", why: "It names a place in Botbench's own data folder, which no agent may use." };
+  if (paths.some((place) => (inside(place, [o.dataDir]) && !inside(place, open)) || (o.profile !== undefined && inside(place, [o.profile])))) return { answer: "deny", why: "It names a place in Botbench's own data folder, which no agent may use." };
   if (request.kind === "execute") return { ask: { name: "Bash", input: { command: commandOf(request.rawInput) } } };
   if (paths.length === 0) return { ask: { name: request.name, input: isObject(request.rawInput) ? request.rawInput : {} } };
-  const file = paths[0]!;
   if (request.kind === "read" || request.kind === "search") {
-    if (paths.every((place) => inside(place, open))) return { answer: "allow", rule: "files" };
-    return { ask: { name: "Read", input: { file_path: file } } };
+    const outside = paths.find((place) => !inside(place, open));
+    if (outside === undefined) return { answer: "allow", rule: "files" };
+    // The place outside is the one put to the check, so the check does not judge the request by a place inside.
+    return { ask: { name: "Read", input: { file_path: outside } } };
   }
   const readOnly = o.writable ? o.readable : open;
   if (paths.some((place) => inside(place, readOnly))) return { answer: "deny", why: "It would change a place Antigravity may only read here." };
-  if (o.writable && paths.every((place) => inside(place, [o.folder]))) return { answer: "allow", rule: "files" };
-  return { ask: { name: request.kind === "edit" ? "Edit" : request.name, input: { file_path: file } } };
+  const outside = o.writable ? paths.find((place) => !inside(place, [o.folder])) : paths[0];
+  if (outside === undefined) return { answer: "allow", rule: "files" };
+  return { ask: { name: request.kind === "edit" ? "Edit" : request.name, input: { file_path: outside } } };
 }
 
 export interface AntigravityDriverOptions {
@@ -422,18 +469,25 @@ export class AntigravityDriver implements Driver {
     if (!fs.statSync(options.cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`The working directory does not exist: ${options.cwd}`);
     const dataDir = fs.realpathSync(givenDataDir);
     const profile = prepareProfile(this.dataDir);
-    const folder = fs.realpathSync(options.cwd);
-    const readable = (chat === undefined ? [folder, ...(options.confinement.gitDir === undefined ? [] : [options.confinement.gitDir])] : [...chat.readable]).map((place) => fs.realpathSync(place));
+    // A review works in a new empty folder and reads the task's copy from there: in the copy itself, Antigravity would
+    // take the repository's AGENTS.md as its own instructions (measured on 1.5.14).
+    const readable = (chat === undefined ? [options.cwd, ...(options.confinement.gitDir === undefined ? [] : [options.confinement.gitDir])] : [...chat.readable]).map((place) => fs.realpathSync(place));
+    const planted = plantedConfigProblem([options.cwd, ...readable]);
+    if (planted !== null) throw new Error(planted);
+    const review = chat === undefined ? makeReviewFolder(dataDir) : null;
+    const folder = review?.path ?? fs.realpathSync(options.cwd);
     const agent = writeAgent(profile, kept);
     let proxy: { port: number; close(): Promise<void> };
     try {
       proxy = await startProviderProxy(AGY_PROVIDER);
     } catch (err) {
+      review?.remove();
       throw new Error(`Botbench could not start the proxy Antigravity reaches Google through: ${err instanceof Error ? err.message : String(err)}`);
     }
     // Its own temporary folder: the shared one, where other programs keep files and sockets, is closed to it (toolsProfile).
     const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-agy-")));
     const cleanup = (): void => {
+      review?.remove();
       fs.rmSync(temp, { recursive: true, force: true });
       void proxy.close();
     };
@@ -452,12 +506,16 @@ export class AntigravityDriver implements Driver {
       cwd: folder,
       extraEnv: { ...AGY_EXTRA_ENV, BROWSER: NO_BROWSER, ...proxyEnv(proxy.port), TMPDIR: temp, TMP: temp, TEMP: temp },
       capabilities: ANTIGRAVITY_CAPABILITIES,
-      session: { cwd: folder, ...(others.length > 0 ? { additionalDirectories: others } : {}) },
+      // The read-only places are not added to its workspace: Antigravity takes a workspace folder's AGENTS.md as its own
+      // instructions (measured on 1.5.14). Its reads there ask, and Botbench allows them without asking the owner.
+      session: { cwd: folder },
       ...(options.model !== undefined ? { model: options.model } : {}),
       // Every edit and command is put to Botbench: Antigravity's own default mode.
       config: [{ id: "mode", value: "default" }],
       reader: acpReader("Antigravity", kept),
-      decide: (request) => agyDecide(request, chat === undefined ? { folder, writable: false, readable: others, dataDir, kept } : { folder, writable: true, readable: others, dataDir, kept }),
+      decide: (request) => agyDecide(request, { folder, writable: chat !== undefined, readable: others, dataDir, profile, kept }),
+      // Every command and every change must have been put to Botbench first: one that ran without asking stops the turn.
+      mustAsk: ["execute", "edit", "delete", "move"],
       gated: options.gate !== undefined,
       ...(this.onLine ? { onLine: this.onLine } : {}),
       cleanup,

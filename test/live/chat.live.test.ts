@@ -28,7 +28,12 @@ test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a re
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
   const turns = createTurns({ db, home, driver: claude, broker, onEvent: () => {} });
-  const chat = createChat({ db, home, turns, claude, agents: { codex: new CodexDriver(), grok: new GrokDriver(), antigravity: new AntigravityDriver({ dataDir: path.join(os.homedir(), ".botbench") }) }, onEvent: () => {} });
+  const chat = createChat({ db, home, turns, claude, agents: { codex: new CodexDriver(), grok: new GrokDriver(), antigravity: new AntigravityDriver({ dataDir: path.join(os.homedir(), ".botbench") }) }, broker, onEvent: () => {} });
+  // Antigravity asks before it writes outside the chat's folder: the owner, here, declines each card.
+  const owner = setInterval(() => {
+    for (const approval of broker.pending()) broker.answer(approval.id, "decline", "Declined by the live test.");
+  }, 200);
+  t.after(() => clearInterval(owner));
   t.after(async () => {
     await chat.close();
     await turns.close();

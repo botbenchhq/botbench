@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { SANDBOX_EXEC } from "../../src/confinement.ts";
 import { acpLines, acpReader, acpStartProblem, requestPaths, type AcpToolRequest } from "../../src/drivers/acp-turn.ts";
 import {
-  AGY_CHAT_TOOLS, AGY_CONFIG_DENIED, AGY_REVIEW_TOOLS, AGY_TERMINAL, AGY_WEB_TOOLS, agentDefinition, agentName, agyDecide, agyLoopback, agyProgram, agyTools, agyToolsProfile,
+  AGY_CHAT_TOOLS, AGY_CONFIG_DENIED, AGY_REVIEW_TOOLS, agyTerminal, AGY_WEB_TOOLS, agentDefinition, agentName, agyDecide, agyLoopback, agyProgram, agyTools, agyToolsProfile, plantedConfigProblem,
   ANTIGRAVITY_CAPABILITIES, antigravityProfile, antigravitySignIn, AntigravityDriver, parseAcpModels, prepareProfile, profileGeminiDir, profileSignedIn, resolvedPath, signInSandbox, SIGN_IN_FILES, writeAgent,
 } from "../../src/drivers/antigravity.ts";
 import { KEYCHAIN_DENIED, ownProgramOnly } from "../../src/drivers/cli-sandbox.ts";
@@ -153,7 +153,7 @@ test("CRITICAL: the sandbox of a turn keeps Botbench's profile, the sign-in in i
   for (const rule of ownProgramOnly({ own: ["/data/antigravity"], program, starter: SANDBOX_EXEC })) assert.ok(profile.includes(rule), rule);
   assert.ok(profile.includes(`(deny file-read* file-write* (require-all (subpath "/data/antigravity") (require-not (process-path "${program}"))))`));
   assert.ok(profile.includes(`(deny process-exec (require-all (literal "${program}") (require-not (process-path "${program}")) (require-not (process-path "${SANDBOX_EXEC}"))))`), "a command cannot start Antigravity again");
-  for (const rule of [KEYCHAIN_DENIED, AGY_CONFIG_DENIED, AGY_TERMINAL, ...agyLoopback(program)]) assert.ok(profile.includes(rule), rule);
+  for (const rule of [KEYCHAIN_DENIED, AGY_CONFIG_DENIED, agyTerminal(program), ...agyLoopback(program)]) assert.ok(profile.includes(rule), rule);
   for (const rule of agyLoopback(program)) assert.ok(rule.includes(`(process-path "${program}")`), "the loopback is Antigravity's alone");
   assert.ok(profile.includes('(deny file-read* (subpath "/Users/someone")'), "the home folder is unreadable");
   assert.ok(profile.includes('(allow network-outbound (remote ip "localhost:4242"))'));
@@ -178,6 +178,36 @@ test("CRITICAL: under the rules that keep a folder to one program, the program r
   assert.notEqual(again.status, 0, "a command cannot start the program to read it");
   assert.equal(again.stdout.includes("SECRET"), false);
   assert.notEqual(run(["/bin/cat", path.join(dir, "repo", ".agents", "mcp_config.json")]).status, 0, "no MCP file is read");
+  // This Mac's volume ignores case: `.AGENTS/HOOKS.JSON` is a file of the `.agents` folder.
+  fs.writeFileSync(path.join(dir, "repo", ".agents", "HOOKS.JSON"), "{}\n");
+  assert.notEqual(run(["/bin/cat", path.join(dir, "repo", ".AGENTS", "HOOKS.JSON")]).status, 0, "in any case");
+  // A program of the owner's that is kept to itself, as Antigravity's is (Homebrew's is the owner's): it cannot be
+  // linked under another name, and a copy is another program, with none of its rights.
+  const program = path.join(dir, "prog");
+  fs.copyFileSync("/usr/bin/head", program);
+  const mine = ["(version 1)", "(allow default)", ...ownProgramOnly({ own: [own], program, starter: SANDBOX_EXEC }), ""].join("\n");
+  const link = spawnSync(SANDBOX_EXEC, ["-p", mine, "/bin/ln", program, path.join(dir, "linked")], { encoding: "utf8" });
+  assert.notEqual(link.status, 0, `no hard link to the program: ${link.stderr}`);
+  fs.copyFileSync(program, path.join(dir, "copied"));
+  const copied = spawnSync(SANDBOX_EXEC, ["-p", mine, path.join(dir, "copied"), "-1", path.join(own, "secret")], { encoding: "utf8" });
+  assert.equal(copied.stdout.includes("SECRET"), false, "a copy has none of the program's rights");
+});
+
+test("a turn does not start where a link stands in for the folder or files Antigravity reads its MCP servers and hooks from, in any case", (t) => {
+  const dir = fs.realpathSync(tempDir("botbench-agy-planted-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const folder = path.join(dir, "folder");
+  fs.mkdirSync(path.join(folder, ".agents"), { recursive: true });
+  fs.writeFileSync(path.join(folder, ".agents", "rules.md"), "x");
+  assert.equal(plantedConfigProblem([folder]), null);
+  fs.writeFileSync(path.join(dir, "x.json"), "{}");
+  fs.symlinkSync(path.join(dir, "x.json"), path.join(folder, ".agents", "MCP_config.json"));
+  assert.match(plantedConfigProblem([folder]) ?? "", /MCP_config\.json is a link/);
+  const other = path.join(dir, "other");
+  fs.mkdirSync(path.join(dir, "cfg"));
+  fs.mkdirSync(other);
+  fs.symlinkSync(path.join(dir, "cfg"), path.join(other, "_Agents"));
+  assert.match(plantedConfigProblem([path.join(dir, "missing"), other]) ?? "", /_Agents is a link/);
 });
 
 const req = (o: Partial<AcpToolRequest>): AcpToolRequest => ({ id: "1", toolCallId: "c", name: "read_file", kind: "read", rawInput: {}, paths: [], ...o });
@@ -203,6 +233,14 @@ test("CRITICAL: Botbench's answer to each permission request: its data folder is
   assert.deepEqual(agyDecide(req({ paths: ["/etc/hosts"] }), chat), { ask: { name: "Read", input: { file_path: "/private/etc/hosts" } } });
   assert.deepEqual(agyDecide(req({ name: "write_file", kind: "edit", paths: ["/tmp/x/out.txt"] }), chat), { ask: { name: "Edit", input: { file_path: path.join(fs.realpathSync("/tmp"), "x", "out.txt") } } });
   assert.equal((agyDecide(req({ name: "schedule", kind: "other" }), chat) as { answer: string }).answer, "deny", "a tool Botbench did not give is refused");
+  // A request naming a place inside and one outside is put to the check by the one outside.
+  assert.deepEqual(agyDecide(req({ paths: [path.join(folder, "a"), "/etc/hosts"] }), chat), { ask: { name: "Read", input: { file_path: "/private/etc/hosts" } } });
+  assert.deepEqual(agyDecide(req({ name: "write_file", kind: "move", paths: [path.join(folder, "a"), "/tmp/b"] }), chat), { ask: { name: "write_file", input: { file_path: path.join(fs.realpathSync("/tmp"), "b") } } });
+  // A command's own folder counts: one run in Botbench's data folder is refused.
+  const inData = { CommandLine: "ls", Cwd: path.join(data, "antigravity") };
+  assert.equal((agyDecide(req({ name: "run_command", kind: "execute", rawInput: inData, paths: requestPaths({ rawInput: inData }) }), chat) as { answer: string }).answer, "deny");
+  // The profile is refused wherever it is, even outside the data folder named for the turn.
+  assert.equal((agyDecide(req({ paths: ["/somewhere/profile/x"] }), { ...chat, profile: "/somewhere/profile" }) as { answer: string }).answer, "deny");
   // A review: the task's copy is read, never changed.
   const review = { folder: repo, writable: false, readable: [], dataDir: data, kept: agyTools({ mode: "review" }) };
   assert.deepEqual(agyDecide(req({ paths: [path.join(repo, "README.md")] }), review), { answer: "allow", rule: "files" });

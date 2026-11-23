@@ -71,6 +71,11 @@ export interface AcpTurnSpec {
   reader(): (update: Record<string, unknown>) => AcpLineResult;
   /** Botbench's answer to a permission request. */
   decide(request: AcpToolRequest): AcpDecision;
+  /**
+   * The kinds of tool call (ACP's execute, edit, …) the agent must ask about before they run: one that completes with
+   * no permission request first stops the turn. None when left out.
+   */
+  mustAsk?: readonly string[];
   /** Requests may be put to Botbench's permission check (the attempt was given a gate). Without, every `ask` is denied. */
   gated: boolean;
   /** Each line the agent printed, as printed: for a capture script only. */
@@ -91,7 +96,7 @@ export function requestPaths(toolCall: Record<string, unknown>): string[] {
   const paths = new Set<string>();
   if (Array.isArray(toolCall.locations)) for (const at of toolCall.locations) if (isObject(at) && typeof at.path === "string") paths.add(at.path);
   const raw = isObject(toolCall.rawInput) ? toolCall.rawInput : {};
-  for (const [key, value] of Object.entries(raw)) if (/path|file|directory|dir$/i.test(key) && typeof value === "string" && value !== "") paths.add(value);
+  for (const [key, value] of Object.entries(raw)) if (/path|file|directory|dir$|^cwd$/i.test(key) && typeof value === "string" && value !== "") paths.add(value);
   return [...paths];
 }
 
@@ -179,6 +184,14 @@ export function acpLines(agent: string, kept: readonly string[]): () => (line: s
   };
 }
 
+/** How many times one message is continued after a refusal ended the agent's answer. */
+export const MAX_CONTINUATIONS = 3;
+
+/** Botbench's message that continues the agent's answer after what it asked for was refused. */
+export function continuation(refused: readonly string[]): string {
+  return `[From Botbench] What you last asked to do was not run. ${refused.join(" ")} Do not try it another way. Go on with the rest of the owner's message without it, and reply.`;
+}
+
 interface Pending {
   method: string;
   resolve(result: unknown): void;
@@ -210,6 +223,11 @@ export class AcpTurnSession implements DriverSession {
   private readonly pending = new Map<number, Pending>();
   private readonly asking = new Map<string, Asking>();
   private readonly called = new Set<string>();
+  /** What was refused during the agent's current answer: what it asked for, and why, for the message that continues it. */
+  private refused: string[] = [];
+  /** Tool calls the agent asked permission for, and the kind of each call it reported. */
+  private readonly askedFor = new Set<string>();
+  private readonly kinds = new Map<string, string>();
   private read: ((update: Record<string, unknown>) => AcpLineResult) | null = null;
 
   constructor(db: DatabaseSync, attemptId: number, spec: AcpTurnSpec) {
@@ -272,9 +290,11 @@ export class AcpTurnSession implements DriverSession {
     } else if (words(given.refused) !== null) {
       this.answerPermission(request, "reject");
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "denied", note: words(given.refused) });
+      this.refused.push(`Botbench refused it without asking the owner: ${words(given.refused)}`);
     } else {
       this.answerPermission(request, "reject");
       this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision: "declined", note: words(given.note) });
+      this.refused.push(words(given.note) === null ? "The owner declined it." : `The owner declined it, and wrote: ${words(given.note)}`);
     }
     return Promise.resolve();
   }
@@ -312,8 +332,19 @@ export class AcpTurnSession implements DriverSession {
         if (current?.currentValue !== value) return this.fail(`${this.spec.agent} did not take the setting ${id} = ${value}, so Botbench did not send it the message.`);
       }
       if (!this.running) return;
-      const result = await this.request("session/prompt", { sessionId, prompt: [{ type: "text", text: prompt }] });
-      this.onUpdate({ sessionUpdate: "botbench_turn_end", result });
+      let text = prompt;
+      for (let round = 0; ; round++) {
+        this.refused = [];
+        const result = await this.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+        // Seen on 1.5.14: a refused tool call ends the agent's turn at once, with no reply. Botbench tells it what was
+        // refused and why, in the same session, so it can go on without it (as Claude Code is told in a denial), a few times at most.
+        const refused = this.refused;
+        if (refused.length === 0 || round >= MAX_CONTINUATIONS || !this.running || !(isObject(result) && result.stopReason === "end_turn")) {
+          this.onUpdate({ sessionUpdate: "botbench_turn_end", result });
+          return;
+        }
+        text = continuation(refused);
+      }
     } catch (err) {
       if (this.running && !this.interrupting) this.fail(`${this.spec.agent} failed: ${shorten(err instanceof Error ? err.message : isObject(err) ? (str(err.message) ?? JSON.stringify(err)) : String(err), 300)}`);
     }
@@ -364,6 +395,14 @@ export class AcpTurnSession implements DriverSession {
 
   private onUpdate(update: Record<string, unknown>): void {
     if (this.read === null) return;
+    const callId = str(update.toolCallId);
+    if (callId !== null && typeof update.kind === "string") this.kinds.set(callId, update.kind);
+    if (update.sessionUpdate === "tool_call_update" && callId !== null && update.status === "completed" && !this.askedFor.has(callId) && (this.spec.mustAsk ?? []).includes(this.kinds.get(callId) ?? "")) {
+      const why = `Stopped: ${this.spec.agent} ran a tool call (${this.kinds.get(callId)}) without asking Botbench first. Update Botbench for this ${this.spec.agent}.`;
+      this.record({ type: "error", message: why, raw: null });
+      if (this.running) this.endTurn("error", why);
+      return;
+    }
     const { events, stop } = this.read(update);
     for (const event of events) {
       if (event.type === "turn_ended") {
@@ -394,6 +433,7 @@ export class AcpTurnSession implements DriverSession {
     const choices = Array.isArray(message.params.options) ? message.params.options.filter(isObject) : [];
     const pick = (kind: "allow" | "reject"): string | null => str(choices.find((o) => o.kind === `${kind}_once`)?.optionId) ?? str(choices.find((o) => String(o.kind ?? "").startsWith(kind))?.optionId);
     const asking: Asking = { rpcId, toolCallId: str(toolCall.toolCallId) ?? "", options: { allow: pick("allow"), reject: pick("reject") } };
+    this.askedFor.add(asking.toolCallId);
     const id = String(rpcId);
     const request: AcpToolRequest = { id, toolCallId: asking.toolCallId, name: str(toolCall.name) ?? str(toolCall.title) ?? "unknown", kind: str(toolCall.kind) ?? "other", rawInput: toolCall.rawInput ?? null, paths: requestPaths(toolCall) };
     let decision: AcpDecision;
@@ -416,6 +456,7 @@ export class AcpTurnSession implements DriverSession {
     const why = "why" in decision ? decision.why : "Botbench cannot put this request to you here, so it was refused.";
     this.answerPermission(asking, "reject");
     this.record({ type: "permission_resolved", id, toolCallId: asking.toolCallId, decision: "denied", note: why });
+    this.refused.push(`Botbench refused it without asking the owner: ${why}`);
   }
 
   private answerPermission(request: Asking, answer: "allow" | "reject"): void {

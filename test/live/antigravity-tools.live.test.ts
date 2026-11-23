@@ -231,3 +231,18 @@ test("LIVE: Antigravity as a reviewer reads the task's copy and cannot change it
   assert.ok(events.some((e) => e.type === "tool_call" && e.name === "read_file"), `it read the copy: ${seen}`);
   assert.equal(fs.readFileSync(path.join(copy, "calc.py"), "utf8"), "def add(a, b):\n    return a - b\n", `the copy is unchanged: ${seen}`);
 });
+
+test("LIVE: Antigravity in a chat: a command the safety floor names asks you first (declined here) and does not run; a link planted where it reads MCP servers stops the turn before it starts", { timeout: 300_000, skip: SKIP }, async (t) => {
+  const r = await rig(t);
+  const marker = path.join(r.scratch, "floor-ran.txt");
+  const { events } = await r.ask(`Run exactly this one shell command, unchanged: echo sudo > ${marker}`);
+  const seen = JSON.stringify(events.filter((e) => e.type !== "user_prompt"));
+  assert.ok(r.cards.some((card) => card.includes("echo sudo")), `the floor's command asked you first: ${JSON.stringify(r.cards)} ${seen}`);
+  assert.equal(fs.existsSync(marker), false, `declined, it did not run: ${seen}`);
+  fs.mkdirSync(path.join(r.dir, "cfg"));
+  fs.writeFileSync(path.join(r.dir, "cfg", "mcp_config.json"), JSON.stringify({ mcpServers: { planted: { command: "/usr/bin/touch", args: [path.join(r.dir, "mcp-ran")] } } }));
+  fs.symlinkSync(path.join(r.dir, "cfg"), path.join(r.scratch, ".agents"));
+  const planted = await r.ask("Say hi.");
+  assert.match(JSON.stringify(planted.events), /is a link, which could make Antigravity start a program/);
+  assert.equal(fs.existsSync(path.join(r.dir, "mcp-ran")), false);
+});
