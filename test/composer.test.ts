@@ -3,7 +3,7 @@ import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
 import { chatOffer, readKnownAgents } from "../web/src/app/chat.ts";
 import { arrive, blocked, builderChip, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, LIMIT_WORDS, modeFor, oneTaskFor, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
-import { fallbackOrders, moveAbout, moveButton, moveRefused, orderWords, sessionsLine } from "../web/src/app/handoff-words.ts";
+import { fallbackOrders, moveAbout, moveButton, moveRefused, orderWords, sessionAgent, sessionsLine, shownAttempts } from "../web/src/app/handoff-words.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -395,6 +395,12 @@ test("the task screen's words for a move: one button per agent, what a move does
   assert.match(moveAbout("claude-code"), /^Claude Code stops now, and what it wrote is committed\. The agent you choose takes the task over in a new session, in the same copy and on the same branch/);
   assert.equal(moveRefused("Codex reviews this run."), "The task was not moved. Codex reviews this run.");
   assert.equal(moveRefused(null), "The task was not moved. Botbench could not be reached.");
+  // One transcript, both agents: the session the move left, then the new agent's, each named for its agent.
+  const moved = { attemptId: 9, builder: "codex", handoffs: [{ from: "claude-code", fromAttemptId: 4 }] };
+  assert.deepEqual(shownAttempts(moved), [4, 9]);
+  assert.deepEqual([sessionAgent(moved, 4), sessionAgent(moved, 9), sessionAgent(moved, 2)], ["Claude Code", "Codex", null]);
+  assert.deepEqual(shownAttempts({ attemptId: 3, handoffs: [] }), [3]);
+  assert.equal(sessionAgent({ attemptId: 3, builder: "codex", handoffs: [] }, 3), "Codex", "a task Codex built from the start is not labelled Claude Code");
   assert.equal(sessionsLine("codex", 0, true), null);
   assert.equal(sessionsLine("codex", 1, false), "This is Codex's latest session on this task. Its 1 earlier session is kept in Botbench's records, not shown here.");
   assert.equal(sessionsLine("codex", 2, true), "These are the sessions before and after each move to another agent. Its 2 earlier sessions are kept in Botbench's records, not shown here.");

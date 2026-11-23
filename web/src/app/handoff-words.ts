@@ -38,6 +38,23 @@ export function fallbackOrders(agents: readonly string[]): string[][] {
 /** An order as the select shows it: "Claude Code, then Codex", or one agent alone ("Codex only"). */
 export const orderWords = (order: readonly string[]): string => (order.length === 1 ? `${agentLabel(order[0]!)} only` : order.map(agentLabel).join(", then "));
 
+/** What the task screen needs of a task to show its transcript across moves to another agent. */
+interface Sessions {
+  attemptId: number | null;
+  builder: string;
+  handoffs: { from: string; fromAttemptId: number | null }[];
+}
+
+/** The sessions a task's one transcript shows, in order: the session each move left, then the one the task names now. */
+export const shownAttempts = (task: Pick<Sessions, "attemptId" | "handoffs">): number[] => [...new Set([...task.handoffs.flatMap((h) => (h.fromAttemptId === null ? [] : [h.fromAttemptId])), ...(task.attemptId === null ? [] : [task.attemptId])])];
+
+/** The agent of one of those sessions, by name, for its messages: the one a move left, or the one building it now. */
+export const sessionAgent = (task: Sessions, attempt: number): string | null => {
+  if (attempt === task.attemptId) return agentLabel(task.builder);
+  const left = task.handoffs.find((h) => h.fromAttemptId === attempt);
+  return left === undefined ? null : agentLabel(left.from);
+};
+
 /** The line above the transcript when the screen shows more than one agent's sessions on the task. */
 export const sessionsLine = (builder: string, earlier: number, handedOver: boolean): string | null => {
   if (earlier === 0) return null;

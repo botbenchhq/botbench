@@ -1815,6 +1815,11 @@ export function createTasks(options: TasksOptions): Tasks {
     const problem = handoffProblem({ from: builderNow(task).agent, to: agent, reviewer: reviewerOf(task), cannotBuild: cannotBuildFor(task) });
     if (problem !== null) throw new TaskError(409, problem);
     if (!atWorkNow(task)) throw new TaskError(409, `${agentName(builderNow(task).agent)} is not at work on this task right now (it is being set up, its work is being committed, or it waits across a restart), so it cannot be moved yet. Try again once it is working.`);
+    // The agent's own check (installed, signed in) before anything is stopped: one that cannot start is refused now,
+    // and the builder at work goes on.
+    const probe = await driverFor(agent).probe().then((p) => p.problem, (err: unknown) => `it could not be checked: ${words(err)}`);
+    if (probe !== null) throw new TaskError(409, `${agentName(agent)} cannot take this task over now: ${probe}`);
+    if (!atWorkNow(getTask(db, id) ?? task) || moving.has(id)) throw new TaskError(409, `${agentName(builderNow(task).agent)} is no longer at work on this task, so it was not moved.`);
     moving.set(id, { to: agent, model: model === undefined ? takeOverModel(task, agent) : model });
     // The turn ends as stopped, and its end makes the move (`driveTurns`). One that cannot be asked to stop is closed.
     const session = current!;

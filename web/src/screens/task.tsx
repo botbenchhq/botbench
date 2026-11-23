@@ -15,16 +15,7 @@ import { modelName, modelState, sessionModel, useModelList } from "../components
 import { ResumeControl } from "../components/resume.tsx";
 import { TaskNote } from "../components/task-note.tsx";
 import { MoveTask } from "../components/move-task.tsx";
-import { sessionsLine } from "../app/handoff-words.ts";
-
-/** The sessions a task's transcript shows: the one it names now, after the session each move to another agent left. */
-/** The agent of one of the sessions the transcript shows, by name: the one a move left, or the one building it now. */
-const sessionAgent = (task: Pick<TaskDetail, "attemptId" | "handoffs" | "builder">, attempt: number): string | null => {
-  if (attempt === task.attemptId) return agentName(task.builder);
-  const left = task.handoffs.find((h) => h.fromAttemptId === attempt);
-  return left === undefined ? null : agentName(left.from);
-};
-const shownAttempts = (task: Pick<TaskDetail, "attemptId" | "handoffs">): number[] => [...new Set([...task.handoffs.flatMap((h) => (h.fromAttemptId === null ? [] : [h.fromAttemptId])), ...(task.attemptId === null ? [] : [task.attemptId])])];
+import { sessionAgent, sessionsLine, shownAttempts } from "../app/handoff-words.ts";
 import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle, waitingWords } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";

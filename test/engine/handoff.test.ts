@@ -261,6 +261,22 @@ test("a move to the run's reviewer is refused with a plain message and nothing c
   assert.equal((e.codex as CodexBuildReplay).started.length, 0);
 });
 
+test("a move to an agent whose own check says it cannot start (signed out) is refused before anything is stopped, and the builder at work goes on", WITHIN, async (t) => {
+  const claude = processDriver([writesAndWaits("one")], { resume: true });
+  // The probe's answer is the test's; Codex's session would be the replay's, and is never started.
+  const signedOut = (outside: string): Driver => ({ ...codexBuildReplay([["inside"]], { outside }), probe: async () => ({ installed: true, version: "0.171.0", supported: true, signedIn: false, billing: "unknown", problem: "Codex is signed out." }) });
+  const e = await line(t, { main: claude, codex: signedOut });
+  const { task } = planned(e);
+  await until(() => saidIn(e.db, task.id, "started"), "Claude Code is at work");
+  const attempt = getTask(e.db, task.id)!.attemptId;
+  await assert.rejects(e.tasks.handOff(task.id, "codex"), (err: unknown) => err instanceof TaskError && err.status === 409 && err.message === "Codex cannot take this task over now: Codex is signed out.");
+  await pause(200);
+  const still = getTask(e.db, task.id)!;
+  assert.deepEqual([still.status, still.attemptId], ["building", attempt], "Claude Code was not stopped");
+  assert.deepEqual(taskHandoffs(e.db, task.id), []);
+  assert.deepEqual(e.tasks.moveOffer(task.id).now, true, "it can still be moved once Codex is signed in");
+});
+
 test("a move is refused while the builder is not at work on the task, and for a task that is not being built", WITHIN, async (t) => {
   const claude = buildReplayDriver(["done"]);
   const e = await line(t, { main: claude });

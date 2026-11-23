@@ -250,6 +250,12 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   const left = await remainsOf(db, task);
   // `issueHosts`: for a task of a marked run whose owner allowed them, the network hosts its commands may reach.
   const offer = ctx.tasks.moveOffer(task.id);
+  // An agent whose last check found a problem (signed out, not installed) is not offered: from the kept check, so a
+  // task's screen never waits for every agent's program (api/agents.ts). The move itself checks the agent again.
+  if (offer.now && offer.agents.length > 0) {
+    const checked = await ctx.agentChecks.read().catch(() => null);
+    offer.agents = offer.agents.filter((agent) => checked === null || checked.agents.find((a) => a.agent === agent)?.problem == null);
+  }
   return { ...summary(db, task), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), handoffs: handoffsOf(db, task.id),
     // The agents the owner can move this task to now: only while its builder is at work, never its run's reviewer, and
     // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
