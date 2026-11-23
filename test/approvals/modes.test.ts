@@ -28,6 +28,15 @@ const KINDS = {
   "edit inside the copy": { tool: "Write", input: { file_path: path.join(WORKTREE, "src/a.ts"), content: "x" }, shell: false, floor: false, inside: true },
   "edit outside the copy": { tool: "Write", input: { file_path: "/tmp/elsewhere.txt", content: "x" }, shell: false, floor: false },
   "web fetch": { tool: "WebFetch", input: { url: "https://example.com", prompt: "read" }, shell: false, floor: false },
+  // Shapes the builder used in run 3 of the self-review, each asked about there (by a round of fixes admitted unconfined).
+  "loop over files with a pipe": { tool: "Bash", input: { command: "for f in docs/a.md docs/b.md; do sed -n 23p,32p $f | cut -c1-600; echo ----; done; sed -n 90,110p src/push.ts", description: "Read flagged lines" }, shell: true, floor: false },
+  "perl editing a file in place, then counting": { tool: "Bash", input: { command: "perl -0pi -e 's/old/new/' docs/review.md; f=docs/review.md; wc -l $f; awk '/^## 1/{f=1;next}f&&NF' $f | wc -l; git status --short", description: "Apply corrections" }, shell: true, floor: false },
+  "python editing a file from a here-document": { tool: "Bash", input: { command: "python3 - <<'PY'\np='docs/review.md'\ns=open(p).read().replace('a','b')\nopen(p,'w').write(s)\nPY\nwc -l docs/review.md; git status --short", description: "Apply the three review fixes" }, shell: true, floor: false },
+  "sed into grep": { tool: "Bash", input: { command: "sed -n 1,40p README.md | grep -n Botbench" }, shell: true, floor: false },
+  "chained command with a push in it": { tool: "Bash", input: { command: "sed -n 1,5p README.md; git push origin HEAD" }, shell: true, floor: true },
+  "chained command that reads a guarded place": { tool: "Bash", input: { command: "for f in ~/.ssh/*; do cat $f; done" }, shell: true, floor: true },
+  "subagent": { tool: "Agent", input: { description: "audit", prompt: "Audit the code", run_in_background: true }, shell: false, floor: false },
+  "wakeup": { tool: "ScheduleWakeup", input: { delaySeconds: 1200, reason: "fallback", prompt: "continue" }, shell: false, floor: false },
 } as const satisfies Record<string, { tool: string; input: Record<string, unknown>; shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean }>;
 type Kind = keyof typeof KINDS;
 

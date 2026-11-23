@@ -110,11 +110,19 @@ export async function closeContext(page: Page): Promise<void> {
   await expect(sheet).toBeHidden();
 }
 
+/** Back to the rows: a tapped option goes back by itself, unless it opens a field or carries a warning, or was already chosen. */
+export async function backToRows(sheet: Locator): Promise<void> {
+  await expect(sheet.getByRole("heading", { name: "Add context" }).or(sheet.getByRole("button", { name: "Back to Add context" }))).toBeVisible();
+  const back = sheet.getByRole("button", { name: "Back to Add context" });
+  if (await back.isVisible()) await back.click();
+  await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
+}
+
 /** Choose an option in one row's view, by its name, and go back to the rows. */
 export async function choose(page: Page, row: string, option: string): Promise<void> {
   const sheet = await openRow(page, row);
-  await sheet.getByRole("radio", { name: option, exact: true }).check();
-  await sheet.getByRole("button", { name: "Back to Add context" }).click();
+  await sheet.getByRole("radio", { name: option, exact: true }).click();
+  await backToRows(sheet);
 }
 
 /** Choose the repository at `path` by typing it as Another folder, and wait until Botbench calls it usable. */
@@ -163,7 +171,7 @@ export async function startRunIn(page: Page, repo: string, prompt: string, optio
     const sheet = await openRow(page, "Review");
     // The reviewer and model as the option's value: the agent and the model id, apart by a space.
     await sheet.locator(`input[name="review"][value="${options.review}"]`).check();
-    await sheet.getByRole("button", { name: "Back to Add context" }).click();
+    await backToRows(sheet);
   }
   if (options.delivery) await choose(page, "When accepted", options.delivery);
   if (options.commands) await allowCommands(page, options.commands);

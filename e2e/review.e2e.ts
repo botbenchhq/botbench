@@ -54,7 +54,9 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   await choose(page, "What to do", "Plan a run");
   const sheet = await openRow(page, "Review");
   await expect(sheet.getByRole("radio", { name: "Off" })).toBeChecked();
-  await sheet.locator('input[name="review"][value="codex gpt-6-luna"]').check();
+  // Each reviewer's own default comes first; a model of its list is typed under Other model….
+  await sheet.locator('input[name="review"][value="codex ?other"]').check();
+  await sheet.getByLabel("Codex model name").fill("gpt-6-luna");
   await checkDesign(page, "new run, review by Codex");
   await shot(page, "review-new-run.png");
   await closeContext(page);

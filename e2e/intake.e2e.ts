@@ -74,7 +74,7 @@ test("an issue is looked up and shown as plain text, attached as the row's value
   await expect(mode.getByText("Not for a run from an issue")).toBeVisible();
   await expect(mode.getByText(ISSUE_NOT_FULL)).toBeVisible();
   await checkDesign(page, "mode, with Fully autonomous closed for a run from an issue");
-  await mode.getByRole("radio", { name: "Semi-autonomous", exact: true }).check();
+  await mode.getByRole("radio", { name: "Semi-autonomous", exact: true }).click();
   await closeContext(page);
   await expect(page.getByTestId("composer-reason")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();

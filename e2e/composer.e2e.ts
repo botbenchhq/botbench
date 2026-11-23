@@ -59,9 +59,9 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await expect(sheet.getByRole("radio", { name: "shipment-tracking-api" })).toHaveAccessibleDescription(repo);
     await checkDesign(page, "add context, repository");
     await tempShot(page, "sheet-repository");
-    await sheet.getByRole("radio", { name: "shipment-tracking-api" }).check();
-    await sheet.getByRole("button", { name: "Back to Add context" }).click();
-    // Back puts the focus on the row that was pressed.
+    // A tapped option goes back to the rows at once, with the focus on the row that was pressed.
+    await sheet.getByRole("radio", { name: "shipment-tracking-api" }).click();
+    await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
     await expect(sheet.locator('[data-row="repository"]')).toBeFocused();
     // A task in a repository: what to do, its mode (always Manual for a task on its own), its commands and the model.
     await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do One task", "Mode Manual", "Allowed commands 1 command", expect.stringMatching(/^Model .+/)]);
@@ -103,7 +103,8 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await page.reload();
     await expect(box).toHaveAttribute("aria-label", "Describe what to plan");
     await openContext(page);
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", "Spec file None", "Mode Fully autonomous", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
+    // Fully autonomous is not remembered: the mode is Settings' default again (Manual), as a new visit should start.
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", "Spec file None", "Mode Manual", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
     // Escape closes the sheet and gives the focus back to Add context.
     await page.keyboard.press("Escape");
     await expect(contextSheet(page)).toBeHidden();
@@ -150,7 +151,7 @@ test("New task and New run open the composer with their kind chosen and the shee
     await expect(send).toHaveAccessibleDescription(/Give the full path, starting with \//);
     // None is a choice: a chat needs no repository.
     await page.getByRole("button", { name: "Choose a Repository" }).click();
-    await sheet.getByRole("radio", { name: "None (just chat)" }).check();
+    await sheet.getByRole("radio", { name: "None (just chat)" }).click();
     await closeContext(page);
     await expect(send).toBeEnabled();
     await expect(messageBox(page)).toHaveAttribute("aria-label", "Message Claude Code");

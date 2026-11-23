@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getDefaultMode, getDriver, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, commandsWords, issueWords, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, chipModel, commandsWords, issueWords, modeFor, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
@@ -97,10 +97,11 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   const [repo, setRepo] = useState<RepoPick>(arrived.repo);
   const [otherPath, setOtherPath] = useState(remembered.repo.kind === "other" ? remembered.repo.path : "");
   const [kind, setKind] = useState<Kind>(arrived.kind);
-  /** The mode the owner chose here; until then the default from Settings. */
-  const [chosenMode, setChosenMode] = useState<RunMode | null>(remembered.mode);
+  /** The mode the owner chose here, for the repository it was chosen for; otherwise the default from Settings. */
+  const [chosenMode, setChosenMode] = useState<ChosenMode | null>(remembered.mode);
   const [defaultMode, setDefaultMode] = useState<RunMode | null>(null);
-  const mode = chosenMode ?? defaultMode;
+  const repoPath = repo.kind === "known" || repo.kind === "other" ? repo.path.trim() : "";
+  const mode = modeFor(chosenMode, repoPath, defaultMode);
   const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
   const [specPath, setSpecPath] = useState("");
   const [sameBuild, setSameBuild] = useState(true);
@@ -448,7 +449,6 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
   useEffect(() => {
     if (run) setRunWanted(true);
   }, [run]);
-  const builds = run && !sameBuild ? buildModels : models;
   const chip = chatChip(agents, models);
   const values: Record<Row, string> = {
     repository: repoName(repo, known),
@@ -458,7 +458,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
     review: review.offer.state === "checking" ? "Checking" : review.words,
     delivery: delivery === "branch" ? "Keep the branch" : "Open a pull request",
     commands: commandsWords(repository.listed?.commands.length ?? 0),
-    models: chatting ? `${chip.value}, ${chip.qualifier}` : run && !sameBuild ? `${choiceName(models)}, then ${choiceName(buildModels)}` : choiceName(models),
+    models: chatting ? `${chip.value}, ${chip.qualifier}` : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) }),
     issue: issueWords(issue.attached),
   };
   const rows = rowsFor({ repo, kind, reviewOffered: !(review.offer.state === "not-offered" && review.offer.none), commandsKnown: repository.listed !== null, issueOffered: issue.source.state === "offered" });
@@ -555,7 +555,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
                   <BusyButton variant="quiet" size="small" className="ds-composer__chip" aria-haspopup="dialog" onClick={() => openSheet("models")}>
                     <span className="ds-composer__value">
                       <span className="ds-visually-hidden">Model: </span>
-                      {chatting ? chip.value : choiceName(builds)}
+                      {chatting ? chip.value : chipModel({ run, sameBuild, plan: choiceName(models), build: choiceName(buildModels) })}
                       <span className="ds-visually-hidden">, </span>
                       {" "}
                       <span className="ds-composer__qualifier">{chatting ? chip.qualifier : "Claude Code"}</span>
@@ -648,7 +648,7 @@ export function TurnScreen({ start, onSignedOut }: { start: Kind | null; onSigne
             specPath,
             setSpecPath,
             mode,
-            setMode: setChosenMode,
+            setMode: (chosen: RunMode) => setChosenMode({ repo: repoPath, mode: chosen }),
             review,
             delivery,
             setDelivery,

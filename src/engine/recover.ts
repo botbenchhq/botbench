@@ -34,6 +34,13 @@ export const RESUME_PROMPT =
 export const CONTINUE_PROMPT =
   "[From Botbench, not from the owner] Your work on this task was stopped before it finished, because Botbench stopped. The files in this folder are as you left them, and anything you were running then was stopped. Carry on with the task from where you left off, and finish it.";
 
+/**
+ * What Botbench says to the agent when the owner resumes a task whose last turn ended without changing a file (the agent
+ * may have left the work to something that did not finish within the turn). Botbench's words, and they say so.
+ */
+export const CHANGED_NOTHING_PROMPT =
+  "[From Botbench, not from the owner] Your last turn ended without changing any file in this folder, so there was nothing to check or review. Do the task now, in this turn, yourself: anything left running when the turn ends is stopped and not kept. Change the files the task needs before you finish.";
+
 const PS_LIMIT_MS = 5000;
 /** A CLI is started just before its attempt row is written; the clock `ps` reads has whole seconds. */
 const START_SLACK_MS = 5000;

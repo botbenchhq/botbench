@@ -2,6 +2,7 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import { answerApproval, ApiError, grantStanding, type Approval } from "../api/client.ts";
 import { ApprovalsContext } from "../app/approvals.tsx";
 import { ConfirmAction } from "./confirm.tsx";
+import { approvalWords } from "./tool-summary.ts";
 
 /** The tray's last "open" a card has answered by taking the focus. Kept across screens, so one open moves the focus once. */
 let focusedFor = 0;
@@ -135,15 +136,29 @@ export function ApprovalCard({ approval, more, on, onSignedOut }: { approval: Ap
   };
 
   const waiting = sending !== null || !settled;
+  /** A tool that is not a shell command is said in words; what an allow lets run is one tap away. */
+  const said = approvalWords(approval.tool, approval.command);
 
   return (
     <article ref={card} tabIndex={-1} data-testid="approval-card" data-approval-id={approval.id} aria-labelledby={heading} className="ds-approval">
       <h2 id={heading} className="ds-approval__title">
         {approval.tool === "Bash" ? "Claude Code asks to run a command" : `Claude Code asks to use ${approval.tool}`}
       </h2>
-      <pre data-testid="approval-command" data-ds-content="" className="ds-approval__command">
-        {visible(approval.command)}
-      </pre>
+      {said.line === null ? (
+        <pre data-testid="approval-command" data-ds-content="" className="ds-approval__command">
+          {visible(approval.command)}
+        </pre>
+      ) : (
+        <>
+          <p data-testid="approval-line">{visible(said.line)}</p>
+          <details className="ds-disclosure">
+            <summary className="ds-disclosure__summary">Technical details</summary>
+            <pre data-testid="approval-command" data-ds-content="" className="ds-approval__command">
+              {visible(said.raw)}
+            </pre>
+          </details>
+        </>
+      )}
       <ul className="ds-approval__facts">
         <Fact term="Folder" testId="approval-directory">
           {directoryWords(approval.cwd)}

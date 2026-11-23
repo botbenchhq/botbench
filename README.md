@@ -1,6 +1,6 @@
 # Botbench
 
-Botbench is a workbench you run on your own Mac. You give it a piece of coding work from a browser on the Mac or on your phone. It has Claude Code, the coding agent you already have, do the work in a separate copy of your repository, asks you before every shell command, runs your repository's checks, can have Codex review the result, and hands back a git branch with the evidence: the diff, the transcript, the check results and each answer you gave. Nothing is merged and nothing is pushed.
+Botbench is a workbench you run on your own Mac. You give it a piece of coding work from a browser on the Mac or on your phone. It has Claude Code, the coding agent you already have, do the work in a separate copy of your repository, asks you before each shell command (or, in a run you made semi-autonomous or fully autonomous, lets the ones that run inside its sandbox go without asking), runs your repository's checks, can have Codex, Grok or Antigravity review the result, and hands back a git branch with the evidence: the diff, the transcript, the check results and each answer you gave. Nothing is ever merged. Nothing is pushed unless you chose, for a run, to have each accepted task opened as a pull request.
 
 It is for one developer on macOS. It is early, and built so far for its author's own use. It does not replace your agents, it is not a hosted service, and it is not a security sandbox.
 
@@ -17,22 +17,22 @@ It is for one developer on macOS. It is early, and built so far for its author's
 ## How a piece of work goes
 
 1. You start a **run** (a prompt or a spec file, and a repository) or a single **task** (a prompt and a repository).
-2. For a run, Claude Code reads the repository and proposes a plan of tasks. You edit it or approve it. Nothing is built before you approve.
+2. For a run, Claude Code reads the repository and proposes a plan of tasks. You edit it or approve it. Nothing is built before you approve, unless you made the run fully autonomous: then the plan is approved as the planner gave it.
 3. Each task is built in a separate copy of your repository (a git worktree) on its own branch, `botbench/run-<n>/task-<n>`. Your own files and branch are not touched.
-4. Every shell command the agent wants to run waits for your answer, unless you allowed that exact command in advance.
-5. Botbench commits the work, runs the checks you set for the repository, and keeps their output. If you chose a reviewer, Codex then reads the change; its review is shown as a model's opinion, next to the checks and never counted as one.
-6. You read the diff, the checks and the transcript, and you Accept (the branch is kept) or Reject (you choose whether to keep the branch).
+4. Every shell command the agent wants to run waits for your answer, unless it starts with the words of a command you allowed for the task or run (further arguments may follow), or is exactly one you chose Always allow for. In a semi-autonomous or fully autonomous run a command that runs inside the sandbox goes without asking; a short list of dangerous commands always asks (and in a fully autonomous run is refused instead).
+5. Botbench commits the work, runs the checks you set for the repository, and keeps their output. A build that changed no file stops there, as failed, for you to resume or discard. If you chose a reviewer (Codex, Grok or Antigravity), it then reads the change; with concerns, Claude Code is given the review and makes a round of fixes, up to the run's limit, and the checks and the review run again. A review is shown as a model's opinion, next to the checks and never counted as one.
+6. You read the diff, the checks and the transcript, and you Accept (the branch is kept, and opened as a pull request if the run says so) or Reject (you choose whether to keep the branch). A fully autonomous run accepts a task without you only when every check passed, the review is satisfied or there is none, and nothing was refused during the task; otherwise it waits for you.
 
 ## Is it for you?
 
-**Use it if** you work on a Mac, use Claude Code with your own sign-in, and want to hand it work and come back to a reviewable branch instead of watching a terminal; if you want every shell command an agent runs to wait for your yes, with a record of what ran; and if you want the transcripts, approvals and check results kept on your machine.
+**Use it if** you work on a Mac, use Claude Code with your own sign-in, and want to hand it work and come back to a reviewable branch instead of watching a terminal; if you want each shell command an agent runs to wait for your yes (or, run by run, to go unasked inside a sandbox), with a record of what ran; and if you want the transcripts, approvals and check results kept on your machine.
 
 **Don't use it if:**
 
 - **You are on Windows or Linux.** Agents are only started on macOS: the confinement below relies on macOS's sandbox.
 - **You want a hosted service or a team tool.** It is one person's workbench on one Mac, behind a single login token. There are no accounts.
 - **You need a hard security boundary for code you do not trust.** Commands an agent runs are confined by the macOS sandbox: they cannot read your sign-ins, keys or Keychain, reach no network except hosts you allow for that repository, and can write only in the task's copy and a temporary folder. It is not a virtual machine or a container. Claude Code itself runs outside it with your rights. Your repository's setup and check commands, which run the code the agent wrote, can still read your home folder outside the protected places. A test server those commands start on all network addresses, rather than only on 127.0.0.1, can be reached from other machines on your network while it runs, as macOS's sandbox cannot tell the two apart; the macOS firewall blocks that. Point Botbench only at repositories you trust. The exact limits are in the [threat model](docs/security/threat-model.md#confined-commands-u27).
-- **You expect your code to stay on your Mac.** Claude Code and Codex send your prompts and the code they read to their providers, as they do when you use them directly. Botbench does not change that.
+- **You expect your code to stay on your Mac.** Claude Code, Codex, Grok and Antigravity send your prompts and the code they read to their providers (Anthropic, OpenAI, xAI and Google), as they do when you use them directly. Botbench does not change that.
 - **You need it stable.** It changes often, and nothing here is promised to stay the same.
 
 Whether your subscription's terms allow this kind of unattended use of the vendor's program is the vendor's decision. Check them before relying on it.
@@ -44,11 +44,14 @@ Whether your subscription's terms allow this kind of unattended use of the vendo
 | **Works today** | Claude Code plans and builds; one task at a time, each in its own copy and branch | `src/drivers/claude-code.ts`, `src/engine/` |
 | | Approval cards, commands allowed in advance, Always allow, and a list of dangerous commands that always ask | `src/approvals/` |
 | | Confined commands, per-repository checks and setup commands | `src/confinement.ts`, `src/engine/stations.ts` |
-| | Codex as reviewer of a run's tasks (reviews only; it cannot plan or build) | `src/drivers/codex.ts`, `src/engine/review.ts` |
+| | Codex, Grok or Antigravity as reviewer of a run's tasks (reviews only; they cannot plan or build), and rounds of fixes in which Claude Code answers the review | `src/drivers/codex.ts`, `src/drivers/grok.ts`, `src/drivers/antigravity.ts`, `src/engine/review.ts`, `src/engine/refine.ts` |
+| | Three modes per run: manual, semi-autonomous, fully autonomous | `src/engine/modes.ts`, `src/approvals/gate.ts` |
+| | Opening a pull request for an accepted task, with your own `git` and `gh`; never merged | `src/engine/delivery.ts`, `src/github.ts` |
 | | Accept or Reject; runs board, chat, usage, settings; recovery after a restart | `src/engine/`, `web/src/screens/` |
+| | Starting work from one message box on the home screen; dictating into it, transcribed on the Mac; staying signed in on a device, with a list of signed-in devices | `web/src/screens/turn.tsx`, `src/dictation/`, `src/api/auth.ts` |
 | | A run started from one GitHub issue you name: read with your own `gh`, shown to you as plain text, given to the planner and builder as text from outside (no command allowed in advance or always allowed for that run, no network unless you allow it, never fully autonomous); its pull request closes the issue. Nothing is posted to GitHub | `src/engine/intake.ts`, `src/github.ts` |
 | **In the code, not confirmed on a real iPhone** | Adding Botbench to the phone's Home Screen, and notifications when an approval is waiting or a task is ready | `src/push.ts`, `web/public/` |
-| **Planned, not in this code** | The reviewer's concerns going back to the builder; three modes per run (manual, semi-autonomous, fully autonomous; today every run is manual); opening a pull request for an accepted task; Gemini CLI and Grok; watching a repository for new issues, and posting back to them; one container per task; two developers' workbenches working on one repository | [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
+| **Planned, not in this code** | Watching a repository for new issues, and posting back to them; one container per task; two developers' workbenches working on one repository | [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
 
 ## Quickstart
 

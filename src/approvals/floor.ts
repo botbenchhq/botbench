@@ -137,9 +137,10 @@ const DOWNLOADS_INTO_SHELL = [
   new RegExp(`\\b(?:${INTERPRETERS}|eval|source)\\b[^;&|\\n]*(?:\\$\\(|\`)\\s*(?:curl|wget)\\b`, "i"),
 ];
 
-/** Whether the words after a shell's name hand it text to run: `-c`, commands on its input (`-s`), a start-up file, or no script at all. */
+/** Whether the words after a shell's name hand it text to run: `-c`, commands on its input (`-s`, `/dev/stdin`), a start-up file, or no script at all. */
 const shellRunsText = (rest: Words): boolean =>
   rest.every((word) => word.startsWith("-") || word.startsWith("+")) ||
+  rest.some((word) => word === "/dev/stdin" || word.startsWith("/dev/fd/")) ||
   rest.some((word) => word === "--rcfile" || word === "--init-file" || (word.startsWith("-") && !word.startsWith("--") && /[cs]/.test(word)));
 
 /** Places that decide what later runs as the owner, or that hold the owner's keys and logins. Compared in lower case; an entry ending in `/` is a folder, any other the start of a name. */
@@ -159,6 +160,8 @@ function guardedPlace(word: string, reading: Reading): boolean {
   return pathsIn(word).some((candidate) => {
     // `~user`, `~+`, `~-`: the shell puts a directory there that the text does not show.
     if (candidate.startsWith("~") && candidate !== "~" && !candidate.startsWith("~/")) return true;
+    // A glob or a variable: what it can reach starts with the text before it.
+    if (/[*?[\]{}$`]/.test(candidate)) return reachesGuarded(candidate.slice(0, candidate.search(/[*?[\]{}$`]/)), reading);
     const full = target(candidate, reading);
     if (full === null) return false;
     return both(full).some((written) => {
@@ -176,6 +179,31 @@ function guardedPlace(word: string, reading: Reading): boolean {
   });
 }
 
+/**
+ * Whether a glob or a variable whose text before it is `stem` could name a guarded place: the stem lies in one, or one
+ * lies where the rest of the word could lead (`~/.ss*`, `~/*`, `/e*`, `/Users/*`). Leans towards asking.
+ */
+function reachesGuarded(stem: string, reading: Reading): boolean {
+  const { ctx } = reading;
+  const cut = stem.lastIndexOf("/") + 1;
+  const dir = target(stem.slice(0, cut) === "" ? "." : stem.slice(0, cut), reading);
+  if (dir === null) return false;
+  const real = ctx.real ?? ((p: string) => p);
+  const folder = (p: string): string => `${p.toLowerCase().replace(/\/+$/, "")}/`;
+  const home = folder(ctx.home);
+  const worktree = [path.resolve(ctx.worktree), real(path.resolve(ctx.worktree))].map(folder);
+  const data = ctx.dataDir === undefined ? [] : [path.resolve(ctx.dataDir), real(path.resolve(ctx.dataDir))].map(folder);
+  return [dir, real(dir)].some((place) => {
+    const reach = folder(place) + stem.slice(cut).toLowerCase();
+    const guardedAt = [home, ...GUARDED_ROOTS, ...GUARDED_IN_HOME.map((entry) => home + entry), ...data];
+    // A guarded place the rest of the word could lead to, the home folder and every folder holding it among them.
+    if (guardedAt.some((place) => place.startsWith(reach))) return true;
+    // Already inside one: a root, a place in the home folder, or Botbench's data folder outside this task's copy.
+    if ([...GUARDED_ROOTS, ...GUARDED_IN_HOME.map((entry) => home + entry)].some((place) => reach.startsWith(place))) return true;
+    return data.some((place) => reach.startsWith(place)) && !worktree.some((place) => reach.startsWith(place));
+  });
+}
+
 /** Device files that are no disks. */
 const HARMLESS_DEVICES = /^\/dev\/(?:null|zero|stdin|stdout|stderr|tty|random|urandom|fd\/\d+)$/;
 function diskDevice(word: string, reading: Reading): boolean {
@@ -187,6 +215,11 @@ function diskDevice(word: string, reading: Reading): boolean {
   });
 }
 const DISK_VERBS = /^(?:erase|reformat|partitiondisk|zerodisk|randomdisk|secureerase|delete|resetfusion|resize|merge|split)/;
+
+/** What the shell may turn into another word: a variable, a substitution, a glob, a brace list, ANSI-C quoting, or zsh's `=name`. */
+const SHELL_BUILT = /[$`*?[\]{}]/;
+/** Words that only set a variable for the program after them. */
+const ASSIGNS = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /** The last rule of the floor, which no other matched: the command is not one plain command, and so never runs on a grant. */
 export const NOT_PLAIN = "not-a-plain-command";
@@ -249,6 +282,29 @@ export const FLOOR_RULES: readonly FloorRule[] = [
     matches: (r) => runs(r, oneOf("security", "ssh-add", "ssh-keygen")) || r.segments.some((segment) => segment.some((word) => guardedPlace(word, r))),
   },
   {
+    // A program, or git's subcommand, that the shell builds from a variable, a substitution, a glob or a brace list, or
+    // a program handed its words on its input (`xargs git`): the floor cannot read what will run, so it asks.
+    name: "program-named-by-the-shell",
+    matches: (r) =>
+      !r.plain &&
+      (r.segments.some((segment) => {
+        const first = segment.find((word) => !ASSIGNS.test(word));
+        // `[` and `[[` are the test command, written as a bracket.
+        return first !== undefined && first !== "[" && first !== "[[" && (SHELL_BUILT.test(first) || first.startsWith("="));
+      }) ||
+        runs(r, oneOf("git"), (rest) => {
+          const sub = rest.findIndex((word) => !word.startsWith("-"));
+          return sub === -1 || SHELL_BUILT.test(rest[sub]!);
+        }) ||
+        runs(r, oneOf("xargs"), (rest) => rest.some((word) => oneOf("git", "sudo", "su", "doas", "eval")(program(word)) || SHELLS(program(word))))),
+  },
+  {
+    // Programs that start work outside the sandbox the command runs in: an app (`open`), AppleScript, a login item or a scheduled job.
+    name: "leaves-the-sandbox",
+    // `open` only with something after it: in code a here-document holds (`open(p)`), the word stands alone.
+    matches: (r) => runs(r, oneOf("osascript", "launchctl", "crontab")) || runs(r, oneOf("open"), (rest) => rest.length > 0),
+  },
+  {
     // Anything that is not one plain command: chained, piped, redirected, substituted, with variables, globs or line breaks.
     // It cannot be compared word by word, so it never runs on a grant.
     name: NOT_PLAIN,
@@ -273,8 +329,10 @@ const holds = (segment: Words, entry: FloorEntry): boolean =>
  * The name of the floor rule a command falls under, or null when none does. A command that falls under one
  * always asks the owner. The same text and context give the same answer.
  */
-export function floor(command: string, ctx: FloorContext): string | null {
-  const words = splitPlain(command);
+export function floor(given: string, ctx: FloorContext): string | null {
+  // A backslash at the end of a line joins it to the next, before anything else is read (`git pu\<newline>sh`).
+  const command = given.replace(/\\\r?\n/g, "");
+  const words = splitPlain(given);
   const outer = words === null ? roughSegments(command, ctx.home) : [words];
   // An argument with a space in it may be a command for the program to run (`env -S`, `git … foreach`, `find -exec sh -c`).
   const inner = outer.flatMap((segment) => segment.filter((word) => word.includes(" ")).flatMap((word) => roughSegments(word, ctx.home)));

@@ -206,7 +206,11 @@ const TWO: PlanTask[] = [
   { title: "Add a farewell file", criteria: ["bye.txt exists"] },
 ];
 
-async function line(t: T, script: BuildTurn[], checks: StationCommand[], files?: Record<string, string>, setup: StationCommand[] = []) {
+// The replayed "done" turn changes no file, and a task whose branch holds no change fails (test/engine/no-change.test.ts):
+// by default the repository's setup writes a file, so each task has work to decide on.
+const SETUP_WRITES: StationCommand = { command: "printf 'hi\\n' > hello.txt", limitMs: 10_000 };
+
+async function line(t: T, script: BuildTurn[], checks: StationCommand[], files?: Record<string, string>, setup: StationCommand[] = [SETUP_WRITES]) {
   const s = store(t, files);
   const broker = createBroker({ db: s.db, home: s.home, onChange: () => {} });
   await broker.listen();

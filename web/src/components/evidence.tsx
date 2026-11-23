@@ -1,5 +1,6 @@
 import { agentName } from "../app/chat.ts";
 import type { ChecksMark, CommandList, Evidence, Refinement, Review } from "../api/client.ts";
+import { roundLabel } from "./command-rounds.ts";
 import { failureExtract } from "./failure-extract.ts";
 import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
@@ -126,8 +127,8 @@ export const latestRound = (rows: readonly Evidence[]): Evidence[] => {
 };
 
 /**
- * A list of commands as it was last run, and before it, folded away, each earlier time it was run: a list stopped by a
- * restart is run again from the start, and what the stopped one did stays on record.
+ * A list of commands as it was last run, and before it, folded away, each earlier time it was run, named by what it
+ * checked or why it ran again (`roundLabel`): what an earlier one did stays on record.
  */
 export function CommandRounds({ rows, lists, what, failedFirst = false, testId }: { rows: readonly Evidence[]; lists: readonly CommandList[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
   const latest = latestRound(rows);
@@ -139,7 +140,7 @@ export function CommandRounds({ rows, lists, what, failedFirst = false, testId }
       <CommandEvidence rows={latest} what={what} failedFirst={failedFirst} total={totalOf(latest[0]?.round)} {...(testId === undefined ? {} : { testId })} />
       {earlier.map((round) => (
         <details key={round} className="ds-disclosure">
-          <summary className="ds-disclosure__summary">{`${what.many.charAt(0).toUpperCase()}${what.many.slice(1)} before Botbench restarted`}</summary>
+          <summary className="ds-disclosure__summary">{kind === undefined ? what.many : roundLabel(rows, lists, round, kind)}</summary>
           <div className="ds-disclosure__content">
             <CommandEvidence rows={rows.filter((row) => row.round === round)} what={what} total={totalOf(round)} />
           </div>

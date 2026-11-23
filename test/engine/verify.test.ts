@@ -27,6 +27,9 @@ const TWO: PlanTask[] = [
   { title: "Add a farewell file", criteria: ["bye.txt exists"] },
 ];
 const cmd = (command: string, limitMs = 10_000): StationCommand => ({ command, limitMs });
+// The replayed "done" turn changes no file, and a task whose branch holds no change fails before its checks
+// (test/engine/no-change.test.ts): unless a test names its own setup commands, the repository's setup writes a file.
+const SETUP_WRITES = cmd("printf 'hi\\n' > hello.txt");
 
 interface Line {
   db: DatabaseSync;
@@ -50,7 +53,7 @@ async function line(t: T, script: BuildTurn[], o: { setup?: StationCommand[]; ch
   await broker.listen();
   const driver = buildReplayDriver(script, { hold: o.hold ?? [] });
   const taskChanges: string[] = [];
-  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [], checks: o.checks ?? [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`) });
+  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [SETUP_WRITES], checks: o.checks ?? [] }), onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`) });
   const runs = createRuns({ db, home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();
@@ -160,7 +163,8 @@ test("a check that edits the worktree does not change the committed work; nothin
   await e.tasks.idle();
   const task = getTask(e.db, started.id)!;
   assert.equal(task.checks, "passed");
-  assert.equal(task.headCommit, task.baseCommit, "the commit is the one Botbench made after the turn, before the checks");
+  // The one commit on the branch is Botbench's, of what setup wrote, made after the turn and before the checks.
+  assert.equal(execFileSync("git", ["-C", e.repo, "rev-parse", `${task.headCommit}^`], { encoding: "utf8" }).trim(), task.baseCommit, "the commit is the one Botbench made after the turn, before the checks");
   assert.equal(execFileSync("git", ["-C", e.repo, "rev-parse", task.branch!], { encoding: "utf8" }).trim(), task.headCommit);
   assert.throws(() => execFileSync("git", ["-C", e.repo, "show", `${task.branch}:check-output.txt`], { stdio: "pipe" }), "what the check wrote is not on the branch");
   assert.ok(fs.existsSync(path.join(task.worktreePath!, "check-output.txt")), "it is left, uncommitted, in the copy");
@@ -214,7 +218,8 @@ test("after a restart, a task left at Checking has its checks run again once, as
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(["done"]);
-  const engine = createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: [], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
+  // The second task is built from the start, so its setup gives it a change; the first is past setup and only checked again.
+  const engine = createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: [SETUP_WRITES], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await engine.close();
     await broker.close();

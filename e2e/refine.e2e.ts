@@ -67,7 +67,9 @@ test("LIVE the refine loop: Codex raises a defect in Claude Code's first build, 
   await chooseRepository(page, repo);
   await choose(page, "What to do", "Plan a run");
   const sheet = await openRow(page, "Review");
-  await sheet.locator('input[name="review"][value="codex gpt-6-luna"]').check();
+  // Each reviewer's own default comes first; a model of its list is typed under Other model….
+  await sheet.locator('input[name="review"][value="codex ?other"]').check();
+  await sheet.getByLabel("Codex model name").fill("gpt-6-luna");
   await expect(sheet.getByTestId("review-rounds-cap")).toHaveText("Up to 2 rounds of fixes.");
   await checkDesign(page, "new run, review by Codex, with the cap on rounds of fixes");
   await closeContext(page);

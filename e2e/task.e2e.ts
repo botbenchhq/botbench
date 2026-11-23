@@ -238,7 +238,7 @@ test("the repository Botbench knows of is offered by name, with its path, and on
     await openNewTask(page);
     await page.getByRole("button", { name: "Choose a Repository" }).click();
     const sheet = contextSheet(page);
-    await sheet.getByRole("radio", { name: "shipment-tracking-api" }).check();
+    await sheet.getByRole("radio", { name: "shipment-tracking-api" }).click();
     await closeContext(page);
     await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
     await checkDesign(page, "composer, the known repository chosen");

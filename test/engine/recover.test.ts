@@ -30,6 +30,12 @@ const SCRIPT = path.resolve(import.meta.dirname, "..", "support", "leave-running
 /** The resume cursor the real CLI announced in the recorded turn the replay plays. */
 const CURSOR = (loadPlanRecording().turns[0]!.events.find((event) => event.type === "session_started") as { resumeCursor: string }).resumeCursor;
 const PROMPT = "Create hello.txt with the word hello.";
+/**
+ * A setup command that writes a file. The replayed "done" turn changes no file, and a task whose branch then holds no
+ * change fails (test/engine/no-change.test.ts); a test whose task must reach review without the agent having written a
+ * file before the stop has this as its setup.
+ */
+const WRITES = "printf 'hi\\n' > hello.txt";
 
 interface Place {
   dir: string;
@@ -134,12 +140,12 @@ async function until(what: string, done: () => boolean, ms = 10_000): Promise<vo
 
 test("a restart mid-run: the finished task is not built again, a run waiting for plan approval still waits with its plan, the task that was mid-turn is re-driven once from its resume cursor, and the run goes on with its queued task after it", { timeout: 60_000 }, async (t) => {
   const p = place(t);
-  const s = leave(t, p, { run: ["First", "Second", "Third"], waitingRun: ["Waiting one", "Waiting two"], script: ["done", "done"], hold: 1, holdAt: "session", stopAt: "turn" });
+  const s = leave(t, p, { run: ["First", "Second", "Third"], waitingRun: ["Waiting one", "Waiting two"], setup: [WRITES], script: ["done", "done"], hold: 1, holdAt: "session", stopAt: "turn" });
   const [waitingId, runId] = s.runIds as [number, number];
   const [first, second, third] = s.taskIds as [number, number, number];
 
   const driver = buildReplayDriver(["done", "done"]);
-  const again = await startAgain(t, p, { driver });
+  const again = await startAgain(t, p, { driver, setup: [WRITES] });
   // The finished task: as it was, and no attempt started for it.
   const done = getTask(again.db, first)!;
   assert.equal(done.status, "awaiting_decision");
@@ -216,11 +222,11 @@ test("a second interruption of the same task marks it stopped for the owner, wit
 
 test("a turn stopped before its CLI had reported a session is started again from the task's own prompt, once", { timeout: 60_000 }, async (t) => {
   const p = place(t);
-  const s = leave(t, p, { task: PROMPT, script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
+  const s = leave(t, p, { task: PROMPT, setup: [WRITES], script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
   const [taskId] = s.taskIds as [number];
   assert.equal(row(openStoreOnce(p.home), "SELECT resume_cursor FROM attempts WHERE id = ?", s.attemptId!).resume_cursor, null);
   const driver = buildReplayDriver(["done"]);
-  const again = await startAgain(t, p, { driver });
+  const again = await startAgain(t, p, { driver, setup: [WRITES] });
   assert.equal(driver.started.length, 1);
   assert.equal(driver.started[0]!.resumeCursor, undefined);
   assert.equal(driver.prompts[0], PROMPT);
@@ -341,7 +347,7 @@ test("a task whose agent turn had started is never set up again after a restart,
 test("a task stopped during its checks: the check at work is recorded as stopped by the restart, and the checks run again once from the start on the same commit", { timeout: 60_000 }, async (t) => {
   const p = place(t);
   const checks = ["true", waits(p)];
-  const s = leave(t, p, { task: PROMPT, checks, script: ["done"], stopAt: "checks" });
+  const s = leave(t, p, { task: PROMPT, setup: [WRITES], checks, script: ["done"], stopAt: "checks" });
   const [taskId] = s.taskIds as [number];
   const peek = openStore(p.home);
   const before = getTask(peek, taskId)!;
@@ -350,27 +356,29 @@ test("a task stopped during its checks: the check at work is recorded as stopped
 
   fs.writeFileSync(p.go, "");
   const driver = buildReplayDriver([]);
-  const again = await startAgain(t, p, { checks, driver });
+  const again = await startAgain(t, p, { setup: [WRITES], checks, driver });
   const task = getTask(again.db, taskId)!;
   assert.equal(task.status, "awaiting_decision");
   assert.equal(task.checks, "passed", "what the checks found is the rerun's");
   assert.equal(task.headCommit, before.headCommit, "nothing is committed again: what a check left is not on the branch");
-  assert.deepEqual(evidenceOf(again.db, taskId), [["check", 1, 1, "passed"], ["check", 1, 2, "stopped"], ["check", 2, 1, "passed"], ["check", 2, 2, "passed"]]);
+  // The first row is the setup command that gives the task a change to check; setup is not run again for the checks.
+  assert.deepEqual(evidenceOf(again.db, taskId), [["setup", 1, 1, "passed"], ["check", 1, 1, "passed"], ["check", 1, 2, "stopped"], ["check", 2, 1, "passed"], ["check", 2, 2, "passed"]]);
   assert.equal(driver.started.length, 0, "no agent is started for the checks");
   assert.equal(restarts(again.db, taskId), 1);
 
   // Stopped during the checks twice: the owner is left to resume it.
   const q = place(t);
   const checks2 = ["true", waits(q)];
-  const first = leave(t, q, { task: PROMPT, checks: checks2, script: ["done"], stopAt: "checks" });
+  const first = leave(t, q, { task: PROMPT, setup: [WRITES], checks: checks2, script: ["done"], stopAt: "checks" });
   fs.rmSync(path.join(first.worktree!, "begun.txt"));
-  leave(t, q, { existing: true, checks: checks2, taskId: first.taskIds[0]!, stopAt: "checks" });
-  const third = await startAgain(t, q, { checks: checks2 });
+  leave(t, q, { existing: true, setup: [WRITES], checks: checks2, taskId: first.taskIds[0]!, stopAt: "checks" });
+  const third = await startAgain(t, q, { setup: [WRITES], checks: checks2 });
   const twice = getTask(third.db, first.taskIds[0]!)!;
   assert.equal(twice.status, "interrupted");
   assert.match(twice.reason!, /checks/);
   assert.equal(twice.checks, null);
-  assert.deepEqual(evidenceOf(third.db, twice.id).map((e) => e[3]), ["passed", "stopped", "passed", "stopped"]);
+  // The setup row first, then the two rounds of checks.
+  assert.deepEqual(evidenceOf(third.db, twice.id).map((e) => e[3]), ["passed", "passed", "stopped", "passed", "stopped"]);
 });
 
 test("a run that was being planned is planned again once from the start, read-only in a fresh copy; stopped while planning a second time, it fails and says to start it again", { timeout: 90_000 }, async (t) => {
@@ -405,7 +413,8 @@ test("Botbench shut down in the ordinary way during a turn leaves the task where
   const broker = createBroker({ db, home: p.home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(["done"], { hold: [0], holdAt: "session" });
-  const tasks = createTasks({ db, home: p.home, driver, broker, model: "haiku", onEvent: () => {}, onTaskChange: () => {} });
+  const repoCommands = () => ({ setup: [{ command: WRITES, limitMs: 60_000 }], checks: [] });
+  const tasks = createTasks({ db, home: p.home, driver, broker, model: "haiku", repoCommands, onEvent: () => {}, onTaskChange: () => {} });
   const started = await tasks.start(p.repo, PROMPT, "haiku");
   await driver.held(0);
   await tasks.close();
@@ -417,7 +426,7 @@ test("Botbench shut down in the ordinary way during a turn leaves the task where
   db.close();
 
   const next = buildReplayDriver(["done"]);
-  const again = await startAgain(t, p, { driver: next });
+  const again = await startAgain(t, p, { driver: next, setup: [WRITES] });
   assert.equal(next.started[0]!.resumeCursor, CURSOR);
   assert.equal(getTask(again.db, started.id)!.status, "awaiting_decision");
 });
@@ -450,17 +459,17 @@ test("Resume re-drives a stopped task from its resume cursor, told what happened
   assert.equal(getRun(again.db, runId)!.status, "awaiting_decision");
 
   // Every other state is refused, with what it is in words.
-  assert.throws(() => again.tasks.resume(taskId), (err: unknown) => err instanceof TaskError && err.status === 409 && /Only a stopped task can be resumed/.test(err.message) && /ready for review/.test(err.message));
+  assert.throws(() => again.tasks.resume(taskId), (err: unknown) => err instanceof TaskError && err.status === 409 && /Only a stopped task, or one whose builder changed no file, can be resumed/.test(err.message) && /ready for review/.test(err.message));
   assert.throws(() => again.tasks.resume(999), (err: unknown) => err instanceof TaskError && err.status === 404);
   assert.equal(driver.started.length, 1);
 });
 
 test("Resume of a task stopped before its CLI had reported a session starts a fresh turn with the task's own prompt", { timeout: 120_000 }, async (t) => {
   const p = place(t);
-  const s = leave(t, p, { task: PROMPT, script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
-  leave(t, p, { existing: true, script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
+  const s = leave(t, p, { task: PROMPT, setup: [WRITES], script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
+  leave(t, p, { existing: true, setup: [WRITES], script: ["done"], hold: 0, holdAt: "prompt", stopAt: "turn" });
   const driver = buildReplayDriver(["done"]);
-  const again = await startAgain(t, p, { driver });
+  const again = await startAgain(t, p, { driver, setup: [WRITES] });
   const [taskId] = s.taskIds as [number];
   assert.equal(getTask(again.db, taskId)!.status, "interrupted");
   again.tasks.resume(taskId);
