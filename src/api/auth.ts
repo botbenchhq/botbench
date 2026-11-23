@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "../store/atomic.ts";
 import { audioFormat } from "../dictation/dictation.ts";
 import { BodyError, json, readJsonBody, requestUrl } from "./router.ts";
+import { createPairing, REFUSAL_WORDS, type Refusal } from "./pairing.ts";
 import { createSessions, deviceLabel, SESSION_MAX_AGE_S } from "./sessions.ts";
 import { isShellRequest } from "./static.ts";
 
@@ -43,6 +44,8 @@ export interface AuthOptions {
   publicHosts: readonly string[];
   /** Wait after the first wrong token; it doubles with each further one, up to `MAX_SIGN_IN_DELAY_MS`. */
   signInDelayMs?: number;
+  /** How long a code from Add a device signs in; 5 minutes unless a test asks for less. */
+  pairingLifetimeMs?: number;
 }
 
 export interface Auth {
@@ -95,6 +98,7 @@ export function createAuth(options: AuthOptions): Auth {
   // Sessions are kept in the database (as hashes), so a restart signs nobody out. They are not tied to the login
   // token: replacing the token file changes what signs in from then on, and leaves signed-in devices signed in.
   const sessions = createSessions(options.db);
+  const pairing = createPairing(options.db, options.pairingLifetimeMs);
   /** Each session's requests in flight, the event stream included, so ending a session ends them at once. */
   const inFlight = new Map<number, Set<http.ServerResponse>>();
   const track = (id: number, res: http.ServerResponse): void => {
@@ -134,28 +138,30 @@ export function createAuth(options: AuthOptions): Auth {
     return url.protocol === "http:" && directHosts().has(url.host);
   };
 
-  // Wrong tokens are slowed down for everyone at once, not per address: there is one owner,
-  // and a per-address count would be reset by simply coming from another address.
-  // Attempts are checked one at a time, so sending many side by side gains nothing.
+  // Wrong tokens and wrong codes are slowed down together, for everyone at once, not per address: there is one owner,
+  // and a per-address count would be reset by simply coming from another address. Attempts of both kinds wait in the one
+  // line and are checked one at a time, so sending many side by side, or mixing tokens and codes, gains nothing.
   let failures = 0;
   let notBefore = 0;
   let queue: Promise<unknown> = Promise.resolve();
   let waiting = 0;
-  const attempt = (candidate: string): Promise<boolean | "busy"> => {
+  /** Run `check` in its turn, after the wait the failures so far set; anything but true counts as one more failure. */
+  const attempt = <R,>(check: () => true | R): Promise<true | R | "busy"> => {
     // A bounded line: without it a flood of guesses would keep the owner's own sign-in waiting behind them for ever.
     if (waiting >= MAX_WAITING_SIGN_INS) return Promise.resolve("busy");
     waiting += 1;
     const result = queue.then(async () => {
       const wait = notBefore - Date.now();
       if (wait > 0) await sleep(wait, undefined, { ref: false });
-      if (sameSecret(candidate, options.token)) {
+      const outcome = check();
+      if (outcome === true) {
         failures = 0;
         notBefore = 0;
-        return true;
+        return true as const;
       }
       failures += 1;
       notBefore = Date.now() + Math.min(baseDelay * 2 ** (failures - 1), MAX_SIGN_IN_DELAY_MS);
-      return false;
+      return outcome;
     });
     queue = result.catch(() => undefined);
     return result.finally(() => (waiting -= 1));
@@ -169,19 +175,28 @@ export function createAuth(options: AuthOptions): Auth {
       if (!(err instanceof BodyError)) throw err;
       return json(res, err.status, { error: err.message });
     }
-    const candidate = typeof body === "object" && body !== null ? (body as { token?: unknown }).token : undefined;
-    if (typeof candidate !== "string") return json(res, 400, { error: 'expected { "token": "..." }' });
-    const outcome = await attempt(candidate);
+    // The login token, or a one-time code from Add a device: exactly one of the two.
+    const fields = typeof body === "object" && body !== null ? (body as { token?: unknown; code?: unknown }) : {};
+    const token = typeof fields.token === "string" && fields.code === undefined ? fields.token : undefined;
+    const code = typeof fields.code === "string" && fields.token === undefined ? fields.code : undefined;
+    if (token === undefined && code === undefined) return json(res, 400, { error: 'expected { "token": "..." } or { "code": "..." }' });
+    const outcome = await attempt<false | Refusal>(code === undefined ? () => sameSecret(token!, options.token) || false : () => pairing.redeem(code));
     if (outcome === "busy") return json(res, 429, { error: "too many tries at signing in; wait a moment, then try again" });
-    if (!outcome) return json(res, 401, { error: "wrong token" });
+    if (outcome === false) return json(res, 401, { error: "wrong token" });
+    if (outcome !== true) return json(res, 401, { error: REFUSAL_WORDS[outcome], refused: outcome });
     const { secret } = sessions.create(deviceLabel(req.headers["user-agent"]));
     json(res, 200, { signedIn: true }, { "set-cookie": sessionCookie(secret, secure) });
   };
 
-  /** The signed-in devices: listing them, signing one out, signing out every other. Answered here; false when not one of them. */
+  /** The signed-in devices: listing them, adding one with a code, signing one out, signing out every other. Answered here; false when not one of them. */
   const deviceRoutes = (req: http.IncomingMessage, res: http.ServerResponse, pathname: string, current: number, secure: boolean): boolean => {
     if (req.method === "GET" && pathname === "/api/devices") {
       json(res, 200, { devices: sessions.list().map((d) => ({ ...d, current: d.id === current })) });
+      return true;
+    }
+    // Add a device: a new one-time code, which cancels the one before it. Shown once, on the device that asked.
+    if (req.method === "POST" && pathname === "/api/devices/pairing") {
+      json(res, 200, pairing.create(), { "cache-control": "no-store" });
       return true;
     }
     if (req.method === "POST" && pathname === "/api/devices/sign-out-others") {

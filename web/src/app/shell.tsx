@@ -28,6 +28,8 @@ function parseRoute(hash: string): Route {
   // Work lists the runs and the tasks started on their own, where Runs and Tasks were.
   if (at === "/work") return { screen: "work" };
   if (at === "/runs" || at === "/tasks") return { screen: "redirect", to: "#/work" };
+  // The sign-in address from Add a device, opened on a device that is already signed in: the code is not needed.
+  if (at.startsWith("code=")) return { screen: "redirect", to: "#/" };
   if (at === "/trust") return { screen: "trust" };
   if (at === "/usage") return { screen: "usage" };
   if (at === "/settings") return { screen: "settings", section: null };

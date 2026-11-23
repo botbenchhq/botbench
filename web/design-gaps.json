@@ -5,6 +5,12 @@
       "reason": "The diff component has no wrapping variant: its lines always scroll sideways. A diff of prose (.md, .txt) is one long line per paragraph, unreadable at phone width unless it wraps; code keeps the component's own scrolling lines.",
       "classes": ["bb-diff-prose"],
       "files": ["src/index.css"]
+    },
+    {
+      "name": "qr",
+      "reason": "The catalogue has no QR code. Settings → Add a device shows the sign-in address with a one-time code as a QR code for a phone's camera, which reads it most surely dark on light, so it keeps that in dark mode too, with colour tokens only.",
+      "classes": ["bb-qr"],
+      "files": ["src/index.css", "src/components/qr-code.tsx"]
     }
   ]
 }

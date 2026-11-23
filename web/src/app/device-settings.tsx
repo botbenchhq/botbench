@@ -1,9 +1,98 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { ApiError, listDevices, signOutDevice, signOutOtherDevices, type SignedInDevice } from "../api/client.ts";
+import { ApiError, listDevices, newPairingCode, signOutDevice, signOutOtherDevices, type SignedInDevice } from "../api/client.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
+import { DeviceCode } from "../components/connect-sheet.tsx";
+import { Alert } from "../components/header.tsx";
+import { QrCode } from "../components/qr-code.tsx";
+import { groupCode, signInAddress } from "./sign-in-code.ts";
 
 const when = (ts: string): string => new Date(ts).toLocaleString();
+const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const words = (err: unknown): string => (err instanceof Error && err.message ? err.message : "Botbench could not be reached.");
+
+/**
+ * Add a device: a one-time code for signing in on another device without the login token, as text and as a QR code of
+ * the sign-in address with the code in it. Asking again replaces the code shown, and the server cancels the old one.
+ */
+function AddDevice({ onSignedOut }: { onSignedOut: () => void }) {
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: string; minutes: number } | null>(null);
+  const [expired, setExpired] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const id = useId();
+
+  // Once the code has expired it is taken off the screen, so nobody copies a code that cannot work.
+  useEffect(() => {
+    if (pairing === null) return;
+    const timer = window.setTimeout(() => setExpired(true), Math.max(0, Date.parse(pairing.expiresAt) - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [pairing]);
+
+  const ask = (): void => {
+    setBusy(true);
+    setProblem(null);
+    newPairingCode()
+      .then(
+        ({ code, expiresAt }) => {
+          setExpired(false);
+          setPairing({ code: groupCode(code), expiresAt, minutes: Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60_000)) });
+        },
+        (err: unknown) => {
+          if (err instanceof ApiError && err.status === 401) return onSignedOut();
+          setProblem(`No code was made. ${words(err)}`);
+        },
+      )
+      .finally(() => setBusy(false));
+  };
+
+  const shown = pairing !== null && !expired ? pairing : null;
+  return (
+    <>
+      <div className="ds-settings-row" data-testid="add-device">
+        <div className="ds-settings-row__text">
+          <p className="ds-settings-row__label">Add a device</p>
+          <p className="ds-settings-row__description" id={`${id}-about`}>
+            Sign in on a phone or another computer with a one-time code, without the login token.
+          </p>
+        </div>
+        <div className="ds-settings-row__control">
+          <button type="button" className="ds-button" aria-describedby={`${id}-about`} disabled={busy} onClick={ask}>
+            {pairing === null ? "Add a device" : "Make a new code"}
+          </button>
+        </div>
+      </div>
+      {problem !== null && (
+        <Alert tone="error" role="alert">
+          {problem}
+        </Alert>
+      )}
+      {pairing !== null && expired && (
+        <Alert tone="warning" role="alert">
+          The code has expired and can no longer be used. Make a new code to add a device.
+        </Alert>
+      )}
+      {shown !== null && (
+        <div className="ds-device-code" data-testid="pairing">
+          <ol className="ds-device-code__steps">
+            <li className="ds-device-code__step">
+              <p>
+                On the other device, scan this QR code with the camera, or open <span data-ds-content="">{window.location.origin}</span> and choose Code.
+              </p>
+              <QrCode text={signInAddress(window.location.origin, shown.code)} label={`QR code of the sign-in address with the code ${shown.code}`} testId="pairing-qr" />
+            </li>
+            <li className="ds-device-code__step">
+              <p>Enter this code there, if the QR code did not fill it in:</p>
+              <DeviceCode code={shown.code} testId="pairing-code" />
+            </li>
+          </ol>
+          <div className="ds-device-code__status">
+            <p className="ds-device-code__note">{`It works once, for ${shown.minutes} ${shown.minutes === 1 ? "minute" : "minutes"}: until ${timeOf(shown.expiresAt)}. Making a new code stops this one working.`}</p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /**
  * The Signed-in devices group of Settings: every device that is signed in, this one marked, each with its own Sign out,
@@ -55,7 +144,7 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
         Signed-in devices
       </h2>
       <p className="ds-settings-row__description" id={`${id}-about`} role={note ? "alert" : undefined}>
-        {note ?? "A device stays signed in for 90 days after it was last used. Sign out a device you no longer use or do not recognise: it needs the login token to sign in again."}
+        {note ?? "A device stays signed in for 90 days after it was last used. Sign out a device you no longer use or do not recognise: it needs the login token, or a new code from Add a device, to sign in again."}
       </p>
       {devices === null && note === null && (
         <p role="status" className="ds-spinner">
@@ -82,6 +171,7 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
           </div>
         </div>
       ))}
+      <AddDevice onSignedOut={onSignedOut} />
       {others > 0 && (
         <div className="ds-settings-row">
           <div className="ds-settings-row__text">
