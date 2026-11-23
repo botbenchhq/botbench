@@ -1,12 +1,13 @@
 import { useEffect, useId, useState } from "react";
 import { ApiError, getPeers, getPeersOf, type PeersView } from "../api/client.ts";
-import { folderName } from "../app/composer.ts";
+import { peerRows } from "../app/peers.ts";
 import { Icon } from "./icon.tsx";
 
 /**
  * Work's quiet section "Other workbenches" (Peers P2): for each repository the owner has used, what other workbenches
- * have in flight on its shared remote, read only: their open pull requests (each a link that opens GitHub in a new tab)
- * and their pushed branches with no pull request yet. Shown only when there is something; nothing at all otherwise,
+ * have in flight on its shared remote, read only: their open pull requests (each a link that opens GitHub in a new tab),
+ * their claims on issues, and their pushed branches with no pull request yet, each row naming the other workbench and
+ * the shared repository (web/src/app/peers.ts peerRows). Shown only when there is something; nothing at all otherwise,
  * also while it is read or when it cannot be read (never a state that holds anything up). Everything in it but the
  * numbers is outside text, shown as plain text.
  */
@@ -26,45 +27,47 @@ export function OtherWorkbenches({ onSignedOut }: { onSignedOut: () => void }) {
     };
   }, [onSignedOut]);
 
-  const shown = (views ?? []).flatMap((view) => (view.state === "ready" && (view.pullRequests.length > 0 || view.branches.length > 0) ? [view] : []));
+  const shown = (views ?? []).flatMap((view) => (view.state === "ready" && (view.pullRequests.length > 0 || view.branches.length > 0 || view.claims.length > 0) ? [view] : []));
   if (shown.length === 0) return null;
+  const now = Date.now();
   return (
     <section data-testid="other-workbenches" aria-labelledby={`${id}-heading`} className="ds-stack ds-gap-sm">
       <h2 id={`${id}-heading`}>Other workbenches</h2>
       {shown.map((view) => (
-        <ul key={view.repo} aria-label={`Other workbenches in ${folderName(view.repo)}`} className="ds-list">
-          {view.pullRequests.map((pr) => (
-            <li key={`pr ${pr.number}`} className="ds-list__row">
-              <a data-testid="peer-pull-request" href={pr.url} target="_blank" rel="noopener noreferrer" className="ds-list__link">
-                <span className="ds-list__body">
-                  <span className="ds-list__primary">
-                    {`Pull request #${pr.number}: `}
-                    <span data-ds-content="">{pr.title}</span>
-                  </span>
-                  <span className="ds-list__secondary">
-                    <span data-ds-content="">{pr.workbench}</span>
-                    {`${pr.closes.length === 0 ? "" : ` · Closes ${pr.closes.map((n) => `#${n}`).join(", ")}`} · ${folderName(view.repo)} (opens GitHub in a new tab)`}
-                  </span>
-                </span>
-                <Icon name="external-link" className="ds-list__icon" />
-              </a>
-            </li>
-          ))}
-          {view.branches.map((b) => (
-            <li key={`branch ${b.branch}`} className="ds-list__row">
-              <div data-testid="peer-branch" className="ds-list__content">
-                <span className="ds-list__body">
-                  <code data-ds-content="" className="ds-list__primary">
-                    {b.branch}
-                  </code>
-                  <span className="ds-list__secondary">
-                    <span data-ds-content="">{b.workbench}</span>
-                    {` · Pushed, no pull request yet · ${folderName(view.repo)}`}
-                  </span>
-                </span>
-              </div>
-            </li>
-          ))}
+        <ul key={view.repo} aria-label={`Other workbenches in ${view.repository}`} className="ds-list">
+          {peerRows(view, now).map((row) => {
+            const second = (
+              <span className="ds-list__secondary">
+                <span data-ds-content="">{row.workbench}</span>
+                {row.rest}
+              </span>
+            );
+            return (
+              <li key={row.key} className="ds-list__row">
+                {row.url !== null ? (
+                  <a data-testid="peer-pull-request" href={row.url} target="_blank" rel="noopener noreferrer" className="ds-list__link">
+                    <span className="ds-list__body">
+                      <span className="ds-list__primary">
+                        {row.lead}
+                        <span data-ds-content="">{row.title}</span>
+                      </span>
+                      {second}
+                    </span>
+                    <Icon name="external-link" className="ds-list__icon" />
+                  </a>
+                ) : (
+                  <div data-testid={row.kind === "claim" ? "peer-claim" : "peer-branch"} className="ds-list__content">
+                    <span className="ds-list__body">
+                      <code data-ds-content="" className="ds-list__primary">
+                        {row.branch}
+                      </code>
+                      {second}
+                    </span>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       ))}
     </section>

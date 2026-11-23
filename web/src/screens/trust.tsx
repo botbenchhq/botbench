@@ -31,6 +31,7 @@ const RULE_WORDS: Record<LogRule, string> = {
   web_allowed: "Ran without asking: Web access is Allow",
   web_refused: "Refused without asking: Web access is Off",
   bookkeeping: "Ran without asking: Claude Code's own to-do list or tool loading",
+  issue_claim: "Issue claim",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();
@@ -186,7 +187,7 @@ export function TrustScreen({ onSignedOut }: { onSignedOut: () => void }) {
                     <div className="ds-list__content">
                       <span className="ds-list__body">
                         <span className="ds-list__primary">{RULE_WORDS[entry.rule] ?? entry.rule}</span>
-                        <code data-ds-content="" className="ds-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" || entry.rule === "owner_accepted" || entry.rule === "owner_rejected" || entry.rule === "owner_discarded" || entry.rule === "mode_accepted" || entry.rule === "delivery" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
+                        <code data-ds-content="" className="ds-list__secondary">{visible(shorten(entry.command === "" ? entry.tool : entry.tool === "Bash" || entry.rule === "owner_accepted" || entry.rule === "owner_rejected" || entry.rule === "owner_discarded" || entry.rule === "mode_accepted" || entry.rule === "delivery" || entry.rule === "issue_claim" ? entry.command : `${entry.tool} ${entry.command}`))}</code>
                         {/* The server's own sentence, which may hold the command it is about; its wording is checked where it is built. */}
                         {entry.detail !== null && (
                           <span data-ds-content="" className="ds-list__secondary">

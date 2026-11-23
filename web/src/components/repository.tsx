@@ -24,6 +24,8 @@ interface Preapproved {
   commands: string[];
   /** Whether a check command is configured; null when the settings could not be read. */
   hasChecks: boolean | null;
+  /** Whether a run from an issue that opens pull requests pushes a claim first (src/engine/claims.ts); false when unknown. */
+  claimIssues: boolean;
   note: string | null;
 }
 
@@ -104,11 +106,11 @@ export function useRepository(repo: string, onSignedOut: () => void): Repository
     let stale = false;
     const older = new AbortController();
     getRepoSettings(usablePath, older.signal).then(
-      (settings) => !stale && setPreapproved({ path: usablePath, commands: settings.preapproved, hasChecks: settings.hasChecks, note: null }),
+      (settings) => !stale && setPreapproved({ path: usablePath, commands: settings.preapproved, hasChecks: settings.hasChecks, claimIssues: settings.claimIssues, note: null }),
       (err: unknown) => {
         if (stale) return;
         if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setPreapproved({ path: usablePath, commands: [], hasChecks: null, note: "The commands configured for this repository could not be read, so none is listed." });
+        setPreapproved({ path: usablePath, commands: [], hasChecks: null, claimIssues: false, note: "The commands configured for this repository could not be read, so none is listed." });
       },
     );
     return () => {

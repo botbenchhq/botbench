@@ -1386,4 +1386,86 @@ INSERT INTO owner_settings (name, value, updated_at) SELECT name, value, updated
 DROP TABLE owner_settings_before_actions;
 `,
   },
+  {
+    // Claiming an issue on the shared remote (Peers P3, engine/claims.ts), step by step for a run, append-only: the
+    // commit Botbench made for the claim, stored before it is pushed (`claiming`), so a restart finds a push it never saw
+    // end; the branches pushed with it (`claimed`), a claim that could not be made or was not to be made, and why
+    // (`not_claimed`), a claim given up because another workbench holds the issue's lock (`withdrawn`, naming it), and
+    // when the run ended without a pull request, the branches deleted (`released`) or left on the remote and why
+    // (`kept`). A run claims at most once. `claim_takeovers`: another workbench's old claim the owner chose, after a confirm naming
+    // its holder, not to give way to; stored with the run, before its claim. The action log gains `issue_claim`, one
+    // entry per step that wrote to the remote or released a claim. A check cannot be altered in place, so the action
+    // log is made again with every row kept, ids included, and its indexes and triggers put back.
+    name: "issue_claims",
+    sql: `
+CREATE TABLE issue_claims (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES runs (id),
+  step TEXT NOT NULL CHECK (step IN ('claiming', 'claimed', 'not_claimed', 'withdrawn', 'released', 'kept')),
+  issue INTEGER NOT NULL CHECK (issue >= 1),
+  remote TEXT,
+  branch TEXT,
+  commit_id TEXT,
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CHECK ((step = 'not_claimed') OR (remote IS NOT NULL AND branch IS NOT NULL AND commit_id IS NOT NULL))
+);
+CREATE INDEX issue_claims_run ON issue_claims (run_id, id);
+CREATE UNIQUE INDEX issue_claims_once ON issue_claims (run_id) WHERE step IN ('claimed', 'not_claimed');
+CREATE TRIGGER issue_claims_no_update BEFORE UPDATE ON issue_claims
+BEGIN SELECT RAISE(ABORT, 'issue claims are append-only'); END;
+CREATE TRIGGER issue_claims_no_delete BEFORE DELETE ON issue_claims
+BEGIN SELECT RAISE(ABORT, 'issue claims are append-only'); END;
+
+CREATE TABLE claim_takeovers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES runs (id),
+  branch TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  issue INTEGER NOT NULL CHECK (issue >= 1),
+  started_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (run_id, branch)
+);
+CREATE TRIGGER claim_takeovers_no_update BEFORE UPDATE ON claim_takeovers
+BEGIN SELECT RAISE(ABORT, 'claim take-overs are append-only'); END;
+CREATE TRIGGER claim_takeovers_no_delete BEFORE DELETE ON claim_takeovers
+BEGIN SELECT RAISE(ABORT, 'claim take-overs are append-only'); END;
+
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_claims;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL)
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal FROM action_log_before_claims ORDER BY id;
+DROP TABLE action_log_before_claims;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];

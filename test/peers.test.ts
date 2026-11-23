@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { otherWork } from "../src/engine/peers.ts";
-import { ghArgs, parsePullRequestList, type ListedPullRequest } from "../src/github.ts";
+import { MAX_BRANCH_LOOKUPS, otherWork, withoutPullRequest } from "../src/engine/peers.ts";
+import { replayGitHub } from "./support/replay-github.ts";
+import { ghArgs, parsePullRequestList, parsePullRequestPage, type ListedPullRequest } from "../src/github.ts";
 import { loadPeersCapture, PEERS_REPO } from "./support/replay-peers.ts";
 
 // What other workbenches have in flight (Peers P2), read from gh's answer. The parser is tested on output captured
@@ -47,10 +48,39 @@ test("another workbench's work: an open pull request or a pushed branch under a 
   const listed = (number: number, headRefName: string, state = "OPEN"): ListedPullRequest => ({ number, title: `Pull request ${number}`, url: `https://github.com/jon-lange/botbench/pull/${number}`, state, headRefName, closes: [number + 100], files: ["src/a.ts"] });
   const own = new Set(["alice", "alices-mac"]);
   const work = otherWork(
-    [listed(3, "botbench/bob/run-1/task-1"), listed(4, "botbench/alice/run-1/task-1"), listed(5, "botbench/alices-mac/run-2/task-2"), listed(6, "botbench/run-4/task-5"), listed(7, "feature/x"), listed(8, "botbench/carol/run-1/task-1", "MERGED"), listed(9, "botbench/Bob/run-1/task-1"), listed(10, "botbench/../x")],
-    [{ branch: "botbench/bob/run-1/task-1" }, { branch: "botbench/bob/run-2/task-3" }, { branch: "botbench/alice/run-9/task-9" }, { branch: "botbench/run-1/task-1" }, { branch: "botbench/carol/run-1/task-1" }, { branch: "botbench/x/y" }],
+    [listed(3, "botbench/bob/run-1/task-1"), listed(4, "botbench/alice/run-1/task-1"), listed(5, "botbench/alices-mac/run-2/task-2"), listed(6, "botbench/run-4/task-5"), listed(7, "feature/x"), listed(8, "botbench/carol/run-1/task-1", "MERGED"), listed(9, "botbench/Bob/run-1/task-1"), listed(10, "botbench/../x"), listed(11, "botbench/erin/run-1/task-1", "CLOSED")],
+    [{ branch: "botbench/bob/run-1/task-1" }, { branch: "botbench/bob/run-2/task-3" }, { branch: "botbench/alice/run-9/task-9" }, { branch: "botbench/run-1/task-1" }, { branch: "botbench/carol/run-1/task-1" }, { branch: "botbench/erin/run-1/task-1" }, { branch: "botbench/x/y" }],
     own,
   );
   assert.deepEqual(work.pullRequests.map((pr) => [pr.workbench, pr.number, pr.closes]), [["bob", 3, [103]]]);
-  assert.deepEqual(work.branches, [{ workbench: "bob", branch: "botbench/bob/run-2/task-3" }, { workbench: "carol", branch: "botbench/carol/run-1/task-1" }], "a branch with an open pull request is listed with it; this installation's own are not listed");
+  assert.deepEqual(work.branches, [{ workbench: "bob", branch: "botbench/bob/run-2/task-3" }], "a branch with an open pull request is listed with it, one whose pull request was merged (carol's) or closed (erin's) is left out, and this installation's own are not listed");
+  assert.deepEqual(work.claims, []);
+});
+
+test("when the list of pull requests was full, a pushed branch is kept only once gh says it has none; one it could not ask about is left out", async () => {
+  const branches = Array.from({ length: MAX_BRANCH_LOOKUPS + 2 }, (_, i) => ({ workbench: "bob", branch: `botbench/bob/run-${i + 1}/task-1` }));
+  // gh's real answers, captured once (test/support/replay-github.ts): none for a branch, and one pull request for a branch.
+  const none = replayGitHub().github;
+  const one = replayGitHub({ existing: true }).github;
+  const repo = { host: "github.com", owner: "jon-lange", name: "botbench" };
+  const answer = (branch: string) => (branch.endsWith("run-1/task-1") ? one.findPullRequest(repo, branch) : branch.endsWith("run-2/task-1") ? Promise.reject(new Error("no network")) : none.findPullRequest(repo, branch));
+  const kept = await withoutPullRequest(branches, answer);
+  assert.deepEqual(kept.map((b) => b.branch), branches.slice(2, MAX_BRANCH_LOOKUPS).map((b) => b.branch), "the one with a pull request, the one gh could not answer for, and those past the cap are left out");
+});
+
+test("another workbench's claim branch is read as a claim from its name alone; this installation's own and malformed ones are not", () => {
+  const work = otherWork(
+    [],
+    [{ branch: "botbench/bob/run-3/issue-82-at-20261122T210530123Z" }, { branch: "botbench/alice/run-1/issue-82-at-20261122T210530123Z" }, { branch: "botbench/carol/run-2/issue-82-at-20261322T210530123Z" }, { branch: "botbench/dave/run-2/issue-0-at-20261122T210530123Z" }],
+    new Set(["alice"]),
+  );
+  assert.deepEqual(work.claims, [{ workbench: "bob", branch: "botbench/bob/run-3/issue-82-at-20261122T210530123Z", issue: 82, startedAt: "2026-11-22T21:05:30.123Z" }]);
+  assert.deepEqual(work.branches.map((b) => b.branch), ["botbench/carol/run-2/issue-82-at-20261322T210530123Z", "botbench/dave/run-2/issue-0-at-20261122T210530123Z"], "a name that is not a real claim (month 13, issue 0) is only a pushed branch");
+});
+
+test("a page is full by what gh gave: the real list of jon-lange/botbench held 61 when it was captured, so it is not full", () => {
+  const capture = loadPeersCapture();
+  const real = parsePullRequestPage(capture.outputs.all.result.stdout, PEERS_REPO);
+  assert.deepEqual([real.pullRequests.length, real.full], [61, false]);
+  // A full page with a fork's pull request among them is read live from a public repository: test/live/peers.live.test.ts.
 });
