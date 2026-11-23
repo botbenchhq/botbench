@@ -63,9 +63,12 @@ test("a builder's question shows as a card titled 'Claude Code has a question' w
   await page.goBack();
 
   // Answered with a choice: the card goes, and the task no longer needs input.
-  await page.getByTestId("question-choice").first().click();
+  // The choice the recording was answered with: the replay goes on only after exactly that answer.
+  const chosen = asked.options.findIndex((option) => option.label === recording.answer);
+  expect(chosen, "the recorded answer is one of the choices").toBeGreaterThanOrEqual(0);
+  await page.getByTestId("question-choice").nth(chosen).click();
   await expect(page.getByTestId("question-card")).toHaveCount(0);
-  await expect(page.getByRole("log", { name: "Transcript" }).getByText(`Your answer: ${asked.options[0]!.label}`)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("log", { name: "Transcript" }).getByText(`Your answer: ${recording.answer}`)).toBeVisible({ timeout: 30_000 });
   await openWork(page);
   await expect(page.getByTestId("board-group").getByRole("link").filter({ hasText: "Task 1 · " })).not.toHaveText(/Needs input/, { timeout: 30_000 });
 });

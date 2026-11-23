@@ -853,10 +853,12 @@ export function createBroker(options: {
     if (ticket && ticket.resumes !== null && ticket.taskId !== null && ticket.taskId === r.taskId) {
       const carried = db.prepare(`SELECT ${APPROVAL_COLUMNS} WHERE a.task_id = ? AND a.attempt_id = ? AND a.status = 'pending' AND a.stored_decision IS NOT NULL ORDER BY a.id`).all(ticket.taskId, ticket.resumes).map(toApproval);
       // The same thing asked again: same role, tool, command and directory. A directory nobody reported is not known to be the same.
-      // A question is the same when its text is: where the agent stood says nothing about it.
+      // A question is the same when its text and its choices' labels, in order, are: the owner answered those choices.
+      // Where the agent stood says nothing about it.
+      const labels = (q: Question): string => JSON.stringify(q.choices.map((c) => c.label));
       const match =
         question !== null
-          ? carried.find((a) => a.role === r.role && a.tool === r.tool && a.question !== null && a.question.text === question.text && a.answer !== null)
+          ? carried.find((a) => a.role === r.role && a.tool === r.tool && a.question !== null && a.question.text === question.text && labels(a.question) === labels(question) && a.answer !== null)
           : cwd === ""
             ? undefined
             : carried.find((a) => a.role === r.role && a.tool === r.tool && a.question === null && a.command === r.command && a.cwd === cwd);

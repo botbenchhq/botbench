@@ -101,9 +101,11 @@ const resolved = events.find((e) => e.type === "permission_resolved" && e.toolCa
 if (resolved === undefined || resolved.type !== "permission_resolved" || resolved.decision !== "answered") report(`The question reached Botbench but was not answered as a question (it ended ${resolved?.type === "permission_resolved" ? resolved.decision : "with no answer"}). See src/approvals/question.ts for what Botbench can show.`);
 const after = events.slice(events.indexOf(resolved!) + 1);
 if (end !== "completed" || !after.some((e) => e.type === "text")) report(`The answer was given, but the agent's turn did not go on with it (the turn ended ${end}${end === "interrupted" ? `, stopped after ${LIMIT_MS / 60_000} minutes or by a stop` : ""}).`);
-// The prompt asks for the chosen label as the reply: only then is the answer known to have reached the agent.
+// The prompt asks for only the chosen label as the reply: only a reply that is exactly that (quotes, marks or a final
+// full stop around it aside) shows the answer reached the agent. "Was it Hi?" does not.
 const replied = after.filter((e): e is Extract<DriverEvent, { type: "text" }> => e.type === "text").map((e) => e.text.trim());
-if (!replied.some((text) => new RegExp(`(^|\\W)${ANSWER}(\\W|$)`).test(text))) report(`The turn went on, but the agent's reply does not name the answer it was given ("${ANSWER}"), so the answer may not have reached it. It replied: ${JSON.stringify(replied).slice(0, 300)}`);
+const last = (replied.at(-1) ?? "").replace(/^[\s"'`*_]+|[\s"'`*_.]+$/g, "");
+if (last !== ANSWER) report(`The turn went on, but the agent's last reply is not the answer it was given ("${ANSWER}") alone, so the answer may not have reached it. It replied: ${JSON.stringify(replied).slice(0, 300)}`);
 
 const recording = {
   about:

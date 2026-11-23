@@ -60,15 +60,17 @@ test("replayed from a real session: a builder's question is a card of its own an
   assert.equal(waitingOnApproval(db, taskId), true, "Needs input, as for a waiting approval");
   assert.equal(getTask(db, taskId)!.status, "building");
 
-  broker.answerQuestion(card!.id, card!.question!.choices[0]!.label);
+  // The answer the recording was given: the replay goes on only after exactly that, keyed by the question (replay-build.ts).
+  assert.ok(card!.question!.choices.some((c) => c.label === recording.answer), "the recorded answer is one of the choices");
+  broker.answerQuestion(card!.id, recording.answer);
   await tasks.idle();
   assert.equal(getTask(db, taskId)!.status, "awaiting_decision", "the turn went on after the answer and the task was built");
-  assert.deepEqual(listApprovals(db).map((a) => [a.status, a.answer]), [["allowed", card!.question!.choices[0]!.label]]);
+  assert.deepEqual(listApprovals(db).map((a) => [a.status, a.answer]), [["allowed", recording.answer]]);
   const attemptId = getTask(db, taskId)!.attemptId!;
   const events = db.prepare("SELECT payload FROM events WHERE attempt_id = ? ORDER BY id").all(attemptId).map((row) => JSON.parse(String(row.payload)) as DriverEvent);
   const resolved = events.findIndex((e) => e.type === "permission_resolved" && e.decision === "answered");
   assert.ok(resolved > 0, "the answer is in the transcript");
-  assert.equal((events[resolved] as { note: string }).note, card!.question!.choices[0]!.label);
+  assert.equal((events[resolved] as { note: string }).note, recording.answer);
   assert.ok(events.slice(resolved + 1).some((e) => e.type === "text"), "the agent went on and wrote after the answer");
   assert.deepEqual(events.at(-1), { type: "turn_ended", reason: "completed", detail: null });
 });
