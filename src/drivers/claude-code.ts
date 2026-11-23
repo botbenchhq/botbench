@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { PROXY_SCRIPT, SECRET_ENV, SOCKET_ENV } from "../approvals/permission-proxy.ts";
 import { QUESTION_TOOL } from "../approvals/question.ts";
 import { confinementProblem, hostProblem, unreadablePaths, type Confinement } from "../confinement.ts";
+import { containerShellInput, type TaskContainer } from "../execution.ts";
 import { now, transaction } from "../store/db.ts";
 import { DriverUnavailableError, modelNameProblem, type BillingKind, type Driver, type DriverCapabilities, type DriverModels, type DriverProbe, type DriverSession, type ModelChoice, type ResumeCursor, type StartAttemptOptions } from "./contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "./events.ts";
@@ -71,7 +72,9 @@ const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
 export const OUTLIVING_TOOLS = ["Agent", "Task", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "Monitor", "TaskStop", "SendMessage", "ListAgents", "Workflow", "EnterWorktree", "ExitWorktree", "PushNotification"] as const;
 
 // Commands are confined: the sandbox is on with `failIfUnavailable` and `allowUnsandboxedCommands` false (`sandboxSettings`).
-const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true };
+// Every shell command reaches Botbench's permission answer (the bare `Bash` ask rule), whose allow can rewrite it into a
+// task's container (`containerCommands`, src/execution.ts).
+const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true, containerCommands: true };
 
 /** How long the CLI lets the pre-tool hook run, in seconds. The hook asks Botbench one question and never waits for a person. */
 const HOOK_TIMEOUT_S = 20;
@@ -129,8 +132,13 @@ const realOrAsIs = (place: string): string => {
  *   which runs outside the sandbox, still has them.
  * - `permissions.blockReadsOutsideWorkingDirectories`: the CLI's own file tools, which run outside the sandbox, refuse
  *   reads outside the folder, and the sandbox also closes the rest of the home folder to commands.
+ * With `container` (a repository whose commands run in a task's container, src/execution.ts, ADR 0009) one thing
+ * differs: `allowUnsandboxedCommands` is true, so that the one call Botbench's permission answer marks
+ * `dangerouslyDisableSandbox` runs outside the CLI's sandbox, which blocks the Docker socket. Botbench marks only the
+ * exact `docker exec … sh -c '<command>'` it rewrote the allowed command into (`containerShellInput`), and every shell
+ * call reaches that answer: the bare `Bash` ask rule, no allow rule for Bash, and `autoAllowBashIfSandboxed` false.
  */
-export function sandboxSettings(place: AttemptPlace, local = false): Record<string, unknown> {
+export function sandboxSettings(place: AttemptPlace, local = false, container = false): Record<string, unknown> {
   // Claude Code's settings reference: the read block does not reach sandboxed commands when the folder the CLI starts in has a glob character.
   if (/[*?[]/.test(place.cwd)) throw new Error(`Claude Code cannot be confined in ${place.cwd}: its path holds *, ? or [. Move Botbench's data folder to a path without them.`);
   const bad = place.allowedHosts.find((host) => hostProblem(host) !== null);
@@ -146,7 +154,7 @@ export function sandboxSettings(place: AttemptPlace, local = false): Record<stri
       enabled: true,
       failIfUnavailable: true,
       autoAllowBashIfSandboxed: false,
-      allowUnsandboxedCommands: false,
+      allowUnsandboxedCommands: container,
       filesystem,
       network: { allowedDomains: [...place.allowedHosts], strictAllowlist: true, ...(local ? { allowLocalBinding: true, allowUnixSockets: [realOrAsIs(place.cwd)] } : {}) },
       credentials: { envVars: [{ name: SOCKET_ENV, mode: "deny" }, { name: SECRET_ENV, mode: "deny" }] },
@@ -155,8 +163,8 @@ export function sandboxSettings(place: AttemptPlace, local = false): Record<stri
 }
 
 /** The one settings object of an attempt: the sandbox, and with the gate its hook and ask rule as well. */
-function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean): string {
-  const sandbox = sandboxSettings(place, local);
+function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean, container: boolean): string {
+  const sandbox = sandboxSettings(place, local, container);
   if (!gated) return JSON.stringify(sandbox);
   const gate = gateSettings();
   return JSON.stringify({ ...gate, ...sandbox, permissions: { ...(gate.permissions as object), ...(sandbox.permissions as object) } });
@@ -198,10 +206,12 @@ function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean): s
  * tools among them), loads no settings file (the agent may write in the chat's folder, and must not leave rules there
  * for its next turn), and every edit, like every other prompt, is decided by Botbench's gate.
  */
-export function claudeArgs(options: { confinement: AttemptPlace; model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string }): string[] {
+export function claudeArgs(options: { confinement: AttemptPlace; model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string; container?: boolean }): string[] {
   const readOnly = options.readOnly === true;
   const allowEdits = options.allowEdits === true && !readOnly;
   const gated = options.gated === true;
+  // A container's commands are rewritten in the permission answer: without the gate nothing would rewrite them.
+  if (options.container === true && !gated) throw new Error("Claude Code can run a task's commands in its container only through Botbench's permission check, and this session has none.");
   // An attempt on a repository's content, and a gated chat, whose folder the agent may write in, load no settings file.
   const inWorktree = allowEdits || readOnly || gated;
   const args = [
@@ -214,7 +224,7 @@ export function claudeArgs(options: { confinement: AttemptPlace; model?: string;
     "--mcp-config", JSON.stringify({ mcpServers: {} }),
   ];
   // Only an attempt that builds runs a project's tests: it alone may listen and connect on this Mac.
-  args.push("--settings", attemptSettings(options.confinement, gated, allowEdits));
+  args.push("--settings", attemptSettings(options.confinement, gated, allowEdits, options.container === true));
   if (gated) args.push("--permission-prompt-tool", "stdio");
   else args.push("--permission-prompts", "none");
   if (allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
@@ -432,10 +442,16 @@ type Resolved = Extract<DriverEvent, { type: "permission_resolved" }>["decision"
  * it. Pure. Only the exact word allows; anything else, a malformed answer included, declines.
  * - An allow runs the input the owner was shown, unchanged. For the question tool (approvals/question.ts) it is that
  *   input with the owner's `answers` added, keyed by the question's text, as the CLI takes an answer; an allow of a
- *   question with no answer to give is a refusal, as the agent would otherwise go on as if it had been answered.
+ *   question with no answer to give is a refusal, as the agent would otherwise go on as if it had been answered. A
+ *   question is answered the same way whether or not the task's commands run in a container: it runs nothing.
+ * - With `container` (a repository whose commands run in a task's container, src/execution.ts) an allowed shell call
+ *   runs as `containerShellInput` rewrote it, in the task's container, and one that cannot be rewritten is refused. The
+ *   rewrite comes after the decision, which the safety rules and the permission check made on the command as the agent
+ *   asked it; a refused or declined call is never rewritten. Any other tool's allowed call that carries the CLI's
+ *   sandbox escape (`dangerouslyDisableSandbox`, open in this kind for Botbench's own rewritten call only) is refused.
  * - A refusal of Botbench's own says so. For a question the agent is told the reason alone: nothing was going to run.
  */
-export function controlAnswer(request: PermissionRequestEvent, response: unknown): { reply: Record<string, unknown>; decision: Resolved; note: string | null } {
+export function controlAnswer(request: Pick<PermissionRequestEvent, "name" | "input">, response: unknown, container: TaskContainer | null = null): { reply: Record<string, unknown>; decision: Resolved; note: string | null } {
   const given: Partial<PermissionResponse> = isObject(response) ? response : {};
   const words = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
   const question = request.name === QUESTION_TOOL;
@@ -446,7 +462,12 @@ export function controlAnswer(request: PermissionRequestEvent, response: unknown
   }
   if (given.decision === "allow") {
     const decision: Resolved = given.preapproved === true ? "preapproved" : given.standing === true ? "standing" : given.mode === true ? "mode" : given.files === true ? "files" : given.web === true ? "web" : given.chat === true ? "chat" : given.bookkeeping === true ? "bookkeeping" : "allowed";
-    return { reply: { behavior: "allow", updatedInput: request.input }, decision, note: null };
+    const escapes = isObject(request.input) && "dangerouslyDisableSandbox" in request.input;
+    if (container === null || (request.name !== "Bash" && !escapes)) return { reply: { behavior: "allow", updatedInput: request.input }, decision, note: null };
+    const rewritten = request.name === "Bash" ? containerShellInput(container, request.input) : null;
+    if (rewritten !== null) return { reply: { behavior: "allow", updatedInput: rewritten }, decision, note: null };
+    const why = request.name === "Bash" ? "This task's commands run in its container, and this call holds no command Botbench could run there." : "This task's commands run in its container, and this call asks to run outside Claude Code's sandbox, which only Botbench's own command into the container may.";
+    return { reply: { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
   }
   const why = words(given.refused);
   if (why !== null) return { reply: { behavior: "deny", message: question ? why : `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
@@ -590,8 +611,12 @@ class ClaudeCodeSession implements DriverSession {
   /** The attempt's gate secret. A command the owner allowed can print its environment; the secret is blanked before anything is stored. */
   private readonly secret: string | null;
 
-  constructor(db: DatabaseSync, attemptId: number, child: CliChild, pgid: number, cursor: ResumeCursor | null, gateSecret: string | null = null, cleanUp: () => void = () => {}) {
+  /** The task's container, when each allowed shell command is rewritten to run in it (src/execution.ts). */
+  private readonly container: TaskContainer | null;
+
+  constructor(db: DatabaseSync, attemptId: number, child: CliChild, pgid: number, cursor: ResumeCursor | null, gateSecret: string | null = null, cleanUp: () => void = () => {}, container: TaskContainer | null = null) {
     const gated = gateSecret !== null;
+    this.container = container;
     this.secret = gateSecret;
     this.db = db;
     this.attemptId = attemptId;
@@ -655,7 +680,7 @@ class ClaudeCodeSession implements DriverSession {
     // An answer that cannot reach the CLI is not recorded as given.
     if (this.hasExited || !this.child.stdin.writable) return Promise.reject(new Error(`The answer to permission request ${requestId} could not be delivered: Claude Code is no longer running. Nothing was run.`));
     this.asking.delete(requestId);
-    const { reply, decision, note } = controlAnswer(request, response);
+    const { reply, decision, note } = controlAnswer(request, response, this.container);
     this.answerControl(requestId, reply);
     this.record({ type: "permission_resolved", id: requestId, toolCallId: request.toolCallId, decision, note });
     return Promise.resolve();
@@ -948,6 +973,7 @@ export class ClaudeCodeDriver implements Driver {
       ...(options.allowEdits ? { allowEdits: true } : {}),
       ...(options.readOnly ? { readOnly: true } : {}),
       ...(instructionsDir === null ? {} : { instructionsFile: path.join(instructionsDir, "instructions.md") }),
+      ...(options.container === undefined ? {} : { container: true }),
     });
     const extraEnv = gate ? { ...this.extraEnv, [SOCKET_ENV]: gate.socketPath, [SECRET_ENV]: gate.secret } : this.extraEnv;
     const { child, pgid } = launch(COMMAND, args, { cwd: options.cwd, extraEnv });
@@ -969,7 +995,7 @@ export class ClaudeCodeDriver implements Driver {
       cleanUp();
       throw err;
     }
-    return new ClaudeCodeSession(options.db, attemptId, child, pgid, options.resumeCursor ?? null, gate?.secret ?? null, cleanUp);
+    return new ClaudeCodeSession(options.db, attemptId, child, pgid, options.resumeCursor ?? null, gate?.secret ?? null, cleanUp, options.container ?? null);
   }
 }
 

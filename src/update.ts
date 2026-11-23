@@ -47,7 +47,7 @@ export const SERVICE_LABEL = "dev.botbench.server";
 export const CHECK_EVERY_MS = 6 * 3600_000;
 export const UPDATE_DIR = "update";
 export const JOURNAL_FILE = "update.json";
-/** The owner's database as it was just before the checkout last moved, for going back by hand (threat model, open item 12). */
+/** The owner's database as it was just before the checkout last moved, for going back by hand (threat model, open item 13). */
 export const BACKUP_FILE = "before-update.sqlite";
 const RELEASE_REF = "refs/botbench-update/main";
 const BUSY_POLL_MS = 15_000;

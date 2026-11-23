@@ -716,6 +716,12 @@ export interface WorkbenchSetting {
   setInFile: boolean;
 }
 export const getWorkbench = async (): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("GET", "/api/settings", undefined, 30_000)).workbench;
+/** Where one repository of the settings file runs its commands (src/execution.ts). */
+export interface RepositoryExecution {
+  path: string;
+  execution: { kind: "host" } | { kind: "container"; image: string };
+}
+export const getRepositoryExecutions = async (): Promise<RepositoryExecution[]> => (await request<{ repositories: RepositoryExecution[] }>("GET", "/api/settings", undefined, 30_000)).repositories;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;
 
 /** A note the owner asked Botbench to remember (src/engine/memory.ts). `hash` is the version an edit or a forget carries. */
@@ -1010,7 +1016,9 @@ export type LogRule =
   | "question_unasked"
   | "sandboxed"
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
-  | "memory";
+  | "memory"
+  /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
+  | "peer_message_conflict";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {
