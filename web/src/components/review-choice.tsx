@@ -102,8 +102,8 @@ export function ReviewOptions({ state }: { state: ReviewChoiceState }) {
             <Option group="review" id={`review-${at}`} value={option.value} checked={current === option.value} onChange={() => state.setValue(option.value)} name={option.name} description={option.description} />
             <div className="ds-option-picker__reveal">
               <div className="ds-field">
-                <label htmlFor={`review-${at}-name`} className="ds-field__label">{`${option.name} model name`}</label>
-                <input id={`review-${at}-name`} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={typed(option.agent)} onChange={(e) => state.setValue(`${option.agent} ${e.target.value.trim() === "" ? REVIEW_OTHER : e.target.value.trim()}`)} className="ds-field__control" />
+                <label htmlFor={`review-${at}-model`} className="ds-field__label">{`${option.name} model name`}</label>
+                <input id={`review-${at}-model`} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={typed(option.agent)} onChange={(e) => state.setValue(`${option.agent} ${e.target.value.trim() === "" ? REVIEW_OTHER : e.target.value.trim()}`)} className="ds-field__control" />
               </div>
             </div>
           </Fragment>
