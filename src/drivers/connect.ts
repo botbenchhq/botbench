@@ -19,8 +19,10 @@ export interface FlowView {
   kind: SignInKind;
   /** The sign-in as the owner would run it in a terminal on the Mac. */
   terminalCommand: string;
-  /** The CLI's own sign-out, as Disconnect runs it. */
+  /** The CLI's own sign-out, as Disconnect runs it. Empty when Botbench keeps the sign-in (`keptByBotbench`). */
   signOutCommand: string;
+  /** The sign-in is kept in Botbench's own folder, apart from the CLI's in a terminal: Disconnect removes it there. */
+  keptByBotbench: boolean;
   /** The CLI waits for the code the vendor's page shows, pasted back. */
   takesCode: boolean;
   state: FlowState | "idle";
@@ -112,6 +114,7 @@ export function createConnect(options: ConnectOptions): Connect {
       kind: signIn.kind,
       terminalCommand: signIn.terminalCommand,
       signOutCommand: signIn.signOutCommand,
+      keptByBotbench: signIn.keptByBotbench === true,
       takesCode: signIn.takesCode,
       state: flow?.state ?? "idle",
       url: waiting ? (flow.prompt?.url ?? null) : null,
@@ -208,7 +211,7 @@ export function createConnect(options: ConnectOptions): Connect {
     flow.timers.push(
       setTimeout(() => {
         if (flow.state !== "starting") return;
-        finish(flow, "failed", `${signIn.product} did not give a sign-in link within ${Math.round(startLimitMs / 1000)} seconds. Try again, or run \`${signIn.terminalCommand}\` in a terminal on the Mac.`);
+        finish(flow, "failed", `${signIn.product} did not give a sign-in link within ${Math.round(startLimitMs / 1000)} seconds. ${signIn.keptByBotbench === true ? "Try again." : `Try again, or run \`${signIn.terminalCommand}\` in a terminal on the Mac.`}`);
         void stopGroup(flow);
         shown();
       }, startLimitMs),
@@ -229,7 +232,7 @@ export function createConnect(options: ConnectOptions): Connect {
     const flow = flows.get(driver);
     if (!agent.signIn.takesCode) throw new ConnectError(409, `${agent.signIn.product} does not take a code back. Enter its code on the vendor's page.`);
     if (flow === undefined || flow.state !== "waiting" || flow.child === null) throw new ConnectError(409, `${agent.signIn.product} is not waiting for a code. Connect again.`);
-    const code = pastedCode(value);
+    const code = (agent.signIn.pasted ?? pastedCode)(value);
     if (code === null) throw new ConnectError(400, "That is not a code from the sign-in page. Copy the whole code the page shows and paste it on one line.");
     // The code goes to the CLI and nowhere else: it is not kept here.
     flow.child.stdin.write(`${code}\n`);
@@ -255,6 +258,17 @@ export function createConnect(options: ConnectOptions): Connect {
     if ((flow !== undefined && active(flow.state)) || signingOut.has(driver)) throw new ConnectError(409, `${signIn.product} is being connected or disconnected. Finish or cancel that first.`);
     signingOut.add(driver);
     try {
+      if (signIn.removeSignIn !== undefined) {
+        // A sign-in Botbench keeps in its own folder: its file is removed there, unread. No sign-in is running (checked above).
+        try {
+          signIn.removeSignIn();
+        } catch (err) {
+          throw new ConnectError(500, `Botbench could not remove ${signIn.product}'s sign-in from its folder: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        flows.delete(driver);
+        changed(driver, "signed-out");
+        return await agent.probe();
+      }
       const run = await runCli(signIn.command, signIn.signOutArgs, { cwd: os.tmpdir(), extraEnv: { ...signIn.env }, timeoutMs: SIGN_OUT_LIMIT_MS });
       if (!run.started) throw new ConnectError(502, `${signIn.product} could not be started. Check that \`${signIn.command}\` is installed and on the PATH.`);
       if (run.exitCode !== 0) throw new ConnectError(502, signInFailure(run.stdout, run.stderr, []) ?? `${signIn.product} could not sign out.`);

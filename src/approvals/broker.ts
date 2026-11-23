@@ -175,6 +175,14 @@ export type LogRule =
   | "bookkeeping"
   /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it (src/peers/messages.ts). */
   | "peer_message_conflict"
+  /** An invite to pair with another workbench was made, withdrawn, or expired (src/peers/). Never holds the invite. */
+  | "peer_invite"
+  /** A step of pairing with another workbench: a pair request taken or refused, a confirmation, an end (src/peers/). */
+  | "peer_pairing"
+  /** Fixed-shape traffic sent to a paired workbench without a Send: an answer, a confirmation, a notice, a refusal (src/peers/). */
+  | "peer_protocol"
+  /** Traffic the peer listener refused, at most one row a minute per caller, with how many (src/peers/listener.ts). */
+  | "peer_refused"
   /** Botbench's own step on an issue claim (engine/claims.ts): a claim branch pushed, given up for an earlier claim, or released when the run ended. */
   | "issue_claim"
   /** The owner answered an agent's question; `detail` holds the answer as given. */
@@ -531,6 +539,50 @@ export function logSandboxedCalls(db: DatabaseSync, session: Pick<DriverSession,
     if (event.type !== "tool_call" || seen.has(event.id)) return;
     seen.add(event.id);
     logSandboxedCall(db, event, { taskId: o.taskId, runId: o.runId ?? null, attemptId: session.attemptId, cwd: o.cwd, detail: `${o.agent} cannot ask you, so it ran this without asking, kept by its own sandbox to ${o.where}.` });
+  });
+}
+
+/**
+ * For an agent that asks Botbench before it acts but keeps one turn per session (Antigravity): each `permission_request`
+ * of `session` goes through `broker` as a request of `who` (a chat, or a task's review) and is answered, a decline
+ * for anything that fails on the way (broker failure is deny). Each tool call that asked nothing (Botbench's own rules
+ * let it run or refused it, or it never needed asking, as a read inside the folder) is a line of the action log, kept
+ * by the agent's sandbox to `where`. Returns a function that stops both.
+ */
+export function askThroughBroker(db: DatabaseSync, broker: Pick<Broker, "request">, session: Pick<DriverSession, "attemptId" | "onEvent" | "respondToRequest">, o: { who: { taskId: number; chat?: undefined } | { taskId: null; chat: true }; role: string; agent: string; cwd: string; where: string; onAnswer?(): void }): () => void {
+  const asked = new Set<string>();
+  const calls = new Map<string, { name: string; input: unknown }>();
+  const decided = new Map<string, { decision: string; note: string | null }>();
+  const log = (id: string): void => {
+    const call = calls.get(id);
+    if (call === undefined) return;
+    calls.delete(id);
+    if (asked.has(id)) return;
+    const input = call.input;
+    const named = isObject(input) ? input : null;
+    const command = typeof named?.CommandLine === "string" ? named.CommandLine : typeof named?.query === "string" ? named.query : JSON.stringify(input ?? null);
+    const outcome = decided.get(id);
+    const detail = outcome === undefined || outcome.decision !== "denied" ? `${o.agent} ran this without asking you, by Botbench's rules, kept by its sandbox to ${o.where}.` : `Botbench refused this without asking you: ${outcome.note ?? "its rules do not allow it."}`;
+    try {
+      appendLog(db, { taskId: o.who.taskId, attemptId: session.attemptId, rule: "sandboxed", tool: shorten(call.name, 200), command: shorten(command, MAX_COMMAND), cwd: o.cwd, detail });
+    } catch (err) {
+      console.error(`A tool call of attempt ${session.attemptId} could not be written to the action log: ${words(err)}`);
+    }
+  };
+  return session.onEvent((event) => {
+    if (event.type === "tool_call") calls.set(event.id, { name: event.name, input: event.input });
+    else if (event.type === "permission_resolved" && !asked.has(event.toolCallId)) decided.set(event.toolCallId, { decision: event.decision, note: event.note });
+    else if (event.type === "tool_result") log(event.id);
+    else if (event.type === "turn_ended") for (const id of [...calls.keys()]) log(id);
+    else if (event.type === "permission_request") {
+      asked.add(event.toolCallId);
+      void broker
+        .request({ ...o.who, attemptId: session.attemptId, role: o.role, tool: event.name, command: summarize(event.name, event.input), input: event.input, cwd: ".", reason: event.reason, toolCallId: event.toolCallId })
+        .then((answer) => session.respondToRequest(event.id, { decision: answer.decision, note: answer.note, refused: answer.refused, preapproved: answer.preapproved !== undefined, standing: answer.standing !== undefined, mode: answer.byMode !== undefined, files: answer.files !== undefined, web: answer.web !== undefined, chat: answer.chat !== undefined, bookkeeping: answer.bookkeeping !== undefined }))
+        // A request the agent stopped waiting for (the turn was stopped) has no one to tell; it was not run.
+        .catch(() => {})
+        .finally(() => o.onAnswer?.());
+    }
   });
 }
 
@@ -1066,7 +1118,7 @@ export function createBroker(options: {
     const { stored, question } = transaction(db, () => {
       const current = getApproval(db, id);
       if (!current) throw new ApprovalError(404, "No such approval.");
-      if (current.question === null) throw new ApprovalError(409, "This request is not a question. Answer it with Allow once or Deny.");
+      if (current.question === null) throw new ApprovalError(409, "This request is not a question. Answer it with Allow or Decline.");
       if (current.status !== "pending" || current.answer !== null || current.storedDecision !== null) throw new ApprovalError(409, current.status === "superseded" ? "This question is no longer waiting for an answer." : "This question already has your answer.");
       const entry = { taskId: current.taskId, runId: current.runId, attemptId: current.attemptId, approvalId: id, rule: "owner_answered", tool: current.tool, command: current.command, cwd: current.cwd, detail: given } as const;
       if (waiters.has(id)) {
@@ -1164,7 +1216,7 @@ export function createBroker(options: {
       if (!current) throw new ApprovalError(404, "No such approval.");
       if (current.status !== "pending") throw new ApprovalError(409, `This approval is already ${current.status}.`);
       const found = eligibility(current);
-      if (typeof found === "string") throw new ApprovalError(409, `Always allow is not available for this request: ${found}. Nothing was allowed; answer it with Allow once or Deny.`);
+      if (typeof found === "string") throw new ApprovalError(409, `Always allow is not available for this request: ${found}. Nothing was allowed; answer it with Allow or Decline.`);
       const answered = db.prepare("UPDATE approvals SET status = 'allowed', resolved_at = ? WHERE id = ? AND status = 'pending'").run(now(), id);
       if (Number(answered.changes) !== 1) throw new ApprovalError(409, "This approval is no longer waiting for an answer.");
       const about = { taskId: current.taskId, attemptId: current.attemptId, approvalId: id, tool: current.tool, command: current.command, cwd: current.cwd };

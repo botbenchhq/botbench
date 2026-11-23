@@ -100,15 +100,18 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   if ((await reason.count()) > 0) expect(((await reason.textContent()) ?? "").trim().length).toBeGreaterThan(0);
 
   // Exactly two controls: Allow, the one primary action of this view, and Decline, plainly secondary, at the far end of the same row. No standing permission.
-  await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny"]);
-  // A card's buttons take a moment to come alive, so a tap meant for an earlier card cannot answer this one. Until then they are drawn as unavailable.
-  await expect(card.getByRole("button", { name: "Allow once" })).toBeEnabled();
-  // The button has just come alive, and its colour takes the system's transition time to settle: the check waits for it.
-  await expect.poll(() => primaries(page), { message: "one primary action on the screen" }).toEqual(["Allow once"]);
+  // The design system's Approval draws them, with its labels, and marks both as never hidden.
+  await expect(card.getByRole("button")).toHaveText(["Allow", "Decline"]);
+  await expect(card.locator(".ds-approval__actions [data-ds-critical]")).toHaveCount(2);
+  await expect(card.getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
+  await expect.poll(() => primaries(page), { message: "one primary action on the screen" }).toEqual(["Allow"]);
   await expect(page.getByRole("button", { name: /always|standing|every time|remember|pre-?approve/i })).toHaveCount(0);
   await expect(card.getByRole("checkbox")).toHaveCount(0);
-  const allow = card.getByRole("button", { name: "Allow once" });
-  const decline = card.getByRole("button", { name: "Deny", exact: true });
+  // Allow is named Allowing while its answer is sent, and stays the same button.
+  const allow = card.getByRole("button", { name: /^Allow(ing)?$/ });
+  const decline = card.getByRole("button", { name: "Decline", exact: true });
+  // What would run is marked as somebody else's words, so the screen's own wording rules do not read it.
+  await expect(card.getByTestId("approval-command")).toHaveAttribute("data-ds-content", "");
   const look = (el: Element): { background: string; text: string; border: string } => {
     const style = getComputedStyle(el);
     return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };
@@ -121,9 +124,10 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   expect(declineBox.x - (allowBox.x + allowBox.width), "Decline is at the far end of the row, well away from Allow").toBeGreaterThanOrEqual(44);
   expect(allowBox.height).toBeGreaterThanOrEqual(44);
   expect(declineBox.height).toBeGreaterThanOrEqual(44);
-  // A note for the agent is one step away, closed until it is asked for, and neither answer hides in it.
-  await expect(card.locator("summary")).toHaveText("Deny and say what to do instead");
+  // A note for the agent is one step away, before the answers, closed until it is asked for, and neither answer hides in it.
+  await expect(card.locator("summary")).toHaveText("Add a note for Claude Code");
   await expect(card.getByLabel("What Claude Code should do instead")).toBeHidden();
+  await expect(card.locator("details button")).toHaveCount(0);
   await checkDesign(page, "task, with an approval card");
   if (SHOTS) await tallShot(page, path.join(SHOTS, "u7-approval-card.png"));
 
@@ -134,13 +138,29 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   const worktree = path.join(botbench.home, "worktrees", branch.split("/").at(-2)!, "task-1");
   expect(git(worktree, "status", "--porcelain")).toBe("");
 
-  // Allow, from the keyboard. The card goes, the tray empties, and the task resumes and finishes.
-  // A card's buttons take a moment to come alive, so a tap meant for an earlier card cannot answer this one.
-  await expect(allow).toBeEnabled();
+  // Allow, from the keyboard. While the answer is on its way, Allow says so and keeps the focus, and only Decline is
+  // unavailable. The answer is held here until that is seen. Then the card goes, the tray empties, and the task resumes and finishes.
+  let release = (): void => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(/\/api\/approvals\/\d+$/, async (route) => {
+    if (route.request().method() === "POST") await held;
+    await route.continue();
+  });
+  // A card's answers count only once it has settled, so a tap meant for an earlier card cannot answer this one.
+  await expect(card).toHaveAttribute("data-settled", "");
   await allow.focus();
   await expect(allow).toBeFocused();
   await page.keyboard.press("Enter");
+  await expect(allow).toHaveAttribute("aria-busy", "true");
+  await expect(allow).toHaveText("Allowing");
+  await expect(allow).toBeEnabled();
+  await expect(allow).toBeFocused();
+  await expect(decline).toBeDisabled();
+  // A second press while it is sent sends nothing more.
+  await page.keyboard.press("Enter");
+  release();
   await expect(card).toHaveCount(0);
+  await page.unroute(/\/api\/approvals\/\d+$/);
   await expect(tray).toBeEmpty();
   await expect(page.locator('[data-event="permission_resolved"]')).toContainText("You allowed");
   await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.", { timeout: 120_000 });
@@ -177,12 +197,13 @@ test("LIVE: Decline, with a note, shows the declined result in the transcript; t
   await expect(page.getByTestId("approval-tray")).toHaveText("An approval is waiting on this screen.");
 
   const note = "Not in this task <b>please</b>.";
-  // Declining with a note is its own step: the disclosure holds the note and the button that sends it.
-  await card.getByText("Deny and say what to do instead").click();
+  // The note is in a disclosure before the answers; the card's one Decline sends it. There is no second decline button.
+  await card.getByText("Add a note for Claude Code").click();
   await card.getByLabel("What Claude Code should do instead").fill(note);
   await checkDesign(page, "task, an approval card with the note open");
-  await expect(card.getByRole("button")).toHaveText(["Allow once", "Deny", "Deny and send"]);
-  await card.getByRole("button", { name: "Deny and send" }).click();
+  await expect(card.getByRole("button")).toHaveText(["Allow", "Decline"]);
+  await expect(card).toHaveAttribute("data-settled", "");
+  await card.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(card).toHaveCount(0);
   await expect(page.getByTestId("approval-tray")).toBeEmpty();
 

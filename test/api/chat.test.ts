@@ -69,14 +69,14 @@ test("a chat message to Codex is one turn stored under Codex, with its own tools
   assert.equal(fs.existsSync(rest.cwd), true, "the chat's folder stays: the files made there are the chat's");
 });
 
-test("the screen is told in plain words what each agent can do in a chat: for Codex and Grok, that the sandbox is the control because they cannot ask", () => {
+test("the screen is told in plain words what each agent can do in a chat: for Codex and Grok, that the sandbox is the control because they cannot ask; for Antigravity, that it asks before anything outside its folder", () => {
   const { codex, grok, antigravity } = { codex: chatReplayDriver("codex"), grok: chatReplayDriver("grok"), antigravity: chatReplayDriver("antigravity") };
   for (const [driver, name] of [[codex, "Codex"], [grok, "Grok"]] as const) {
     const words = chatScopeWords(driver)!;
     assert.ok(words.startsWith(`${name} cannot ask you before it acts, so Botbench's sandbox is what keeps it in bounds:`), words);
     assert.match(words, /only in the chat's own folder, its commands reach nothing on the network but its own provider, and it searches the web only when Web access is Allow\./);
   }
-  assert.match(chatScopeWords(antigravity)!, /^Antigravity answers from the conversation alone: it cannot read your files or change anything here\./);
+  assert.match(chatScopeWords(antigravity)!, /^Antigravity works only in the chat's own folder, inside Botbench's sandbox: there it reads, changes and runs commands without asking, and anything outside it asks you first\./);
   assert.equal(chatScopeWords(new ClaudeCodeDriver()), null, "Claude Code asks you itself");
 });
 
@@ -91,37 +91,35 @@ test("web search follows \"Web access in chat\": Off turns it off, and so does A
   }
 });
 
-test("Antigravity, which has no tools here, still answers in a new empty folder that is gone afterwards, read-only, with no web search", async (t) => {
+test("Antigravity answers in the chat's own folder with its tools, as the agents that cannot ask do; with no permission check given, it is given no gate, so what it would ask is refused", async (t) => {
   const { home, agents, chat } = setup(t);
   const [reply] = await chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "antigravity", model: null }] });
   await settled(chat, [reply!.attemptId]);
-  const { db: _db, cwd, ...rest } = agents.antigravity.started[0]!;
-  assert.deepEqual(rest, { readOnly: true, confinement: { dataDir: home, allowedHosts: [] } });
-  assert.equal(path.dirname(cwd), path.join(fs.realpathSync(home), "reviewers"));
-  assert.equal(fs.existsSync(cwd), false);
+  const { db: _db, ...rest } = agents.antigravity.started[0]!;
+  assert.deepEqual(rest, { cwd: fs.realpathSync(path.join(home, SCRATCH_DIR)), chatTools: { readable: [] }, webSearch: true, confinement: { dataDir: home, allowedHosts: [] } });
+  assert.match(agents.antigravity.prompts[0]!, /working in a folder of your own/);
 });
 
-test("with a repository attached, Codex and Grok read it and its git folder, resolved once, and are told where it is; Claude Code and Antigravity are not asked, and nothing is sent", async (t) => {
+test("with a repository attached, Codex, Grok and Antigravity read it and its git folder, resolved once, and are told where it is; Claude Code is not asked, and nothing is sent", async (t) => {
   const { home, agents, chat } = setup(t);
   const repo = path.join(path.dirname(home), "attached");
   initRepo(repo, { "README.md": "# Attached\n" });
   const link = path.join(path.dirname(home), "attached-link");
   fs.symlinkSync(repo, link);
-  const replies = await chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }, { agent: "grok", model: null }], repository: link });
+  const replies = await chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }, { agent: "grok", model: null }, { agent: "antigravity", model: null }], repository: link });
   await settled(chat, replies.map((r) => r.attemptId));
   const real = fs.realpathSync(repo);
-  for (const agent of [agents.codex, agents.grok]) {
+  for (const agent of [agents.codex, agents.grok, agents.antigravity]) {
     assert.deepEqual(agent.started[0]!.chatTools, { readable: [real, path.join(real, ".git")] });
     assert.match(agent.prompts[0]!, new RegExp(`The owner attached the repository at ${escapeRegExp(real)}: you can read it there, and you cannot change it`));
   }
   await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "claude-code", model: undefined }], repository: repo }), /Claude Code works on a repository as a task/);
-  await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }, { agent: "antigravity", model: null }], repository: repo }), /Antigravity cannot read a repository in Botbench/);
   await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }], repository: path.join(repo, "missing") }), TurnError);
   await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }], repository: "relative/path" }), /full path/);
   initRepo(path.join(home, "inside"), { "a.txt": "a\n" });
   await assert.rejects(chat.send({ message: QUESTION, conversation: [], agents: [{ agent: "codex", model: null }], repository: path.join(home, "inside") }), /Botbench's own data/);
   assert.equal(agents.codex.started.length, 1, "a refused message starts nothing");
-  assert.equal(agents.antigravity.started.length, 0);
+  assert.equal(agents.antigravity.started.length, 1);
 });
 
 test("a web search an agent reports is a step of the chat's transcript: Codex's own search and Grok's X search, replayed through each one's reader", async (t) => {
@@ -208,10 +206,9 @@ test("ask several: one message goes to each agent with the same conversation, on
   assert.equal(ended(db, agy)?.reason, "completed");
   assert.equal(ended(db, grok)?.reason, "error");
   assert.match(text(db, agy), /^Blue\./);
-  assert.equal(agents.codex.prompts[0], agents.grok.prompts[0], "the two with their own tools were sent the same");
+  assert.equal(agents.codex.prompts[0], agents.grok.prompts[0], "the agents with their own tools were sent the same");
+  assert.equal(agents.codex.prompts[0], agents.antigravity.prompts[0]);
   assert.match(agents.codex.prompts[0]!, /working in a folder of your own/);
-  assert.match(agents.antigravity.prompts[0]!, /Answer from the conversation alone/, "Antigravity has none, and is told so");
-  assert.equal(agents.codex.prompts[0]!.split("\n\n").slice(1).join("\n\n"), agents.antigravity.prompts[0]!.split("\n\n").slice(1).join("\n\n"), "the conversation and the message are the same for each");
   // The owner's message is in the conversation passed on once, then each reply that came.
   assert.deepEqual(chatHistory(db, [codex, grok, agy]).map((e) => e.from), ["owner", "Codex (gpt-6-luna)", "Antigravity (gemini-3.8-flash-low)"]);
 

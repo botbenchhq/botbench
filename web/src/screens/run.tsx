@@ -18,8 +18,11 @@ import { mergeEvents, Transcript } from "../components/transcript.tsx";
 import { StatusBadge } from "../components/status.tsx";
 import { OutsideText } from "../components/outside-text.tsx";
 import { RunTimeline } from "../components/run-timeline.tsx";
+import { StricterMode } from "../components/mode-change.tsx";
 
 const UNDO_SECONDS = 10;
+/** When something happened, as the run's history says it. */
+const when = (iso: string): string => new Date(iso).toLocaleString();
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
 /** The criteria as the editor holds them: one on each line. */
 const toLines = (criteria: readonly string[]): string => criteria.join("\n");
@@ -362,6 +365,18 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   {modeSentence(run.mode, run.issueHosts)}
                 </dd>
               </div>
+              {run.modeChanges.length > 0 && (
+                <div className="ds-key-value__item">
+                  <dt className="ds-key-value__label">Changes of mode</dt>
+                  <dd className="ds-key-value__value">
+                    <ul data-testid="run-mode-changes" className="ds-stack ds-gap-xs">
+                      {run.modeChanges.map((change) => (
+                        <li key={change.at + change.to}>{`${when(change.at)}: ${change.words}`}</li>
+                      ))}
+                    </ul>
+                  </dd>
+                </div>
+              )}
               <div className="ds-key-value__item">
                 <dt className="ds-key-value__label">Planning model</dt>
                 <dd data-testid="run-model" className="ds-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session, nameOf)}. You asked for: ${run.requestedModel === null ? "Claude Code's default" : nameOf(run.requestedModel)}.`}</dd>
@@ -377,6 +392,8 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                 <dd data-testid="run-delivery" className="ds-key-value__value">{run.delivery === "pull_request" ? "Botbench pushes its branch and opens a pull request" : "Its branch is kept on this Mac"}</dd>
               </div>
             </dl>
+
+            <StricterMode key={run.mode} run={run} onChanged={setRun} onSignedOut={onSignedOut} />
 
             {gate && run.reason !== null && (
               <Alert tone="warning" role="status">

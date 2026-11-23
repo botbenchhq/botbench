@@ -125,8 +125,8 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await page.reload();
     await expect(box).toHaveAttribute("aria-label", "Describe what to plan");
     await openContext(page);
-    // Fully autonomous is not remembered: the mode is Settings' default again (Manual), as a new visit should start.
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
+    // Fully autonomous is remembered for this repository, but it has no check command, so the run falls back, visibly, to Semi-autonomous.
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Semi-autonomous", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
     // Escape closes the sheet and gives the focus back to Add context.
     await page.keyboard.press("Escape");
     await expect(contextSheet(page)).toBeHidden();

@@ -40,7 +40,7 @@ const tempFolders = (): string[] => {
  * denied but in `writable`, the temporary folder and the terminal devices; and nothing the CLI starts can open an app
  * or send Apple events, which would run outside the sandbox.
  */
-export function wholeCliProfile(o: { unreadable: readonly string[]; readable: readonly string[]; writable: readonly string[] }): string {
+export function wholeCliProfile(o: { unreadable: readonly string[]; readable: readonly string[]; writable: readonly string[]; noKeychain?: boolean }): string {
   const lines = ["(version 1)", "(allow default)"];
   if (o.unreadable.length > 0) lines.push(`(deny file-read* ${subpaths(o.unreadable)})`);
   if (o.readable.length > 0) lines.push(`(allow file-read* ${subpaths(o.readable)})`);
@@ -49,10 +49,19 @@ export function wholeCliProfile(o: { unreadable: readonly string[]; readable: re
     `(allow file-write* ${subpaths([...o.writable, ...tempFolders()])} (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
     "(deny lsopen)",
     "(deny appleevent-send)",
+    ...(o.noKeychain === true ? [KEYCHAIN_DENIED] : []),
     "",
   );
   return lines.join("\n");
 }
+
+/*
+ * The Keychain's services, refused to a CLI whose sign-in must stay out of the owner's Keychain (Antigravity with
+ * Botbench's own profile). Its files in ~/Library/Keychains are on the shared list already; these are the services a
+ * program asks to read or write an item. Seen on macOS 27.2 with Antigravity 1.5.14: with them refused, `agy` reads no
+ * sign-in from the Keychain, and still verifies TLS to Google (trustd is not refused).
+ */
+export const KEYCHAIN_DENIED = '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd") (global-name "com.apple.securityd.xpc") (global-name "com.apple.security.keychain-circle-notification"))';
 
 /*
  * For a CLI that has its own tools and cannot ask Botbench before it uses one (Grok in a chat or a review): the
@@ -101,6 +110,33 @@ export interface ToolsPlaces {
   readOnly: readonly string[];
   /** The port of Botbench's proxy to the provider. */
   proxyPort: number;
+  /**
+   * The CLI's own program, when only it may use its own folders (Antigravity): every other process of the turn, the
+   * commands it runs among them, can neither read nor write them, nor reach a socket there, nor start the program again.
+   * Left out, every process of the turn may use them (Grok, the known limit below).
+   */
+  ownProgram?: string;
+  /** Rules added at the end, which win over every rule above (sandbox-exec: the last matching rule decides). */
+  extra?: readonly string[];
+}
+
+/**
+ * The rules that keep the CLI's own folders to the CLI's own program (`ownProgram`). Measured on macOS 27.2: a
+ * `(process-path …)` filter decides file reads by the program that asks, so `cat` was refused a file `head` could
+ * read under one profile.
+ */
+export function ownProgramOnly(o: { own: readonly string[]; program: string; starter: string }): string[] {
+  const program = quoted(o.program);
+  const others = `(require-not (process-path ${program}))`;
+  return [
+    ...bothNames(o.own).flatMap((place) => [
+      `(deny file-read* file-write* (require-all (subpath ${quoted(place)}) ${others}))`,
+      `(deny network-outbound (require-all (remote unix-socket (subpath ${quoted(place)})) ${others}))`,
+    ]),
+    // A command cannot start the program again to make it read its own folders for it: only sandbox-exec, which
+    // starts the turn, and the program itself may.
+    `(deny process-exec (require-all (literal ${program}) ${others} (require-not (process-path ${quoted(o.starter)}))))`,
+  ];
 }
 
 const realOrAsIs = (place: string): string => {
@@ -146,6 +182,8 @@ export function toolsProfile(o: ToolsPlaces): string {
     ...sockets.flatMap((place) => [`(allow network-bind (local unix-socket (subpath ${quoted(place)})))`, `(allow network-outbound (remote unix-socket (subpath ${quoted(place)})))`]),
     "(deny lsopen)",
     "(deny appleevent-send)",
+    ...(o.ownProgram === undefined ? [] : ownProgramOnly({ own: o.own, program: o.ownProgram, starter: SANDBOX_EXEC })),
+    ...(o.extra ?? []),
     "",
   );
   return lines.join("\n");

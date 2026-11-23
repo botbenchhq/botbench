@@ -205,6 +205,8 @@ export interface ConnectState {
   terminalCommand: string;
   /** The agent's own sign-out, as Disconnect runs it. */
   signOutCommand: string;
+  /** The sign-in is one Botbench keeps in its own folder, apart from the agent's in a terminal (Antigravity): Disconnect removes it there. */
+  keptByBotbench: boolean;
   /** The page shows a code after sign-in, to be pasted back here. */
   takesCode: boolean;
   state: "idle" | "starting" | "waiting" | "checking" | "succeeded" | "failed" | "cancelled";
@@ -629,6 +631,10 @@ export interface RunDetail extends Omit<RunSummary, "taskCount" | "finishedCount
   issueHosts: string[];
   /** Whether the run told other workbenches it started on its issue, and what became of that, in one sentence; null when it did not try. */
   claim: { state: "claiming" | "claimed" | "not_claimed" | "withdrawn" | "released" | "kept"; issue: number; branch: string | null; words: string } | null;
+  /** The stricter modes the owner may move the run to now, loosest first; empty for a manual or finished run. */
+  modeChoices: RunMode[];
+  /** Each change of mode the owner made, oldest first, with the sentence the run screen shows for it. */
+  modeChanges: { at: string; from: RunMode; to: RunMode; words: string }[];
 }
 
 /** One task of a run as the run's screen shows it. */
@@ -904,6 +910,8 @@ export const savePlan = (id: number, planVersion: number, tasks: PlanTask[]): Pr
 export const approvePlan = (id: number, planVersion: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/approve`, { planVersion }, 30_000);
 export const requestPlanChanges = (id: number, planVersion: number, feedback: string): Promise<RunDetail> => request("POST", `/api/runs/${id}/plan/request-changes`, { planVersion, feedback }, 30_000);
 export const cancelRun = (id: number): Promise<RunDetail> => request("POST", `/api/runs/${id}/cancel`, {}, 30_000);
+/** Make the run's mode stricter; the server refuses a looser or the same mode, and a finished run. */
+export const changeRunMode = (id: number, mode: RunMode): Promise<RunDetail> => request("POST", `/api/runs/${id}/mode`, { mode }, 30_000);
 
 export type ApprovalStatus = "pending" | "allowed" | "declined" | "superseded";
 
@@ -1018,7 +1026,15 @@ export type LogRule =
   /** The owner saved, edited or forgot a note in memory. The entry names the note by its number and holds none of its text. */
   | "memory"
   /** A paired workbench sent a message id again with other content; Botbench kept the first and refused it. */
-  | "peer_message_conflict";
+  | "peer_message_conflict"
+  /** An invite to pair with another workbench was made, withdrawn, or expired. */
+  | "peer_invite"
+  /** A step of pairing with another workbench. */
+  | "peer_pairing"
+  /** A fixed reply or notice sent to a paired workbench without asking. */
+  | "peer_protocol"
+  /** What the listener for paired workbenches refused, at most one entry a minute, with how many. */
+  | "peer_refused";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

@@ -12,6 +12,7 @@ import {
   signEnvelope,
   verifyEnvelope,
   type Envelope,
+  type EnvelopeKind,
   type MessageKind,
   type RefusalReason,
   type SignedEnvelope,
@@ -104,7 +105,7 @@ function parentProblem(db: DatabaseSync, e: Envelope, direction: "in" | "out"): 
   return null;
 }
 
-const toSigned = (row: Record<string, unknown>): SignedEnvelope => ({
+export const toSigned = (row: Record<string, unknown>): SignedEnvelope => ({
   envelope: {
     pairingId: String(row.pairing_id),
     kind: String(row.kind) as Envelope["kind"],
@@ -150,6 +151,11 @@ export interface ReceiveOptions {
   /** `peers.roundTripsPerThread`, 1 to 10; 3 when absent. */
   roundTrips?: number;
   at?: Date;
+  /**
+   * The kinds the caller takes here (the peer listener's route, or a response to a request this side made). Any other
+   * kind, once its signature checked, gets a signed refusal (`kind_not_taken`) and nothing is stored. All when absent.
+   */
+  kinds?: readonly EnvelopeKind[];
 }
 
 /** Take one envelope from the peer: check it, store it, and say what goes back. */
@@ -165,6 +171,7 @@ export function receiveEnvelope(db: DatabaseSync, key: WorkbenchKey, wire: { env
     const refuse = (reason: RefusalReason, problem: string): Received => ({ outcome: "refused", reason, refusal: isResponseKind(e.kind) || !isId(e.messageId) ? null : response(key, p, "refusal", e.messageId, at, reason), problem });
     const state = pairingState(p);
     if (state === "ended") return refuse("pairing_ended", "This pairing has ended.");
+    if (o.kinds !== undefined && !o.kinds.includes(e.kind)) return refuse("kind_not_taken", `This workbench does not take a ${String(e.kind).slice(0, 40)} here.`);
     const early = (e.kind === "pair_confirmation" && p.role === "joiner" && state === "waiting_for_peer") || e.kind === "end_notice";
     if (state !== "in_force" && !early) return refuse("not_confirmed", "This pairing is not yet confirmed by both owners.");
     if (e.repository !== p.repository) return refuse("wrong_repository", "The message names another repository than the pairing's.");

@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { ANTIGRAVITY, ANTIGRAVITY_CAPABILITIES, agyReader } from "../../src/drivers/antigravity.ts";
+import { acpLines } from "../../src/drivers/acp-turn.ts";
+import { AGY_CHAT_TOOLS, AGY_WEB_TOOLS, ANTIGRAVITY, ANTIGRAVITY_CAPABILITIES } from "../../src/drivers/antigravity.ts";
 import { CODEX, CODEX_CAPABILITIES, readCodexLine } from "../../src/drivers/codex.ts";
 import type { Driver, DriverCapabilities, DriverProbe, DriverSession, StartAttemptOptions } from "../../src/drivers/contract.ts";
 import { DriverUnavailableError } from "../../src/drivers/contract.ts";
@@ -11,7 +12,7 @@ import type { LineResult } from "../../src/drivers/one-turn.ts";
 import { ReplaySession } from "./replay.ts";
 
 /*
- * Replays sessions captured from real `codex exec`, `grok -p` and `agy` runs through the driver contract, as the agents
+ * Replays sessions captured from real `codex exec`, `grok -p` and `agy acp` runs through the driver contract, as the agents
  * a chat asks (the owner's approved exception to "real CLIs only", for engine and screen tests).
  *
  * What is real: every line a session plays is one the real CLI printed, in its order, and it becomes events through
@@ -41,13 +42,15 @@ const load = (file: string): { sessions: Record<string, { lines: string[] }> } =
 const READERS: Record<Agent, { capabilities: DriverCapabilities; reader: () => (line: string) => LineResult; review: string; model: string }> = {
   [CODEX]: { capabilities: CODEX_CAPABILITIES, reader: () => readCodexLine, review: "codex-review.json", model: "gpt-6-luna" },
   [GROK]: { capabilities: GROK_CAPABILITIES, reader: grokReader, review: "grok-review.json", model: "grok-4.7-build-fast" },
-  [ANTIGRAVITY]: { capabilities: ANTIGRAVITY_CAPABILITIES, reader: agyReader, review: "antigravity-review.json", model: "gemini-3.8-flash-low" },
+  // Antigravity's chat, review and signed-out sessions are all in test/recordings/antigravity-acp.json.
+  [ANTIGRAVITY]: { capabilities: ANTIGRAVITY_CAPABILITIES, reader: acpLines("Antigravity", [...AGY_CHAT_TOOLS, ...AGY_WEB_TOOLS]), review: "antigravity-acp.json", model: "gemini-3.8-flash-low" },
 };
 
 /** The lines a session plays. */
 function linesOf(agent: Agent, session: Exclude<ChatSession, "hang">): string[] {
   if (session === "review" || session === "signed-out") return load(READERS[agent].review).sessions[session]!.lines;
   if (session === "compare" && agent !== CODEX) throw new Error("Only Codex's comparison was recorded.");
+  if (agent === ANTIGRAVITY) return load(READERS[agent].review).sessions[session]!.lines;
   return load("chat-turns.json").sessions[session === "compare" ? "compare" : agent]!.lines;
 }
 

@@ -2102,4 +2102,85 @@ CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 `,
   },
+  {
+    // A run's mode can be made stricter while it works, never looser (#156): fully autonomous to semi-autonomous or
+    // manual, semi-autonomous to manual, and only while the run has not finished (done, cancelled or failed; the run
+    // of a single task, which has no state, stays manual). The same mode and any looser one are refused here as well as
+    // by the route. Each change is in the run's history as the owner's (`actor`), naming the mode before and after;
+    // such a row must name the mode the run has once it is written, so it is written after the change, in its write.
+    name: "stricter modes",
+    sql: `
+DROP TRIGGER runs_mode_fixed;
+CREATE TRIGGER runs_mode_stricter_only BEFORE UPDATE OF mode ON runs
+WHEN OLD.status IS NULL OR OLD.status IN ('done', 'cancelled', 'failed') OR NOT ((OLD.mode = 'full' AND NEW.mode IN ('semi', 'manual')) OR (OLD.mode = 'semi' AND NEW.mode = 'manual'))
+BEGIN SELECT RAISE(ABORT, 'a run''s mode can only be made stricter, and only while the run has not finished'); END;
+ALTER TABLE run_events ADD COLUMN actor TEXT CHECK (actor IS NULL OR actor = 'owner');
+ALTER TABLE run_events ADD COLUMN mode_from TEXT CHECK (mode_from IS NULL OR mode_from IN ('manual', 'semi', 'full'));
+ALTER TABLE run_events ADD COLUMN mode_to TEXT CHECK (mode_to IS NULL OR mode_to IN ('manual', 'semi', 'full'));
+CREATE TRIGGER run_events_mode_change BEFORE INSERT ON run_events
+WHEN (NEW.mode_from IS NULL) <> (NEW.mode_to IS NULL) OR (NEW.mode_to IS NOT NULL AND (NEW.actor IS NOT 'owner' OR NEW.mode_to IS NOT (SELECT mode FROM runs WHERE id = NEW.run_id)))
+BEGIN SELECT RAISE(ABORT, 'a change of mode is recorded as the owner''s, naming the mode the run now has'); END;
+`,
+  },
+  {
+    // Peers P5, second unit (ADR 0004 decisions 1, 3, 4 and 9; threat model B16): the peer listener, pairing over it and
+    // ending a pairing. Each step is a row of the action log, which gains four rules, none with a task or run:
+    // - `peer_invite`: an invite made, withdrawn or expired (the owner's, or Botbench's sweep of an expired one).
+    // - `peer_pairing`: a pair request accepted or refused, a join, each owner's confirmation, a refused fingerprint and
+    //   an end, with how it ended.
+    // - `peer_protocol`: fixed-shape traffic Botbench sent without a Send (decision 9): the pair answer, a pair
+    //   confirmation, a settings notice, an acknowledgement, a refusal, an end notice.
+    // - `peer_refused`: traffic the peer listener refused, at most one row a minute per pairing or caller, with the count.
+    // No row holds an invite's secret or the invite text. A check cannot be altered in place, so the action log is made
+    // again with every row kept, ids and who asked included.
+    name: "peers listener and pairing log",
+    sql: `
+DROP TRIGGER action_log_no_update;
+DROP TRIGGER action_log_no_delete;
+DROP INDEX action_log_task;
+DROP INDEX action_log_grant;
+DROP INDEX action_log_approval;
+ALTER TABLE action_log RENAME TO action_log_before_pairing;
+CREATE TABLE action_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks (id),
+  attempt_id INTEGER REFERENCES attempts (id),
+  approval_id INTEGER REFERENCES approvals (id),
+  rule TEXT NOT NULL CHECK (rule IN ('asked_owner', 'owner_allowed', 'owner_declined', 'ended_unanswered', 'auto_worktree_edit', 'broker_failure_denied', 'stored_answer_applied', 'stored_answer_discarded', 'preapproved', 'standing', 'standing_granted', 'standing_revoked', 'owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_allowed', 'mode_refused', 'mode_accepted', 'delivery', 'chat_web_access', 'chat_confined', 'web_allowed', 'web_refused', 'bookkeeping', 'issue_claim', 'sandboxed', 'memory', 'owner_answered', 'question_unasked', 'peer_message_conflict', 'peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused')),
+  tool TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  detail TEXT,
+  grant_id INTEGER REFERENCES grants (id),
+  run_id INTEGER REFERENCES runs (id),
+  refusal TEXT CHECK (refusal IS NULL OR (rule = 'mode_refused' AND refusal IN ('floor', 'network', 'outside_copy', 'unconfined', 'read_only', 'other'))),
+  asked_by TEXT NOT NULL DEFAULT 'owner' CHECK (asked_by IN ('owner', 'agent', 'peer')),
+  asked_by_pairing_id TEXT REFERENCES peer_pairings (id),
+  asked_by_peer_name TEXT,
+  asked_by_peer_fingerprint TEXT,
+  CHECK (rule NOT IN ('preapproved', 'standing', 'standing_granted', 'standing_revoked') OR grant_id IS NOT NULL),
+  CHECK (rule NOT IN ('owner_accepted', 'owner_rejected', 'owner_discarded', 'mode_accepted', 'delivery') OR task_id IS NOT NULL),
+  CHECK (rule <> 'issue_claim' OR run_id IS NOT NULL),
+  CHECK (rule <> 'memory' OR (task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule <> 'owner_answered' OR approval_id IS NOT NULL),
+  CHECK (rule <> 'question_unasked' OR ((task_id IS NOT NULL OR run_id IS NOT NULL) AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_message_conflict' OR (asked_by = 'peer' AND task_id IS NULL AND run_id IS NULL)),
+  CHECK (rule NOT IN ('peer_invite', 'peer_pairing', 'peer_protocol', 'peer_refused') OR (task_id IS NULL AND run_id IS NULL AND attempt_id IS NULL AND approval_id IS NULL AND grant_id IS NULL AND detail IS NOT NULL)),
+  CHECK (rule <> 'peer_invite' OR asked_by = 'owner'),
+  CHECK ((asked_by = 'peer') = (asked_by_pairing_id IS NOT NULL AND asked_by_peer_name IS NOT NULL AND asked_by_peer_fingerprint IS NOT NULL)),
+  CHECK (asked_by = 'peer' OR (asked_by_pairing_id IS NULL AND asked_by_peer_name IS NULL AND asked_by_peer_fingerprint IS NULL))
+);
+INSERT INTO action_log (id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint)
+  SELECT id, ts, task_id, attempt_id, approval_id, rule, tool, command, cwd, detail, grant_id, run_id, refusal, asked_by, asked_by_pairing_id, asked_by_peer_name, asked_by_peer_fingerprint FROM action_log_before_pairing ORDER BY id;
+DROP TABLE action_log_before_pairing;
+CREATE INDEX action_log_task ON action_log (task_id, id);
+CREATE INDEX action_log_grant ON action_log (grant_id, rule);
+CREATE INDEX action_log_approval ON action_log (approval_id, rule);
+CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
+BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+`,
+  },
 ];
