@@ -6,12 +6,18 @@ import type { RunMode } from "../api/client.ts";
  * wrote the GitHub issue it was started from. Decided here, without a browser (test/run-words.test.ts).
  */
 
+/** Each mode by its name, as a choice of it and the line under the message box name it. */
+export const MODE_NAMES: Record<RunMode, string> = { manual: "Manual", semi: "Semi-autonomous", full: "Fully autonomous" };
+
 /** A run's mode as the run and task screens say it. */
 export const MODE_SENTENCE: Record<RunMode, string> = {
   manual: "Manual: you approve the plan and decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
   semi: "Semi-autonomous: building starts without your plan approval (a run started from a GitHub issue still waits for it), and you decide on each result. Commands kept inside the task's copy run without asking; the always-ask list still asks.",
   full: "Fully autonomous: Botbench builds without asking you, refuses what would need you, and accepts work whose every check passed and that its reviewer, if any, said looks right and named what it checked. The rest waits for you.",
 };
+
+/** What the run screen says over its choice of a stricter mode (components/mode-change.tsx). */
+export const STRICTER_HINT = "You can make the mode stricter while the run works, never looser. A request already waiting for you stays, and what an agent is doing now finishes; the new mode applies to everything after it. The safety rules are the same in every mode.";
 
 /** "a", "a and b", "a, b and c". */
 const listed = (items: readonly string[]): string => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);

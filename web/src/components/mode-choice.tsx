@@ -1,13 +1,14 @@
 import { Option } from "./option.tsx";
 import type { RunMode } from "../api/client.ts";
+import { MODE_NAMES } from "../app/run-words.ts";
 
-/** Each mode in the order it is offered, with its name and what it does in one line. */
+/** Each mode in the order it is offered, from the strictest, with its name and what it does in one line. */
 export const MODES: { mode: RunMode; name: string; description: string; warning?: string }[] = [
-  { mode: "manual", name: "Manual", description: "You approve the plan and decide on each result." },
-  { mode: "semi", name: "Semi-autonomous", description: "Builds without waiting for plan approval. You decide on each result." },
+  { mode: "manual", name: MODE_NAMES.manual, description: "You approve the plan and decide on each result." },
+  { mode: "semi", name: MODE_NAMES.semi, description: "Builds without waiting for plan approval. You decide on each result." },
   {
     mode: "full",
-    name: "Fully autonomous",
+    name: MODE_NAMES.full,
     description: "Plans, builds and accepts on its own when checks pass.",
     warning: "Accepts work without you",
   },

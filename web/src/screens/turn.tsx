@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type RunMode, type StoredEvent } from "../api/client.ts";
-import { arrive, blocked as blockedBy, builderName, chipModel, type Builder, commandsWords, issueWords, modeFor, oneTaskFor, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { arrive, blocked as blockedBy, builderName, chipModel, type Builder, commandsWords, issueWords, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, chipWords, sendWords, type AttemptInfo } from "../app/chat.ts";
 import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
 import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
@@ -174,15 +174,15 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const [kind, setKind] = useState<Kind>(arrived.kind);
   /** The mode the owner chose here, for the repository it was chosen for; otherwise the default from Settings. */
   const [chosenMode, setChosenMode] = useState<ChosenMode | null>(remembered.mode);
+  /** Whether the owner chose the mode on this visit; until then it is the one remembered, which may fall back (`startMode`). */
+  const [modeChosenHere, setModeChosenHere] = useState(false);
   const [defaultMode, setDefaultMode] = useState<RunMode | null>(null);
   const repoPath = repo.kind === "known" || repo.kind === "other" ? repo.path.trim() : "";
-  const mode = modeFor(chosenMode, repoPath, defaultMode);
   const [delivery, setDelivery] = useState<Delivery>(remembered.delivery);
   /** Who the owner chose to build; Claude Code unless Codex was chosen here. Not remembered: each start chooses again. */
   const [builderPick, setBuilderPick] = useState<Builder | null>(null);
   /** Keep the run to one task, as the owner chose it here; null follows the mode (`oneTaskFor`). */
   const [chosenOneTask, setChosenOneTask] = useState<boolean | null>(null);
-  const oneTask = oneTaskFor(chosenOneTask, mode);
   const [specPath, setSpecPath] = useState("");
   const [sameBuild, setSameBuild] = useState(true);
   const models = useModelChoice(onSignedOut);
@@ -201,6 +201,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
   const [preset, setPreset] = useState<{ repo: string; number: number } | null>(null);
   // Only a run can start from an issue, and only in a usable repository whose remote is on GitHub.
   const issue = useIssueChoice(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", runWanted, onSignedOut, preset);
+  // The mode the run starts in: the one remembered for this repository, falling back to a stricter one, and saying why,
+  // when it cannot start here; else the default from Settings. Shown under the box before Send.
+  const started = startMode(modeFor(chosenMode, repoPath, defaultMode), { remembered: !modeChosenHere && chosenMode !== null && chosenMode.repo === repoPath, hasChecks: repository.listed?.hasChecks ?? null, issue: kind === "run" && issue.attached !== null });
+  const mode = started.mode;
+  const oneTask = oneTaskFor(chosenOneTask, mode);
   // What other workbenches have in flight on the repository's remote: warnings only, never a reason Send waits.
   const peers = usePeersOf(inRepository(repo) && repository.status.state === "usable" ? repo.path.trim() : "", onSignedOut);
 
@@ -800,6 +805,11 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
               </p>
             )
           )}
+          {!showStop && run && modeLine(started) !== null && (
+            <p data-testid="composer-mode" className="ds-composer__reason">
+              {modeLine(started)}
+            </p>
+          )}
           {!showStop && stopReason === null && chatting && sendWords(askedCount).line !== null && (
             <p data-testid="asked-line" className="ds-composer__reason">
               {sendWords(askedCount).line}
@@ -900,7 +910,10 @@ export function TurnScreen({ start, proposal = null, onSignedOut }: { start: Kin
             specPath,
             setSpecPath,
             mode,
-            setMode: (chosen: RunMode) => setChosenMode({ repo: repoPath, mode: chosen }),
+            setMode: (chosen: RunMode) => {
+              setChosenMode({ repo: repoPath, mode: chosen });
+              setModeChosenHere(true);
+            },
             review,
             delivery,
             setDelivery,
