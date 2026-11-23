@@ -104,6 +104,17 @@ export function approvalMessage(approval: Pick<Approval, "taskId" | "runId"> & {
 export function readyMessage(task: { id: number }): PushMessage {
   return { title: "A task is ready for review", path: `/#/tasks/${task.id}` };
 }
+/** The one reminder of an approval still waiting for the owner after the reminder wait: the same screen, its own fixed sentence. */
+export function approvalReminderMessage(approval: Pick<Approval, "taskId" | "runId"> & { chat?: boolean; question?: unknown }): PushMessage {
+  const first = approvalMessage(approval);
+  return { title: approval.question !== undefined && approval.question !== null ? "A task still has a question" : "An approval is still waiting", path: first.path };
+}
+/** The one reminder of a task still Ready for review after the reminder wait. */
+export function readyReminderMessage(task: { id: number }): PushMessage {
+  return { title: "A task is still ready for review", path: `/#/tasks/${task.id}` };
+}
+/** How long a request or a task waits for the owner before its one reminder, when the settings file does not say: an hour. */
+export const REMINDER_AFTER_MS = 3600 * 1000;
 export function failedMessage(task: { id: number }): PushMessage {
   return { title: "A task failed", path: `/#/tasks/${task.id}` };
 }
@@ -164,9 +175,12 @@ export interface Push {
   subscribed(endpoint: string): boolean;
   /** Send the test notification to one device. Throws PushError: 404 not subscribed, 410 expired (and removed), 502 not taken. */
   sendTest(endpoint: string): Promise<void>;
-  /** The broker's listener: a newly pending approval notifies every device once. */
+  /** The broker's listener: a newly pending approval notifies every device once, and once more if it still waits after the reminder wait. */
   approvalChanged(approval: Approval): void;
-  /** The engine's listener: a task that has reached Ready for review, Failed or Stopped notifies every device once. */
+  /**
+   * The engine's listener: a task that has reached Ready for review, Failed or Stopped notifies every device once; one
+   * still Ready for review after the reminder wait, once more.
+   */
   taskChanged(task: { id: number; status: string }): void;
   /** The engine's listener: a planned run that is done with no task accepted or rejected notifies every device once. */
   runChanged(run: { id: number; status: string }): void;
@@ -179,18 +193,64 @@ export interface Push {
   updated(version: string): void;
   /** Resolves when every message in flight has been sent or has failed. */
   idle(): Promise<void>;
+  /** Stop the reminder timers. What is due is in the store, and the next start arms it again. */
+  close(): void;
 }
 
-export function createPush(options: { db: DatabaseSync; home: string; allowHttpEndpoints?: boolean }): Push {
+export function createPush(options: { db: DatabaseSync; home: string; allowHttpEndpoints?: boolean; /** How long a request or a task waits for the owner before its one reminder; `REMINDER_AFTER_MS` when left out. */ reminderAfterMs?: number }): Push {
   const { db } = options;
   const keys = loadOrCreatePushKeys(options.home);
+  const reminderAfterMs = options.reminderAfterMs ?? REMINDER_AFTER_MS;
   const inFlight = new Set<Promise<unknown>>();
-  // Approvals in memory: after a restart a pending one is parked, and a parked one asks nothing new. A task's or run's
-  // notification is recorded in the store before it is sent, so a restart, or the same state seen again, sends none.
-  const approvalsSent = new Set<number>();
-  /** Record that `message` is sent for this task or run; false when it already was. Throws when the store cannot record it. */
-  const firstTime = (subject: "task" | "run", id: number, message: PushMessage): boolean =>
+  // Each notification of an approval, a task or a run is recorded in the store before it is sent, by what it is about
+  // and its fixed text, so a restart, or the same state seen again, sends none: each one and each reminder is sent once.
+  /** Record that `message` is sent for this approval, task or run; false when it already was. Throws when the store cannot record it. */
+  const firstTime = (subject: "task" | "run" | "approval", id: number, message: PushMessage): boolean =>
     Number(db.prepare("INSERT INTO push_sent (subject, subject_id, title, sent_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING").run(subject, id, message.title, now()).changes) > 0;
+  const wasSent = (subject: "task" | "approval", id: number, message: PushMessage): boolean => db.prepare("SELECT 1 FROM push_sent WHERE subject = ? AND subject_id = ? AND title = ?").get(subject, id, message.title) !== undefined;
+
+  /** The reminder timer of each approval and task still waiting, by `subject:id`. A timer only reads the store again when it fires. */
+  const reminders = new Map<string, NodeJS.Timeout>();
+  let closed = false;
+
+  /**
+   * The one reminder of an approval or a task still waiting for the owner, read again from the store when it is due:
+   * an approval still pending with no answer stored, a task still Ready for review. Recorded before it is sent.
+   */
+  const remind = (subject: "task" | "approval", id: number): void => {
+    try {
+      let message: PushMessage | null = null;
+      if (subject === "approval") {
+        // One past its run's approval time limit is Botbench's to decline, whether or not that has run yet: it is waiting for nobody.
+        const row = db.prepare("SELECT task_id, run_id, chat, question FROM approvals WHERE id = ? AND status = 'pending' AND stored_decision IS NULL AND (expires_at IS NULL OR expires_at > ?)").get(id, now());
+        if (row !== undefined) message = approvalReminderMessage({ taskId: typeof row.task_id === "number" ? row.task_id : null, runId: typeof row.run_id === "number" ? row.run_id : null, chat: row.chat === 1, question: row.question });
+      } else if (db.prepare("SELECT 1 FROM tasks WHERE id = ? AND status = 'awaiting_decision'").get(id) !== undefined) {
+        message = readyReminderMessage({ id });
+      }
+      if (message !== null && firstTime(subject, id, message)) sendAll(message);
+    } catch (err) {
+      console.error(`A reminder for ${subject === "approval" ? "an approval" : "a task"} could not be sent: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  /** Set the reminder of this approval or task for the reminder wait after `since`, unless it was sent or is already set. */
+  const schedule = (subject: "task" | "approval", id: number, since: string, reminder: PushMessage): void => {
+    const key = `${subject}:${id}`;
+    if (closed || reminders.has(key) || wasSent(subject, id, reminder)) return;
+    const timer = setTimeout(() => {
+      reminders.delete(key);
+      remind(subject, id);
+    }, Math.max(0, Date.parse(since) + reminderAfterMs - Date.now()));
+    timer.unref();
+    reminders.set(key, timer);
+  };
+
+  /** A task waiting for the owner's decision is reminded of the wait after its first notice was recorded; one with none on record, after it last changed. */
+  const scheduleReady = (id: number, updatedAt?: string): void => {
+    const first = db.prepare("SELECT sent_at FROM push_sent WHERE subject = 'task' AND subject_id = ? AND title = ?").get(id, readyMessage({ id }).title)?.sent_at;
+    const since = typeof first === "string" ? first : (updatedAt ?? now());
+    schedule("task", id, since, readyReminderMessage({ id }));
+  };
 
   const rows = (): Subscription[] =>
     db
@@ -282,10 +342,12 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
 
   const approvalChanged = (approval: Approval): void => {
     try {
-      // Only an approval newly asked in this run: an answer to a parked one stays pending but asks nothing new.
-      if (approval.status !== "pending" || approval.parkedAt !== null || approval.storedDecision !== null || approvalsSent.has(approval.id)) return;
-      approvalsSent.add(approval.id);
-      sendAll(approvalMessage(approval));
+      if (approval.status !== "pending" || approval.storedDecision !== null) return;
+      // Still waiting for the owner, here or across a restart: reminded of once after the wait from when it was asked.
+      schedule("approval", approval.id, approval.createdAt, approvalReminderMessage(approval));
+      // Announced only when newly asked in this run, and once: an answer to a parked one stays pending but asks nothing new.
+      const message = approvalMessage(approval);
+      if (approval.parkedAt === null && firstTime("approval", approval.id, message)) sendAll(message);
     } catch (err) {
       console.error(`A notification for an approval could not be started: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -295,6 +357,7 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
     try {
       const message = TASK_MESSAGES[task.status]?.(task);
       if (message !== undefined && firstTime("task", task.id, message)) sendAll(message);
+      if (task.status === "awaiting_decision") scheduleReady(task.id);
     } catch (err) {
       console.error(`A notification for a task could not be started: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -331,5 +394,23 @@ export function createPush(options: { db: DatabaseSync; home: string; allowHttpE
     while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
   };
 
-  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, issueProposed, updated, idle };
+  const close = (): void => {
+    closed = true;
+    for (const timer of reminders.values()) clearTimeout(timer);
+    reminders.clear();
+  };
+
+  // What waited for the owner when the last Botbench stopped keeps its reminder, at the time it was due: at once when
+  // that passed while Botbench was stopped, never earlier than the wait after the first notice.
+  try {
+    for (const row of db.prepare("SELECT id, task_id, run_id, chat, question, created_at FROM approvals WHERE status = 'pending' AND stored_decision IS NULL ORDER BY id").all()) {
+      const reminder = approvalReminderMessage({ taskId: typeof row.task_id === "number" ? row.task_id : null, runId: typeof row.run_id === "number" ? row.run_id : null, chat: row.chat === 1, question: row.question });
+      schedule("approval", Number(row.id), String(row.created_at), reminder);
+    }
+    for (const row of db.prepare("SELECT id, updated_at FROM tasks WHERE status = 'awaiting_decision' ORDER BY id").all()) scheduleReady(Number(row.id), String(row.updated_at));
+  } catch (err) {
+    console.error(`The reminders of what waits for you could not be set again: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return { publicKey: keys.publicKey.toString("base64url"), subscribe, unsubscribe: remove, subscribed, sendTest, approvalChanged, taskChanged, runChanged, issueProposed, updated, idle, close };
 }

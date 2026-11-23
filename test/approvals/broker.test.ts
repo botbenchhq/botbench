@@ -113,7 +113,7 @@ test("a request waits as a pending approval until the owner answers; the answer 
   assert.ok(pending);
   assert.deepEqual(
     { ...pending, id: 0, createdAt: "" },
-    { id: 0, taskId: r.taskId, chat: false, runId: null, taskTitle: "run the marker script", attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: "sub", reason: "Run the marker script", toolCallId: "toolu_01", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false, asksBecause: "Botbench could not tell what this would run, or which of its agents asked.", target: null, question: null, answer: null, askedBy: { by: "owner", pairingId: null, peerName: null, peerFingerprint: null, words: null } },
+    { id: 0, taskId: r.taskId, chat: false, runId: null, taskTitle: "run the marker script", attemptId: r.attemptId, role: "implementer", tool: "Bash", command: "sh make-marker.sh", cwd: "sub", reason: "Run the marker script", toolCallId: "toolu_01", status: "pending", note: null, createdAt: "", resolvedAt: null, parkedAt: null, storedDecision: null, outsideText: false, asksBecause: "Botbench could not tell what this would run, or which of its agents asked.", target: null, question: null, answer: null, expiresAt: null, expiredAt: null, askedBy: { by: "owner", pairingId: null, peerName: null, peerFingerprint: null, words: null } },
   );
   assert.deepEqual(listApprovals(r.db, "pending"), [pending]);
   assert.deepEqual(rules(r.db), ["asked_owner"]);

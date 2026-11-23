@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RUN_MODES } from "../src/engine/modes.ts";
 import { chatOffer, readKnownAgents } from "../web/src/app/chat.ts";
-import { arrive, blocked, builderName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { APPROVAL_LIMITS, arrive, blocked, builderName, LIMIT_WORDS, limitName, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -113,9 +113,30 @@ test("the sheet shows only the rows that apply: a chat has a repository, one to 
   assert.deepEqual(rowsFor({ repo: { kind: "none" }, kind: "run", ...known }), ["repository", "read", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "needed" }, kind: "task", ...known }), ["repository", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known }), ["repository", "kind", "spec", "mode", "limit", "tasks", "review", "delivery", "commands", "models"]);
   // No reviewer is set up at all: no Review row. The commands are not known until the repository is usable.
-  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "tasks", "delivery", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "other", path: REPO }, kind: "run", reviewOffered: false, commandsKnown: false }), ["repository", "kind", "spec", "mode", "limit", "tasks", "delivery", "models"]);
+});
+
+test("an approval time limit is offered for a run only, is off unless chosen, is sent only when chosen, and is named in plain words", () => {
+  assert.equal(APPROVAL_LIMITS[0], null, "Off comes first, and is the default");
+  assert.deepEqual(APPROVAL_LIMITS.map(limitName), ["Off", "15 minutes", "1 hour", "4 hours", "1 day"]);
+  assert.deepEqual([1, 90, 120, 2880].map(limitName), ["1 minute", "90 minutes", "2 hours", "2 days"]);
+  assert.ok(!rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", reviewOffered: true, commandsKnown: true }).includes("limit"), "a task on its own has none");
+  // Off is not sent: the run then has none, as the server decides when a request leaves it out.
+  for (const off of [undefined, null]) {
+    const run = sendFor(inRepo({ kind: "run", mode: "semi" }), { ...extras, approvalLimitMinutes: off });
+    assert.equal(run.do === "run" && "approvalLimitMinutes" in run, false);
+  }
+  const limited = sendFor(inRepo({ kind: "run", mode: "semi" }), { ...extras, approvalLimitMinutes: 60 });
+  assert.equal(limited.do === "run" && limited.approvalLimitMinutes, 60);
+  // A task is never sent one.
+  assert.equal("approvalLimitMinutes" in sendFor(inRepo(), { ...extras, approvalLimitMinutes: 60 }), false);
+  assert.match(LIMIT_WORDS.hint, /Botbench denies it/);
+  assert.match(LIMIT_WORDS.hint, /Nothing is ever allowed this way/);
+  assert.equal(LIMIT_WORDS.on(60), "A request nobody answers within 1 hour is denied.");
+  // An option chosen here goes back to the list, as the other plain choices do.
+  assert.equal(returnsToList({ view: "limit", value: "60", run: true }), true);
 });
 
 test("Keep it to one task is offered for a run in every mode, is on by default in Fully autonomous only, and is sent as the owner chose it", () => {
@@ -181,9 +202,9 @@ const issue = { fetchId: 4, allowHosts: false, number: 123, title: "Crash when t
 
 test("From an issue is a row of a run in a repository with a GitHub remote only, after What to do", () => {
   const known = { reviewOffered: true, commandsKnown: true };
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: true }), ["repository", "kind", "issue", "spec", "mode", "limit", "tasks", "review", "delivery", "commands", "models"]);
   assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "task", ...known, issueOffered: true }), ["repository", "kind", "mode", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "tasks", "review", "delivery", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", ...known, issueOffered: false }), ["repository", "kind", "spec", "mode", "limit", "tasks", "review", "delivery", "commands", "models"]);
 });
 
 test("the row's value is the issue's number and the start of its title, or None", () => {

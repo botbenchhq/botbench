@@ -92,6 +92,11 @@ export interface Run {
    * several is sent back once, and one that still holds several is merged by Botbench (`mergePlan`).
    */
   oneTask: boolean;
+  /**
+   * How many minutes an approval of the run waits for the owner before Botbench denies it (approvals/broker.ts), chosen
+   * when it started and never changed; null for no limit, as for every run started before there was one.
+   */
+  approvalLimitMinutes: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -149,6 +154,7 @@ function toRun(row: Record<string, unknown>): Run {
     outsideText: row.outside_text === 1,
     outsideHosts: row.outside_hosts === 1,
     oneTask: row.one_task === 1,
+    approvalLimitMinutes: int(row.approval_limit_minutes),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -197,7 +203,7 @@ const insertEvent = (db: DatabaseSync, id: number, at: string, status: RunStatus
  * and the run's first event are written together: none exists without the others. The grants are the implementer's:
  * the planner has none. Throws for a pre-approved command that cannot be a grant, and then nothing is written.
  */
-export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[] }): Run {
+export function createRun(db: DatabaseSync, o: { repo: string; builder?: string | null; prompt?: string; spec?: { path: string; text: string }; issue?: { fetchId: number; allowHosts: boolean }; requestedModel?: string | null; buildModel?: string | null; baseCommit: string; preapproved?: readonly string[]; reviewer?: RoleChoice | null; mode?: RunMode; delivery?: Delivery; maxRefineRounds?: number; oneTask?: boolean; takeOver?: readonly ClaimName[]; approvalLimitMinutes?: number | null }): Run {
   // From a prompt or a spec file, one of the two; or from an issue, with or without a prompt of the owner's own.
   if (o.issue !== undefined ? o.spec !== undefined : (o.prompt === undefined) === (o.spec === undefined)) throw new Error("A run is started from a prompt or from a spec file, one of the two, or from an issue with or without a prompt.");
   return transaction(db, () => {
@@ -206,8 +212,8 @@ export function createRun(db: DatabaseSync, o: { repo: string; builder?: string 
     const repo = realRepo(o.repo);
     const id = Number(
       db
-        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, at, at).lastInsertRowid,
+        .prepare("INSERT INTO runs (kind, repo_path, prompt, spec_path, spec_text, status, requested_model, build_model, build_model_set, build_agent, base_commit, reviewer_agent, reviewer_model, mode, delivery, max_refine_rounds, issue_fetch_id, outside_text, outside_hosts, one_task, approval_limit_minutes, created_at, updated_at) VALUES ('planned', ?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(repo, o.prompt ?? (o.issue !== undefined && o.spec === undefined ? "" : null), o.spec?.path ?? null, o.spec?.text ?? null, o.requestedModel ?? null, o.buildModel ?? null, o.buildModel === undefined ? 0 : 1, o.builder ?? null, o.baseCommit, o.reviewer?.agent ?? null, o.reviewer?.model ?? null, o.mode ?? "manual", o.delivery ?? "branch", o.maxRefineRounds ?? DEFAULT_MAX_REFINE_ROUNDS, o.issue?.fetchId ?? null, o.issue === undefined ? 0 : 1, o.issue?.allowHosts === true ? 1 : 0, o.oneTask === true ? 1 : 0, o.approvalLimitMinutes ?? null, at, at).lastInsertRowid,
     );
     insertPreapproved(db, { role: IMPLEMENTER, repo, runId: id, taskId: null, commands: o.preapproved ?? [] });
     // Stored with the run, so its claim (engine/claims.ts), which starts once the run is announced, already sees them.
@@ -501,6 +507,8 @@ export interface StartRun {
   oneTask?: unknown;
   /** Other workbenches' old claims on the run's issue the owner chose to take over, by branch (engine/claim-branch.ts); left out for none. */
   takeOver?: unknown;
+  /** How many minutes an approval waits for the owner before Botbench denies it: a whole number from 1 to 1440, or left out or null for no limit. */
+  approvalLimitMinutes?: unknown;
 }
 
 export interface Runs {
@@ -872,6 +880,7 @@ export function createRuns(options: RunsOptions): Runs {
     const buildModel = input.buildModel !== undefined ? (input.buildModel as string | null) : builderName !== null ? null : input.model !== undefined ? input.model : (options.implementerModel ?? null);
     const delivery = deliveryChoice(input.delivery);
     const oneTask = oneTaskChoice(input.oneTask, mode);
+    const approvalLimitMinutes = approvalLimitChoice(input.approvalLimitMinutes);
     // Everything a client names is checked before anything is stored: the repository, then the spec file.
     let repo: string;
     try {
@@ -901,7 +910,7 @@ export function createRuns(options: RunsOptions): Runs {
     if (mode === "full") fullyAutonomousUsable(repo, builder);
     if (reviewer !== null) await reviewerUsable(reviewer, buildModel, builder.name);
     stopping();
-    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
+    const run = createRun(db, { repo, builder: builderName, ...(spec ? { spec } : hasPrompt ? { prompt: input.prompt as string } : {}), ...(issueChoice === null ? {} : { issue: issueChoice }), requestedModel: input.model === undefined ? (options.model ?? null) : input.model, buildModel, baseCommit, preapproved, reviewer, mode, delivery, oneTask, takeOver, approvalLimitMinutes, ...(options.maxRefineRounds === undefined ? {} : { maxRefineRounds: options.maxRefineRounds }) });
     announce(run);
     enqueue(run.id);
     return run;
@@ -990,6 +999,17 @@ export function issueGiven(given: unknown): { fetchId: number; allowHosts: boole
   const { fetchId, allowHosts, ...rest } = given as Record<string, unknown>;
   if (Object.keys(rest).length > 0 || typeof fetchId !== "number" || !Number.isSafeInteger(fetchId) || fetchId < 1 || typeof allowHosts !== "boolean") throw new RunError(400, shape);
   return { fetchId, allowHosts };
+}
+
+/** The longest approval time limit a run may have, in minutes: a day. */
+export const MAX_APPROVAL_LIMIT_MINUTES = 1440;
+
+/** The approval time limit a request names, in minutes; null when it names none, which is the default. Anything else is refused with the reason, before anything exists. */
+export function approvalLimitChoice(given: unknown): number | null {
+  if (given === undefined || given === null) return null;
+  if (typeof given === "number" && Number.isSafeInteger(given) && given >= 1 && given <= MAX_APPROVAL_LIMIT_MINUTES) return given;
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  throw new RunError(400, `"approvalLimitMinutes" must be a whole number of minutes from 1 to ${MAX_APPROVAL_LIMIT_MINUTES}, or null for no limit.`);
 }
 
 /** Whether a request keeps its run to one task: as it says, or, left out, on only in a fully autonomous run. Anything else is refused with the reason, before anything exists. */

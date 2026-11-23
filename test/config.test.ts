@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryClaims, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, silenceLimitMs, usageLimitWaitMs } from "../src/config.ts";
+import { DEFAULT_CONFIG_FILE, loadConfig, maxRefineRounds, offerStandingAfter, repositoryClaims, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, botbenchHome, reminderAfterMs, silenceLimitMs, usageLimitWaitMs } from "../src/config.ts";
 import { removedAtEnd } from "./support/repo.ts";
 
 /** Write real config files into a temporary directory and return their paths. */
@@ -325,6 +325,20 @@ test("the silence limit is 600 seconds as shipped and when unset, 0 turns it off
   assert.equal(local.autonomy?.maxRefineRounds, 1);
   for (const bad of [-1, -600, 1.5, 0.1, "600", null, true, [600], { seconds: 600 }, 86_401, Number.NaN, 1e21]) {
     assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { silenceLimitSeconds: bad } })), /"autonomy\.silenceLimitSeconds" must be a whole number of seconds from 0 to 86400: how long a builder or planner may send nothing while it works before Botbench stops it\. 0 turns the limit off\./, String(bad));
+  }
+});
+
+test("the reminder wait is an hour as shipped and when unset, can be set by the owner, and anything but a whole number of seconds from 1 to 86,400 is refused at start", (t) => {
+  assert.equal(reminderAfterMs(loadConfig({ defaults: DEFAULT_CONFIG_FILE })), 3_600_000);
+  assert.equal(reminderAfterMs(loadConfig(configFiles(t, BASE))), 3_600_000);
+  assert.equal(reminderAfterMs(loadConfig(configFiles(t, { ...BASE, autonomy: {} }))), 3_600_000);
+  for (const good of [1, 60, 900, 86_400]) assert.equal(reminderAfterMs(loadConfig(configFiles(t, { ...BASE, autonomy: { reminderAfterSeconds: good } }))), good * 1000, String(good));
+  // The owner's local file sets it and keeps the rest of the shipped autonomy settings.
+  const local = loadConfig(configFiles(t, { ...BASE, autonomy: { maxRefineRounds: 1 } }, { autonomy: { reminderAfterSeconds: 600 } }));
+  assert.equal(reminderAfterMs(local), 600_000);
+  assert.equal(local.autonomy?.maxRefineRounds, 1);
+  for (const bad of [0, -1, 1.5, "3600", null, true, [3600], 86_401, Number.NaN]) {
+    assert.throws(() => loadConfig(configFiles(t, { ...BASE, autonomy: { reminderAfterSeconds: bad } })), /"autonomy\.reminderAfterSeconds" must be a whole number of seconds from 1 to 86400: how long a request or a task ready for review waits for you before Botbench sends you one reminder\./, String(bad));
   }
 });
 

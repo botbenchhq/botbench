@@ -137,6 +137,7 @@ test("starting a run takes exactly one of a prompt and a spec file, a usable rep
     [{ repo: api.repo, prompt: "p", buildModel: 5 }, 400, /build model/],
     [{ repo: api.repo, prompt: "p", preapproved: "npm test" }, 400, /preapproved/],
     [{ repo: api.repo, prompt: "p", preapproved: ["ls | sh"] }, 400, /cannot be allowed in advance/],
+    ...[0, -5, 1441, 1.5, "60", true, [60]].map((limit): [unknown, number, RegExp] => [{ repo: api.repo, prompt: "p", approvalLimitMinutes: limit }, 400, /"approvalLimitMinutes" must be a whole number of minutes from 1 to 1440, or null for no limit\./]),
   ];
   for (const [body, status, words] of bad) {
     const res = await call(api, "POST", "/api/runs", body);
@@ -146,6 +147,14 @@ test("starting a run takes exactly one of a prompt and a spec file, a usable rep
   assert.equal(count(api, "runs"), 0);
   assert.equal(count(api, "attempts"), 0, "no planner was started");
   assert.equal(worktreeCount(api.repo), 1);
+});
+
+test("a run's screen says its approval time limit when it was started with one, and none when it was not", async (t) => {
+  const api = await start(t);
+  const limited = createRun(api.server.db, { repo: api.repo, prompt: "p", baseCommit: api.commit, approvalLimitMinutes: 15 });
+  const free = planned(api);
+  assert.equal((await call(api, "GET", `/api/runs/${limited.id}`)).body.approvalLimitMinutes, 15);
+  assert.equal((await call(api, "GET", `/api/runs/${free.id}`)).body.approvalLimitMinutes, null);
 });
 
 test("a spec file that is missing, relative, too large, not a regular file, not text or not a .md file is refused in words before any run exists", async (t) => {
@@ -192,7 +201,7 @@ test("a run is read with its plan and listed newest first; an unknown run is 404
     { ...one.body, createdAt: null, updatedAt: null },
     {
       id: first.id, repo: fs.realpathSync(api.repo), prompt: "Add two files and describe them", specPath: null, specText: null, title: "Add two files and describe them",
-      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, issue: null, outsideText: false, outsideHosts: false, oneTask: false, issueHosts: [], claim: null,
+      status: "awaiting_plan_approval", reason: null, requestedModel: null, plannerModel: null, baseCommit: api.commit, attemptId: null, planVersion: first.planVersion, reviewer: null, mode: "manual", delivery: "branch", maxRefineRounds: 2, approvalLimitMinutes: null, issue: null, outsideText: false, outsideHosts: false, oneTask: false, issueHosts: [], claim: null,
       // A manual run can be made no stricter, and its mode was never changed.
       modeChoices: [], modeChanges: [],
       plan: THREE, tasks: [], preapproved: ["npm test"], waitingOnApproval: false, createdAt: null, updatedAt: null,

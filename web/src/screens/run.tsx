@@ -8,6 +8,7 @@ import { PullRequestLink, pullRequestWords } from "../components/pull-request.ts
 import { CHECKS_RISK, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
 import { modeSentence } from "../app/run-words.ts";
+import { LIMIT_WORDS, limitName } from "../app/composer.ts";
 import { cancelStatement } from "../app/row-menu.ts";
 import { Icon } from "../components/icon.tsx";
 import { modelState, sessionModel, useModelNames } from "../components/model-picker.tsx";
@@ -377,6 +378,12 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                   </dd>
                 </div>
               )}
+              <div className="ds-key-value__item">
+                <dt className="ds-key-value__label">Approval time limit</dt>
+                <dd data-testid="run-approval-limit" className="ds-key-value__value">
+                  {run.approvalLimitMinutes === null ? `Off. ${LIMIT_WORDS.off}` : `${limitName(run.approvalLimitMinutes)}. ${LIMIT_WORDS.on(run.approvalLimitMinutes)}`}
+                </dd>
+              </div>
               <div className="ds-key-value__item">
                 <dt className="ds-key-value__label">Planning model</dt>
                 <dd data-testid="run-model" className="ds-key-value__value">{`${run.attemptId === null ? "not started yet" : modelState(session, nameOf)}. You asked for: ${run.requestedModel === null ? "Claude Code's default" : nameOf(run.requestedModel)}.`}</dd>

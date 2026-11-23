@@ -1,0 +1,23 @@
+✔ the broker's socket is inside the Botbench home, for the owner only, and is gone after close (60.475667ms)
+✔ a request waits as a pending approval until the owner answers; the answer and its log entry are written together (128.353084ms)
+✔ declining carries the owner's note to the waiting request and into the log (54.420792ms)
+✔ answering twice is refused, an unknown approval is not found, and neither writes anything (52.318667ms)
+✔ the action log cannot be changed or emptied, an answered approval cannot be answered over, and the store offers no function that would (58.833834ms)
+✔ the gate lets edits inside the worktree pass, lets reads there pass, and asks for everything else (60.681833ms)
+✔ through the socket: a shell command is sent on to the owner, an edit in the worktree passes and is logged, with the directory it was made from (322.087667ms)
+✔ if the broker's socket is unavailable, the proxy answers deny (615.726875ms)
+✔ a wrong per-attempt secret is refused, and so is a secret before its attempt exists or after it is over (50.471458ms)
+The mode of the run of a request could not be read: its task or run is not in the store
+✔ a malformed message is denied (53.120583ms)
+✔ a request the broker cannot record is declined, never allowed (49.489833ms)
+✔ approvals left pending when a broker starts on the store stay pending and are marked as asked before that start; nothing ends them (47.709958ms)
+✔ a socket that takes a connection for a moment and is then gone (a Botbench killed just after it started a process) is no running Botbench: the next start listens (303.479167ms)
+✔ a second Botbench on the same data directory is refused, and takes nothing from the first: its socket and its pending approvals stay (346.660958ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2357.459834

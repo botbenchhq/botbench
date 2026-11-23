@@ -95,7 +95,25 @@ export type Send =
   | { do: "blocked"; reason: string }
   | { do: "chat"; prompt: string; model: string | null | undefined; repository?: string }
   | { do: "task"; repo: string; prompt: string; model: string | null | undefined; preapproved: string[]; agent?: Builder }
-  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder } & ({ prompt: string } | { specPath: string } | {}));
+  | ({ do: "run"; repo: string; model: string | null | undefined; buildModel?: string | null; preapproved: string[]; reviewer: ReviewerChoice | null; mode: RunMode; delivery: Delivery; oneTask: boolean; issue?: IssueChoice; takeOver?: string[]; agent?: Builder; approvalLimitMinutes?: number } & ({ prompt: string } | { specPath: string } | {}));
+
+/** The approval time limits a run can be started with, in minutes; null for none, which is the default. */
+export const APPROVAL_LIMITS: readonly (number | null)[] = [null, 15, 60, 240, 1440];
+
+/** An approval time limit in words: "Off", "15 minutes", "1 hour", "4 hours", "1 day". */
+export function limitName(minutes: number | null): string {
+  if (minutes === null) return "Off";
+  if (minutes % 1440 === 0) return minutes === 1440 ? "1 day" : `${minutes / 1440} days`;
+  if (minutes % 60 === 0) return minutes === 60 ? "1 hour" : `${minutes / 60} hours`;
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+/** What the Approval time limit view and the run's screen say of it (docs/product/voice.md). */
+export const LIMIT_WORDS = {
+  hint: "If nobody answers a request of this run in this time, Botbench denies it and tells the agent nobody answered. Nothing is ever allowed this way. It cannot be changed once the run starts.",
+  off: "Requests wait for your answer, however long that takes.",
+  on: (minutes: number): string => `A request nobody answers within ${limitName(minutes).toLowerCase()} is denied.`,
+} as const;
 
 /** An agent other than Claude Code that builds a task or a run's tasks when the owner chooses it. */
 export type Builder = "codex";
@@ -151,7 +169,7 @@ export function blocked(f: Facts): Blocked | null {
  */
 export const oneTaskFor = (chosen: boolean | null, mode: RunMode | null): boolean => chosen ?? mode === "full";
 
-export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null }): Send {
+export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: ReviewerChoice | null; delivery: Delivery; oneTask: boolean; takeOver?: string[]; builder?: Builder | null; approvalLimitMinutes?: number | null }): Send {
   const stop = blocked(f);
   if (stop !== null) return { do: "blocked", reason: stop.reason };
   const prompt = f.text.trim() === "" ? null : f.text;
@@ -174,11 +192,13 @@ export function sendFor(f: Facts, extras: { preapproved: string[]; reviewer: Rev
   const given = prompt !== null ? { prompt } : f.issue ? {} : { specPath: spec };
   // Old claims of other workbenches the owner confirmed taking over (web/src/app/peers.ts oldClaims); the server checks each again.
   const takeOver = extras.takeOver !== undefined && extras.takeOver.length > 0 ? { takeOver: extras.takeOver } : {};
-  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, ...takeOver };
+  // Sent only when the owner chose one: left out, the run has none.
+  const limit = extras.approvalLimitMinutes === undefined || extras.approvalLimitMinutes === null ? {} : { approvalLimitMinutes: extras.approvalLimitMinutes };
+  return { do: "run", repo, ...given, ...issue, model, ...build, preapproved: extras.preapproved, reviewer: extras.reviewer, mode: f.mode!, delivery: extras.delivery, oneTask: extras.oneTask, ...takeOver, ...limit };
 }
 
 /** A row of the Add context sheet, in the order they are shown. */
-export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "tasks" | "review" | "delivery" | "commands" | "models";
+export type Row = "repository" | "read" | "kind" | "builder" | "issue" | "spec" | "mode" | "limit" | "tasks" | "review" | "delivery" | "commands" | "models";
 
 /**
  * The rows that apply: a chat has a repository to work in, one to read and a model; a start in a repository adds what to
@@ -198,6 +218,8 @@ export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean;
     ...(run && f.issueOffered === true ? (["issue"] as const) : []),
     ...(run ? (["spec"] as const) : []),
     "mode",
+    // Off unless chosen; for a run only, whose requests may wait while nobody is looking.
+    ...(run ? (["limit"] as const) : []),
     // Offered in every mode; its default follows the mode (`oneTaskFor`).
     ...(run ? (["tasks"] as const) : []),
     ...(run && f.reviewOffered ? (["review"] as const) : []),

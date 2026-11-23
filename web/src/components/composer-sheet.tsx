@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { BUILDER_WORDS, ISSUE_NOT_FULL, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { APPROVAL_LIMITS, BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, limitName, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -22,6 +22,7 @@ const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   issue: { label: "From an issue", title: "From an issue", icon: "external-link" },
   spec: { label: "Spec file", title: "Spec file", icon: "file" },
   mode: { label: "Mode", title: "Mode", icon: "shield" },
+  limit: { label: "Approval time limit", title: "Approval time limit", icon: "clock" },
   tasks: { label: "Tasks", title: "How many tasks", icon: "circle-dashed" },
   review: { label: "Review", title: "Review", icon: "eye" },
   delivery: { label: "When accepted", title: "When you accept a task", icon: "circle-check" },
@@ -58,6 +59,9 @@ export interface SheetState {
   /** Whether the run is kept to one task, as it would start now. */
   oneTask: boolean;
   setOneTask(oneTask: boolean): void;
+  /** The run's approval time limit in minutes; null for none. */
+  approvalLimit: number | null;
+  setApprovalLimit(minutes: number | null): void;
   issue: IssueChoiceState;
   models: ModelChoiceState;
   sameBuild: boolean;
@@ -180,6 +184,18 @@ function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
         </p>
         <Option group="tasks" id="tasks-one" value="one" checked={state.oneTask} onChange={() => state.setOneTask(true)} name="Keep it to one task" description="Claude Code plans one task that does all of the work. If it plans more, it is asked once more for one; if it still plans more, Botbench joins them into one task." />
         <Option group="tasks" id="tasks-several" value="several" checked={!state.oneTask} onChange={() => state.setOneTask(false)} name="Let it plan several" description="Claude Code splits the work into up to 20 tasks, built one after another." />
+      </fieldset>
+    );
+  if (row === "limit")
+    return (
+      <fieldset className="ds-option-picker" aria-describedby="limit-hint">
+        <legend className="ds-option-picker__legend ds-visually-hidden">Approval time limit</legend>
+        <p id="limit-hint" className="ds-option-picker__hint">
+          {LIMIT_WORDS.hint}
+        </p>
+        {APPROVAL_LIMITS.map((minutes) => (
+          <Option key={minutes ?? "off"} group="limit" id={`limit-${minutes ?? "off"}`} value={String(minutes ?? "off")} checked={state.approvalLimit === minutes} onChange={() => state.setApprovalLimit(minutes)} name={limitName(minutes)} description={minutes === null ? LIMIT_WORDS.off : LIMIT_WORDS.on(minutes)} />
+        ))}
       </fieldset>
     );
   if (row === "builder")

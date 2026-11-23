@@ -48,6 +48,8 @@ const RULE_WORDS: Record<LogRule, string> = {
   peer_send_attempt: "Claude Code drafted a message to another workbench",
   peer_send_over_limit: "Not sent: the run's most messages to other workbenches",
   peer_settings: "What another workbench may send or receive, changed by you",
+  expired_unanswered: "Denied by Botbench: nobody answered in time",
+  repeat_declined: "Denied without asking: you denied it before in this task",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();

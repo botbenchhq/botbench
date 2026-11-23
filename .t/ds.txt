@@ -1,0 +1,5 @@
+Declared gaps (3):
+  diff-prose  bb-diff-prose  The diff component has no wrapping variant: its lines always scroll sideways. A diff of prose (.md, .txt) is one long line per paragraph, unreadable at phone width unless it wraps; code keeps the component's own scrolling lines.
+  row-press  bb-row-press  The context menu says a long press on a row may open its More menu, but the list has no way to switch off the phone's own long press on a link (its preview, callout and text selection), which opens on top of the menu. This class switches those off on a Work row's link and draws nothing.
+  qr  bb-qr  The catalogue has no QR code. Settings → Add a device shows the sign-in address with a one-time code as a QR code for a phone's camera, which reads it most surely dark on light, so it keeps that in dark mode too, with colour tokens only.
+0 findings, 0 waivers, 3 declared gaps, 83 files scanned, 41 rules

@@ -274,6 +274,8 @@ test("a Read under the CLI's saved-output folder runs without asking only inside
     fs.mkdirSync(other, { recursive: true });
     fs.writeFileSync(path.join(own, "toolu_01.txt"), "long output");
     fs.writeFileSync(path.join(other, "toolu_02.txt"), "someone else's");
+    // Reached through the own folder with "..": a file of its own, as a request the owner declined in this task is not asked again.
+    fs.writeFileSync(path.join(other, "toolu_04.txt"), "someone else's too");
     fs.writeFileSync(path.join(project, `${SESSION}.jsonl`), "{}");
     fs.writeFileSync(path.join(r.config, "settings.json"), "{}");
     // A link planted in the session's own folder that leads out of it.
@@ -283,7 +285,7 @@ test("a Read under the CLI's saved-output folder runs without asking only inside
     const mine = await read(path.join(own, "toolu_01.txt"), "own");
     assert.equal(mine.heard.verdict, "pass", "the hook lets it pass");
     assert.deepEqual([mine.answer.decision, mine.answer.files, mine.answer.approvalId], ["allow", true, null], "and so does the CLI's own request for it");
-    for (const [file, id] of [[path.join(other, "toolu_02.txt"), "other"], [path.join(project, `${SESSION}.jsonl`), "transcript"], [path.join(r.config, "settings.json"), "settings"], [path.join(own, "toolu_03.txt"), "link"], [path.join(own, "..", "..", OTHER_SESSION, "tool-results", "toolu_02.txt"), "dots"]] as const) {
+    for (const [file, id] of [[path.join(other, "toolu_02.txt"), "other"], [path.join(project, `${SESSION}.jsonl`), "transcript"], [path.join(r.config, "settings.json"), "settings"], [path.join(own, "toolu_03.txt"), "link"], [path.join(own, "..", "..", OTHER_SESSION, "tool-results", "toolu_04.txt"), "dots"]] as const) {
       const asked = await read(file, id);
       assert.equal(asked.heard.verdict, "ask", id);
       assert.ok(asked.answer.approvalId !== null, `${mode}: ${id} asks`);
@@ -321,8 +323,10 @@ test("without a session reported yet, or for an agent whose CLI keeps no such fo
   const own = toolResultsFolder({ cwd: a.top, session: SESSION, configDir: r.config })!;
   fs.mkdirSync(own, { recursive: true });
   fs.writeFileSync(path.join(own, "toolu_01.txt"), "long output");
+  // A second file for the second read: a request the owner declined in this task is not asked again.
+  fs.writeFileSync(path.join(own, "toolu_02.txt"), "more long output");
   r.db.prepare("UPDATE attempts SET resume_cursor = NULL").run();
   assert.ok((await a.ask("Read", { file_path: path.join(own, "toolu_01.txt") }, "no-session")).answer.approvalId !== null);
   r.db.prepare("UPDATE attempts SET resume_cursor = ?, driver = 'codex'").run(SESSION);
-  assert.ok((await a.ask("Read", { file_path: path.join(own, "toolu_01.txt") }, "codex")).answer.approvalId !== null);
+  assert.ok((await a.ask("Read", { file_path: path.join(own, "toolu_02.txt") }, "codex")).answer.approvalId !== null);
 });

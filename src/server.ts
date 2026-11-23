@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, peersProblem, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log, repositoryExecution } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, peersProblem, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, reminderAfterMs, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log, repositoryExecution } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -83,6 +83,8 @@ export interface StartOptions {
   signInDelayMs?: number;
   /** How long a code from Add a device signs in; 5 minutes when left out. */
   pairingLifetimeMs?: number;
+  /** How long a minute of a run's approval time limit lasts; a real minute when left out. Tests ask for a shorter one. */
+  approvalMinuteMs?: number;
   /** The built client; `web/dist` in this checkout when left out. */
   clientDir?: string;
   /** How often an idle event stream is sent a comment to keep it open. */
@@ -165,12 +167,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   let broker: Broker;
   let push: Push;
   try {
-    push = createPush({ db, home, allowHttpEndpoints: options.allowHttpPushEndpoints === true });
+    push = createPush({ db, home, allowHttpEndpoints: options.allowHttpPushEndpoints === true, reminderAfterMs: reminderAfterMs(config) });
     // A number that is no count is refused here too: a config handed over in code has not been through the loader.
     broker = createBroker({ db, home, onChange: (approval) => {
         stream.announceApproval(approval);
         push.approvalChanged(approval);
-      }, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config),
+      }, floor: floorEntries(config), offerStandingAfter: offerStandingAfter(config), ...(options.approvalMinuteMs === undefined ? {} : { minuteMs: options.approvalMinuteMs }),
       // Only Claude Code's sessions save long output Botbench knows where to find (src/drivers/claude-code.ts).
       sessionOutput: ({ driver: name, session, worktree }) => (name === CLAUDE_CODE ? toolResultsFolder({ cwd: worktree, session }) : null) });
   } catch (err) {
@@ -182,6 +184,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     // Without its socket the gate could only refuse, so Botbench does not start half-working.
     await broker.listen();
   } catch (err) {
+    push.close();
     stream.close();
     db.close();
     throw err;
@@ -301,7 +304,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     await claims.idle();
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();
-    // A notification in flight may still delete an expired device's row; each has a time limit.
+    // A notification in flight may still delete an expired device's row; each has a time limit. Reminders not yet due are
+    // in the store, for the next start.
+    push.close();
     await push.idle();
     // A container sweep or removal reads the store; each docker call has a time limit.
     await containers.idle();

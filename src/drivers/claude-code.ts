@@ -470,6 +470,8 @@ export function controlAnswer(request: Pick<PermissionRequestEvent, "name" | "in
     return { reply: { behavior: "deny", message: `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
   }
   const why = words(given.refused);
+  // The owner was asked and nobody answered in time: Botbench's decline, which says so in its own words.
+  if (why !== null && given.expired === true) return { reply: { behavior: "deny", message: `${why} Do not try to get the same thing done another way.` }, decision: "denied", note: why };
   if (why !== null) return { reply: { behavior: "deny", message: question ? why : `Botbench's permission check denied this request without asking the owner: ${why} Nothing was run.` }, decision: "denied", note: why };
   const note = words(given.note);
   return { reply: { behavior: "deny", message: declineMessage(note) }, decision: "declined", note };
