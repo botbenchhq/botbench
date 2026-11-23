@@ -92,7 +92,14 @@ function plannedRun(api: Api, repo: string, titles: string[] = ["Add a greeting 
   const waiting = storePlan(api.server.db, run.id, titles.map((title) => ({ title, criteria: [`${title} is done`] })));
   return { id: run.id, planVersion: waiting.planVersion };
 }
-const initHead = (repo: string): string => git(repo, "rev-parse", "HEAD").trim();
+/** Each repository's first commit, read with git once: nothing here commits to the repositories themselves. */
+const heads = new Map<string, string>();
+const initHead = (repo: string): string => {
+  if (!heads.has(repo)) heads.set(repo, git(repo, "rev-parse", "HEAD").trim());
+  return heads.get(repo)!;
+};
+/** Let the server's timers run: its idle connections are closed on time, not after a long stretch of work in between. */
+const breathe = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /** Put `task` at Ready for review with one committed file, in a worktree under its run. */
 async function ready(api: Api, task: Task, repo: string): Promise<void> {
@@ -188,13 +195,20 @@ test("however many runs and tasks there are, every one that needs the owner is o
   const old = createTask(db, { repo: api.plain, prompt: "an old task" });
   await ready(api, old, api.plain);
   const oldPlan = plannedRun(api, api.plain);
-  for (let i = 0; i < 260; i++) cancelRun(db, plannedRun(api, api.plain, ["one", "two"]).id);
+  // The server runs in this process, so this work holds up its timers. The test yields between runs: a client
+  // connection kept idle across a long stretch would otherwise be closed by the server's idle timer only after the next
+  // request was already written to it, and that request reset (seen on a loaded machine).
+  for (let i = 0; i < 260; i++) {
+    cancelRun(db, plannedRun(api, api.plain, ["one", "two"]).id);
+    await breathe();
+  }
   // More than two hundred tasks of planned runs, which an older stand-alone task must not be crowded out by.
   let many = { id: 0, planVersion: 0 };
   for (let i = 0; i < 12; i++) {
     many = plannedRun(api, api.plain, Array.from({ length: 20 }, (_, n) => `task ${n}`));
     approvePlan(db, many.id, many.planVersion);
     cancelRun(db, many.id);
+    await breathe();
   }
   const groups = await board(api);
   assert.deepEqual(shape(groups)["needs-you"]!.sort(), [`run ${oldPlan.id}`, `task ${old.id}`].sort());

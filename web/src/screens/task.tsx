@@ -24,8 +24,14 @@ import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
 import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
+import { duration as fromTo } from "../components/tool-summary.ts";
+import { oldestCommand, runningCommands, runningWords, type RunningCommand } from "../../../src/engine/command-limit.ts";
 import { MakeRunSection } from "../components/make-run.tsx";
 import { offersRun } from "../app/run-source.ts";
+import { firstLine } from "../../../src/shorten.ts";
+
+/** A time in the transcript's own words ("42s", "2m 14s"). */
+const msWords = (ms: number): string => fromTo(new Date(0).toISOString(), new Date(ms).toISOString()) ?? "0s";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
 type DiffState = { kind: "loading" } | { kind: "loaded"; diff: string; truncated: boolean } | { kind: "failed"; why: string };
@@ -99,6 +105,41 @@ function Counts({ file }: { file: FileChange }) {
       </span>
     </span>
   );
+}
+
+/**
+ * One refused request in the task's list: its first line, shortened, and when that is not all of it, a disclosure with
+ * the whole of it and how many lines it has. A here-document of thousands of characters stays one line until opened.
+ */
+function RefusedCommand({ command }: { command: string }) {
+  const first = firstLine(command, 100);
+  const lines = command.trim().split("\n").length;
+  if (first === command.trim()) return <code data-testid="refused-command" data-ds-content="">{first}</code>;
+  return (
+    <details data-testid="refused-command" className="ds-disclosure">
+      <summary className="ds-disclosure__summary">
+        <code data-ds-content="">{first}</code>
+        <span className="ds-disclosure__meta">{lines === 1 ? `${command.trim().length.toLocaleString("en")} characters` : `${lines.toLocaleString("en")} lines`}</span>
+      </summary>
+      <div className="ds-disclosure__content">
+        <figure className="ds-code-block">
+          <pre data-testid="refused-full" data-ds-content="" className="ds-code-block__body">
+            <code>{command}</code>
+          </pre>
+        </figure>
+      </div>
+    </details>
+  );
+}
+
+/** How long a command has run, ticking each second, against its own time limit (engine/command-limit.ts). */
+function RunningFor({ agent, command }: { agent: string; command: RunningCommand }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span data-testid="running-for">{` ${runningWords(agent, command, now, msWords).time}`}</span>;
 }
 
 /** `discard`: the owner chose Discard from the task's More menu on Work, so its confirmation opens once the task is read. */
@@ -201,7 +242,10 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
   // While a request waits, its card says so: the transcript is still live, with no line of its own ("").
   // Its last message's turn has not ended: with the owner's note sent as the next message, that is the note's.
   const lastSent = current.findLastIndex((e) => e.type === "user_prompt");
-  const working = task?.status === "building" && !task.resuming && attemptId !== null && !current.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended") ? (asking === undefined ? `${agentName(task.builder)} is working.` : "") : null;
+  const turnOn = task?.status === "building" && !task.resuming && attemptId !== null && !current.slice(Math.max(lastSent, 0)).some((e) => e.type === "turn_ended");
+  // The command the agent is running now, which may print nothing for minutes: the line says which, and for how long.
+  const command = turnOn ? oldestCommand(runningCommands(current)) : null;
+  const working = turnOn ? (asking !== undefined ? "" : command !== null ? runningWords(agentName(task!.builder), command, Date.now(), msWords).line : `${agentName(task!.builder)} is working.`) : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
   // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
@@ -310,6 +354,7 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
                 <Transcript
                   events={shown}
                   working={working}
+                  workingMore={command !== null && asking === undefined && <RunningFor agent={agentName(task.builder)} command={command} />}
                   modelName={nameOf}
                   modelDiffers={() => null}
                   who={(attempt) => sessionAgent(task, attempt)}
@@ -437,11 +482,11 @@ export function TaskScreen({ id, discard = false, onSignedOut }: { id: number; d
             {task.refused.length > 0 && (
               <section aria-labelledby="refused-heading" data-testid="refused" className="ds-stack ds-gap-sm">
                 <h2 id="refused-heading">Refused without asking</h2>
-                <p>{`Botbench refused ${task.refused.length === 1 ? "this request" : `these ${task.refused.length} requests`} during this task without asking you. Each is shown in full.`}</p>
+                <p>{`Botbench refused ${task.refused.length === 1 ? "this request" : `these ${task.refused.length} requests`} during this task without asking you. Each shows its first line; open one to see all of it.`}</p>
                 <ul className="ds-stack ds-gap-xs">
                   {task.refused.map((command, i) => (
                     <li key={i}>
-                      <code>{command}</code>
+                      <RefusedCommand command={command} />
                     </li>
                   ))}
                 </ul>

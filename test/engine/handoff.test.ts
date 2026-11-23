@@ -15,6 +15,7 @@ import { setAskEveryCommand, type RunMode } from "../../src/engine/modes.ts";
 import { approvePlan, createRun, getRun, storePlan, type Run } from "../../src/engine/run.ts";
 import type { Containers } from "../../src/engine/containers.ts";
 import { createTasks, getTask, TaskError, type Task, type Tasks } from "../../src/engine/task.ts";
+import { retryTime, USAGE_LIMIT_WAIT_MS } from "../../src/engine/usage-limit.ts";
 import type { Execution } from "../../src/execution.ts";
 import { parseIssueView } from "../../src/github.ts";
 import { openStore } from "../../src/store/db.ts";
@@ -443,7 +444,12 @@ test("with Wait chosen, the same usage limit waits as before and nothing is hand
   const e = await line(t, { main: claude });
   const { task } = planned(e, { onLimit: "wait" });
   await until(() => getTask(e.db, task.id)!.status === "waiting_for_limit", "the task waits");
-  assert.equal(getTask(e.db, task.id)!.retryAt, limitedTurn().resetsAt);
+  // The recorded reset time while it is still ahead, and the configured wait from when the limit was reached once it has
+  // passed (the recording's time is a fixed day): the same rule as without a handoff (engine/usage-limit.ts).
+  const reached = Date.parse(String(e.db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'waiting_for_limit'").get(task.id)!.ts));
+  const retryAt = Date.parse(getTask(e.db, task.id)!.retryAt!);
+  // Worked out a moment before the wait was stored: a second's leeway.
+  assert.ok(Math.abs(retryAt - Date.parse(retryTime(limitedTurn().resetsAt, reached, USAGE_LIMIT_WAIT_MS))) < 1000, `retries at ${new Date(retryAt).toISOString()}, the wait stored at ${new Date(reached).toISOString()}`);
   assert.deepEqual(taskHandoffs(e.db, task.id), []);
   assert.equal((e.codex as CodexBuildReplay).started.length, 0);
 });

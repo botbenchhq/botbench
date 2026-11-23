@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { askBroker } from "../../src/approvals/permission-proxy.ts";
 import type { Driver, DriverCapabilities, DriverProbe, DriverSession, StartAttemptOptions } from "../../src/drivers/contract.ts";
 import type { DriverEvent, PermissionResponse, TurnEndReason } from "../../src/drivers/events.ts";
+import { killProcessGroup, launch } from "../../src/drivers/launch.ts";
 import { loadRecording } from "./replay.ts";
 import { loadPlanRecording } from "./replay-plan.ts";
 
@@ -35,6 +36,13 @@ import { loadPlanRecording } from "./replay-plan.ts";
  * its copy (recorded with it) are written into the worktree, so that the work changes as it did. The replay's own are the answers to `probe` and `models`, the hold a test puts on a turn, and the
  * turn's end when it is stopped or given an answer the recording has no continuation for. No test may read those as
  * what a CLI does.
+ * With `run`, each recorded Bash call is also run for real: after its permission, the replay runs the recorded command
+ * in the task's copy, as `/bin/sh -c` in its own process group, and plays the recorded result only once it has exited;
+ * a stopped turn kills its group. This is for the silence limit, whose test needs a command that really runs a long time
+ * and prints nothing while the CLI waits for it (engine/silence.ts); the command is the test's own file under the
+ * recorded name, and it runs outside the sandbox the real CLI ran it in. `run.timeoutMs` gives each such call a
+ * `timeout` (its own time limit, as Claude Code's Bash takes one from the model) that the recording did not have: the
+ * replay's own, so a test can reach a command's limit without waiting minutes.
  */
 
 export type BuildTurn = "done" | "ask" | "refused" | "refine";
@@ -93,7 +101,7 @@ export interface BuildReplay extends Driver {
  * "session"` once the recorded session announcement is played (so the attempt has the resume cursor a real CLI reports
  * at that point, and the turn is under way). `holdTurns` holds later turns of an attempt, each as `[attempt, turn]` from 0.
  */
-export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: readonly number[]; holdTurns?: readonly (readonly [number, number])[]; holdAt?: "prompt" | "session" } = {}): BuildReplay {
+export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: readonly number[]; holdTurns?: readonly (readonly [number, number])[]; holdAt?: "prompt" | "session"; run?: { timeoutMs?: number } } = {}): BuildReplay {
   const turns = recordedTurns();
   const started: StartAttemptOptions[] = [];
   const prompts: string[] = [];
@@ -153,6 +161,8 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
       }
       const recorded = typeof kind === "string" ? turns[kind] : { events: kind.events, hookCwd: new Map<string, string>(), files: undefined };
       const edits = new Set(recorded.events.flatMap((event) => (event.type === "tool_call" && EDIT_TOOLS.has(event.name) ? [event.id] : [])));
+      /** The recorded Bash calls run for real (`run`), by id: their commands. */
+      const commands = new Map(o.run === undefined ? [] : recorded.events.flatMap((event) => (event.type === "tool_call" && event.name === "Bash" ? [[event.id, String((event.input as { command?: unknown }).command)] as const] : [])));
       let given: unknown = null;
       /** The recorded question's text, by tool call, for checking the answer a question is given. */
       const questionOf = new Map<string, string>();
@@ -162,6 +172,19 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
         if (stopped) return end("interrupted", "The replay was stopped.");
         // A recorded end keeps what the driver marked on it: a turn the driver ended on the usage limit (`limitedEnd`).
         if (event.type === "turn_ended") return end(event.reason, event.detail, event.usageLimit);
+        if (event.type === "tool_result" && commands.has(event.id)) {
+          const { child, pgid } = launch("/bin/sh", ["-c", commands.get(event.id)!], { cwd: options.cwd });
+          child.stdin.end();
+          child.stdout.resume();
+          child.stderr.resume();
+          const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+          await Promise.race([exited, stopping]);
+          if (stopped) {
+            await killProcessGroup(pgid).catch(() => {});
+            await exited;
+            return end("interrupted", "The replay was stopped.");
+          }
+        }
         if (event.type === "tool_result" && edits.has(event.id) && !event.isError && recorded.files) {
           for (const [file, content] of Object.entries(recorded.files)) fs.writeFileSync(path.join(options.cwd, file), content);
         }
@@ -182,7 +205,7 @@ export function buildReplayDriver(script: readonly AttemptScript[], o: { hold?: 
           const questions = (event.input as { questions?: { question?: unknown }[] } | null)?.questions;
           if (Array.isArray(questions) && typeof questions[0]?.question === "string") questionOf.set(event.toolCallId, questions[0].question);
         }
-        record(event);
+        record(event.type === "tool_call" && commands.has(event.id) && o.run?.timeoutMs !== undefined ? { ...event, input: { ...(event.input as object), timeout: o.run.timeoutMs } } : event);
         if (atSession && event.type === "session_started") {
           arrival(n, turn).resolve();
           if (gate) await Promise.race([gate, stopping]);

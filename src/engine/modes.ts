@@ -101,11 +101,25 @@ export function reviewOutcome(db: DatabaseSync, taskId: number): ReviewOutcome {
   return record.reviews.length === 0 ? "failed" : loopOutcome(record);
 }
 
-/** One request a fully autonomous run refused: its command as a line, and its kind (null for one recorded before kinds were). */
+/**
+ * One request a fully autonomous run refused: its command as a line, its kind (null for one recorded before kinds were),
+ * and the tool that asked (Bash for a shell command; left out, a shell command).
+ */
 export interface ModeRefusal {
   command: string;
   kind: RefusalKind | null;
+  tool?: string;
 }
+
+/** "1 command", "6 commands", or "requests" when not every one is a shell command: how many were refused, in words. */
+export function refusedCount(refusals: readonly ModeRefusal[]): string {
+  const commands = refusals.every((refusal) => (refusal.tool ?? "Bash") === "Bash");
+  const noun = commands ? (refusals.length === 1 ? "command" : "commands") : refusals.length === 1 ? "request" : "requests";
+  return `${refusals.length} ${noun}`;
+}
+
+/** Where the task screen lists every refused request in full, which the one-line reasons point to. */
+const LISTED = "Each is listed under Refused without asking.";
 
 /** What was refused without asking during a task, oldest first: by a fully autonomous run, or because Web access is Off (a refusal of the network). */
 export function modeRefusals(db: DatabaseSync, taskId: number): ModeRefusal[] {
@@ -115,6 +129,7 @@ export function modeRefusals(db: DatabaseSync, taskId: number): ModeRefusal[] {
     .map((row) => ({
       command: row.tool === "Bash" ? String(row.command) : `${String(row.tool)} ${String(row.command)}`.trim(),
       kind: row.rule === "web_refused" ? "network" : asRefusalKind(row.refusal),
+      tool: String(row.tool),
     }));
 }
 
@@ -145,7 +160,8 @@ export interface AcceptFacts {
  * accept (`refusalBlocksAccept`: the safety rules, or a request that would have left the confinement), no changed file
  * is under a protected path, and every changed file is one the plan led one to expect (engine/scope.ts). Answers the
  * reasons it qualified, for the record, naming any refusal that did not block, or the plain reasons it needs the owner.
- * Every refused command is named in full, never cut: the task screen shows these lines, and the owner judges by them.
+ * Refused commands are counted, not quoted: these reasons are the task's one-line status, and a command can be thousands
+ * of characters (a here-document). The task screen lists every one in full under Refused without asking.
  */
 export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string } | { accept: false; why: string } {
   const why: string[] = [];
@@ -154,18 +170,19 @@ export function autoAccept(facts: AcceptFacts): { accept: true; reasons: string 
   if (facts.review === "unresolved") why.push("The reviewer raised concerns.");
   else if (facts.review === "unaccounted") why.push(`${NO_ACCOUNT}.`);
   else if (facts.review === "failed") why.push("The review did not finish.");
-  const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
-  if (blocking.length > 0) why.push(`Botbench refused ${blocking.length === 1 ? "something" : `${blocking.length} things`} an agent asked to do during this task (${blocking.join("; ")}).`);
+  const blocking = facts.refusals.filter((refusal) => refusalBlocksAccept(refusal.kind));
+  if (blocking.length > 0) why.push(`${refusedCount(blocking)} refused during this task.`);
   // A question is the agent saying it needed the owner's choice: it chose for itself, and the owner sees what it chose.
   const questions = facts.questions ?? [];
   if (questions.length > 0) why.push(`Claude Code had ${questions.length === 1 ? "a question" : `${questions.length} questions`} for you and chose the answer itself, as a fully autonomous run puts no questions to you (${questions.map((q) => `"${q}"`).join("; ")}).`);
   if ((facts.protectedFiles?.length ?? 0) > 0) why.push(protectedWords(facts.protectedFiles!));
   if ((facts.unexpectedFiles?.length ?? 0) > 0) why.push(unexpectedWords(facts.unexpectedFiles!));
-  // The rest of what was refused is named too, so the task screen lists every refused command whatever the verdict.
-  const harmless = facts.refusals.filter((refusal) => !refusalBlocksAccept(refusal.kind)).map((refusal) => refusal.command);
-  if (why.length > 0 && harmless.length > 0) why.push(`Botbench also refused, without that keeping it from being accepted: ${harmless.join("; ")}.`);
+  // The rest of what was refused is counted too, apart, as it did not keep the task from being accepted.
+  const harmless = facts.refusals.filter((refusal) => !refusalBlocksAccept(refusal.kind));
+  if (why.length > 0 && harmless.length > 0) why.push(`${blocking.length > 0 ? "Also " : ""}${refusedCount(harmless)} refused that would not have kept it from being accepted.`);
+  if (why.length > 0 && facts.refusals.length > 0) why.push(LISTED);
   if (why.length > 0) return { accept: false, why: `It needs your review: ${why.join(" ")}` };
   const review = facts.review === "satisfied" ? "the reviewer said it looks right and what it checked" : "this run has no reviewer";
   if (facts.refusals.length === 0) return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and nothing an agent asked for was refused.` };
-  return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and what Botbench refused (${harmless.join("; ")}) was not on the always-ask list and would not have reached outside the task's copy.` };
+  return { accept: true, reasons: `Accepted without you, as this run is fully autonomous: every check passed, ${review}, and the ${refusedCount(harmless)} Botbench refused ${harmless.length === 1 ? "was" : "were"} not on the always-ask list and would not have reached outside the task's copy. ${LISTED}` };
 }
