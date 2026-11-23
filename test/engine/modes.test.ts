@@ -285,6 +285,9 @@ test("kept to one task in a manual run: a send-back answered with no plan merges
   assert.match(waiting.reason ?? "", /^This run is kept to one task\. Claude Code planned 3 tasks even when asked again for one, so Botbench joined them/);
   const plan = e.db.prepare("SELECT title, criteria FROM plan_tasks WHERE run_id = ?").all(run.id).map((row) => ({ title: String(row.title), criteria: JSON.parse(String(row.criteria)) }));
   assert.deepEqual(plan, [MERGED]);
+  // The owner cannot make it several again: the edit is refused and the plan is as it was.
+  assert.throws(() => e.runs.editPlan(run.id, [MERGED, { title: "Another", criteria: ["It exists"] }], waiting.planVersion), (err: unknown) => err instanceof RunError && err.status === 400 && err.message === "This run is kept to one task, so its plan holds exactly 1 task; this one holds 2 tasks. Put the work in one task.");
+  assert.equal(Number(e.db.prepare("SELECT COUNT(*) AS n FROM plan_tasks WHERE run_id = ?").get(run.id)!.n), 1);
 });
 
 test("not kept to one task: a manual run takes the plan of three as it is, and its planner was told it may plan up to 20", async (t) => {

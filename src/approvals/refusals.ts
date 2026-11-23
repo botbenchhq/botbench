@@ -86,7 +86,7 @@ const TO_NOWHERE = /(^|\s)(?:[12]?>|&>)\s*\/dev\/null(?=\s|$|[;&|])|(^|\s)2>&1(?
  * Whether a shell command only reads files inside the task's copy: every piece of it starts one of a few programs that
  * only read or print (git with a subcommand that only reads), nothing in it runs another program or writes a file, and
  * every word that could be a path lies inside the copy (links followed), read from the folder the agent stood in. A
- * redirection other than to /dev/null, a substitution, a variable, a `~`, an assignment and a `cd` all make it not one.
+ * redirection other than to /dev/null, a substitution, a variable, a glob, a `~`, an assignment and a `cd` all make it not one.
  * Leans towards "no": a false "no" only hands a task back to the owner.
  */
 export function readOnlyCommand(command: string, worktree: string, cwd: string): boolean {
@@ -99,7 +99,8 @@ export function readOnlyCommand(command: string, worktree: string, cwd: string):
   if (read === null || read.substitutes || read.pieces.length === 0) return false;
   return read.pieces.every((piece) => {
     // What a shell may still turn into other text: a variable, a substitution, a home folder.
-    if (piece.some((word) => /[$`]/.test(word.live) || word.live.startsWith("~"))) return false;
+    // A glob too: it can match a link that leads out of the copy, which a word read as a literal path does not show.
+    if (piece.some((word) => /[$`*?[]/.test(word.live) || word.live.startsWith("~"))) return false;
     const [first, ...args] = piece.map((word) => word.text);
     if (first === undefined) return false;
     let operands = args;

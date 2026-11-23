@@ -38,7 +38,8 @@ const MATRIX: { name: string; tool: string; input: Record<string, unknown>; conf
   { name: "a read after a cd", tool: "Bash", input: { command: "cd sub && ls" }, confined: false, kind: "unconfined", blocks: true },
   // A harmless read-only command, refused only because it could not be shown to run confined.
   { name: "ls of a folder", tool: "Bash", input: { command: "ls src", description: "List" }, confined: false, kind: "read_only", blocks: false },
-  { name: "grep with a quoted ( and a glob, errors sent nowhere", tool: "Bash", input: { command: `grep -n "admit(" src/engine/*.ts 2>/dev/null` }, confined: false, kind: "read_only", blocks: false },
+  { name: "a read through a glob, which may match a link out of the copy", tool: "Bash", input: { command: "cat src/*.ts" }, confined: false, kind: "unconfined", blocks: true },
+  { name: "grep with a single-quoted ( and *, errors sent nowhere", tool: "Bash", input: { command: `grep -rn 'admit(.*' src/engine 2>/dev/null` }, confined: false, kind: "read_only", blocks: false },
   { name: "git log piped to head", tool: "Bash", input: { command: "git log --oneline -5 | head -3" }, confined: false, kind: "read_only", blocks: false },
   { name: "cat of a file from a sub-folder", tool: "Bash", input: { command: "cat ../README.md" }, confined: false, cwd: path.join(WORKTREE, "sub"), kind: "read_only", blocks: false },
   // Any other refusal.

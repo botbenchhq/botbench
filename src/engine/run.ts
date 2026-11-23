@@ -257,6 +257,8 @@ function replacePlan(db: DatabaseSync, runId: number, tasks: readonly PlanTask[]
 }
 
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
+/** Why a plan of a run kept to one task cannot hold `n` tasks. */
+const ONE_TASK_ONLY = (n: number): string => `This run is kept to one task, so its plan holds exactly 1 task; this one holds ${tasksWord(n)}. Put the work in one task.`;
 
 /**
  * The planner's plan arrived: store it and wait for the owner. Only a run that is being planned takes a plan; a
@@ -268,6 +270,7 @@ export function storePlan(db: DatabaseSync, runId: number, tasks: readonly PlanT
     if (run.status !== "planning") throw notWaiting(run, "store");
     const checked = validatePlan({ tasks }, { oneTask: run.oneTask });
     if (!checked.ok) throw new Error(`The plan cannot be stored: ${checked.errors.join(" ")}`);
+    if (run.oneTask && checked.tasks.length !== 1) throw new Error(`The plan cannot be stored: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     replacePlan(db, runId, checked.tasks);
     writeRun(db, runId, "awaiting_plan_approval", { reason: o.note ?? null, plannerModel: o.plannerModel ?? null, planChanged: true, detail: `plan of ${tasksWord(checked.tasks.length)}${o.note ? `; ${o.note}` : ""}` });
     return getRun(db, runId)!;
@@ -286,6 +289,7 @@ export function editPlan(db: DatabaseSync, runId: number, tasks: unknown, planVe
     sameVersion(run, planVersion);
     const checked = validatePlan({ tasks }, { oneTask: run.oneTask });
     if (!checked.ok) throw new RunError(400, checked.errors.join(" "));
+    if (run.oneTask && checked.tasks.length !== 1) throw new RunError(400, ONE_TASK_ONLY(checked.tasks.length));
     replacePlan(db, runId, checked.tasks);
     writeRun(db, runId, "awaiting_plan_approval", { planChanged: true, detail: `plan edited by the owner: ${tasksWord(checked.tasks.length)}` });
     return getRun(db, runId)!;
@@ -309,6 +313,7 @@ export function approvePlan(db: DatabaseSync, runId: number, planVersion: unknow
     // What is approved is checked once more as it is stored: nothing reaches a builder that a plan may not hold.
     const checked = validatePlan({ tasks: plan.map(({ title, criteria }) => ({ title, criteria })) }, { oneTask: run.oneTask });
     if (!checked.ok) throw new RunError(409, `The plan cannot be approved as it is: ${checked.errors.join(" ")}`);
+    if (run.oneTask && checked.tasks.length !== 1) throw new RunError(409, `The plan cannot be approved as it is: ${ONE_TASK_ONLY(checked.tasks.length)}`);
     const link = db.prepare("UPDATE plan_tasks SET task_id = ? WHERE run_id = ? AND position = ?");
     const tasks = plan.map((task) => {
       const made = insertQueuedTask(db, { runId, repo: run.repo, prompt: taskPrompt(task), requestedModel: run.buildModel === undefined ? implementerModel : run.buildModel });
