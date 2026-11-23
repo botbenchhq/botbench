@@ -1,0 +1,86 @@
+name: Release
+
+# Releases are made by release-please (googleapis/release-please-action; release-please-config.json and
+# .release-please-manifest.json), as in jon-lange/settleview's release.yml: on every push to main it keeps one release
+# pull request open ("chore(main): release X.Y.Z") with the next version (from the Conventional Commits since the last
+# release: `feat:` a minor version before 1.0, `fix:` a patch), package.json's and package-lock.json's version and the
+# CHANGELOG.md section. Merging that pull request makes the tag vX.Y.Z and its GitHub Release, with the changelog
+# section as its notes. Nothing is built or uploaded: an installed Botbench updates from the tagged commit itself
+# (src/update.ts, docs/adr/0010-releases-and-self-update.md), so a Release has no binaries to trust.
+#
+# The release pull request's checks. A pull request made with GITHUB_TOKEN starts no `pull_request` run that can pass
+# (GitHub creates it in an approval-required state), so main's required checks would never be met. A
+# `workflow_dispatch` is the one event GITHUB_TOKEN may start ("workflow_dispatch and repository_dispatch events always
+# create workflow runs", docs.github.com/en/actions/concepts/security/github_token): after release-please opens or
+# updates the release pull request, this workflow starts ci.yml on its branch. That run's jobs are the same checks, by
+# the same names, from GitHub Actions, on the pull request's head commit, which is what main's ruleset requires. No
+# secret, no app, no personal token.
+#
+# The tag needs no other workflow: nothing runs on a tag.
+
+on:
+  push:
+    branches: [main]
+
+# Nothing by default: each job asks for what it needs, and only it.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Actions are pinned by full commit hash (the version in the comment), as in ci.yml.
+
+jobs:
+  release-please:
+    name: Release pull request, tag and Release (release-please)
+    if: github.repository == 'jon-lange/botbench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # the release pull request's branch, the tag and the Release
+      pull-requests: write  # open and update the release pull request
+      issues: write  # the release pull request's labels (autorelease: pending / tagged)
+    outputs:
+      prs_created: ${{ steps.rp.outputs.prs_created }}
+      pr: ${{ steps.rp.outputs.pr }}
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Summary
+        env:
+          RELEASED: ${{ steps.rp.outputs.release_created }}
+          TAG: ${{ steps.rp.outputs.tag_name }}
+          PRS: ${{ steps.rp.outputs.prs_created }}
+        run: |
+          if [ "$RELEASED" = true ]; then echo "Released $TAG." >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$PRS" = true ]; then echo "The release pull request was opened or updated." >> "$GITHUB_STEP_SUMMARY"; fi
+
+  release-pr-checks:
+    # CI on the release pull request's branch, started by workflow_dispatch (see the top of this file).
+    name: Start CI on the release pull request
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write  # start ci.yml; this job only
+    steps:
+      - name: Start ci.yml on the release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ needs.release-please.outputs.pr }}
+        run: |
+          set -euo pipefail
+          branch=$(jq -r '.headBranchName // empty' <<< "$PR")
+          # release-please's own branches only: never a branch named by anything else.
+          [[ "$branch" =~ ^release-please--branches--main(--components--[A-Za-z0-9._-]+)?$ ]] || { echo "release-please named the branch '$branch', not one of its own"; exit 1; }
+          gh workflow run ci.yml --ref "$branch"
+          echo "Started CI on $branch." >> "$GITHUB_STEP_SUMMARY"

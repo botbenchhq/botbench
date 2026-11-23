@@ -2,6 +2,13 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-23: test runs left thousands of botbench-* folders in the temporary folder, and two timing tests failed under load (task 21 of run 17)
+The owner's temporary folder held hundreds of `botbench-*` leftovers, and a sandboxed builder's thousands. Four causes: a probe file named by the shell's `$$`, which the test could not know to remove; `t.after` hooks run first in, first out, so a fixture that added its removal first removed the folder before the server or engine added after it had closed, and closing wrote `home/worktrees` back; a setup that threw (a socket the sandbox refused) before the fixture added its removal; and Playwright loading a test file once just to list its tests, so a folder made at the top of the file was made twice and removed once. Separately, the sign-in slow-down tests timed one request against a wait counted from the request before it, and a loaded machine spent that wait delivering the earlier answer. Rules going forward:
+- Make temporary folders with `tempDir` (test/support/repo.ts, e2e/botbench.ts), or wrap `mkdtemp` in `removedAtEnd`: they are removed after every hook of the file at the latest. A file a test writes into the temporary folder is named by the test, which removes it.
+- In a teardown, remove folders before checking anything with `expect`, and nothing made at the top of a Playwright file outlives it: make it in a fixture.
+- `npm test`, `npm run test:live` and `npm run e2e` fail when a run leaves a `botbench-*` entry (test/no-leftovers.ts).
+- A timing test bounds only what load cannot shorten: from sending one attempt to the answer of the next, not one request alone. An upper bound sits far from the wrong value (half of it), never near the right one. Check each by breaking the code it guards (no wait, a wait that does not grow, no reset) and seeing it fail.
+
 ## 2026-11-23: a builder was stopped for silence during its own long test run, and its scratch copy was committed (task 17 of run 16)
 Inside Botbench's sandbox the engine tests that run check commands are skipped, so the builder made an unconfined scratch copy of `src` and `test` inside the task's copy to exercise them, then started the whole suite there in the foreground. It printed nothing for 10 minutes, Botbench stopped it for silence, and Botbench's commit of the copy took the scratch folder with it (later deleted). Rules going forward:
 - A run that may take minutes goes in the background, or is cut to the files changed; nothing in the foreground waits longer than the silence limit.

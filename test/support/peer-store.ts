@@ -8,6 +8,7 @@ import { openStore } from "../../src/store/db.ts";
 import { newId, type SignedEnvelope } from "../../src/peers/envelope.ts";
 import { workbenchKey, type WorkbenchKey } from "../../src/peers/key.ts";
 import { receiveEnvelope, writeOutgoing, type Outgoing } from "../../src/peers/messages.ts";
+import { removedAtEnd } from "./repo.ts";
 import { acceptPairRequest, confirmByOwner, createInvite, getPairing, joinPairing, newPairingKey, pairingState, requestDigest, type PairRequest } from "../../src/peers/pairings.ts";
 
 // Two workbenches' stores in one test, each with its own real key and real SQLite, paired by the store's own steps
@@ -21,7 +22,7 @@ export interface Side {
   key: WorkbenchKey;
 }
 export function side(t: { after(fn: () => void): void }): Side {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-peers-"));
+  const home = removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-peers-")));
   const s: Side = { home, db: openStore(home), key: workbenchKey(home) };
   t.after(() => {
     s.db.close();

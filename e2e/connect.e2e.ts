@@ -60,9 +60,10 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
     await expect(agent.getByRole("button", { name: "Connect Claude Code" })).toBeVisible();
     await expect.poll(() => processesUsing(empty), { message: "no sign-in process is left", timeout: 5000 }).toEqual([]);
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
     fs.rmSync(empty, { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
 

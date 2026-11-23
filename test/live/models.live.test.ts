@@ -9,6 +9,7 @@ import type { StoredEvent } from "../../src/api/stream.ts";
 import type { Config } from "../../src/config.ts";
 import { modelNameProblem } from "../../src/drivers/contract.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
+import { removedAtEnd } from "../support/repo.ts";
 
 // These tests start the real Claude Code on the owner's login, through Botbench's HTTP API.
 // Every prompt is tiny and every model named here is one of the cheapest the CLI lists.
@@ -20,7 +21,7 @@ const FULL_NAME = "claude-haiku-4-5-20251001";
 const ALIAS = "haiku";
 
 async function start(t: TestContext): Promise<{ server: BotbenchServer; base: string; headers: Record<string, string> }> {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-live-models-")));
+  const dir = fs.realpathSync(removedAtEnd(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-live-models-"))));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, "home");
   const config: Config = { port: 0, listen: ["127.0.0.1"], drivers: { "claude-code": { model: ALIAS, models: ["sonnet"] } }, roles: { implementer: { driver: "claude-code" } } };

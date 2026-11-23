@@ -14,6 +14,7 @@ import { startServer } from "../../src/server.ts";
 import { openStore } from "../../src/store/db.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { git, initRepo, tempDir } from "../support/repo.ts";
+import { escapeRegExp } from "../support/regexp.ts";
 
 // The container kind (U28, ADR 0009) on the owner's real Docker and an image already on this Mac, named by
 // BOTBENCH_TEST_CONTAINER_IMAGE (any image with sh, such as alpine:3 or node:24). Nothing is ever pulled. No model turn:
@@ -68,7 +69,7 @@ test("in a task's container a command sees the copy, writes a file that lands on
   const seen = await run("cat inside.txt && pwd && echo from-check > check.txt");
   assert.equal(seen.outcome, "passed", seen.output);
   assert.match(seen.output, /INSIDE-OK/);
-  assert.match(seen.output, new RegExp(copy.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(seen.output, new RegExp(escapeRegExp(copy)));
   // The agent's command, as the permission answer rewrites it and the CLI then runs it, quotes and a newline included.
   const agent = spawnSync("/bin/sh", ["-c", containerCommand(c, "printf '%s\\n' \"it's here\" > agent.txt\necho done")], { encoding: "utf8", cwd: copy });
   assert.equal(agent.status, 0, agent.stderr);

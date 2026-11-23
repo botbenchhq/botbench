@@ -160,6 +160,9 @@ test("LIVE: for a task a model is picked and sent, and the task screen names a m
   await chooseRepository(page, repo);
   await closeContext(page);
   await messageBox(page).fill("Create a file named hello.txt containing exactly: hi");
+  // Send is drawn as the primary only while it is enabled, and it waits on the composer's own checks; primaries() reads
+  // the page once, so it is read after Send is enabled. If Send stays disabled, the composer's reason is on the page.
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   expect(await primaries(page)).toEqual(["Send"]);
   await checkDesign(page, "composer, a task with a model picked");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u25-new-task-model.png"), fullPage: true });
@@ -202,7 +205,8 @@ test("where Claude Code reports no list, the picker offers the configured models
     expect(await sheet.getByTestId("model-options").locator(".ds-radio__label").allTextContents()).toEqual(["Claude Code's default", "opus", "sonnet", "Other…"]);
     await checkDesign(page, "add context, models from configuration");
   } finally {
-    expect((await botbench.stop()).leftover).toEqual([]);
+    const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
+    expect(leftover).toEqual([]);
   }
 });
