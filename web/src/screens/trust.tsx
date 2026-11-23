@@ -43,6 +43,11 @@ const RULE_WORDS: Record<LogRule, string> = {
   peer_pairing: "Pairing with another workbench",
   peer_protocol: "Sent to a paired workbench without asking: a fixed reply or notice",
   peer_refused: "Refused from another workbench",
+  peer_message: "Message to or from another workbench",
+  peer_kind_refused: "Not sent or not taken: switched off for that workbench",
+  peer_send_attempt: "Claude Code drafted a message to another workbench",
+  peer_send_over_limit: "Not sent: the run's most messages to other workbenches",
+  peer_settings: "What another workbench may send or receive, changed by you",
 };
 
 const when = (ts: string): string => new Date(ts).toLocaleString();
