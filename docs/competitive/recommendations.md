@@ -66,6 +66,17 @@ Each of these scored low on value for the two-developer case today, or high on e
 | **Measuring success by agents, providers or connectors supported** | The category | OpenAgents lists 26 CLI adapters and OpenMausBot 31 drivers. It is not where a small team wins. |
 | **Copying Agor code, reading OpenMausBot's `enterprise/`, copying Agenta's `ee/`** | Licences | Agor's licence forbids using its code in a commercial product or service for others whose main purpose is orchestrating AI coding agents (until it becomes Apache 2.0 on 15 January 2029). Botbench is close enough to that line to take ideas only. |
 
+## What the first experiments changed (23 November 2026)
+
+Records in [`results/`](results/README.md).
+
+- **Rank 1 is done in its first version.** The unattended-safety run held. The overlapping-issues run did not pass: one duplicate through a stale claim, as many conflicting pairs as three uncoordinated sessions, and 23 requests to a person where the plain sessions made none.
+- **Rank 3 (claims that lapse) moves up and gains a bug.** A stopped workbench blocked its issue for an hour, and after a takeover its restart opened a second pull request (#188). Fix the bug first.
+- **Rank 4 (dependencies and knowing what others are changing) matters more than the claim on an issue.** Conflicts came from different issues touching the same code, which a claim does not see, and the warning arrived at review, after the work.
+- **A new item: warnings that carry signal (#189).** Sixteen of seventeen overlap warnings named only a shared test file.
+- **A new question for the owner: how much a person approves on a team's own issues.** A run from an issue needs its plan approved and its result accepted, by design for outside text. On ten of a team's own issues that was 23 interventions. It is the same tradeoff as for messages (`docs/product/peers-autonomy-tradeoff.md`) and should be decided with it.
+- **The integrate row for ACP is settled for now:** not a generic driver, and the Grok test's answer is no until its long-lived tools can be switched off (`docs/security/acp-check.md`).
+
 ## What would change these recommendations
 
 - **Experiment 3 finds a trap carried out:** fix that before anything else.

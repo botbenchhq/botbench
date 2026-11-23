@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, peersProblem, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, peersProblem, maxCheckFixRounds, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, usageLimitWaitMs, type Config, type Log, repositoryExecution } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -32,6 +32,7 @@ import { clearCombinedCopies } from "./worktrees.ts";
 import { createClaims } from "./engine/claims.ts";
 import { chooseWorkbench, workbenchName } from "./workbench.ts";
 import { createTasks } from "./engine/task.ts";
+import { createContainers } from "./engine/containers.ts";
 import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
 import { moveOldHome } from "./store/move-home.ts";
@@ -122,7 +123,17 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // A review folder of a Botbench that stopped mid-review is never used again (src/drivers/cli-sandbox.ts).
   removeLeftoverReviewFolders(home);
   const login = loadOrCreateLoginToken(home);
-  const stream = createEventStream(db, options.heartbeatMs);
+  // The task containers (engine/containers.ts). Each time a task is announced, accepted, rejected, cancelled or
+  // discarded included, a container of a task that is no longer live is removed; at start, every one left over.
+  const containers = createContainers({ db, home, workbench: () => workbenchName(db) });
+  const events = createEventStream(db, options.heartbeatMs);
+  const stream: typeof events = { ...events, announceTask: (task) => {
+      events.announceTask(task);
+      containers.taskChanged(task.id);
+    } };
+  // Whenever a docker program is on this Mac (the sweep asks nothing otherwise): a repository switched back to the host,
+  // or taken out of the settings, may have left containers of ended tasks.
+  void containers.sweep();
   // The configured model for turns and tasks is the implementer role's; a run's planner has its own.
   const model = roleModel(config, IMPLEMENTER, CLAUDE_CODE);
   const plannerModel = roleModel(config, PLANNER, CLAUDE_CODE);
@@ -184,11 +195,12 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     db, home, peers,
     repoCommands: (repo) => repositoryCommands(config, repo),
     repoHosts: (repo) => repositoryHosts(config, repo),
+    execution: (repo) => repositoryExecution(config, repo),
     remote: (repo) => repositoryDelivery(config, repo).remote,
     onTaskChange: stream.announceTask,
     onPassed: (taskId) => void tasks.reconsider(taskId),
   });
-  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
+  const tasks = createTasks({ db, home, driver, builders, broker,...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), execution: (repo) => repositoryExecution(config, repo), containers, protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), usageLimitWaitMs: usageLimitWaitMs(config), checkFixRounds: maxCheckFixRounds(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
@@ -264,6 +276,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     await broker.close();
     // A notification in flight may still delete an expired device's row; each has a time limit.
     await push.idle();
+    // A container sweep or removal reads the store; each docker call has a time limit.
+    await containers.idle();
     db.close();
   };
 

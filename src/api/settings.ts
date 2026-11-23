@@ -2,6 +2,7 @@ import type http from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { chatWebAccess, isWebAccess, setChatWebAccess } from "../approvals/web-access.ts";
 import { askEveryCommand, defaultMode, isRunMode, setAskEveryCommand, setDefaultMode } from "../engine/modes.ts";
+import { HOST_EXECUTION } from "../execution.ts";
 import { chooseWorkbench, workbenchName, workbenchProblem } from "../workbench.ts";
 import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
 
@@ -25,7 +26,9 @@ export async function settingsRoutes(req: http.IncomingMessage, res: http.Server
   if (req.method === "GET" && url.pathname === "/api/first-run") return (json(res, 200, { firstRun: firstRun(ctx.db) }), true);
   if (url.pathname !== "/api/settings") return false;
   try {
-    const current = () => ({ defaultMode: defaultMode(ctx.db, ctx.config.autonomy?.mode), chatWebAccess: chatWebAccess(ctx.db), askEveryCommand: askEveryCommand(ctx.db), workbench: { name: workbenchName(ctx.db), setInFile: ctx.config.workbench !== undefined } });
+    // Where each repository in the settings file runs its commands (src/execution.ts): set there, shown here, never changed here.
+    const repositories = Object.entries(ctx.config.repositories ?? {}).map(([repo, settings]) => ({ path: repo, execution: settings.execution ?? HOST_EXECUTION }));
+    const current = () => ({ defaultMode: defaultMode(ctx.db, ctx.config.autonomy?.mode), chatWebAccess: chatWebAccess(ctx.db), askEveryCommand: askEveryCommand(ctx.db), workbench: { name: workbenchName(ctx.db), setInFile: ctx.config.workbench !== undefined }, repositories });
     if (req.method === "GET") {
       json(res, 200, current());
     } else if (req.method === "PUT") {

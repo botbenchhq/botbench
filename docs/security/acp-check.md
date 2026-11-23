@@ -92,3 +92,18 @@ Only a vendor's own ACP server (`agy acp`, `grok agent stdio`) fits "drive exist
 ## Not tested
 
 Usage-limit detection. Grok's write through the client's file method, and what Grok does when the client refuses a command. A Grok-requested command under `sandbox-exec`, end to end. Whether either agent loads personal settings or MCP servers. Antigravity's `--sandbox` flag. The Claude Code and Codex adapters. OpenCode.
+
+## The Grok test (run 2026-11-23, after the owner approved the next step)
+
+**Verdict: no, not yet.** Four of six conditions hold. The tools that outlive a turn cannot be switched off in this mode, and switching those off is one of Botbench's hard rules. Five short Grok turns (`grok-4.5`, low reasoning), started with `--permission-mode default`, never with approvals bypassed; nothing installed.
+
+| # | Condition | Result |
+|---|---|---|
+| 1 | A command the client refuses to run stays un-run | **Holds.** Grok marked the call failed and ended the turn; no other attempt, and the file the command would have made does not exist. |
+| 2 | A Grok-requested command is confined by Botbench's own profile | **Holds.** Under `sandbox-exec` with the equivalent of `toolsProfile`: the home-folder decoy and Grok's sign-in file gave "Operation not permitted" (nothing printed), the network was closed, a write outside the copy was refused, and a write in the copy worked. |
+| 3 | Background and scheduling tools can be switched off | **Fails.** `--disallowed-tools` and `--tools` are accepted silently in `agent stdio` mode and change nothing: the scheduler, monitor and goal tools remain. Subagents and web search do switch off. The evidence is the model's own list of its tools, not a schema dump. |
+| 4 | File writes go through the client | **Holds.** Read, permission request, then `fs/write_text_file`; the client wrote the file. |
+| 5 | A cancelled command stays cancelled | **Holds**, when the client kills its own terminal. Grok again sent no kill. |
+| 6 | Personal MCP servers and settings are not loaded | **Partly.** No personal MCP server is configured on this Mac, so loading one could not be tested. Grok discovered a personal plugin despite the settings meant to stop that. No flag was found that stops plugin discovery. |
+
+What would make it a yes: a Grok setting that removes the scheduler, monitor and goal tools in this mode (an agent profile file or a settings key are untested candidates); or a decision record that accepts stopping the turn when one of them is called. Those calls arrive with no permission request and no client method, so Botbench could only react after one started, which is weaker than switched off and is the owner's decision. Until then the Grok driver stays as it is.

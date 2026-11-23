@@ -18,7 +18,7 @@ import { NO_SANDBOX } from "./support/confined.ts";
  * How many tests the runner skips inside the sandbox. A test that newly takes its `skip` from test/support/confined.ts
  * makes this run fail until this number is changed with it.
  */
-const EXPECTED_SKIPPED = 151;
+const EXPECTED_SKIPPED = 154;
 
 const REPO = fs.realpathSync(path.resolve(import.meta.dirname, ".."));
 

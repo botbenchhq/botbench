@@ -14,7 +14,7 @@ import { confirmGroupGone, durationWords, plannerSilenceReason, SILENCE_LIMIT_MS
 import { agentName, correctionPrompt, IMPLEMENTER, mergePlan, oneTaskPrompt, parsePlan, PLANNER, plannerPrompt, REVIEWER, roleProblem, sameModelProblem, taskPrompt, validatePlan, type PlanTask, type RoleChoice } from "./roles.ts";
 import { DRIVER_NAMES } from "../config.ts";
 import { confinementProblem } from "../confinement.ts";
-import { isRunMode, MODE_WORDS, planApprovedByMode, type RunMode } from "./modes.ts";
+import { isRunMode, MODE_WORDS, planApprovedByMode, stricterModes, type RunMode } from "./modes.ts";
 import type { StationCommand } from "./stations.ts";
 import { modelNameProblem } from "../drivers/contract.ts";
 import { checkRepository, getTask, insertQueuedTask, moveTaskIn, TaskError, words, type Task, type Tasks } from "./task.ts";
@@ -363,6 +363,29 @@ export function cancelRun(db: DatabaseSync, runId: number, by = "cancelled by th
   });
 }
 
+/**
+ * The owner makes a run's mode stricter while it has not finished: fully autonomous to semi-autonomous or manual,
+ * semi-autonomous to manual. The mode and the history's record of the owner's change, naming both modes, are written
+ * together. Nothing else is touched: a request waiting for the owner stays, a turn under way finishes, and from the
+ * next request and the next result on, the broker and the engine read the new mode from the store (engine/modes.ts).
+ * Throws for a mode that is none of the three (400), a run that does not exist (404), one that has finished, and the
+ * same or a looser mode (409); then nothing is written.
+ */
+export function tightenMode(db: DatabaseSync, runId: number, given: unknown): Run {
+  const mode = modeChoice(given);
+  return transaction(db, () => {
+    const run = known(db, runId);
+    if (run.status === "done" || run.status === "cancelled" || run.status === "failed") throw new RunError(409, `Run ${run.id} has finished, so its mode can no longer be changed.`);
+    if (mode === run.mode) throw new RunError(409, `Run ${run.id} is already ${MODE_WORDS[mode]}.`);
+    if (!stricterModes(run.mode, run.status).includes(mode)) throw new RunError(409, `Run ${run.id} is ${MODE_WORDS[run.mode]}. A run's mode can be made stricter while it works, never looser, so it cannot become ${MODE_WORDS[mode]}.`);
+    const at = now();
+    db.prepare("UPDATE runs SET mode = ?, updated_at = ? WHERE id = ?").run(mode, at, runId);
+    // voice: not on screen. A note in the stored history of the run; the run screen says it from `modeChanges`.
+    db.prepare("INSERT INTO run_events (run_id, ts, status, detail, actor, mode_from, mode_to) VALUES (?, ?, ?, ?, 'owner', ?, ?)").run(runId, at, run.status, `mode changed by the owner from ${MODE_WORDS[run.mode]} to ${MODE_WORDS[mode]}`, run.mode, mode);
+    return getRun(db, runId)!;
+  });
+}
+
 const MAX_PATH = 4096;
 export const MAX_PROMPT = 20_000;
 export const MAX_FEEDBACK = 5000;
@@ -490,6 +513,8 @@ export interface Runs {
   requestChanges(id: number, feedback: unknown, planVersion: unknown): Run;
   /** Cancel a run that is planning, waits for approval or is building. A planner or a builder at work is stopped. */
   cancel(id: number, by?: string): Run;
+  /** Make the run's mode stricter, on the owner's request (`tightenMode`). Nothing at work is stopped and no request waiting is answered. */
+  tightenMode(id: number, mode: unknown): Run;
   /** Resolves when no planner is at work and nothing is being recovered. */
   idle(): Promise<void>;
   /** Stop the planner at work and leave no CLI process and no planning worktree behind. */
@@ -940,7 +965,7 @@ export function createRuns(options: RunsOptions): Runs {
     await chain;
   };
 
-  return { start, editPlan: (id, tasks, planVersion) => announce(editPlan(db, id, tasks, planVersion)), approve, requestChanges, cancel, idle: () => chain, close };
+  return { start, editPlan: (id, tasks, planVersion) => announce(editPlan(db, id, tasks, planVersion)), approve, requestChanges, cancel, tightenMode: (id, mode) => announce(tightenMode(db, id, mode)), idle: () => chain, close };
 }
 
 /**
