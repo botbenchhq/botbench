@@ -275,7 +275,8 @@ export function createChat(o: ChatOptions): Chat {
         : // Exactly what the review station asks for, in a folder with nothing in it: read-only, no host, no way to ask.
           { readOnly: true };
       // An agent that asks is admitted as a chat's, its commands confined (its whole process is in Botbench's sandbox).
-      admission = tools && driver.capabilities.permissionRequests && o.broker !== undefined ? o.broker.admit({ chat: true, role: CHAT_ROLE, worktree: folder.path, confined: driver.capabilities.confinedCommands === true }) : null;
+      // Codex asks only when it builds, to leave its sandbox (`escalationsOnly`): in a chat it is kept by its sandbox alone.
+      admission = tools && driver.capabilities.permissionRequests && driver.capabilities.escalationsOnly !== true && o.broker !== undefined ? o.broker.admit({ chat: true, role: CHAT_ROLE, worktree: folder.path, confined: driver.capabilities.confinedCommands === true }) : null;
       session = await driver.startAttempt({ db, cwd: folder.path, ...how, ...(admission === null ? {} : { gate: { socketPath: admission.socketPath, secret: admission.secret } }), confinement: { dataDir: o.home, allowedHosts: [] }, ...(model === null ? {} : { model }) });
     } catch (err) {
       admission?.release();
