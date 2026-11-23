@@ -10,7 +10,7 @@ import { createTurns } from "./api/turns.ts";
 import { createChat } from "./api/chat.ts";
 import { createAgentChecks } from "./api/agents.ts";
 import { createBroker, type Broker } from "./approvals/broker.ts";
-import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, type Config, type Log } from "./config.ts";
+import { DEFAULT_CONFIG_FILE, dataHomes, envSetting, floorEntries, loadConfig, localConfigFile, maxRefineRounds, offerStandingAfter, repositoryCommands, repositoryDelivery, repositoryHosts, repositoryProtectedPaths, ROOT, silenceLimitMs, type Config, type Log } from "./config.ts";
 import { CLAUDE_CODE, ClaudeCodeDriver, toolResultsFolder } from "./drivers/claude-code.ts";
 import { ANTIGRAVITY, AntigravityDriver } from "./drivers/antigravity.ts";
 import { CODEX, CodexDriver } from "./drivers/codex.ts";
@@ -26,6 +26,8 @@ import { createDeliveries } from "./engine/delivery.ts";
 import { createRuns } from "./engine/run.ts";
 import { createGitHub, type GitHub } from "./github.ts";
 import { createPeers } from "./engine/peers.ts";
+import { createCheckTogether } from "./engine/combined.ts";
+import { clearCombinedCopies } from "./worktrees.ts";
 import { chooseWorkbench, workbenchName } from "./workbench.ts";
 import { createTasks } from "./engine/task.ts";
 import { createPush, type Push } from "./push.ts";
@@ -136,7 +138,22 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const turns = createTurns({ db, home, driver: chatClaude, broker, ...(model ? { model } : {}), onEvent: stream.notify, idleCloseMs: options.idleCloseMs });
   // A chat can ask Codex, Grok and Antigravity too, each confined as for a review (src/api/chat.ts).
   const chat = createChat({ db, home, turns, claude: chatClaude, agents: reviewers, onEvent: stream.notify });
-  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), onEvent: stream.notify, onTaskChange: (task) => {
+  // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
+  const github = options.github ?? createGitHub();
+  // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
+  const peers = createPeers({ db, config, github });
+  // Checking a task together with another workbench's open pull request, in a temporary copy (engine/combined.ts).
+  // A copy left by a Botbench that stopped while checking is removed first, by what is on disk.
+  clearCombinedCopies(home);
+  const checkTogether = createCheckTogether({
+    db, home, peers,
+    repoCommands: (repo) => repositoryCommands(config, repo),
+    repoHosts: (repo) => repositoryHosts(config, repo),
+    remote: (repo) => repositoryDelivery(config, repo).remote,
+    onTaskChange: stream.announceTask,
+    onPassed: (taskId) => void tasks.reconsider(taskId),
+  });
+  const tasks = createTasks({ db, home, driver, broker, ...(model ? { model } : {}), repoCommands: (repo) => repositoryCommands(config, repo), repoHosts: (repo) => repositoryHosts(config, repo), protectedPaths: (repo) => repositoryProtectedPaths(config, repo), reviewers, silenceLimitMs: silenceLimitMs(config), checkTogether, onEvent: stream.notify, onTaskChange: (task) => {
       stream.announceTask(task);
       push.taskChanged(task);
     }, onRunChange: (run) => {
@@ -160,12 +177,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   });
   const { maxBytes: maxRecordingBytes, ...dictationOptions } = options.dictation ?? {};
   const dictation = createDictation({ home, ...dictationOptions });
-  // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
-  const github = options.github ?? createGitHub();
   const deliveries = createDeliveries({ db, config, github, onTaskChange: stream.announceTask });
-  // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
-  const peers = createPeers({ db, config, github });
-  const ctx = { db, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  const ctx = { db, config, driver, reviewers, agentChecks, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, checkTogether, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
@@ -190,6 +203,8 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
     stream.close();
     await Promise.all(servers.map(stop));
     // Sessions write to the database as they stop, so they are closed before it.
+    // A check together ending now may still ask the tasks to look at its task again, so it stops first.
+    await checkTogether.close();
     await Promise.allSettled([chat.close().then(() => turns.close()), tasks.close(), runs.close(), connect.close(), deliveries.close()]);
     // After the tasks: a task that is stopping still writes its last approvals' ends through the broker.
     await broker.close();

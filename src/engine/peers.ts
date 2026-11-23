@@ -29,6 +29,11 @@ export interface PeerPullRequest {
   /** Issues of the same repository it closes, as GitHub reports them. */
   closes: number[];
   files: string[];
+  /**
+   * The commit its head branch points at on the remote, as `git ls-remote` read it with the rest of the view; null when
+   * the remote did not list the branch. What a check together with it is compared with (engine/combined.ts).
+   */
+  head: string | null;
 }
 export interface PeerBranch {
   workbench: string;
@@ -42,14 +47,15 @@ export type PeersView =
  * What of a repository's open pull requests and remote task branches is another workbench's: a head branch in the
  * named form under a name this installation never had. A branch with an open pull request is listed with it, not again.
  */
-export function otherWork(prs: readonly ListedPullRequest[], branches: readonly { branch: string }[], own: ReadonlySet<string>): { pullRequests: PeerPullRequest[]; branches: PeerBranch[] } {
+export function otherWork(prs: readonly ListedPullRequest[], branches: readonly { branch: string; commit?: string }[], own: ReadonlySet<string>): { pullRequests: PeerPullRequest[]; branches: PeerBranch[] } {
   const other = (branch: string): string | null => {
     const parsed = parseTaskBranch(branch);
     return parsed?.prefix === "botbench" && parsed.workbench !== null && !own.has(parsed.workbench) ? parsed.workbench : null;
   };
+  const heads = new Map(branches.flatMap(({ branch, commit }) => (commit === undefined ? [] : [[branch, commit] as const])));
   const pullRequests = prs.flatMap((pr) => {
     const workbench = pr.state === "OPEN" ? other(pr.headRefName) : null;
-    return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files }];
+    return workbench === null ? [] : [{ workbench, number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, closes: pr.closes, files: pr.files, head: heads.get(pr.headRefName) ?? null }];
   });
   const withPr = new Set(pullRequests.map((pr) => pr.branch));
   const pushed = branches.flatMap(({ branch }) => {
@@ -60,8 +66,11 @@ export function otherWork(prs: readonly ListedPullRequest[], branches: readonly 
 }
 
 export interface Peers {
-  /** Other workbenches' work on the repository's remote: from the short-lived cache, or read now. Never rejects. */
-  view(repo: string): Promise<PeersView>;
+  /**
+   * Other workbenches' work on the repository's remote: from the short-lived cache, or read now. `fresh` reads it now
+   * whatever is kept, for a decision that stands on it (engine/combined.ts). Never rejects.
+   */
+  view(repo: string, o?: { fresh?: boolean }): Promise<PeersView>;
 }
 
 /** How long a view is kept before it is read again. */
@@ -94,11 +103,11 @@ export function createPeers(o: { db: DatabaseSync; config: Config; github: GitHu
   };
 
   return {
-    view(repoPath) {
+    view(repoPath, given = {}) {
       const repo = realRepo(repoPath);
       const at = clock();
       const have = kept.get(repo);
-      if (have !== undefined && at - have.at < fresh) return have.view;
+      if (given.fresh !== true && have !== undefined && at - have.at < fresh) return have.view;
       const view = read(repo);
       kept.set(repo, { at, view });
       return view;

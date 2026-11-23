@@ -9,7 +9,7 @@ const view = (pullRequests: { workbench: string; number: number; closes: number[
   state: "ready",
   repo: "/r",
   repository: "github.com/o/r",
-  pullRequests: pullRequests.map((pr) => ({ ...pr, title: `Pull request ${pr.number}`, url: `https://github.com/o/r/pull/${pr.number}`, branch: `botbench/${pr.workbench}/run-1/task-${pr.number}` })),
+  pullRequests: pullRequests.map((pr) => ({ ...pr, title: `Pull request ${pr.number}`, url: `https://github.com/o/r/pull/${pr.number}`, branch: `botbench/${pr.workbench}/run-1/task-${pr.number}`, head: null })),
   branches: [],
   checkedAt: "2026-11-22T00:00:00.000Z",
 });

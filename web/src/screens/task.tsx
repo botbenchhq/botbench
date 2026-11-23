@@ -16,6 +16,7 @@ import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, st
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
+import { CheckTogether } from "../components/check-together.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
@@ -291,6 +292,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                 <CommandRounds testId="checks" lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
               </section>
             )}
+            {task.checks !== null && task.checks !== "none" && <CheckTogether taskId={task.id} repo={task.repo} ready={task.status === "awaiting_decision"} onSignedOut={onSignedOut} />}
 
             {task.reviewer !== null && (task.review !== null || task.status === "reviewing") && (
               <section aria-labelledby="review-heading" data-testid="review" className="ds-stack ds-gap-sm">

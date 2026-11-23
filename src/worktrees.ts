@@ -576,6 +576,68 @@ export async function pushTaskBranch(o: { repo: string; remote: string; branch: 
   }
 }
 
+/*
+ * Checking a task together with another workbench's pull request (engine/combined.ts). The work is done in a temporary
+ * copy of its own under Botbench's data folder, never in the repository:
+ * - the copy is a clone of the repository that borrows its objects (`--shared`), so nothing in the repository is written,
+ *   not a ref, not an object, not FETCH_HEAD; the clone has no hard link into it either;
+ * - the other workbench's head is fetched read only from the remote's address into the copy alone; nothing is pushed;
+ * - the merge is made there, on a scratch branch at the task's commit, by Botbench's own identity, with no hook.
+ * The scratch branch lives only in the copy, so removing the copy removes it.
+ */
+
+/** Where the temporary copies for checking together are made: one folder under the data folder, beside the worktrees. */
+export const combinedRoot = (home: string): string => path.join(path.resolve(home), "combined");
+const SCRATCH_BRANCH = "botbench-check-together";
+const PEER_REF = "refs/botbench/peer";
+
+/** What merging the other workbench's head into the task's commit came to, and the commit that head was. */
+export type CombinedMerge = { peerCommit: string; merged: true } | { peerCommit: string; merged: false; conflicts: string[] };
+
+/**
+ * Make the temporary copy at `dir`, a new folder under `combinedRoot(home)`: clone `repo` into it, fetch `peerBranch`
+ * (another workbench's task branch) from `fetchUrl`, start the scratch branch at `taskCommit` and merge that head into
+ * it. Answers the head fetched and whether it merged, with the files in conflict when not. Throws when any step fails
+ * for another reason; the caller removes the copy either way (`removeCombinedCopy`).
+ */
+export async function prepareCombinedCopy(o: { repo: string; home: string; dir: string; fetchUrl: string; peerBranch: string; taskCommit: string }): Promise<CombinedMerge> {
+  checkBase(o.taskCommit);
+  if (parseTaskBranch(o.peerBranch)?.prefix !== "botbench") throw new Error(`${o.peerBranch} is not a Botbench task branch, so it is not fetched.`);
+  const root = combinedRoot(o.home);
+  const dir = path.resolve(o.dir);
+  if (path.dirname(dir) !== root) throw new Error(`${dir} is not a folder for checking together.`);
+  if (fs.existsSync(dir)) throw new Error(`${dir} already exists.`);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  await git(root, ["clone", "--quiet", "--shared", "--no-checkout", "--", path.resolve(o.repo), dir]);
+  // By the address, so the copy has no remote of its own; `--` keeps it from ever being read as an option.
+  await git(dir, ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--", o.fetchUrl, `+refs/heads/${o.peerBranch}:${PEER_REF}`], GIT_NETWORK_LIMIT_MS);
+  const peerCommit = (await git(dir, ["rev-parse", "--verify", "--quiet", `${PEER_REF}^{commit}`], GIT_CHECK_LIMIT_MS)).trim();
+  if (!COMMIT_ID.test(peerCommit)) throw new Error(`The head of ${o.peerBranch} could not be read after it was fetched.`);
+  const identity = ["-c", `user.name=${AUTHOR_NAME}`, "-c", `user.email=${AUTHOR_EMAIL}`, "-c", "commit.gpgsign=false"];
+  await git(dir, ["checkout", "--quiet", "--force", "-B", SCRATCH_BRANCH, o.taskCommit]);
+  try {
+    await git(dir, [...identity, "merge", "--quiet", "--no-ff", "--no-edit", "--no-verify", "-m", `Check together with ${o.peerBranch}`, PEER_REF]);
+    return { peerCommit, merged: true };
+  } catch (err) {
+    unlessTimeout(err);
+    const conflicts = (await git(dir, ["diff", "--name-only", "--diff-filter=U", "-z"], GIT_CHECK_LIMIT_MS)).split("\0").filter(Boolean).sort();
+    if (conflicts.length === 0) throw err;
+    return { peerCommit, merged: false, conflicts };
+  }
+}
+
+/** Remove a temporary copy for checking together, and its scratch branch with it. A copy that is already gone is fine. */
+export function removeCombinedCopy(home: string, dir: string): void {
+  const at = path.resolve(dir);
+  if (path.dirname(at) !== combinedRoot(home)) throw new Error(`${at} is not a folder for checking together, so it was not removed.`);
+  fs.rmSync(at, { recursive: true, force: true });
+}
+
+/** At start: remove every temporary copy a Botbench that stopped while checking together left, by what is on disk. */
+export function clearCombinedCopies(home: string): void {
+  fs.rmSync(combinedRoot(home), { recursive: true, force: true });
+}
+
 /**
  * Point git's links between `repo` and its task worktrees at where the worktrees are now, after the data folder that
  * holds them was moved: the repository's record of each worktree, and each worktree's own `.git` file. Nothing else in
