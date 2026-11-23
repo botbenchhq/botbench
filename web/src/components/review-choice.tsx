@@ -3,6 +3,7 @@ import { ApiError, getAgentModels, getAgentsAndCap, type ModelList, type Reviewe
 import { REVIEW_DEFAULT, REVIEW_OTHER, reviewRows, type ReviewRow } from "../app/composer.ts";
 import { agentName } from "./evidence.tsx";
 import { Option } from "./option.tsx";
+import { counted } from "../app/format.ts";
 
 /** A select value: the agent and the model, apart by a space, which no agent name or model name holds. */
 const split = (value: string): { agent: string; model: string } => ({ agent: value.slice(0, value.indexOf(" ")), model: value.slice(value.indexOf(" ") + 1) });
@@ -69,7 +70,7 @@ export function useReviewChoice(onSignedOut: () => void, initial = "", wanted = 
 }
 
 /** The rounds of fixes a run started now allows after a review with concerns. */
-const roundsWords = (rounds: number): string => (rounds === 0 ? "No rounds of fixes." : `Up to ${rounds} ${rounds === 1 ? "round" : "rounds"} of fixes.`);
+const roundsWords = (rounds: number): string => (rounds === 0 ? "No rounds of fixes." : `Up to ${counted(rounds, "round", "rounds")} of fixes.`);
 
 /** The reviewer as one choice: Off, each reviewer and model offered now, and the reviewers that cannot review now with why. */
 export function ReviewOptions({ state }: { state: ReviewChoiceState }) {

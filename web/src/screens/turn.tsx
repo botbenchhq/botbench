@@ -17,7 +17,8 @@ import { choiceName, modelName, useModelChoice } from "../components/model-picke
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
 import { useIssueChoice } from "../components/issue-choice.tsx";
 import { usePeersOf } from "../components/other-workbenches.tsx";
-import { agoWords, claimNotice, issueWarnings, oldClaims } from "../app/peers.ts";
+import { ago } from "../app/format.ts";
+import { claimNotice, issueWarnings, oldClaims } from "../app/peers.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
@@ -889,7 +890,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
               >
                 <p>
                   <span data-ds-content="">{c.workbench}</span>
-                  {` started on issue #${c.issue} ${agoWords(c.startedAt, Date.now())} and has opened no pull request. Your run goes ahead as if `}
+                  {` started on issue #${c.issue} ${ago(c.startedAt, Date.now())} and has opened no pull request. Your run goes ahead as if `}
                   <span data-ds-content="">{c.workbench}</span>
                   {" had not started. Botbench leaves its branches on the remote as they are, and pushes only a branch of your own. If that workbench is still working on the issue, the two of you may do the same work twice."}
                 </p>

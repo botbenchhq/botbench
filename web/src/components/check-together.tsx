@@ -94,7 +94,7 @@ export function CheckTogether({ taskId, repo, ready, onSignedOut }: { taskId: nu
                   </span>
                   <span className="ds-list__secondary">
                     <span data-ds-content="">{offer.workbench}</span>
-                    {offer.overlaps.length === 0 ? " · changes none of this task's files" : ` · also changes ${offer.overlaps.length === 1 ? "1 of this task's files" : `${offer.overlaps.length} of this task's files`}`}
+                    {offer.overlaps.length === 0 ? " · changes none of this task's files" : ` · also changes ${offer.overlaps.length} of this task's files`}
                   </span>
                 </span>
               </div>

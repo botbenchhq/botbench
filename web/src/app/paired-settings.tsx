@@ -28,13 +28,13 @@ import { NewQuestion } from "../components/new-question.tsx";
 import { RepoChoice } from "../components/repo-choice.tsx";
 import { PeerChangesContext } from "./approvals.tsx";
 import { PeerCardsContext } from "./peer-cards.tsx";
-import { clockOf, frictionWords, inviteLife, pairingCards, threadHref, threadsOf } from "./paired-words.ts";
+import { clock, counted, fullDate } from "./format.ts";
+import { frictionWords, inviteLife, pairingCards, threadHref, threadsOf } from "./paired-words.ts";
 
 /** The settings file's words for turning pairing on, as the server's own refusal says them (src/peers/service.ts). */
 export const LISTEN_SETTING = '"peers": { "listen": { "address": "127.0.0.1", "port": 4790 } }';
 
 const words = (what: string, err: unknown): string => (err instanceof ApiError ? `${what} ${err.message}` : `${what} Botbench could not be reached.`);
-const dateOf = (iso: string): string => new Date(iso).toLocaleString();
 
 /** One fact of the pairing: its label, then its value, which is the other workbench's words when `theirs`. */
 function Fact({ label, mono = false, theirs = false, testId, children }: { label: string; mono?: boolean; theirs?: boolean; testId?: string; children: ReactNode }) {
@@ -172,7 +172,7 @@ function Invite({ overview, onChanged, onSignedOut }: { overview: PeerOverview; 
         <div key={open.id} className="ds-settings-row" data-testid="open-invite">
           <div className="ds-settings-row__text">
             <p className="ds-settings-row__label">An invite is open</p>
-            <p className="ds-settings-row__description">{`Until ${clockOf(open.expiresAt)}. Botbench shows an invite only once, when it is made.`}</p>
+            <p className="ds-settings-row__description">{`Until ${clock(open.expiresAt)}. Botbench shows an invite only once, when it is made.`}</p>
             <dl className="ds-key-value">
               <Fact label="To pair on" mono theirs>
                 {open.repository}
@@ -425,7 +425,7 @@ function Conversations({ pairing, onSignedOut }: { pairing: Pairing; onSignedOut
                   <span data-ds-content="" className="ds-list__primary">
                     {t.first}
                   </span>
-                  <span className="ds-list__secondary">{`${t.rows.length} ${t.rows.length === 1 ? "message" : "messages"}${t.waiting ? " · Waits for you" : ""} · ${t.rows.at(-1)!.state}`}</span>
+                  <span className="ds-list__secondary">{`${counted(t.rows.length, "message", "messages")}${t.waiting ? " · Waits for you" : ""} · ${t.rows.at(-1)!.state}`}</span>
                 </span>
               </a>
             </li>
@@ -471,7 +471,7 @@ function PairingView({ pairing, onChanged, onSignedOut }: { pairing: Pairing; on
         <Fact label="Repository" mono theirs testId="pairing-repository">
           {pairing.repository}
         </Fact>
-        <Fact label={pairing.state === "in_force" ? "Paired since" : "Asked"}>{dateOf(pairing.createdAt)}</Fact>
+        <Fact label={pairing.state === "in_force" ? "Paired since" : "Asked"}>{fullDate(pairing.createdAt)}</Fact>
       </dl>
       <Fingerprints peer={pairing.peer} own={pairing.ownFingerprint} />
       {pairing.state === "waiting_for_owner" && (
@@ -576,7 +576,7 @@ export function PairedSettings({ onSignedOut }: { onSignedOut: () => void }) {
       {overview !== null && overview.listening !== null && live === null && (
         <>
           {ended !== null && (
-            <p data-testid="pairing-ended">{`The pairing with ${ended.peer.name} ended${ended.endedAt === null ? "" : ` on ${dateOf(ended.endedAt)}`}. Its messages are refused, and nothing more is sent to it. To work together again, one of you sends a new invite.`}</p>
+            <p data-testid="pairing-ended">{`The pairing with ${ended.peer.name} ended${ended.endedAt === null ? "" : ` on ${fullDate(ended.endedAt)}`}. Its messages are refused, and nothing more is sent to it. To work together again, one of you sends a new invite.`}</p>
           )}
           <p className="ds-settings-row__description">{`The first version pairs with one workbench at a time, on one repository. Both workbenches' listeners must be on this Mac's loopback address or a private network; this one listens on ${overview.listening}.`}</p>
           {overview.fingerprint !== null && (

@@ -1,4 +1,5 @@
 import type { CheckTogetherView, CombinedCheck } from "../api/client.ts";
+import { counted, plural } from "./format.ts";
 
 /*
  * What the task screen says about checking a task together with another workbench's open pull request (Peers P4), as
@@ -13,10 +14,10 @@ const listed = (items: readonly string[]): string => (items.length <= 1 ? (items
 
 /** What the result came to, in one sentence. */
 export function outcomeLine(check: Pick<CombinedCheck, "outcome" | "conflicts" | "problem" | "commands">): string {
-  if (check.outcome === "conflict") return `The two did not merge: ${check.conflicts.length === 1 ? "1 file is" : `${check.conflicts.length} files are`} in conflict, ${listed(check.conflicts)}. No check was run.`;
+  if (check.outcome === "conflict") return `The two did not merge: ${counted(check.conflicts.length, "file", "files")} ${plural(check.conflicts.length, "is", "are")} in conflict, ${listed(check.conflicts)}. No check was run.`;
   if (check.outcome === "not_run") return check.problem ?? "The check together did not run.";
   const notPassed = check.commands.filter((c) => c.outcome !== "passed").length;
-  return check.outcome === "passed" ? "Merged cleanly, and every check passed on the merge." : `Merged cleanly, and ${notPassed === 1 ? "1 command" : `${notPassed} commands`} did not pass on the merge.`;
+  return check.outcome === "passed" ? "Merged cleanly, and every check passed on the merge." : `Merged cleanly, and ${counted(notPassed, "command", "commands")} did not pass on the merge.`;
 }
 
 /** Which two commits it ran on. */

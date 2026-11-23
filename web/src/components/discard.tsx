@@ -3,6 +3,7 @@ import { ApiError, discardTask, type TaskDetail } from "../api/client.ts";
 import { ConfirmAction } from "./confirm.tsx";
 import { Leftovers } from "./decision.tsx";
 import { Alert } from "./header.tsx";
+import { plural } from "../app/format.ts";
 
 /** How a task ended without being ready for review, in the words of its state. */
 const ENDED: Partial<Record<TaskDetail["status"], string>> = { failed: "failed", interrupted: "was stopped", cancelled: "was cancelled", drafted: "drafted a message and changed no file" };
@@ -46,7 +47,7 @@ export function DiscardSection({ task, startOpen = false, onDiscarded, onSignedO
   return (
     <section aria-labelledby="discard-heading" className="ds-stack ds-gap-sm">
       <h2 id="discard-heading">What the task left</h2>
-      <p>{`This task ${ended}, so there is nothing to review. Botbench kept ${left.join(" and ")}, so you can look at what it did. Discard removes ${left.length === 1 ? "it" : "both"} when you no longer want ${left.length === 1 ? "it" : "them"}.`}</p>
+      <p>{`This task ${ended}, so there is nothing to review. Botbench kept ${left.join(" and ")}, so you can look at what it did. Discard removes ${plural(left.length, "it", "both")} when you no longer want ${plural(left.length, "it", "them")}.`}</p>
       {problem !== null && (
         <Alert tone="error" role="alert">
           {problem}

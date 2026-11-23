@@ -5,9 +5,9 @@ import { ConfirmAction } from "./confirm.tsx";
 import { CopyField } from "./decision.tsx";
 import { Alert } from "./header.tsx";
 import { Icon } from "./icon.tsx";
+import { clock } from "../app/format.ts";
 
 const active = (state: ConnectState["state"]): boolean => state === "starting" || state === "waiting" || state === "checking";
-const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** Where the link goes, as the reader can check it before following it: the host, and the path when it is short. */
 function place(url: string): string {
@@ -202,7 +202,7 @@ export function ConnectSheet({ driver, product, state, onState, onClose }: { dri
           <p className="ds-spinner" role="status">
             {flow === "checking" ? `Checking the sign-in with ${product}` : "Waiting for you to sign in"}
           </p>
-          {state.expiresAt !== null && <p className="ds-device-code__note">Botbench stops waiting at {timeOf(state.expiresAt)}.</p>}
+          {state.expiresAt !== null && <p className="ds-device-code__note">Botbench stops waiting at {clock(state.expiresAt)}.</p>}
         </div>
       </div>
     );

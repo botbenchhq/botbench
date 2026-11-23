@@ -4,6 +4,8 @@
  * verb below, or a call whose arguments do not hold what the verb needs, is shown by its own name and main argument.
  */
 
+import { counted, duration } from "../app/format.ts";
+
 /** What became of a call, from the events stored about it. */
 export type CallState = "waiting" | "running" | "done" | "failed" | "refused" | "unfinished";
 
@@ -155,14 +157,10 @@ export function ranFor(t: { calledAt?: string | undefined; asked: boolean; allow
   return Number.isFinite(ms) && ms >= 0 ? ms : null;
 }
 
-/** How long something took, from two stored times: "42s", "2m 14s", "1h 3m". Null when either is not a time or they are out of order. */
-export function duration(from: string, to: string): string | null {
+/** How long something took, from two stored times, in the transcript's short form ("42s", "2m 14s", "1h 3m"). Null when either is not a time or they are out of order. */
+export function workedFor(from: string, to: string): string | null {
   const ms = Date.parse(to) - Date.parse(from);
-  if (!Number.isFinite(ms) || ms < 0) return null;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return Number.isFinite(ms) && ms >= 0 ? duration(ms, "short").words : null;
 }
 
 /** What a step group counts each tool's calls as, in the past tense the rows use: the verb, and the thing in one and many. */
@@ -192,7 +190,7 @@ export function stepsSummary(steps: readonly { name: string; state: CallState }[
     const key = kind.join("|");
     counts.set(key, { kind, n: (counts.get(key)?.n ?? 0) + 1 });
   }
-  const parts = [...counts.values()].map(({ kind: [verb, one, many], n }) => `${verb} ${n} ${n === 1 ? one : many}`);
+  const parts = [...counts.values()].map(({ kind: [verb, one, many], n }) => `${verb} ${counted(n, one, many)}`);
   const notRun = steps.filter((step) => step.state === "refused").length;
   const unfinished = steps.filter((step) => step.state === "unfinished").length;
   if (notRun > 0) parts.push(`${notRun} not run`);

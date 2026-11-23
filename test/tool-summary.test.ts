@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { approvalWords, directoryWords, placeWords, callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { approvalWords, directoryWords, placeWords, callLine, callReason, callTarget, confinedWords, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, workedFor, writtenText } from "../web/src/components/tool-summary.ts";
 import { bannedIn } from "../e2e/voice.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
@@ -78,11 +78,11 @@ test("an edit's line counts are counted from its own two texts, and are left out
 });
 
 test("a duration comes from two stored times, or is not given", () => {
-  assert.equal(duration("2026-11-22T10:00:00.000Z", "2026-11-22T10:00:04.400Z"), "4s");
-  assert.equal(duration("2026-11-22T10:00:00.000Z", "2026-11-22T10:02:14.000Z"), "2m 14s");
-  assert.equal(duration("2026-11-22T10:00:00.000Z", "2026-11-22T11:03:10.000Z"), "1h 3m");
-  assert.equal(duration("not a time", "2026-11-22T10:00:00.000Z"), null);
-  assert.equal(duration("2026-11-22T10:00:05.000Z", "2026-11-22T10:00:00.000Z"), null);
+  assert.equal(workedFor("2026-11-22T10:00:00.000Z", "2026-11-22T10:00:04.400Z"), "4s");
+  assert.equal(workedFor("2026-11-22T10:00:00.000Z", "2026-11-22T10:02:14.000Z"), "2m 14s");
+  assert.equal(workedFor("2026-11-22T10:00:00.000Z", "2026-11-22T11:03:10.000Z"), "1h 3m");
+  assert.equal(workedFor("not a time", "2026-11-22T10:00:00.000Z"), null);
+  assert.equal(workedFor("2026-11-22T10:00:05.000Z", "2026-11-22T10:00:00.000Z"), null);
 });
 
 test("a step group's line counts what its calls did, by kind, in the same past-tense verbs as the rows, from the calls themselves", () => {

@@ -86,7 +86,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await aSection.getByRole("button", { name: "Make an invite" }).click();
   const line = aSection.getByTestId("invite-line");
   await expect(line).toHaveValue(/^botbench-invite-1\./);
-  await expect(aSection.getByTestId("invite-life")).toHaveText(/^It works once, until \d\d:\d\d\./);
+  await expect(aSection.getByTestId("invite-life")).toHaveText(/^It works once, until \d{1,2}:\d\d(\s[AP]M)?\./);
   await expect(aSection.getByRole("button", { name: "Withdraw" })).toBeVisible();
   const aliceFingerprint = (await aSection.getByTestId("own-fingerprint").textContent())!;
   expect(aliceFingerprint).toMatch(/^[0-9a-f]{4}( [0-9a-f]{4}){4}$/);

@@ -3,6 +3,7 @@ import { ApiError, getActionLog, listGrants, previewCommand, revokeGrant, type L
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { takesItsPlace } from "../app/focus-after.ts";
 import { stepWord, times, visible } from "../components/approval-card.tsx";
+import { fullDate } from "../app/format.ts";
 import { ConfirmAction } from "../components/confirm.tsx";
 import { Alert, Frame, Page, PageHeader } from "../components/header.tsx";
 import { MODES } from "../components/mode-choice.tsx";
@@ -55,7 +56,6 @@ const RULE_WORDS: Record<LogRule, string> = {
   repeat_declined: "Denied without asking: you denied it before in this task",
 };
 
-const when = (ts: string): string => new Date(ts).toLocaleString();
 /** An edit's entry holds the whole file it wrote; the list shows where each entry begins. */
 const shorten = (text: string, max = 300): string => (text.length > max ? `${text.slice(0, max)}…` : text);
 /** Where a standing permission applies, in words. The path is relative to the worktree of whichever task asks. */
@@ -326,7 +326,7 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
                         <code data-ds-content="">{visible(grant.repo)}</code>
                       </span>
                       <span className="ds-list__secondary">
-                        {`Chosen ${when(grant.grantedAt)}${grant.taskId === null ? "" : `, in task ${grant.taskId}`}. ${grant.lastUsedAt === null ? "Not used yet." : `Used ${times(grant.timesUsed)}, last ${when(grant.lastUsedAt)}.`}`}
+                        {`Chosen ${fullDate(grant.grantedAt)}${grant.taskId === null ? "" : `, in task ${grant.taskId}`}. ${grant.lastUsedAt === null ? "Not used yet." : `Used ${times(grant.timesUsed)}, last ${fullDate(grant.lastUsedAt)}.`}`}
                       </span>
                     </span>
                   </div>
@@ -384,7 +384,7 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
                             {visible(entry.detail)}
                           </span>
                         )}
-                        <span className="ds-list__secondary">{`${entry.taskId === null ? "" : `Task ${entry.taskId} · `}${when(entry.ts)}`}</span>
+                        <span className="ds-list__secondary">{`${entry.taskId === null ? "" : `Task ${entry.taskId} · `}${fullDate(entry.ts)}`}</span>
                       </span>
                     </div>
                   </li>

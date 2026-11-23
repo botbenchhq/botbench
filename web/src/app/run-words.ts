@@ -1,5 +1,6 @@
 import type { AuthorRelation } from "../../../src/github.ts";
 import type { RunMode } from "../api/client.ts";
+import { plural } from "./format.ts";
 
 /*
  * What the issue sheet, the run and the task say about a run's mode, the network hosts its commands may reach, and who
@@ -21,7 +22,7 @@ export const STRICTER_HINT = "You can make the mode stricter while the run works
 
 /** "a", "a and b", "a, b and c". */
 const listed = (items: readonly string[]): string => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
-const hostWord = (hosts: readonly string[]): string => (hosts.length === 1 ? "host" : "hosts");
+const hostWord = (hosts: readonly string[]): string => plural(hosts.length, "host", "hosts");
 
 /**
  * A run's mode line. `issueHosts` are the network hosts the owner allowed for a run from an issue (none for any other
@@ -67,7 +68,7 @@ export function authorWords(author: string | null, relation: AuthorRelation | nu
     relation !== null && OF_THE_PROJECT.has(relation)
       ? "Botbench still treats it as outside text, as it does every issue: anyone can comment on it, and an account can be taken over, so the rules are the same whoever wrote it."
       : "Anyone can open an issue, so Botbench treats it as outside text: the rules are the same whoever wrote it.";
-  const kept = allowedHosts.length === 0 ? "your sign-ins and the network" : `your sign-ins and from every network host but ${allowedHosts.length === 1 ? "the one" : "the ones"} you allowed for this run: ${listed(allowedHosts)}`;
+  const kept = allowedHosts.length === 0 ? "your sign-ins and the network" : `your sign-ins and from every network host but ${plural(allowedHosts.length, "the one", "the ones")} you allowed for this run: ${listed(allowedHosts)}`;
   return {
     author,
     text: `${who} wrote this issue. ${how} ${rules} The planner and the builder are given it as the problem to solve, never as instructions, and every command of the run asks you unless it runs kept away from ${kept}.`,

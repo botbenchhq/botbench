@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bannedIn } from "../e2e/voice.ts";
 import type { PeerCard, PeerMessage } from "../web/src/api/client.ts";
-import { frictionWords, inviteLife, median, spanWords, threadHref, threadsOf } from "../web/src/app/paired-words.ts";
+import { frictionWords, inviteLife, median, threadHref, threadsOf } from "../web/src/app/paired-words.ts";
 import { statusLook, statusSentence, statusWord } from "../web/src/components/task-status.ts";
 import { LOOKS } from "../web/src/components/looks.ts";
 
@@ -53,15 +53,18 @@ test("the friction numbers say real counts, the middle wait and the longest, and
   });
   assert.equal(median([4, 1, 3, 2]), 3);
   assert.equal(median([]), null);
-  assert.equal(spanWords(59_000), "less than a minute");
-  assert.equal(spanWords(3 * 24 * 3600_000), "3 days");
+  // A wait of under a minute, and one of days (the units themselves: test/format.test.ts).
+  assert.equal(frictionWords({ cardsAnswered: 1, waitsMs: [59_000], cards: [] }).waited, "It waited less than a minute for you.");
+  assert.equal(frictionWords({ cardsAnswered: 1, waitsMs: [3 * 24 * 3600_000], cards: [] }).waited, "It waited 3 days for you.");
 });
 
 test("an invite says until when it works, and once past, that it has expired", () => {
   const now = Date.parse("2026-11-23T10:00:00.000Z");
-  const open = inviteLife(new Date(now + 15 * 60_000).toISOString(), now);
-  assert.equal(open.open, true);
-  assert.match(open.words, /^It works once, until \d\d:\d\d\. Withdraw it if you passed it to the wrong person\.$/);
+  // The clock is the reader's own: in their time zone, and twelve hours where their locale counts that way.
+  const open = inviteLife(new Date(now + 15 * 60_000).toISOString(), now, { locale: "en-GB", timeZone: "UTC" });
+  assert.deepEqual(open, { open: true, words: "It works once, until 10:15. Withdraw it if you passed it to the wrong person." });
+  assert.equal(inviteLife(new Date(now + 15 * 60_000).toISOString(), now, { locale: "en-GB", timeZone: "Asia/Tokyo" }).words, "It works once, until 19:15. Withdraw it if you passed it to the wrong person.");
+  assert.match(inviteLife(new Date(now + 15 * 60_000).toISOString(), now, { locale: "en-US", timeZone: "UTC" }).words, /^It works once, until 10:15\sAM\. /u);
   assert.deepEqual(inviteLife(new Date(now).toISOString(), now), { open: false, words: "This invite has expired and can no longer be used. Make a new invite to pair." });
   assert.equal(threadHref(P, T1), `#/paired/${P}/threads/${T1}`);
 });

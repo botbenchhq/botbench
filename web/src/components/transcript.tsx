@@ -1,10 +1,10 @@
 import { createContext, Fragment, useCallback, useContext, useId, useMemo, useState, type ReactNode } from "react";
 import { RESTART_STOPPED, type DriverEvent, type StoredEvent } from "../api/client.ts";
 import { DiffLine } from "./diff.tsx";
-import { duration as took } from "./evidence.tsx";
+import { counted, duration, fullDate } from "../app/format.ts";
 import { Icon, type IconName } from "./icon.tsx";
 import { MarkdownView } from "./markdown-view.tsx";
-import { callLine, callReason, callTarget, confinedWords, duration, editChange, ranFor, stepGroupOpen, stepsSummary, writtenText, type CallState } from "./tool-summary.ts";
+import { callLine, callReason, callTarget, confinedWords, editChange, ranFor, stepGroupOpen, stepsSummary, workedFor, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
 export function mergeEvents(have: StoredEvent[], more: StoredEvent[]): StoredEvent[] {
@@ -219,7 +219,7 @@ function Returned({ text, label }: { text: string; label: string }) {
   if (lines.length <= LAST_LINES)
     return (
       <>
-        <p className="ds-tool-call__label">{`${label}, ${lines.length} ${lines.length === 1 ? "line" : "lines"}`}</p>
+        <p className="ds-tool-call__label">{`${label}, ${counted(lines.length, "line", "lines")}`}</p>
         <Cut text={text} what="The output" />
       </>
     );
@@ -284,8 +284,8 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
   const written = writtenText(call.name, call.input);
   // How long it ran, not how long it waited for the owner's answer.
   const ms = ranFor({ calledAt: story.calledAt.get(call.id), asked: story.asked.has(call.id), allowedAt: story.allowedAt.get(call.id), returnedAt: story.returnedAt.get(call.id) });
-  // Under a second in milliseconds, as the design system writes it ("38 ms"), so a quick call does not read "0 s".
-  const time = ms === null ? null : ms < 1000 ? { words: `${ms} ms`, iso: `PT${ms / 1000}S` } : took(ms);
+  // Under a second it is in milliseconds, as the design system writes it ("38 ms"), so a quick call does not read "0 s".
+  const time = ms === null ? null : duration(ms, "units");
   const { opened, set } = useContext(Opened);
   // Open without a tap: a call that failed and one that ended without a result. One that waits for an answer is one
   // line here, its details a tap away: its approval card, on the same screen, shows the request in full.
@@ -310,7 +310,7 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
                 </code>
               )}
               {change !== null && state === "done" && ` +${change.added} −${change.removed}`}
-              {written !== null && state === "done" && ` ${written.lines} ${written.lines === 1 ? "line" : "lines"}`}
+              {written !== null && state === "done" && ` ${counted(written.lines, "line", "lines")}`}
             </span>
             {time !== null && (
               <span className="ds-tool-call__duration">
@@ -485,7 +485,7 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
       if (!e.limited) return null;
       return (
         <Line kind={e.type} look="failed" label="Usage limit">
-          <Body>{e.resetsAt === null ? "Claude Code's usage limit was reached." : `Claude Code's usage limit was reached. It resets at ${new Date(e.resetsAt).toLocaleString()}.`}</Body>
+          <Body>{e.resetsAt === null ? "Claude Code's usage limit was reached." : `Claude Code's usage limit was reached. It resets at ${fullDate(e.resetsAt)}.`}</Body>
         </Line>
       );
     case "error":
@@ -504,7 +504,7 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
         // and tokens would say nothing the answer does not (Usage keeps the counts). One whose steps make a group says
         // them on the group's line; one with a step or two keeps this quiet row.
         if (!story.calledIn.has(exchangeOf(event))) return null;
-        const took = exchange === undefined ? null : duration(exchange.from, event.ts);
+        const took = exchange === undefined ? null : workedFor(exchange.from, event.ts);
         if (took === null && tokens === false) return null;
         return (
           <li data-event={e.type} className={LOOK.end}>
@@ -654,7 +654,7 @@ export function Transcript({ events, working, workingMore, modelName, modelDiffe
     const live = story.live && !story.ended.has(key);
     const end = story.completedAt.get(key);
     const exchange = story.exchanges.get(key);
-    const worked = lastGroup.get(key) === i && end !== undefined && exchange !== undefined ? { took: duration(exchange.from, end), tokens: exchange.counted ? exchange : null } : null;
+    const worked = lastGroup.get(key) === i && end !== undefined && exchange !== undefined ? { took: workedFor(exchange.from, end), tokens: exchange.counted ? exchange : null } : null;
     return (
       <StepGroup key={`group-${run[0]!.event.id}`} steps={steps} live={live} worked={worked}>
         {steps.map(({ event, call, state }) => (

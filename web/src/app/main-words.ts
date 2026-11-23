@@ -1,4 +1,5 @@
 import type { Evidence, MainUpdate } from "../api/client.ts";
+import { counted } from "./format.ts";
 
 /*
  * The words of bringing a task up to date with main (src/engine/branch-update.ts) and of machine checks
@@ -6,7 +7,7 @@ import type { Evidence, MainUpdate } from "../api/client.ts";
  * are shown as it sends them.
  */
 
-const commits = (n: number): string => `${n} ${n === 1 ? "commit" : "commits"}`;
+const commits = (n: number): string => counted(n, "commit", "commits");
 
 /** The section's heading. */
 export const MAIN_HEADING = "Main";
