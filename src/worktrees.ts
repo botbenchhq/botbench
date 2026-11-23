@@ -454,6 +454,12 @@ export async function branchCheckedOutAt(repo: string, branch: string): Promise<
 /** A branch in one of the task branch forms, and nothing else (src/workbench.ts). */
 const isTaskBranch = (branch: string): boolean => parseTaskBranch(branch) !== null;
 
+/** The Botbench task branches `repo` has now, read in one step: a list asks once per repository, not once per row. */
+export async function taskBranches(repo: string): Promise<Set<string>> {
+  const refs = (await git(path.resolve(repo), ["for-each-ref", "--format=%(refname)", "refs/heads/"], GIT_CHECK_LIMIT_MS)).split("\n");
+  return new Set(refs.map((ref) => ref.slice("refs/heads/".length)).filter((name) => name !== "" && isTaskBranch(name)));
+}
+
 /** The commit a Botbench task branch points at, or null when the branch is not there. */
 export async function branchCommit(repo: string, branch: string): Promise<string | null> {
   if (!isTaskBranch(branch)) throw new Error(`${branch} is not a Botbench task branch.`);
