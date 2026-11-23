@@ -134,6 +134,8 @@ export const transcribe = async (recording: Blob): Promise<string> => (await req
 export interface AgentState extends Omit<DriverState, "driver"> {
   agent: string;
   roles: string[];
+  /** What it can do in a chat, in one sentence; null for Claude Code. */
+  chat?: string | null;
 }
 /** The agents as their last check found them, when it ended, whether a new check is running, and the cap on rounds of fixes. */
 export interface AgentsAnswer {
@@ -870,7 +872,8 @@ export type LogRule =
   | "web_allowed"
   | "web_refused"
   | "bookkeeping"
-  | "issue_claim";
+  | "issue_claim"
+  | "sandboxed";
 
 /** One entry of the action log: what was asked, decided or run, and by which rule. */
 export interface LogEntry {

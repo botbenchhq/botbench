@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { AGY_EXTRA_ENV, agyArgs, agyInput, agyProfile, agyReader, writeReviewAgent } from "../../src/drivers/antigravity.ts";
-import { makeReviewFolder, sandboxed } from "../../src/drivers/cli-sandbox.ts";
+import { makeReviewFolder, proxyEnv, sandboxed, startProviderProxy } from "../../src/drivers/cli-sandbox.ts";
 import { codexArgs, parseCodexLine } from "../../src/drivers/codex.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
-import { GROK_EXTRA_ENV, grokArgs, grokInput, grokProfile, grokReader } from "../../src/drivers/grok.ts";
+import { GROK_EXTRA_ENV, GROK_PROVIDER, grokArgs, grokInput, grokProfile, grokReader } from "../../src/drivers/grok.ts";
 import { launch } from "../../src/drivers/launch.ts";
 import { chatPrompt, comparePrompt, type ChatEntry } from "../../src/engine/roles.ts";
 import { checkRecording } from "./recording-check.ts";
@@ -59,8 +60,19 @@ async function codex(text: string) {
 async function grok(text: string) {
   const folder = makeReviewFolder(home);
   try {
-    const s = sandboxed(grokProfile({ dataDir: home, folder: folder.path }), "grok", grokArgs({ model: MODELS.grok }));
-    return await run(s.command, s.args, folder.path, GROK_EXTRA_ENV, grokInput(text));
+    // As GrokDriver starts a chat since Grok has its own tools there: its network only through a proxy to xAI.
+    const proxy = await startProviderProxy(GROK_PROVIDER);
+    try {
+      const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "botbench-grok-")));
+      try {
+        const s = sandboxed(grokProfile({ dataDir: home, folder: folder.path, readOnly: [], temp, proxyPort: proxy.port }), "grok", grokArgs({ mode: "chat", model: MODELS.grok }));
+        return await run(s.command, s.args, folder.path, { ...GROK_EXTRA_ENV, ...proxyEnv(proxy.port), TMPDIR: temp, TMP: temp, TEMP: temp }, grokInput(text, { cwd: folder.path, allowed: [folder.path] }));
+      } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+      }
+    } finally {
+      await proxy.close();
+    }
   } finally {
     folder.remove();
   }

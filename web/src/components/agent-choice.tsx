@@ -129,8 +129,10 @@ const SEVERAL = "?several";
 /** In a repository, the builder is Claude Code: the one line under the agents that says why, and what to do. */
 export const BUILDER_ONLY = "Only Claude Code can work in a repository. Remove the repository to ask the others.";
 
-/** Why the agents other than Claude Code see only the chat. */
-const CHAT_ALONE = "Codex, Grok and Antigravity answer from the conversation alone: they cannot read your files or change anything here. Botbench gives each the chat so far.";
+/** What an agent other than Claude Code can do in a chat, as the server says it; nothing until its check is known. */
+function ChatScope({ row }: { row: AgentRow }) {
+  return row.chat === null ? null : <p className="ds-radio__description">{row.chat}</p>;
+}
 
 /**
  * The Agent and model view, in two levels shown together: a row of agents at the top that never scrolls away (Claude
@@ -258,7 +260,7 @@ function AgentHeading({ row, line }: { row: AgentRow; line: string | null }) {
     <div className="ds-stack ds-gap-xs" data-testid={`model-${row.agent}-about`}>
       <p className="ds-radio__legend">{row.name}</p>
       <p className="ds-radio__description">{agentAbout(row)}</p>
-      <p className="ds-radio__description">{CHAT_ALONE}</p>
+      <ChatScope row={row} />
       {line !== null && (
         <p role="status" className="ds-radio__description">
           {line}
@@ -278,7 +280,7 @@ function OtherModels({ state, row, list }: { state: ChatAgentsState; row: AgentR
     <fieldset className="ds-radio__group" data-testid={`${id}-options`}>
       <legend className="ds-radio__legend">{row.name}</legend>
       <p className="ds-radio__description">{agentAbout(row)}</p>
-      <p className="ds-radio__description">{CHAT_ALONE}</p>
+      <ChatScope row={row} />
       <ModelRadio group={id} id={`${id}-default`} value="" checked={chosen === null} onChange={() => state.setModel(agent, null)} name={first.label} tag={list.cliDefault === null ? null : "default"} />
       <MoreModels models={first.models} chosen={first.models.find((m) => m.id === chosen) ?? null} option={(model, at) => <ModelRadio key={model.id} group={id} id={`${id}-${at}`} value={model.id} checked={chosen === model.id} onChange={() => state.setModel(agent, model.id)} name={model.label ?? model.id} description={idUnder(model)} />} />
     </fieldset>
