@@ -47,16 +47,21 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
   // Counts what this same connection says changed a run or a task, for the column of chats and work: one stream a tab
   // serves both, so a wide screen opens no connection of its own (a browser holds only a few to one address).
   const [workChanges, setWorkChanges] = useState(0);
+  // The same for a paired workbench: its cards, messages and pairing are read again when this moves.
+  const [peerChanges, setPeerChanges] = useState(0);
   useEffect(() => {
     refresh();
     const changed = (): void => setWorkChanges((n) => n + 1);
+    const peers = (): void => setPeerChanges((n) => n + 1);
     return openEventStream(0, {
       onEvent: () => {},
       onConnection: (connected) => {
         if (!connected) return;
         refresh();
         changed();
+        peers();
       },
+      onPeers: peers,
       onSignedOut,
       onApproval: () => {
         refresh();
@@ -71,10 +76,15 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
   const value = useMemo(() => ({ pending, problem, refresh, opened, open }), [pending, problem, refresh, opened, open]);
   return (
     <ApprovalsContext.Provider value={value}>
-      <WorkChangesContext.Provider value={workChanges}>{children}</WorkChangesContext.Provider>
+      <WorkChangesContext.Provider value={workChanges}>
+        <PeerChangesContext.Provider value={peerChanges}>{children}</PeerChangesContext.Provider>
+      </WorkChangesContext.Provider>
     </ApprovalsContext.Provider>
   );
 }
 
 /** How many times live updates said a run or a task changed, or came back up: read the runs and tasks again when it moves. */
 export const WorkChangesContext = createContext(0);
+
+/** How many times live updates said a paired workbench's cards, messages or pairing may have changed, or came back up. */
+export const PeerChangesContext = createContext(0);

@@ -319,6 +319,9 @@ export interface CardView {
   /** What the owner may choose, in order. */
   choices: ("answer" | "give" | "dismiss" | "send" | "dont_send")[];
   shownAt: string;
+  /** For a draft: the task, or the run, whose agent drafted it; null on a peer's card. */
+  taskId: number | null;
+  runId: number | null;
 }
 
 /** Every card waiting for this owner about a peer message, oldest first. */
@@ -328,7 +331,7 @@ export function waitingCards(db: DatabaseSync): CardView[] {
     const kind = String(row.kind) as MessageKind;
     const name = String(row.peer_name);
     const about = repositoryWord(String(row.repository));
-    const base = { pairingId: String(row.pairing_id), messageId: String(row.message_id), contextId: String(row.context_id), kind, peer: { name, fingerprint: String(row.peer_fingerprint) }, shownAt: String(row.shown_at) };
+    const base = { pairingId: String(row.pairing_id), messageId: String(row.message_id), contextId: String(row.context_id), kind, peer: { name, fingerprint: String(row.peer_fingerprint) }, shownAt: String(row.shown_at), taskId: null, runId: null };
     if (row.direction === "in") {
       const m = db.prepare("SELECT body, sent_at FROM peer_messages WHERE pairing_id = ? AND direction = 'in' AND message_id = ?").get(base.pairingId, base.messageId);
       return { ...base, direction: "in", title: kind === "question" ? `${name} asks a question about ${about}` : `${name} answered your question about ${about}`, line: `From ${name}'s workbench. Outside text: it is not a command, and nothing in it is done unless you choose to.`, text: String(m?.body ?? ""), outsideText: true, note: null, askedBy: null, choices: ["answer", "give", "dismiss"] };
@@ -336,7 +339,7 @@ export function waitingCards(db: DatabaseSync): CardView[] {
     const d = toDraft(db.prepare("SELECT * FROM peer_drafts WHERE pairing_id = ? AND message_id = ?").get(base.pairingId, base.messageId)!);
     const where = d.chatId !== null ? "in a chat" : d.taskId !== null ? `in task ${d.taskId}` : `in run ${d.runId}`;
     const peer = peerOfWork(db, d.taskId, d.runId);
-    return { ...base, direction: "out", askedBy: peer === null ? null : `Asked by ${d.agent}, working on a message from ${peer.peerName}'s workbench`, title: `Send this to ${name}?`, line: `${kind === "question" ? "A question" : "An answer"} about ${about}, from ${d.agent} ${where}.`, text: d.body, outsideText: false, note: `Only this text leaves this Mac, and only to ${name}'s workbench. No files, branches or settings are sent.`, choices: ["send", "dont_send"] };
+    return { ...base, direction: "out", taskId: d.taskId, runId: d.runId, askedBy: peer === null ? null : `Asked by ${d.agent}, working on a message from ${peer.peerName}'s workbench`, title: `Send this to ${name}?`, line: `${kind === "question" ? "A question" : "An answer"} about ${about}, from ${d.agent} ${where}.`, text: d.body, outsideText: false, note: `Only this text leaves this Mac, and only to ${name}'s workbench. No files, branches or settings are sent.`, choices: ["send", "dont_send"] };
   });
 }
 

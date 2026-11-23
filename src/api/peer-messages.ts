@@ -16,14 +16,19 @@ import { BodyError, json, readJsonBody, type RouteContext } from "./router.ts";
  *   POST /api/peers/pairings/:id/cards/:message/give         { repo, allowHosts }: Give it to Claude Code, as a new task in
  *                                                            your copy of the pairing's repository, marked as outside text
  *   POST /api/peers/pairings/:id/cards/:message/dismiss      Dismiss a peer's card
+ *   POST /api/peers/pairings/:id/cards/:message/seen         { direction }: a signed-in device drew this card for the
+ *                                                            first time (the friction record's "shown"); changes nothing else
  *   POST /api/peers/pairings/:id/drafts/:message/send        { text? }: Send an agent's draft, or your edit of it
  *   POST /api/peers/pairings/:id/drafts/:message/dont-send   Don't send an agent's draft
  *   GET  /api/peers/pairings/:id/kinds                       what may be sent to and taken from the peer, per kind
  *   POST /api/peers/pairings/:id/kinds                       { direction, kind, allowed }: change one
  *
- * The friction record's "shown" is when the server produced the card: no screen shows the cards yet, so it is not yet
- * the moment a person first saw one. Its waits are from that moment to the owner's decision through these routes.
+ * The friction record's "shown" is when a signed-in device first drew the card, as the client says with `seen` when it
+ * renders one; for a card decided before any device drew it (through these routes alone), when the server made it.
+ * Its waits are from that moment to the owner's decision.
  */
+
+export const SHOWN_MEANS = "when a signed-in device first drew the card; for a card decided before any device drew it, when the server made it";
 
 const ID = "([0-9a-f-]{36})";
 
@@ -43,7 +48,7 @@ export async function peerMessageRoutes(req: http.IncomingMessage, res: http.Ser
       return true;
     }
     if (on("GET", "/api/peers/friction") !== null) {
-      json(res, 200, { shown: "when the server produced the card; no screen shows cards yet", pairings: link.friction() });
+      json(res, 200, { shown: SHOWN_MEANS, pairings: link.friction() });
       return true;
     }
     let m: string[] | null;
@@ -74,6 +79,12 @@ export async function peerMessageRoutes(req: http.IncomingMessage, res: http.Ser
     if ((m = on("POST", `/api/peers/pairings/${ID}/cards/${ID}/dismiss`)) !== null) {
       link.dismissCard(m[0], m[1]);
       json(res, 200, { dismissed: m[1] });
+      return true;
+    }
+    if ((m = on("POST", `/api/peers/pairings/${ID}/cards/${ID}/seen`)) !== null) {
+      const { direction } = await body();
+      link.seeCard(m[0], direction, m[1]);
+      json(res, 200, { seen: m[1] });
       return true;
     }
     if ((m = on("POST", `/api/peers/pairings/${ID}/drafts/${ID}/send`)) !== null) {

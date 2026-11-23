@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useRef, useState } from "react";
+import { PeerCardsContext } from "../app/peer-cards.tsx";
+import { PeerCardView } from "../components/peer-card.tsx";
 import { ApiError, cancelRun, getBoard, getDriver, openEventStream, setRowHidden, type BoardGroup, type BoardGroupName, type BoardItem, type DriverState } from "../api/client.ts";
 import { checksWords } from "../components/evidence.tsx";
 import { Alert, Frame, NewLink, Page, PageHeader } from "../components/header.tsx";
@@ -118,6 +120,10 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
   const [asking, setAsking] = useState<Asking>(null);
   const reads = useRef(0);
   const name = useId();
+  // Cards about the paired workbench's messages wait for the owner too: they lead the Needs you group.
+  const { cards: peerCardsRead, problem: peerProblem } = useContext(PeerCardsContext);
+  const peerCards = peerCardsRead ?? [];
+  const cardsWaiting = viewingHidden ? 0 : peerCards.length;
 
   const load = useCallback((): void => {
     const read = ++reads.current;
@@ -175,7 +181,8 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
     setViewingHidden(hidden);
   };
 
-  const empty = groups !== null && groups.every((group) => group.total === 0) && hiddenCount === 0 && !viewingHidden;
+  const empty = groups !== null && groups.every((group) => group.total === 0) && hiddenCount === 0 && !viewingHidden && cardsWaiting === 0;
+  const totalOf = (group: BoardGroup): number => group.total + (group.name === "needs-you" ? cardsWaiting : 0);
   // Only an empty board needs to know whether a run could start; the check asks the CLI, so it is not made on every update.
   useEffect(() => {
     if (!empty || driver !== null) return;
@@ -187,9 +194,10 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
 
   // The group shown at first is the first that holds anything, chosen once: a live update never moves the list under the owner's thumb.
   useEffect(() => {
-    if (chosen === null && groups !== null && !groups.every((group) => group.total === 0)) setChosen(groups.find((group) => group.total > 0)!.name);
-  }, [chosen, groups]);
-  const shown = chosen ?? groups?.find((group) => group.total > 0)?.name ?? "needs-you";
+    // Chosen once the peer cards are read too, so cards that wait are where Work opens (the tray links here for them).
+    if (chosen === null && groups !== null && peerCardsRead !== null && !groups.every((group) => totalOf(group) === 0)) setChosen(groups.find((group) => totalOf(group) > 0)!.name);
+  }, [chosen, groups, cardsWaiting, peerCardsRead]);
+  const shown = chosen ?? groups?.find((group) => totalOf(group) > 0)?.name ?? "needs-you";
   const current = groups?.find((group) => group.name === shown);
 
   return (
@@ -199,6 +207,11 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
         {failed !== null && (
           <Alert tone="error" role="alert">
             {failed}
+          </Alert>
+        )}
+        {peerProblem !== null && (
+          <Alert tone="error" role="alert">
+            {peerProblem}
           </Alert>
         )}
         <Proposals refresh={watchRefresh} onSignedOut={onSignedOut} />
@@ -218,14 +231,23 @@ export function BoardScreen({ onSignedOut }: { onSignedOut: () => void }) {
                 {groups.map((group) => (
                   <label key={group.name} className="ds-segmented-control__option">
                     <input className="ds-segmented-control__input" type="radio" name={name} value={group.name} checked={group.name === shown} onChange={() => setChosen(group.name)} />
-                    <span className="ds-segmented-control__label">{`${GROUP[group.name].label} (${group.total})`}</span>
+                    <span className="ds-segmented-control__label">{`${GROUP[group.name].label} (${totalOf(group)})`}</span>
                   </label>
                 ))}
               </div>
             </fieldset>
             {viewingHidden && <p data-testid="hidden-view">{`Rows hidden from the list (${hiddenCount}). Hiding deletes nothing: each row's More menu can show it in the list again.`}</p>}
+            {shown === "needs-you" && cardsWaiting > 0 && (
+              <ul className="ds-stack ds-gap-sm" aria-label="Messages with the paired workbench" data-testid="peer-cards">
+                {peerCards.map((card) => (
+                  <li key={`${card.direction} ${card.pairingId} ${card.messageId}`}>
+                    <PeerCardView card={card} onSignedOut={onSignedOut} />
+                  </li>
+                ))}
+              </ul>
+            )}
             <div data-testid="board-group">
-              {current === undefined || current.items.length === 0 ? (
+              {shown === "needs-you" && cardsWaiting > 0 && (current === undefined || current.items.length === 0) ? null : current === undefined || current.items.length === 0 ? (
                 <p>{viewingHidden ? `Nothing in ${GROUP[shown].label} is hidden.` : GROUP[shown].none}</p>
               ) : (
                 <div className="ds-stack ds-gap-sm">
