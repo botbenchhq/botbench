@@ -93,7 +93,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
 
     // A run adds its spec file, review, and what happens when a task is accepted.
     await choose(page, "What to do", "Plan a run");
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Keep the branch", "Usage limit Wait", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Manual", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Keep the branch", "Usage limit Wait", "Main moved on Ask", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
     await openRow(page, "Mode");
     await sheet.getByRole("radio", { name: "Fully autonomous" }).check();
     await expect(sheet.getByRole("radio", { name: "Fully autonomous" })).toHaveAccessibleDescription(/^Accepts work without you /);
@@ -128,7 +128,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await expect(box).toHaveAttribute("aria-label", "Describe what to plan");
     await openContext(page);
     // Fully autonomous is remembered for this repository, but it has no check command, so the run falls back, visibly, to Semi-autonomous.
-    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Semi-autonomous", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Usage limit Wait", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
+    await expect.poll(() => rows(page)).toEqual(["Repository shipment-tracking-api", "What to do Plan a run", ...builderRow, "Spec file None", "Mode Semi-autonomous", "Tasks Several", expect.stringMatching(/^Review /), "When accepted Open a pull request", "Usage limit Wait", "Main moved on Ask", "Allowed commands 1 command", expect.stringMatching(/^Models .+/)]);
     // Escape closes the sheet and gives the focus back to Add context.
     await page.keyboard.press("Escape");
     await expect(contextSheet(page)).toBeHidden();

@@ -12,9 +12,11 @@ import { memorySection } from "./memory.ts";
 import type { Driver, DriverSession } from "../drivers/contract.ts";
 import type { DriverEvent, TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
-import type { Confinement } from "../confinement.ts";
+import { confinementProblem, type Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
-import { commitsDiff, commitWork, createWorktree, describeCommits, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
+import { abortMerge, commitsBehind, commitsDiff, commitWork, concludeMerge, copyHead, createWorktree, describeCommits, describeWork, mainBranchOf, mergeIntoTask, mergeUnderWay, removeWorktree, sharedGitDir, sourceHead, type MainBranch, type Worktree } from "../worktrees.ts";
+import { runMachineCheck, type MachineCheck } from "./machine-checks.ts";
+import { conflictPrompt, endBranchUpdateIn, openBranchUpdate, setMergeCommitIn, setUpdateAttempt, setUpdateConflicts, startBranchUpdateIn, updateWithMainOf, type BranchUpdate, type BranchUpdateOutcome } from "./branch-update.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { askEveryCommand, autoAccept, modeRefusals, reviewOutcome, runModeOf, unaskedQuestions, type RunMode } from "./modes.ts";
 import { checkFixesUsed, checkFixPrompt, checkFixRoundOf, DEFAULT_CHECK_FIX_ROUNDS, endedCheckFix, insertCheckFix, workVersion, type OpenCheckFix } from "./check-fix.ts";
@@ -60,7 +62,8 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   verifying: ["verifying", "building", "reviewing", "awaiting_decision", "interrupted", "failed", "cancelled"],
   reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
   // To itself: a fully autonomous run that could not accept the task records why it waits for the owner. To building:
-  // the owner's note starts a round in the builder's session (engine/note-rounds.ts).
+  // the owner's note starts a round in the builder's session (engine/note-rounds.ts), or the owner's "Bring up to
+  // date with main" (engine/branch-update.ts).
   awaiting_decision: ["awaiting_decision", "accepted", "rejected", "building"],
   accepted: [],
   rejected: [],
@@ -536,6 +539,15 @@ export interface Tasks {
   handOff(id: number, agent: string, model?: string | null): Promise<Task>;
   /** The agents a task could be moved to now, and whether its builder is at work so that it can be moved at all. */
   moveOffer(id: number): { agents: string[]; now: boolean };
+  /**
+   * The owner's "Bring up to date with main" on a task that is ready for review (engine/branch-update.ts): main is merged
+   * into its branch in its copy, its builder resolves any conflict, and its checks run again; it is then ready for review
+   * again. Resolves once the update has started. Throws a TaskError for a task that does not exist (404), and one that is
+   * not ready for review, already up to date, or has no main to merge (409), saying why.
+   */
+  updateWithMain(id: number): Promise<Task>;
+  /** How far a task's branch is behind main, for its screen; a problem in words when it cannot be read; null with no committed work. */
+  mainStatus(id: number): Promise<{ branch: string; behind: number } | { problem: string } | null>;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /**
@@ -556,7 +568,9 @@ export interface TasksOptions {
   broker: Broker;
   model?: string;
   /** The commands Botbench runs itself in a repository's new worktrees. None when left out. */
-  repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[] };
+  repoCommands?: (repo: string) => { setup: readonly StationCommand[]; checks: readonly StationCommand[]; machineChecks?: readonly MachineCheck[] };
+  /** Where a repository's main branch is read from (engine/branch-update.ts): its remote and the base branch its settings name. "origin" and none when left out. */
+  repoMain?: (repo: string) => { remote: string; baseBranch: string | null };
   /** The hosts a repository's commands may reach, the agent's and Botbench's own. None, and no network, when left out. */
   repoHosts?: (repo: string) => readonly string[];
   /** Where a repository's commands run (src/execution.ts): on this Mac when left out. */
@@ -754,9 +768,16 @@ export function createTasks(options: TasksOptions): Tasks {
     options.onTaskChange(task);
     return task;
   };
-  /** Move a task that is still at `from`, and only then; null when it has moved on meanwhile (its run was cancelled). */
-  const moveFrom = (id: number, from: TaskStatus, to: TaskStatus, change?: TaskChange): Task | null => {
-    const moved = transaction(db, () => (getTask(db, id)?.status === from ? moveTaskIn(db, id, to, change) : null));
+  /**
+   * Move a task that is still at `from`, and only then; null when it has moved on meanwhile (its run was cancelled).
+   * `also` is written in the same transaction as the move, and only with it.
+   */
+  const moveFrom = (id: number, from: TaskStatus, to: TaskStatus, change?: TaskChange, also?: () => void): Task | null => {
+    const moved = transaction(db, () => {
+      if (getTask(db, id)?.status !== from) return null;
+      also?.();
+      return moveTaskIn(db, id, to, change);
+    });
     if (moved) options.onTaskChange(moved);
     return moved;
   };
@@ -805,7 +826,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * stops at the first that does not pass; checks all run. `stopped`: a command was stopped (a cancel, or Botbench
    * stopping) and the rest were not run.
    */
-  const runList = async (task: Task, kind: EvidenceKind, commands: readonly StationCommand[], signal?: AbortSignal, given?: TaskContainer | null): Promise<{ stopped: boolean; failed: CommandRun | null }> => {
+  const runList = async (task: Task, kind: EvidenceKind, commands: readonly (StationCommand | MachineCheck)[], signal?: AbortSignal, given?: TaskContainer | null): Promise<{ stopped: boolean; failed: CommandRun | null; notRun: CommandRun | null }> => {
     const round = nextRound(db, task.id, kind);
     // The whole list is known before its first command runs, so a count shown meanwhile is out of all of it.
     if (commands.length > 0) startCommandList(db, task.id, kind, round, commands.length);
@@ -823,20 +844,36 @@ export function createTasks(options: TasksOptions): Tasks {
           if (kind === "setup") break;
         }
         options.onTaskChange(getTask(db, task.id)!);
-        return { stopped: false, failed };
+        return { stopped: false, failed, notRun: null };
       }
     }
+    /** A machine check Botbench could not run here: not a pass, and not the builder's to fix. */
+    let unrunnable: CommandRun | null = null;
     for (const [i, command] of commands.entries()) {
-      if (signal?.aborted || closed) return { stopped: true, failed };
-      const result = await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), ...(container === null ? {} : { container }), track: { db, taskId: task.id, kind, round, position: i + 1 }, ...(signal ? { signal } : {}) });
+      if (signal?.aborted || closed) return { stopped: true, failed, notRun: unrunnable };
+      const track = { db, taskId: task.id, kind, round, position: i + 1 };
+      const result =
+        "machine" in command
+          ? await runMachineCheck({ check: command, task: { repo: task.repo, baseCommit: task.baseCommit, headCommit: getTask(db, task.id)?.headCommit ?? task.headCommit, worktreePath: task.worktreePath! }, confinement: confinement(task), container, outsideText: runOutside(db, task.runId).text, unconfinable: confinementProblem(), track, ...(signal ? { signal } : {}) })
+          : await runCommand({ command: command.command, cwd: task.worktreePath!, limitMs: command.limitMs, confinement: confinement(task), ...(container === null ? {} : { container }), track, ...(signal ? { signal } : {}) });
       options.onTaskChange(getTask(db, task.id)!);
-      if (result.outcome === "stopped") return { stopped: true, failed };
+      if (result.outcome === "stopped") return { stopped: true, failed, notRun: unrunnable };
+      if (result.outcome === "skipped") continue;
+      if (result.outcome === "not_run") {
+        unrunnable ??= result;
+        continue;
+      }
       if (result.outcome !== "passed") {
         failed ??= result;
         if (kind === "setup") break;
       }
     }
-    return { stopped: false, failed };
+    return { stopped: false, failed, notRun: unrunnable };
+  };
+  /** A task's checks as one list: the repository's checks, then its machine checks (engine/machine-checks.ts). */
+  const checksOf = (task: Pick<Task, "repo">): (StationCommand | MachineCheck)[] => {
+    const commands = options.repoCommands?.(task.repo);
+    return [...(commands?.checks ?? []), ...(commands?.machineChecks ?? [])];
   };
 
   /**
@@ -859,7 +896,7 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /** Run the repository's checks on the work committed at `headCommit`, then go on to the review. */
   const checkCommitted = async (task: Task, headCommit: string, stopped?: AbortSignal): Promise<void> => {
-    const checks = options.repoCommands?.(task.repo).checks ?? [];
+    const checks = checksOf(task);
     // No checks: said so as such, never as a pass.
     if (checks.length === 0) return review(task, "building", { headCommit, checks: "none" }, stopped);
     move(task.id, "verifying", { headCommit });
@@ -871,7 +908,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * check leaves in the copy is never committed. Checks stopped by a cancel end the task as cancelled; stopped by
    * Botbench stopping, the task is left for the next start, which runs them again from the start.
    */
-  const check = async (task: Task, checks: readonly StationCommand[], stopped?: AbortSignal): Promise<void> => {
+  const check = async (task: Task, checks: readonly (StationCommand | MachineCheck)[], stopped?: AbortSignal): Promise<void> => {
     if (checks.length === 0) return review(task, "verifying", { checks: "none" }, stopped);
     const ran = await runList(task, "check", checks, stopped);
     if (ran.stopped) {
@@ -879,14 +916,15 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(task.id, "verifying", "the checks of this task ran");
       return void moveFrom(task.id, "verifying", "interrupted", { reason: "This task's checks were stopped before they finished. The work is committed to its branch." });
     }
-    // A check failed: while rounds of fixes for it are left, the builder is sent it before anything else happens.
-    if (ran.failed !== null) {
+    // A check failed: while rounds of fixes for it are left, the builder is sent it before anything else happens. Not
+    // after a merge with main: what failed may be main's, and the owner is shown it (engine/branch-update.ts).
+    if (ran.failed !== null && openBranchUpdate(db, task.id) === null) {
       const used = checkFixesUsed(db, task.id);
       if (used < checkFixCap && !closed && stopped?.aborted !== true && !cancelled(task)) return fixCheck(task, used + 1, stopped);
       // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
       if (used > 0) return review(task, "verifying", { checks: "failed", note: `a check still failed after ${used} of ${checkFixCap} rounds of fixes for a failing check; the rounds ran out` }, stopped);
     }
-    await review(task, "verifying", { checks: ran.failed === null ? "passed" : "failed" }, stopped);
+    await review(task, "verifying", { checks: ran.failed === null && ran.notRun === null ? "passed" : "failed" }, stopped);
   };
 
   /**
@@ -945,7 +983,7 @@ export function createTasks(options: TasksOptions): Tasks {
     const changed = headCommit !== null && headCommit !== from;
     const problem = end === "completed" ? null : `${agentName(builderOf(task).name)}'s round of fixes for a failing check ended with an error${detail === null ? "." : `: ${detail}`}`;
     const record = (): void => insertCheckFix(db, { taskId: task.id, checkRound: open.checkRound, afterFixes: workVersion(db, task.id), attemptId, outcome: end === "completed" ? "finished" : "failed", changed, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
-    const checks = options.repoCommands?.(task.repo).checks ?? [];
+    const checks = checksOf(task);
     if (end === "completed" && changed && checks.length > 0) {
       // The round and the move to the checks are one write: a stop between them would leave the fixed work committed
       // at `building` with no round open, which the next start would take for a build and not check.
@@ -980,6 +1018,9 @@ export function createTasks(options: TasksOptions): Tasks {
   const reviewerWebSearch = (task: Task): boolean => chatWebAccess(db) === "allow" && !runOutside(db, task.runId).text;
 
   const review = async (task: Task, from: "building" | "verifying", change: TaskChange, stopped?: AbortSignal): Promise<void> => {
+    // The checks after a merge with main: the update ends with the move back to the owner, and nothing is reviewed again.
+    const update = openBranchUpdate(db, task.id);
+    if (update !== null && update.mergeCommit !== null) return handOver(task, from, change, { afterUpdate: true, also: () => endBranchUpdateIn(db, update.id, update.conflicts.length > 0 ? "resolved" : "merged") });
     const assigned = reviewAssignment(db, task.id);
     if (assigned === null) return handOver(task, from, change);
     const reviews = taskReviews(db, task.id);
@@ -1017,7 +1058,16 @@ export function createTasks(options: TasksOptions): Tasks {
    * would; when it does not, or the accept is refused (files the checks left, a branch that went missing), it waits for
    * the owner with a plain line saying why.
    */
-  const handOver = async (task: Task, from: "building" | "verifying" | "reviewing" | "awaiting_decision", change: TaskChange): Promise<void> => {
+  const handOver = async (task: Task, from: "building" | "verifying" | "reviewing" | "awaiting_decision", change: TaskChange, o: { afterUpdate?: boolean; also?: () => void } = {}): Promise<void> => {
+    // A run that brings its tasks up to date with main by itself does so first, when the branch is behind; the update
+    // hands the task over when it ends (engine/branch-update.ts).
+    if (o.afterUpdate !== true && from !== "awaiting_decision" && updateWithMainOf(db, task.runId) === "auto" && !closed && !cancelled(task)) {
+      const at = await beginUpdate(task, from, "run", change).catch((err: unknown) => {
+        report(`Bringing task ${task.id} up to date with main`)(err);
+        return null;
+      });
+      if (at !== null) return mergeNow(at);
+    }
     // A build that changed nothing never gets here (`verify`); rounds of fixes that undid every change of the build would.
     // Changes that cannot be read are taken as none, which a fully autonomous run never accepts.
     // Read at the commit Botbench recorded, the one the mode's accept requires the branch to hold, never the copy's HEAD.
@@ -1027,7 +1077,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (runModeOf(db, task.runId) !== "full") {
       const guarded = scope.filter((f) => f.protected).map((f) => f.path);
       // A reason from an earlier time it was ready for review (before the owner's note) does not stand for this version.
-      return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? { reason: null, ...change } : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` });
+      return void moveFrom(task.id, from, "awaiting_decision", guarded.length === 0 ? { reason: null, ...change } : { ...change, reason: `It needs your review: ${protectedWords(guarded)}` }, o.also);
     }
     let verdict = files.length === 0 ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null, scope);
     // On a repository whose owner requires checking together, every open pull request of another workbench that
@@ -1036,7 +1086,7 @@ export function createTasks(options: TasksOptions): Tasks {
       const together = await options.checkTogether.gate(getTask(db, task.id) ?? task, files, head);
       if (!together.ok) verdict = { accept: false, why: `It needs your review: ${together.why}` };
     }
-    const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why });
+    const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why }, o.also);
     if (ready === null || !verdict.accept) return;
     try {
       // Loaded here: decision.ts builds on this module, which must not need it before both are loaded.
@@ -1047,6 +1097,174 @@ export function createTasks(options: TasksOptions): Tasks {
     } catch (err) {
       moveFrom(task.id, "awaiting_decision", "awaiting_decision", { reason: `It needs your review: Botbench could not accept it without you. ${words(err)}` });
     }
+  };
+
+  /**
+   * Main as Botbench would merge it into a task's branch, and how many of its commits the branch lacks. Throws a
+   * TaskError (409) with why in words for the owner when there is no main to merge or the commits cannot be compared.
+   */
+  const mainFor = async (task: Task): Promise<{ main: MainBranch; behind: number }> => {
+    const head = getTask(db, task.id)?.headCommit ?? task.headCommit;
+    if (head === null) throw new TaskError(409, "This task has no committed work, so there is nothing to bring up to date.");
+    const target = options.repoMain?.(task.repo) ?? { remote: "origin", baseBranch: null };
+    let main: MainBranch | null;
+    try {
+      main = await mainBranchOf({ repo: task.repo, ...target });
+    } catch (err) {
+      throw new TaskError(409, `Botbench could not read this repository's main branch: ${words(err)}`);
+    }
+    if (main === null) throw new TaskError(409, `Botbench found no main branch to merge: the repository has no branch named ${target.baseBranch ?? "main or master"}${target.baseBranch === null ? ", and its settings name no baseBranch" : ""}.`);
+    const behind = await commitsBehind({ repo: task.repo, head, commit: main.commit }).catch((err: unknown) => {
+      throw new TaskError(409, `Botbench could not compare this task's branch with ${main.branch}: ${words(err)}`);
+    });
+    return { main, behind };
+  };
+
+  /**
+   * Start bringing a task at `from` up to date with main: the update's record and the task's move to `building` are one
+   * write, made only while the task is still at `from`. `change` is what the move carries for a task on its way to the
+   * owner (its head commit, what its checks found). Null, with nothing written, when the branch already holds main or
+   * the task moved on; throws a TaskError for a branch that cannot be compared.
+   */
+  const beginUpdate = async (task: Task, from: TaskStatus, by: "owner" | "run", change: TaskChange = {}): Promise<Task | null> => {
+    if (task.worktreePath === null || !fs.statSync(task.worktreePath, { throwIfNoEntry: false })?.isDirectory()) throw new TaskError(409, "This task's copy of the project is no longer there, so it cannot be brought up to date.");
+    const { main, behind } = await mainFor(task);
+    if (behind === 0) return null;
+    const head = change.headCommit ?? getTask(db, task.id)?.headCommit ?? task.headCommit!;
+    const at = transaction(db, () => {
+      if (getTask(db, task.id)?.status !== from || openBranchUpdate(db, task.id) !== null) return null;
+      startBranchUpdateIn(db, { taskId: task.id, requestedBy: by, baseBranch: main.branch, baseCommit: main.commit, fromCommit: head, behind });
+      // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+      return moveTaskIn(db, task.id, "building", { ...change, note: `bringing the branch up to date with ${main.branch} at ${main.commit} (${main.ref}), ${behind} commits behind, asked by the ${by}` });
+    });
+    if (at !== null) options.onTaskChange(at);
+    return at;
+  };
+
+  /**
+   * The update's merge, in the task's copy: a clean merge has its checks run; conflicts go to the builder. A merge git
+   * refuses for another reason ends the update, the branch as it was.
+   */
+  const mergeNow = async (task: Task, stopped?: AbortSignal): Promise<void> => {
+    const update = openBranchUpdate(db, task.id);
+    if (update === null) return;
+    let merged: Awaited<ReturnType<typeof mergeIntoTask>>;
+    try {
+      merged = await mergeIntoTask({ path: task.worktreePath!, commit: update.baseCommit, message: `Botbench task ${task.id}: bring up to date with ${update.baseBranch}` });
+    } catch (err) {
+      return endUpdate(task, update, "failed", `git could not merge ${update.baseBranch} into the branch, and nothing was changed: ${words(err)}`);
+    }
+    if (merged.merged) return checkMerge(task, update, merged.commit, stopped);
+    setUpdateConflicts(db, update.id, merged.conflicts);
+    options.onTaskChange(getTask(db, task.id)!);
+    await resolveConflicts(task, { ...update, conflicts: merged.conflicts }, stopped);
+  };
+
+  /**
+   * Once main is merged in, the task's work is measured from the main commit it merged, as a pull request's is: its
+   * changed files, diff, scope marks and the review's diff are its own changes and their resolutions, not main's.
+   * The commit it started from is kept in its first update (`branch_updates.from_commit`'s ancestry) and its history.
+   */
+  const measureFromMain = (taskId: number, mainCommit: string): void => void db.prepare("UPDATE tasks SET base_commit = ? WHERE id = ?").run(mainCommit, taskId);
+
+  /** The merge is committed: it is recorded with the task's move to its checks, and the checks (and machine checks) run on it. */
+  const checkMerge = async (task: Task, update: BranchUpdate, commit: string, stopped?: AbortSignal): Promise<void> => {
+    const checks = checksOf(task);
+    const at = transaction(db, () => {
+      if (getTask(db, task.id)?.status !== "building") return null;
+      setMergeCommitIn(db, update.id, commit);
+      measureFromMain(task.id, update.baseCommit);
+      return moveTaskIn(db, task.id, checks.length === 0 ? "building" : "verifying", { headCommit: commit });
+    });
+    if (at === null) return;
+    options.onTaskChange(at);
+    if (checks.length === 0) return review(at, "building", { checks: "none" }, stopped);
+    await check(at, checks, stopped);
+  };
+
+  /**
+   * End an update that brought nothing in: a merge under way is undone, so the copy and the branch are as they were, and
+   * the task goes back to the owner, ready for review, with the update ended in the same write.
+   */
+  const endUpdate = async (task: Task, update: BranchUpdate, outcome: Exclude<BranchUpdateOutcome, "merged" | "resolved">, problem: string): Promise<void> => {
+    let why = problem;
+    try {
+      await abortMerge(task.worktreePath!);
+    } catch (err) {
+      why = `${problem} Botbench could not undo the merge in the task's copy either: ${words(err)}`;
+    }
+    await handOver(getTask(db, task.id) ?? task, "building", {}, { afterUpdate: true, also: () => endBranchUpdateIn(db, update.id, outcome, why) });
+    // The task had moved on (its run was cancelled): the update still ends.
+    if (openBranchUpdate(db, task.id) !== null) endBranchUpdateIn(db, update.id, outcome, why);
+    options.onTaskChange(getTask(db, task.id)!);
+  };
+
+  /**
+   * The merge with main left conflicts: the builder is started again in the task's copy, as for a round of fixes for a
+   * failing check, under the same admission, confinement and permission check, taking up its session when it reported
+   * one, and sent the files in conflict. How it ended is handled when it ends (`conflictsDone`).
+   */
+  const resolveConflicts = async (task: Task, update: BranchUpdate, stopped?: AbortSignal): Promise<void> => {
+    const at = getTask(db, task.id)!;
+    const cursor = cursorOf(at);
+    const admission = admitBuilder(at);
+    let session: DriverSession;
+    try {
+      if (closed) throw new Error("Botbench is stopping.");
+      const gitDir = await sharedGitDir(at.repo);
+      session = await builderOf(at).startAttempt({ db, cwd: at.worktreePath!, allowEdits: true, gate: { socketPath: admission.socketPath, secret: admission.secret }, confinement: { ...confinement(at), gitDir }, ...(await inContainer(at)), ...(cursor === null ? {} : { resumeCursor: cursor }), ...modelOf(at) });
+    } catch (err) {
+      admission.release();
+      if (closed) return leave(at.id, "building", "this task's conflicts with main were being resolved");
+      return endUpdate(at, update, "unresolved", `${agentName(builderOf(at).name)} could not be started to resolve the conflicts with ${update.baseBranch}, so Botbench undid the merge. The branch is as it was. ${words(err)}`);
+    }
+    setUpdateAttempt(db, update.id, session.attemptId);
+    let files: string[] = [];
+    if (cursor === null) files = await changedPaths(at, update.fromCommit);
+    // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+    await drive(at, session, admission, conflictPrompt({ branch: update.baseBranch, conflicts: update.conflicts, task: cursor === null ? { prompt: at.prompt, files } : null }), null, stopped, cursor !== null, `resolving the conflicts of the merge with ${update.baseBranch} in ${update.conflicts.length} files`);
+  };
+
+  /**
+   * The builder's turn on the conflicts ended. Finished, with no conflict marker left in the files it was sent, the merge
+   * is committed by Botbench and its checks run; otherwise it is undone and the task goes back to the owner as it was.
+   */
+  const conflictsDone = async (task: Task, update: BranchUpdate, end: TurnEndReason | "not sent", detail: string | null, stopped?: AbortSignal): Promise<void> => {
+    const name = agentName(builderOf(task).name);
+    if (cancelled(task)) return endUpdate(task, update, "stopped", "The run was cancelled while the conflicts were being resolved, so Botbench undid the merge. The branch is as it was.");
+    if (end !== "completed") return endUpdate(task, update, "unresolved", `${name} did not finish resolving the conflicts${detail === null ? "" : ` (${detail})`}, so Botbench undid the merge. The branch is as it was.`);
+    let done: Awaited<ReturnType<typeof concludeMerge>>;
+    try {
+      done = await concludeMerge({ path: task.worktreePath!, conflicts: update.conflicts });
+    } catch (err) {
+      return endUpdate(task, update, "failed", `Botbench could not commit the merge: ${words(err)} It undid the merge; the branch is as it was.`);
+    }
+    if (!done.committed) return endUpdate(task, update, "unresolved", `${name} left conflicts unresolved in ${done.unresolved.join(", ")}, so Botbench undid the merge. The branch is as it was.`);
+    await checkMerge(getTask(db, task.id)!, update, done.commit, stopped);
+  };
+
+  /**
+   * After a restart, a task left at `building` in the middle of an update whose merge was not recorded. A merge commit
+   * git made just before Botbench stopped (the copy's head is the merge of the task's commit and main's) is taken as
+   * the update's, and its checks run in the task's turn: true. Otherwise the merge is undone and the task is handed back:
+   * false. The process of a builder that was resolving conflicts is already stopped (`recover`).
+   */
+  const takeUpUpdate = async (task: Task, update: BranchUpdate): Promise<boolean> => {
+    const head = await copyHead(task.worktreePath!).catch(() => null);
+    const made = head !== null && head.parents.length === 2 && head.parents[0] === update.fromCommit && head.parents[1] === update.baseCommit && !(await mergeUnderWay(task.worktreePath!).catch(() => true));
+    if (made) {
+      const at = transaction(db, () => {
+        if (getTask(db, task.id)?.status !== "building") return null;
+        setMergeCommitIn(db, update.id, head.commit);
+        measureFromMain(task.id, update.baseCommit);
+        // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+        return moveTaskIn(db, task.id, "verifying", { headCommit: head.commit, note: "Botbench restarted after the merge with main was committed; its checks run again" });
+      });
+      if (at !== null) options.onTaskChange(at);
+      return at !== null;
+    }
+    await endUpdate(task, update, "stopped", "Botbench stopped while it was bringing the branch up to date, so it undid the merge. The branch is as it was, and you can try again.");
+    return false;
   };
 
   /**
@@ -1290,6 +1508,9 @@ export function createTasks(options: TasksOptions): Tasks {
     const refineRound = noteRound === null ? refineRoundOf(db, id) : null;
     // One not on a round of fixes for a review, with a failed check no round has ended for, is on a round of fixes for that check.
     const checkFix = noteRound === null && refineRound === null ? checkFixRoundOf(db, id) : null;
+    // One whose update with main is under way with conflicts and no merge commit is resolving them (engine/branch-update.ts).
+    const open = openBranchUpdate(db, id);
+    const conflictUpdate = open !== null && open.mergeCommit === null && open.conflicts.length > 0 ? open : null;
     let sessionStarted = false;
     let parking = false;
     parkCurrent = () => void (parking = waitingOnApproval(db, id));
@@ -1453,8 +1674,15 @@ export function createTasks(options: TasksOptions): Tasks {
     moving.delete(id);
     const name = agentName(builderOf(task).name);
 
+    // Resolving the conflicts of a merge with main: nothing is committed as for a build. Botbench stopping leaves it for
+    // the next start, which undoes the merge; any other end commits the merge or undoes it (`conflictsDone`).
+    if (conflictUpdate !== null) {
+      if (closed && leftover === null) leave(id, "building", "this task's conflicts with main were being resolved");
+      else if (leftover !== null) await endUpdate(task, conflictUpdate, "failed", `${leftover} Botbench undid the merge; the branch is as it was.`);
+      else await conflictsDone(task, conflictUpdate, silent ? "interrupted" : end, silent ? silenceReason(name, silenceLimit) : detail, stopped);
+    }
     // However the turn ended, what it wrote is committed and the task says where it stands.
-    if (leftover !== null) await finish(task, "failed", leftover);
+    else if (leftover !== null) await finish(task, "failed", leftover);
     // A turn that finished before the cancel reached it is a finished task like any other.
     else if (cancelled(task) && end !== "completed") {
       if (refineRound !== null) {
@@ -1758,7 +1986,7 @@ export function createTasks(options: TasksOptions): Tasks {
   /** `before`: the owner resumed a task whose builder's turn had ended without changing a file, or had gone silent, and it is told so. */
   const carryOnNow = async (task: Task, by: "restart" | "owner" | "limit" | "note", stop: AbortController, before: Before = null): Promise<void> => {
     const stage = stageOf(db, task);
-    const commands = options.repoCommands?.(task.repo) ?? { setup: [], checks: [] };
+    const commands = { checks: checksOf(task) };
     if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
       for (const from of ["building", "verifying"] as const) moveFrom(task.id, from, "interrupted", { reason: "This task's copy of the project is no longer there, so it could not be taken up again." });
       return;
@@ -1931,6 +2159,18 @@ export function createTasks(options: TasksOptions): Tasks {
         // A task started on its own that had not started: built in its turn.
         if (task.status === "queued") {
           work.push(task.id);
+          continue;
+        }
+        // In the middle of an update with main whose merge was not recorded: once nothing of the last run is left in its
+        // copy, a merge git had committed has its checks run; any other is undone, and the task goes back to the owner.
+        const update = task.status === "building" ? openBranchUpdate(db, task.id) : null;
+        // A merge committed and recorded on a repository with no checks: only its hand-over was left.
+        if (update !== null && update.mergeCommit !== null) {
+          await review(task, "building", { checks: "none" });
+          continue;
+        }
+        if (update !== null && update.mergeCommit === null && (unstoppable.get(task.id) ?? (await stopSurvivors(task, []))) === null) {
+          if (await takeUpUpdate(task, update)) work.push(task.id);
           continue;
         }
         // Something of the last run may still be at work in its copy: nothing more is done there, and nothing is committed.
@@ -2188,6 +2428,42 @@ export function createTasks(options: TasksOptions): Tasks {
     return getTask(db, id)!;
   };
 
+  const updateWithMain = async (id: number): Promise<Task> => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = getTask(db, id);
+    if (!task) throw new TaskError(404, "No such task.");
+    if (task.status !== "awaiting_decision") throw new TaskError(409, `Only a task that is ready for review can be brought up to date with main. This task ${STANDS[task.status]}.`);
+    if (openBranchUpdate(db, id) !== null) throw new TaskError(409, "This task is already being brought up to date with main.");
+    const started = await beginUpdate(task, "awaiting_decision", "owner");
+    if (started === null) {
+      const now_ = getTask(db, id);
+      if (now_?.status !== "awaiting_decision") throw new TaskError(409, `This task is no longer ready for review, so it was not brought up to date: it ${STANDS[now_?.status ?? "cancelled"]}.`);
+      const { main } = await mainFor(task);
+      throw new TaskError(409, `This task's branch already holds everything on ${main.branch}, so there is nothing to bring in.`);
+    }
+    chain = chain
+      .then(async () => {
+        const at = getTask(db, id);
+        if (at?.status !== "building" || openBranchUpdate(db, id) === null) return;
+        if (closed) return;
+        await atWork(at, (stop) => mergeNow(at, stop.signal));
+      })
+      .then(() => settle(getTask(db, id)?.runId ?? null))
+      .catch(report(`Bringing task ${id} up to date with main`));
+    return started;
+  };
+
+  const mainStatus = async (id: number): Promise<{ branch: string; behind: number } | { problem: string } | null> => {
+    const task = getTask(db, id);
+    if (task === null || task.headCommit === null || task.worktreePath === null) return null;
+    try {
+      const { main, behind } = await mainFor(task);
+      return { branch: main.branch, behind };
+    } catch (err) {
+      return { problem: words(err) };
+    }
+  };
+
   const buildRun = (runId: number): void => {
     if (closed) return;
     chain = chain.then(() => runLine(runId)).catch(report(`Building run ${runId}`));
@@ -2258,5 +2534,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, waitingFor, handOff, moveOffer, reconsider, idle, close };
+  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, waitingFor, handOff, moveOffer, updateWithMain, mainStatus, reconsider, idle, close };
 }

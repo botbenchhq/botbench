@@ -65,8 +65,8 @@ test("Send makes the run from the note and names its source; the owner may choos
 
 test("the Add context sheet of a run made from a source offers no issue and no spec file, and keeps every other setting", () => {
   const rows = rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", reviewOffered: true, commandsKnown: true, issueOffered: true, builderOffered: true, sourced: true });
-  assert.deepEqual(rows, ["repository", "kind", "builder", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
-  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", reviewOffered: true, commandsKnown: true, issueOffered: true, sourced: false }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "commands", "models"]);
+  assert.deepEqual(rows, ["repository", "kind", "builder", "mode", "tasks", "review", "delivery", "limit", "main", "commands", "models"]);
+  assert.deepEqual(rowsFor({ repo: { kind: "known", path: REPO }, kind: "run", reviewOffered: true, commandsKnown: true, issueOffered: true, sourced: false }), ["repository", "kind", "issue", "spec", "mode", "tasks", "review", "delivery", "limit", "main", "commands", "models"]);
 });
 
 test("a task offers Make this a run once it is ready for review, accepted or rejected, and never while it is being built or reviewed", () => {

@@ -236,6 +236,8 @@ test("a committed task is described with its changed files, each marked as the p
     // A task on its own keeps its branch; nothing is sent, and before it is accepted there is nothing to open.
     pullRequest: { choice: "branch", state: "none", number: null, url: null, adopted: false, prState: null, pushed: false, repository: null, base: null, remote: null, branch: worktree.branch, problem: null, at: null },
     pullRequestTarget: null,
+    // Ready for review and holding everything on main: nothing to bring in, and no update yet (engine/branch-update.ts).
+    mainUpdate: { choice: "ask", branch: "main", behind: 0, problem: null, underWay: false, line: null, updates: [] },
   });
   assert.equal(described.body.worktreePath, undefined, "the worktree's location is not part of the answer");
 
