@@ -69,10 +69,12 @@ test("GET /api/agents says when the agents were checked, answers a second time f
   const token = fs.readFileSync(path.join(home, LOGIN_TOKEN_FILE), "utf8").trim();
   const signed = await fetch(`${base}/api/sign-in`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }) });
   const headers = { cookie: signed.headers.getSetCookie()[0]!.split(";")[0]! };
-  const get = async (route: string) => (await (await fetch(`${base}${route}`, { headers })).json()) as { agents: { agent: string; roles: string[] }[]; checkedAt: string; checking: boolean };
+  const get = async (route: string) => (await (await fetch(`${base}${route}`, { headers })).json()) as { agents: { agent: string; roles: string[]; readsRepository: boolean }[]; checkedAt: string; checking: boolean };
 
   const first = await get("/api/agents");
   assert.deepEqual(first.agents.map((a) => a.agent), ["claude-code", "codex", "grok", "antigravity"]);
+  // Which agents read a repository attached to a chat: the rule the chat's own request is checked by (src/api/chat.ts).
+  assert.deepEqual(first.agents.map((a) => a.readsRepository), [false, true, true, false]);
   assert.deepEqual(first.agents.map((a) => a.roles), [["planner", "builder"], ["reviewer"], ["reviewer"], ["reviewer"]]);
   assert.ok(Number.isFinite(Date.parse(first.checkedAt)), first.checkedAt);
   const again = await get("/api/agents");

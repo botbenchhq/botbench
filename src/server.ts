@@ -95,6 +95,8 @@ export interface StartOptions {
   chatClaude?: Driver;
   /** Claude Code for everything it does here: tasks, runs and chat. The real one unless a test replays turns captured from it. */
   claudeCode?: Driver;
+  /** Codex, Grok and Antigravity, for review and chat. The real ones unless a test replays sessions captured from them. */
+  reviewers?: { [CODEX]: Driver; [GROK]: Driver; [ANTIGRAVITY]: Driver };
   /** The gh the issue watch lists labelled issues with. The owner's own unless a test replays output captured from it. */
   watchGh?: RunGh;
 }
@@ -117,7 +119,7 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   const driver = options.claudeCode ?? new ClaudeCodeDriver({ models: config.drivers[CLAUDE_CODE]?.models ?? [], ...(model ? { defaultModel: model } : {}) });
   // Codex, Grok and Antigravity review and chat (src/drivers/, src/api/chat.ts); they never plan or build.
   const configured = (name: typeof CODEX | typeof GROK | typeof ANTIGRAVITY) => ({ models: config.drivers[name]?.models ?? [], ...(config.drivers[name]?.model ? { defaultModel: config.drivers[name].model } : {}) });
-  const reviewers = { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
+  const reviewers = options.reviewers ?? { [CODEX]: new CodexDriver(configured(CODEX)), [GROK]: new GrokDriver(configured(GROK)), [ANTIGRAVITY]: new AntigravityDriver(configured(ANTIGRAVITY)) };
   let broker: Broker;
   let push: Push;
   try {

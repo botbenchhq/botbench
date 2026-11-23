@@ -197,6 +197,13 @@ export function chatScopeWords(driver: Pick<Driver, "name" | "capabilities">): s
 }
 
 /**
+ * Whether an agent reads a repository attached to a chat: one with its own tools, read-only there. Claude Code is never
+ * given one in a chat (it works on a repository as a task, in a separate copy); one without tools answers from the
+ * conversation alone. The one rule for both the request's check and what /api/agents tells the screen.
+ */
+export const readsChatRepository = (driver: Pick<Driver, "name" | "capabilities">): boolean => driver.name !== CLAUDE_CODE && driver.capabilities.chatTools === true;
+
+/**
  * The repository a chat was given, checked and resolved once (docs/lessons.md, unit 10): its real path and its shared
  * git folder, which the agents read and never change. Botbench's data folder may be neither inside it nor around it:
  * reading the repository would then read Botbench's own files.
@@ -306,7 +313,7 @@ export function createChat(o: ChatOptions): Chat {
     if (attached !== undefined) {
       // Only Claude Code changes a repository, as a task in a separate copy; in a chat the others read it.
       if (agents.some(({ agent }) => agent === CLAUDE_CODE)) throw new TurnError(400, "Claude Code works on a repository as a task, in a separate copy. Send it without other agents to start one, or remove the repository to chat with it.");
-      const cannot = agents.find(({ agent }) => driverOf(agent)!.capabilities.chatTools !== true);
+      const cannot = agents.find(({ agent }) => !readsChatRepository(driverOf(agent)!));
       if (cannot !== undefined) throw new TurnError(400, `${agentName(cannot.agent)} cannot read a repository in Botbench: it answers from the conversation alone. Remove the repository to ask it.`);
       repository = await chatRepository(attached, o.home);
     }
