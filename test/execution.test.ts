@@ -239,15 +239,35 @@ test("a container is refused for a mount that is, holds or lies inside the home 
   assert.equal(mountedFrom(dataDir, dataDir), false);
 });
 
-test("Docker not answering is refused in plain words: a failure, no answer within the limit (the program is killed), and no program at all", async () => {
+test("Docker not answering is refused in plain words: a failure, no answer within the limit (the program is killed), and no program at all", async (t) => {
   const failed = await dockerProblem("/usr/bin/false");
   assert.match(failed!, /^Docker did not answer \(docker info: it ended with exit code 1\), so Botbench did not start this task's container\. Start Docker and start the task again, or set this repository's "execution" to "host"\. Nothing ran on this Mac instead\.$/);
-  // `yes` never ends by itself: a real program that does not answer in time. It writes as fast as it can, so it is
-  // given a short limit: the suite's timing-sensitive tests run beside this one.
+  // A program that never answers whatever it is asked: sh running sleep, in place of docker. (`yes` was used before; the
+  // uutils `yes` of newer Linux refuses `info --format …` and ends at once.) It is stopped at its limit, its whole
+  // process group with it: the sleep it started is gone too.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "botbench-execution-silent-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const silent = path.join(dir, "docker");
+  const pidFile = path.join(dir, "sleep.pid");
+  fs.writeFileSync(silent, `#!/bin/sh\nsleep 30 &\necho $! > '${pidFile}'\nwait\n`, { mode: 0o755 });
   const began = Date.now();
-  const late = await dockerProblem("/usr/bin/yes", 100);
+  const late = await dockerProblem(silent, 300);
   assert.match(late!, /^Docker did not answer within 0 seconds \(docker info\)/);
   assert.ok(Date.now() - began < 5000, "it was stopped at its limit");
+  const sleeping = Number(fs.readFileSync(pidFile, "utf8"));
+  // Killed with its group; it may take a moment to be reaped once its parent is gone.
+  const gone = async (): Promise<boolean> => {
+    for (let i = 0; i < 40; i++) {
+      try {
+        process.kill(sleeping, 0);
+      } catch {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  };
+  assert.ok(await gone(), "what it started was stopped with it");
   assert.match((await dockerProblem("/nonexistent/docker"))!, /^Docker did not answer \(docker info: it said: spawn \/nonexistent\/docker ENOENT\)/);
   assert.equal(await dockerProblem("/bin/echo"), null, "a program that answers with a version, as docker info --format does");
 });
