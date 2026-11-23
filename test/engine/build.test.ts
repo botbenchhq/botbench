@@ -28,6 +28,9 @@ const THREE: PlanTask[] = [
   { title: "Describe both files", criteria: ["README.md names both"] },
 ];
 const SETUP_WRITES: StationCommand = { command: "echo built by setup > setup-output.txt", limitMs: 10_000 };
+// The replayed "done" turn changes no file, and a task whose branch holds no change fails (test/engine/no-change.test.ts):
+// unless a test names its own setup commands, the repository's setup writes a file, so each task has work to hand over.
+const DEFAULT_SETUP: StationCommand[] = [SETUP_WRITES];
 
 interface Line {
   db: DatabaseSync;
@@ -54,7 +57,7 @@ async function line(t: T, script: BuildTurn[], o: { hold?: number[]; setup?: Sta
   const driver = buildReplayDriver(script, { hold: o.hold ?? [] });
   const runChanges: string[] = [];
   const taskChanges: string[] = [];
-  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? [], checks: [] }), repoHosts: () => o.hosts ?? [], onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`), onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`) });
+  const tasks = createTasks({ db, home, driver, broker, model: "haiku", repoCommands: () => ({ setup: o.setup ?? DEFAULT_SETUP, checks: [] }), repoHosts: () => o.hosts ?? [], onEvent: () => {}, onTaskChange: (task) => taskChanges.push(`${task.id}:${task.status}`), onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`) });
   const runs = createRuns({ db, home, driver, broker, model: "haiku", implementerModel: "haiku", line: tasks, onEvent: () => {}, onRunChange: (run) => runChanges.push(`${run.id}:${run.status}`), onTaskChange: () => {} });
   // Everything is stopped before the folder goes, so nothing still at work writes into it afterwards.
   t.after(async () => {
@@ -110,7 +113,8 @@ test("AE1: deleting one of three planned tasks and approving creates exactly two
     assert.equal(built.status, "awaiting_decision", `task ${i + 1}: ${built.reason}`);
     assert.equal(built.baseCommit, e.base);
     assert.equal(built.worktreePath, taskWorktree(e, run.id, made.id));
-    assert.equal(git(built.worktreePath!, "rev-parse", "HEAD").trim(), e.base);
+    // The one commit on the branch is Botbench's, of what setup wrote; it sits on the run's base commit.
+    assert.equal(git(built.worktreePath!, "rev-parse", "HEAD^").trim(), e.base);
     assert.equal(fs.existsSync(path.join(built.worktreePath!, "later.txt")), false);
   }
   // Each builder was started in its own worktree, able to edit there, through the gate, on the run's model, with the plan item as its prompt.
@@ -340,7 +344,7 @@ test("after a restart, a running run's task that was being prepared, before any 
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(["done", "done", "done"]);
-  const engine = createTasks({ db, home, driver, broker, onEvent: () => {}, onTaskChange: () => {} });
+  const engine = createTasks({ db, home, driver, broker, repoCommands: () => ({ setup: DEFAULT_SETUP, checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await engine.close();
     await broker.close();
@@ -457,7 +461,7 @@ async function engineOn(t: T, p: { db: DatabaseSync; home: string }, script: Bui
   const broker = createBroker({ db: p.db, home: p.home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(script);
-  const tasks = createTasks({ db: p.db, home: p.home, driver, broker, repoCommands: () => ({ setup: [], checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
+  const tasks = createTasks({ db: p.db, home: p.home, driver, broker, repoCommands: () => ({ setup: DEFAULT_SETUP, checks: [] }), onEvent: () => {}, onTaskChange: () => {} });
   const runs = createRuns({ db: p.db, home: p.home, driver, broker, line: tasks, onEvent: () => {}, onRunChange: () => {}, onTaskChange: () => {} });
   t.after(async () => {
     await runs.close();

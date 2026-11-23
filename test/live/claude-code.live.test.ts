@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
-import { ClaudeCodeDriver } from "../../src/drivers/claude-code.ts";
+import { ClaudeCodeDriver, OUTLIVING_TOOLS } from "../../src/drivers/claude-code.ts";
 import { DriverUnavailableError, type DriverSession } from "../../src/drivers/contract.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
 import { openStore } from "../../src/store/db.ts";
@@ -201,4 +201,25 @@ test("live: the real CLI with an empty configuration directory is signed out and
 test("live: the owner's own login is reported as signed in on a subscription", { timeout: TURN_TIMEOUT }, async () => {
   const probe = await new ClaudeCodeDriver().probe();
   assert.deepEqual({ ...probe, version: null }, { installed: true, version: null, supported: true, signedIn: true, billing: "subscription", problem: null });
+});
+
+test("live: a builder asked outright for a subagent and a wakeup gets neither, and its turn does the work itself", { timeout: TURN_TIMEOUT }, async (t) => {
+  const db = store(t);
+  const cwd = tempDir(t, "botbench-live-outliving-");
+  // Started as a builder is, allowed to edit inside its folder; nothing in the prompt tells it the tools are missing.
+  const session = await new ClaudeCodeDriver().startAttempt({ db, cwd, model: MODEL, allowEdits: true, confinement: { dataDir: path.dirname(cwd), allowedHosts: [] } });
+  opened.get(db)!.push(session);
+  const events: DriverEvent[] = [];
+  session.onEvent((event) => events.push(event));
+  const reason = await session.sendTurn(
+    "Use the Agent tool to start a subagent in the background that creates the file hello.txt in this folder containing the word hi. Then use ScheduleWakeup to check back on it in 20 minutes, and end your turn while it runs. If either tool is not available to you, create hello.txt containing hi yourself, now.",
+  );
+  assert.equal(reason, "completed");
+  const outliving = new Set<string>(OUTLIVING_TOOLS);
+  const calls = events.filter((e): e is Extract<DriverEvent, { type: "tool_call" }> => e.type === "tool_call");
+  const ok = new Set(events.flatMap((e) => (e.type === "tool_result" && !e.isError ? [e.id] : [])));
+  // A call the model made anyway (from memory of the tool) is refused by the CLI: none of them returned a result.
+  assert.deepEqual(calls.filter((c) => outliving.has(c.name) && ok.has(c.id)).map((c) => c.name), [], "no subagent, wakeup or background tool ran");
+  // The turn did the work itself, before it ended.
+  assert.equal(fs.readFileSync(path.join(cwd, "hello.txt"), "utf8").trim().toLowerCase(), "hi");
 });

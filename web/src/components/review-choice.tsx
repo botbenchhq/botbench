@@ -1,13 +1,11 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ApiError, getAgentModels, getAgentsAndCap, type ModelList, type ReviewerChoice } from "../api/client.ts";
+import { REVIEW_DEFAULT, REVIEW_OTHER, reviewRows, type ReviewRow } from "../app/composer.ts";
 import { agentName } from "./evidence.tsx";
 import { Option } from "./option.tsx";
 
-/** The model part of a select value for an agent with its own default model, when it lists none. It holds a character no model name may. */
-const DEFAULT = "?default";
-
 /** A select value: the agent and the model, apart by a space, which no agent name or model name holds. */
-const valueOf = (agent: string, model: string): string => `${agent} ${model}`;
+const split = (value: string): { agent: string; model: string } => ({ agent: value.slice(0, value.indexOf(" ")), model: value.slice(value.indexOf(" ") + 1) });
 
 /** The reviewers that can review now, as their own probes say, with the models each offers; and, for the others, why not. */
 type Offer = { state: "checking" } | { state: "offered"; reviewers: { agent: string; models: ModelList }[]; unavailable: { agent: string; problem: string }[]; rounds: number } | { state: "not-offered"; why: string; none: boolean };
@@ -28,12 +26,13 @@ export interface ReviewChoiceState {
   words: string;
 }
 
-/** Every reviewer and model offered now, as select values with their words. */
-function offered(offer: Offer): { value: string; agent: string; model: string }[] {
-  if (offer.state !== "offered") return [];
-  return offer.reviewers.flatMap(({ agent, models }) =>
-    models.models.length === 0 ? [{ value: valueOf(agent, DEFAULT), agent: agentName(agent), model: "its default model" }] : models.models.map((model) => ({ value: valueOf(agent, model.id), agent: agentName(agent), model: model.label ?? model.id })),
-  );
+/** Every reviewer option offered now (`reviewRows`), as select values with their words. */
+const offered = (offer: Offer): ReviewRow[] => (offer.state === "offered" ? reviewRows(offer.reviewers, agentName) : []);
+
+/** The option a value stands for: its own row, or, for a model of an offered agent that is not a row of its own (one typed, or remembered), that agent's Other…. */
+function rowOf(options: readonly ReviewRow[], value: string): ReviewRow | null {
+  if (value === "") return null;
+  return options.find((option) => option.value === value) ?? options.find((option) => option.other && option.agent === split(value).agent) ?? null;
 }
 
 /** `wanted` false leaves the agents unasked (each asks its own program, which takes seconds) until a run is being set up. */
@@ -61,14 +60,12 @@ export function useReviewChoice(onSignedOut: () => void, initial = "", wanted = 
     };
   }, [onSignedOut, wanted]);
   const options = offered(offer);
-  const chosen = options.find((option) => option.value === value) ?? null;
-  const choice = (): ReviewerChoice | null => {
-    if (chosen === null) return null;
-    const at = value.indexOf(" ");
-    const model = value.slice(at + 1);
-    return { agent: value.slice(0, at), model: model === DEFAULT ? null : model };
-  };
-  return { offer, value, setValue, choice, words: chosen === null ? "Off" : `${chosen.agent}, ${chosen.model}` };
+  const chosen = rowOf(options, value);
+  // Other… with no name typed yet is the agent's own default, and says so.
+  const model = chosen === null ? null : split(value).model;
+  const typed = model === REVIEW_DEFAULT || model === REVIEW_OTHER ? null : model;
+  const choice = (): ReviewerChoice | null => (chosen === null ? null : { agent: chosen.agent, model: typed });
+  return { offer, value, setValue, choice, words: chosen === null ? "Off" : `${chosen.name}, ${typed ?? "its default model"}` };
 }
 
 /** The rounds of fixes a run started now allows after a review with concerns. */
@@ -84,7 +81,8 @@ export function ReviewOptions({ state }: { state: ReviewChoiceState }) {
       </p>
     );
   const options = offered(offer);
-  const current = options.some((option) => option.value === state.value) ? state.value : "";
+  const current = rowOf(options, state.value)?.value ?? "";
+  const typed = (agent: string): string => (split(state.value).agent === agent && !options.some((option) => option.value === state.value) ? split(state.value).model : "");
   return (
     <fieldset className="ds-option-picker" aria-describedby="review-hint" data-testid="review-options">
       <legend className="ds-option-picker__legend ds-visually-hidden">Review</legend>
@@ -98,9 +96,21 @@ export function ReviewOptions({ state }: { state: ReviewChoiceState }) {
         )}
       </p>
       <Option group="review" id="review-off" value="" checked={current === ""} onChange={() => state.setValue("")} name="Off" />
-      {options.map((option, at) => (
-        <Option key={option.value} group="review" id={`review-${at}`} value={option.value} checked={current === option.value} onChange={() => state.setValue(option.value)} name={option.agent} description={option.model} />
-      ))}
+      {options.map((option, at) =>
+        option.other ? (
+          <Fragment key={option.value}>
+            <Option group="review" id={`review-${at}`} value={option.value} checked={current === option.value} onChange={() => state.setValue(option.value)} name={option.name} description={option.description} />
+            <div className="ds-option-picker__reveal">
+              <div className="ds-field">
+                <label htmlFor={`review-${at}-name`} className="ds-field__label">{`${option.name} model name`}</label>
+                <input id={`review-${at}-name`} type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={typed(option.agent)} onChange={(e) => state.setValue(`${option.agent} ${e.target.value.trim() === "" ? REVIEW_OTHER : e.target.value.trim()}`)} className="ds-field__control" />
+              </div>
+            </div>
+          </Fragment>
+        ) : (
+          <Option key={option.value} group="review" id={`review-${at}`} value={option.value} checked={current === option.value} onChange={() => state.setValue(option.value)} name={option.name} description={option.description} />
+        ),
+      )}
       {offer.state === "offered" &&
         offer.unavailable.map(({ agent, problem }) => <Option key={agent} group="review" id={`review-${agent}`} value={agent} checked={false} onChange={() => {}} disabled name={agentName(agent)} description={problem} state="Not available" />)}
     </fieldset>

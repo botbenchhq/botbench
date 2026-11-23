@@ -543,3 +543,19 @@ test("Claude Code with managed settings on this Mac starts no agent, since they 
   assert.match(managedSettingsProblem([path.join(dir, "absent.json"), file]) ?? "", /managed settings on this Mac .*managed-settings\.json.*starts no agent/);
   assert.throws(() => claudeArgs({ confinement: { ...CONFINED, cwd: "/tmp/data[1]/copy" } }), /\*, \? or \[/);
 });
+
+test("no attempt can start work that outlives its turn: the subagent, scheduling, background and remote tools are denied to the builder, the planner and chat alike", () => {
+  // The names as Claude Code 2.1.322 lists them in its init event, each checked to leave that list when denied by name
+  // (the subagent tool is listed as Task and also answers to Agent; denying either removes it).
+  const outliving = ["Agent", "Task", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "Monitor", "TaskStop", "SendMessage", "ListAgents", "Workflow", "EnterWorktree", "ExitWorktree", "PushNotification"];
+  const kinds = { chat: {}, edits: { allowEdits: true }, builder: { allowEdits: true, gated: true }, planner: { readOnly: true, gated: true } };
+  for (const [kind, options] of Object.entries(kinds)) {
+    const args = claudeArgs({ confinement: CONFINED, model: "haiku", ...options });
+    assert.equal(args.filter((a) => a === "--disallowedTools").length, 1, `${kind}: one list of denied tools`);
+    const denied = args[args.indexOf("--disallowedTools") + 1]!.split(",");
+    for (const tool of outliving) assert.ok(denied.includes(tool), `${kind}: ${tool} is denied`);
+    // The planner keeps its writing tools denied as well.
+    if (kind === "planner") for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) assert.ok(denied.includes(tool), `${kind}: ${tool}`);
+    else assert.ok(!denied.includes("Edit"), `${kind} may still edit`);
+  }
+});

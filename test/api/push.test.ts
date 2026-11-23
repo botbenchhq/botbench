@@ -217,7 +217,9 @@ test("a task built to Ready for review sends one push per device, with the fixed
   const endpoint = await startPushEndpoint();
   const push = createPush({ db, home, allowHttpEndpoints: true });
   // The same hook the server gives the engine (src/server.ts).
-  const tasks = createTasks({ db, home, driver: buildReplayDriver(["done"]), broker, model: "haiku", onEvent: () => {}, onTaskChange: push.taskChanged });
+  // The replayed "done" turn changes no file, so setup writes one: a task whose branch holds no change fails instead.
+  const repoCommands = () => ({ setup: [{ command: "printf 'hi\\n' > hello.txt", limitMs: 10_000 }], checks: [] });
+  const tasks = createTasks({ db, home, driver: buildReplayDriver(["done"]), broker, model: "haiku", repoCommands, onEvent: () => {}, onTaskChange: push.taskChanged });
   t.after(async () => {
     await tasks.close();
     await broker.close();

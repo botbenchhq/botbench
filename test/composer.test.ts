@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { arrive, blocked, commandsWords, DEFAULTS, folderName, issueWords, ISSUE_NOT_FULL, readRemembered, repoName, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
+import { arrive, blocked, chipModel, commandsWords, DEFAULTS, folderName, ISSUE_NOT_FULL, issueWords, modeFor, readRemembered, repoName, returnsToList, reviewRows, rowsFor, sendFor, splitPath, writeRemembered, type Facts, type Remembered } from "../web/src/app/composer.ts";
 
 // The composer on the home screen starts a chat, a task or a run. What Send does, which rows the Add context sheet
 // shows, why Send is disabled and what is remembered on the device are decided here, without a browser.
@@ -115,13 +115,13 @@ test("the sheet shows only the rows that apply: a chat has a repository and a mo
 });
 
 test("the repository, kind, mode, review and delivery are remembered on the device, and anything else read back is ignored", () => {
-  const chosen: Remembered = { repo: { kind: "known", path: REPO }, kind: "run", mode: "full", review: "codex gpt-5", delivery: "pull_request" };
+  const chosen: Remembered = { repo: { kind: "known", path: REPO }, kind: "run", mode: { repo: REPO, mode: "semi" }, review: "codex gpt-5", delivery: "pull_request" };
   assert.deepEqual(readRemembered(writeRemembered(chosen)), chosen);
   assert.deepEqual(readRemembered(writeRemembered({ ...chosen, repo: { kind: "other", path: "/x" } })).repo, { kind: "other", path: "/x" });
   assert.deepEqual(readRemembered(null), DEFAULTS);
   assert.deepEqual(DEFAULTS, { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" });
   assert.deepEqual(readRemembered("not json"), DEFAULTS);
-  assert.deepEqual(readRemembered(JSON.stringify({ repo: { kind: "known", path: 3 }, kind: "everything", mode: "reckless", review: 1, delivery: "push" })), DEFAULTS);
+  assert.deepEqual(readRemembered(JSON.stringify({ repo: { kind: "known", path: 3 }, kind: "everything", mode: { repo: REPO, mode: "reckless" }, review: 1, delivery: "push" })), DEFAULTS);
   // "Needed" is a state of one visit, never remembered.
   assert.deepEqual(readRemembered(JSON.stringify({ ...chosen, repo: { kind: "needed" } })).repo, { kind: "none" });
 });
@@ -191,4 +191,51 @@ test("a run from an issue cannot be sent fully autonomous, nor with a spec file,
   assert.equal(blocked(inRepo({ kind: "run", mode: "semi", issue })), null);
   // A task never carries an issue, whatever was attached while planning a run.
   assert.equal(sendFor(inRepo({ kind: "task", issue }), extras).do, "task");
+});
+
+test("Plan a run starts in the mode from Settings: a mode chosen here counts only for the repository it was chosen for, and Fully autonomous is never remembered", () => {
+  // Screenshot 009 of the self-review: a Fully autonomous chosen once, on another visit, was read back as the default.
+  assert.equal(readRemembered(JSON.stringify({ ...DEFAULTS, mode: "full" })).mode, null, "a mode remembered by an earlier version, for no repository, is dropped");
+  assert.equal(readRemembered(writeRemembered({ ...DEFAULTS, mode: { repo: REPO, mode: "full" } })).mode, null, "Fully autonomous is a default only when set in Settings");
+  assert.deepEqual(readRemembered(writeRemembered({ ...DEFAULTS, mode: { repo: REPO, mode: "semi" } })).mode, { repo: REPO, mode: "semi" });
+  // Nothing chosen: the Settings default, Manual when the owner never changed it; null while it is being read.
+  assert.equal(modeFor(null, REPO, "manual"), "manual");
+  assert.equal(modeFor(null, REPO, null), null);
+  // Chosen for this repository: that choice. Chosen for another: the Settings default.
+  assert.equal(modeFor({ repo: REPO, mode: "full" }, REPO, "manual"), "full");
+  assert.equal(modeFor({ repo: "/Users/owner/code/other", mode: "full" }, REPO, "manual"), "manual");
+  assert.equal(modeFor({ repo: "/Users/owner/code/other", mode: "semi" }, REPO, "semi"), "semi");
+});
+
+test("the model chip says what Send uses first: for a run with a build model of its own, the planning model, then the build model", () => {
+  assert.equal(chipModel({ run: false, sameBuild: false, plan: "Haiku 5.5", build: "Opus 5.5" }), "Haiku 5.5");
+  assert.equal(chipModel({ run: true, sameBuild: true, plan: "Haiku 5.5", build: "Opus 5.5" }), "Haiku 5.5");
+  assert.equal(chipModel({ run: true, sameBuild: false, plan: "Haiku 5.5", build: "Opus 5.5" }), "Haiku 5.5, then Opus 5.5");
+});
+
+test("choosing an option of a setting returns to Add context, unless the option opens a field or the view holds a second choice", () => {
+  for (const view of ["kind", "mode", "review", "delivery"] as const) assert.equal(returnsToList({ view, value: "x", run: true }), true, view);
+  assert.equal(returnsToList({ view: "repository", value: REPO, run: false }), true);
+  assert.equal(returnsToList({ view: "repository", value: "?other", run: false }), false, "Another folder… opens Folder path");
+  assert.equal(returnsToList({ view: "models", value: "haiku", run: false }), false, "a chat's Models view also holds the agent");
+  assert.equal(returnsToList({ view: "models", value: "haiku", run: true }), false, "a run's Models view also holds the build model");
+  assert.equal(returnsToList({ view: "review", value: "codex ?other", run: true }), false, "a reviewer's Other… opens a field");
+  assert.equal(returnsToList({ view: "mode", value: "full", run: true }), false, "Fully autonomous stays in view with its warning");
+  for (const view of ["spec", "commands", "issue"] as const) assert.equal(returnsToList({ view, value: "x", run: true }), false, view);
+});
+
+test("Review lists, for each agent that reviews, its own default and the configured model first, then Other… for any other name, not every model flat", () => {
+  // Screenshot 012: about 45 rows, one per model of every agent, and no default among them.
+  const many = Array.from({ length: 20 }, (_, i) => ({ id: `gpt-${i}` }));
+  const rows = reviewRows([
+    { agent: "codex", models: { driver: "codex", source: "cli", models: many, default: "gpt-3", cliDefault: "gpt-6-luna" } },
+    { agent: "grok", models: { driver: "grok", source: "cli", models: [{ id: "grok-5", label: "Grok 5" }], default: null, cliDefault: null } },
+  ], (agent) => ({ codex: "Codex", grok: "Grok" })[agent] ?? agent);
+  assert.deepEqual(rows.map((row) => [row.value, row.name, row.description]), [
+    ["codex ?default", "Codex", "its default model (gpt-6-luna)"],
+    ["codex gpt-3", "Codex", "gpt-3, as configured"],
+    ["codex ?other", "Codex", "Other model…"],
+    ["grok ?default", "Grok", "its default model"],
+    ["grok ?other", "Grok", "Other model…"],
+  ]);
 });

@@ -181,7 +181,9 @@ test("a move the line does not have is refused and writes nothing; task events c
   assert.throws(() => moveTask(db, task.id, "awaiting_decision", { headCommit: "c".repeat(40) }), /queued.*awaiting_decision/, "a task that never built has nothing to decide on");
   assert.throws(() => moveTask(db, 99, "building"), /No task 99/);
   moveTask(db, task.id, "failed", { reason: "could not start" });
-  for (const to of ["queued", "building", "awaiting_decision", "interrupted", "failed"] as const) {
+  // Failed is an end but for one move: back to building, which only the owner's Resume of a task whose builder changed
+  // no file makes (test/engine/no-change.test.ts).
+  for (const to of ["queued", "awaiting_decision", "interrupted", "failed"] as const) {
     assert.throws(() => moveTask(db, task.id, to), /failed/, `failed is an end: no move to ${to}`);
   }
   assert.throws(() => moveTask(db, task.id, "decided" as never), /failed|decided/);
@@ -243,7 +245,9 @@ test("on start, a task left being prepared by a Botbench that stopped, before an
   const broker = createBroker({ db, home, onChange: () => {} });
   await broker.listen();
   const driver = buildReplayDriver(["done", "done"]);
-  const tasks = createTasks({ db, home, driver, broker, onEvent: () => {}, onTaskChange: (task) => announced.push(task.id) });
+  // The replayed "done" turn changes no file, so the queued task's setup writes one: a task whose branch holds no change fails.
+  const repoCommands = () => ({ setup: [{ command: "printf 'hi\\n' > hello.txt", limitMs: 10_000 }], checks: [] });
+  const tasks = createTasks({ db, home, driver, broker, repoCommands, onEvent: () => {}, onTaskChange: (task) => announced.push(task.id) });
   t.after(async () => {
     await tasks.close();
     await broker.close();

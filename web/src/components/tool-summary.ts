@@ -217,3 +217,23 @@ export function stepGroupOpen({ touched, live, states }: { touched: boolean | nu
   if (touched !== null) return touched;
   return live || states.some((state) => state !== "done");
 }
+
+/**
+ * How an approval card says what is asked: for a tool that is not a shell command, a line in words from the tool's name
+ * and main argument (as the transcript says it), with its raw arguments, which are what an allow lets run, laid out for
+ * one tap away. `line` is null when the command itself is the line: a shell command, or text that is not the JSON of an
+ * object.
+ */
+export function approvalWords(tool: string, command: string): { line: string | null; raw: string } {
+  if (tool === "Bash") return { line: null, raw: command };
+  let input: unknown;
+  try {
+    input = JSON.parse(command);
+  } catch {
+    return { line: null, raw: command };
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return { line: null, raw: command };
+  const said = callLine(tool, input, "waiting");
+  const line = said.verb === null ? (said.object === "" ? tool : `${tool}: ${said.object}`) : `${said.verb} ${said.object}`;
+  return { line, raw: JSON.stringify(input, null, 2) };
+}

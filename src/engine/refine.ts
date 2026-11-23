@@ -113,8 +113,11 @@ export function outcomeLine(r: LoopRecord): string {
   if (first.outcome !== "reviewed") return `${reviewer}'s review did not finish: needs your judgment.`;
   if (outcome === "satisfied" && r.refinements.length === 0) return `${reviewer} found nothing to fix.`;
   const parts: string[] = [];
-  const findings = parseFindings(first.text);
-  parts.push(findings.length === 0 ? `${reviewer} raised concerns.` : `${reviewer} raised ${count(findings.length, "concern", "concerns")}.`);
+  // What each review with concerns raised, in order: the builder's count below is of every round, so this is too.
+  const raised = r.reviews.filter((review) => loopVerdict(review) === "concerns").map((review) => parseFindings(review.text).length);
+  const [firstCount, ...later] = raised;
+  const opening = firstCount === undefined || firstCount === 0 ? `${reviewer} raised concerns` : `${reviewer} raised ${count(firstCount, "concern", "concerns")}`;
+  parts.push(`${opening}${later.map((n) => (n === 0 ? ", then concerns again" : `, then ${n}`)).join("")}.`);
   const finished = r.refinements.filter((fix) => fix.outcome === "finished");
   if (finished.length > 0) {
     const replies = finished.map((fix) => parseRefineReply(fix.reply));

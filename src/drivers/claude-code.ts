@@ -51,6 +51,16 @@ const EDITS_BELOW_CWD = "Edit(./**)";
 const READ_ONLY_TOOLS = "Read,Glob,Grep,Bash";
 /** Named as denied as well, should a CLI version hand a tool out in spite of the list above. */
 const WRITING_TOOLS = "Write,Edit,MultiEdit,NotebookEdit";
+/**
+ * The tools that start work outliving the turn, or hand the work to someone else: denied to every attempt. A turn in
+ * Botbench does its work in the turn; what it leaves running is stopped when it ends and is never committed or checked.
+ * Seen on 2.1.322, each listed in the init event's tools and gone from it when denied by this name: the subagent tool
+ * (listed as Task, also called Agent; either name removes it), the scheduled and remote runs (CronCreate, CronDelete,
+ * CronList, ScheduleWakeup, RemoteTrigger), watching a background process (Monitor) and stopping one (TaskStop), other
+ * agents and workflows (SendMessage, ListAgents, Workflow), a worktree of the CLI's own outside the task's copy
+ * (EnterWorktree, ExitWorktree) and a notification to the owner's devices through Anthropic (PushNotification).
+ */
+export const OUTLIVING_TOOLS = ["Agent", "Task", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "Monitor", "TaskStop", "SendMessage", "ListAgents", "Workflow", "EnterWorktree", "ExitWorktree", "PushNotification"] as const;
 
 // Commands are confined: the sandbox is on with `failIfUnavailable` and `allowUnsandboxedCommands` false (`sandboxSettings`).
 const CAPABILITIES: DriverCapabilities = { resume: true, interrupt: true, permissionRequests: true, edits: true, confinedCommands: true };
@@ -173,6 +183,8 @@ function attemptSettings(place: AttemptPlace, gated: boolean, local: boolean): s
  * an agent or fetches a page; the writing tools are also named as denied. It works on a
  * repository's content like an attempt that may edit, so no settings file is loaded, and
  * with `gated` every shell command asks through the gate. `readOnly` wins over `allowEdits`.
+ *
+ * Every attempt, of any kind, is denied the tools that outlive the turn (`OUTLIVING_TOOLS`).
  */
 export function claudeArgs(options: { confinement: AttemptPlace; model?: string; resumeCursor?: ResumeCursor; allowEdits?: boolean; readOnly?: boolean; gated?: boolean; instructionsFile?: string }): string[] {
   const readOnly = options.readOnly === true;
@@ -193,7 +205,8 @@ export function claudeArgs(options: { confinement: AttemptPlace; model?: string;
   if (gated) args.push("--permission-prompt-tool", "stdio");
   else args.push("--permission-prompts", "none");
   if (allowEdits) args.push("--allowedTools", EDITS_BELOW_CWD);
-  if (readOnly) args.push("--tools", READ_ONLY_TOOLS, "--disallowedTools", WRITING_TOOLS);
+  if (readOnly) args.push("--tools", READ_ONLY_TOOLS);
+  args.push("--disallowedTools", [...(readOnly ? [WRITING_TOOLS] : []), ...OUTLIVING_TOOLS].join(","));
   if (gated && options.instructionsFile) args.push("--append-system-prompt-file", options.instructionsFile);
   if (options.model !== undefined) {
     // The name is an argument of its own, and one that could be read as a flag never gets this far.

@@ -10,7 +10,8 @@ import { reviewAssignment } from "./review.ts";
  *   full    the plan is approved by the mode; confined commands run without asking; whatever would ask the owner is
  *           refused instead (the safety floor among it); a task is accepted by the mode when every check passed and
  *           the review is satisfied or there is none, and handed back to the owner, saying why, when not
- * A mode never loosens the safety floor, and broker failure denies in every mode. Nothing is merged or pushed.
+ * A mode never loosens the safety floor, and broker failure denies in every mode. Nothing is ever merged; an accepted
+ * task's branch is pushed only by a run that chose to open a pull request (decision.ts, `acceptedWords`).
  */
 
 export type RunMode = "manual" | "semi" | "full";

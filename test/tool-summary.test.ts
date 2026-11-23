@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
+import { approvalWords, callLine, callReason, callTarget, confinedWords, duration, editChange, lineChanges, ranFor, stepGroupOpen, stepsSummary, writtenText } from "../web/src/components/tool-summary.ts";
 import { bannedIn } from "../e2e/voice.ts";
 
 // The one-line summaries of tool activity (docs/product/voice.md): derived from the real name and arguments, never guessed.
@@ -133,4 +133,16 @@ test("a step group is open while its reply is arriving, closes to its line once 
   // What the reader opened or closed by hand stays so, whatever happens after.
   assert.equal(stepGroupOpen({ touched: true, live: false, states: done }), true);
   assert.equal(stepGroupOpen({ touched: false, live: true, states: [...done, "failed"] }), false);
+});
+
+test("an approval for a tool that is not a shell command reads as the tool's name and main argument in words, with its raw arguments kept for one tap away", () => {
+  // Screenshot 038 of the self-review: the card showed {"delaySeconds":1200,…} as its command.
+  assert.deepEqual(approvalWords("WebFetch", JSON.stringify({ url: "https://example.com/a", prompt: "read" })), { line: "Wants to fetch https://example.com/a", raw: '{\n  "url": "https://example.com/a",\n  "prompt": "read"\n}' });
+  assert.deepEqual(approvalWords("Write", JSON.stringify({ file_path: "/w/src/a.ts", content: "x" })), { line: "Wants to write a.ts", raw: '{\n  "file_path": "/w/src/a.ts",\n  "content": "x"\n}' });
+  // A tool with no verb: its own name, and its main argument when it has one.
+  assert.equal(approvalWords("ScheduleWakeup", JSON.stringify({ delaySeconds: 1200, reason: "fallback" })).line, "ScheduleWakeup");
+  assert.equal(approvalWords("Skill", JSON.stringify({ command: "review" })).line, "Skill: review");
+  // A shell command is its command, as before; text that is not the JSON of an object is shown as it is.
+  assert.deepEqual(approvalWords("Bash", "npm test"), { line: null, raw: "npm test" });
+  assert.deepEqual(approvalWords("Odd", "not json"), { line: null, raw: "not json" });
 });

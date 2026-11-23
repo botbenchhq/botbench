@@ -63,7 +63,7 @@ test("Plan a run offers Keep the branch (chosen) or Open a pull request; a deliv
   await expect(sheet.getByRole("heading", { name: "When you accept a task" })).toBeVisible();
   await expect(sheet.getByRole("radio", { name: "Keep the branch" })).toBeChecked();
   await expect(sheet.getByRole("radio", { name: "Open a pull request" })).not.toBeChecked();
-  await sheet.getByRole("radio", { name: "Open a pull request" }).check();
+  await sheet.getByRole("radio", { name: "Open a pull request" }).click();
   await checkDesign(page, "new run, with the delivery choice");
   await closeContext(page);
   await expect(page.getByTestId("composer-about")).toContainText("Each accepted task is then opened as a pull request.");

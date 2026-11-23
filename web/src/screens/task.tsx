@@ -355,7 +355,7 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
               )
             )}
 
-            {task.status === "interrupted" && task.resumeNote !== null && (
+            {task.resumeNote !== null && (
               <section aria-labelledby="resume-heading" className="ds-stack ds-gap-sm">
                 <h2 id="resume-heading">Resume</h2>
                 <ResumeControl taskId={task.id} note={task.resumeNote} primary onResumed={load} onSignedOut={onSignedOut} />

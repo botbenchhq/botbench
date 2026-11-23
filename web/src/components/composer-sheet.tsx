@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import type { Delivery, KnownRepository, RunMode } from "../api/client.ts";
-import { ISSUE_NOT_FULL, splitPath, type Kind, type RepoPick, type Row } from "../app/composer.ts";
+import { ISSUE_NOT_FULL, returnsToList, splitPath, type Kind, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, BUILDER_ONLY, type ChatAgentsState } from "./agent-choice.tsx";
 import { Icon, type IconName } from "./icon.tsx";
@@ -64,6 +64,14 @@ export function ContextSheet({ sheetRef, view, setView, state }: { sheetRef: Ref
   /** The row whose view is open, so Back can put the focus on it again. */
   const pressed = useRef<Row | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  /** Whether the last choice in a view was made by pointer: a choice made with the arrow keys stays in the view, so the next arrow still works. */
+  const byPointer = useRef(false);
+  /** A choice made by tapping an option goes back to the list, one tap less, unless the option opens a field (`returnsToList`). */
+  const chosen = (e: ChangeEvent<HTMLDivElement>): void => {
+    const input = e.target;
+    if (shown === "rows" || !byPointer.current || !(input instanceof HTMLInputElement) || input.type !== "radio") return;
+    if (returnsToList({ view: shown, value: input.value, run: state.rows.includes("spec") })) setView("rows");
+  };
   const shown: SheetView = view !== "rows" && !state.rows.includes(view) ? "rows" : view;
   const chatting = !state.rows.includes("kind");
   const title = shown === "rows" ? "Add context" : shown === "models" && state.rows.includes("spec") ? "Models" : shown === "models" && chatting ? "Agent and model" : ROW[shown].title;
@@ -103,7 +111,7 @@ export function ContextSheet({ sheetRef, view, setView, state }: { sheetRef: Ref
           <Icon name="x" className="ds-button__icon" />
         </button>
       </form>
-      <div ref={bodyRef} className="ds-sheet__body">
+      <div ref={bodyRef} className="ds-sheet__body" onPointerDown={() => (byPointer.current = true)} onKeyDown={() => (byPointer.current = false)} onChange={chosen}>
         {shown === "rows" ? (
           <ul className="ds-context-list" aria-label="Settings of what you send">
             {state.rows.map((row) => (

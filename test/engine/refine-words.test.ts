@@ -88,8 +88,21 @@ test("the outcome and its plain line say what came of the reviews and the fixes"
     [
       { agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed("concerns"), reviewed("concerns")], refinements: [fix("Addressed:\n- a: x\n- b: y\nNot addressed, and why:\n- c: no"), fix(ADDRESSED)], cap: 2 },
       "unresolved",
-      "Codex raised 3 concerns. Claude Code addressed 3 and explained 1. Still disagree after 2 rounds: needs your judgment.",
+      "Codex raised 3 concerns, then 1, then 1. Claude Code addressed 3 and explained 1. Still disagree after 2 rounds: needs your judgment.",
     ],
+    // The numbers of the self-review's run 3, task 4: the reviewer's count was of its first review only, the builder's of every round.
+    [
+      {
+        agent: "codex",
+        builder: "claude-code",
+        reviews: [reviewed("concerns", `Verdict: concerns\nFindings:\n${[1, 2, 3, 4, 5].map((n) => `- f${n}: x`).join("\n")}`), reviewed("concerns", three), reviewed("concerns", three)],
+        refinements: [fix(`Addressed:\n${[1, 2, 3, 4, 5].map((n) => `- f${n}: done`).join("\n")}\nNot addressed, and why:\n- none`), fix("Addressed:\n- a: x\n- b: y\n- c: z\nNot addressed, and why:\n- none")],
+        cap: 2,
+      },
+      "unresolved",
+      "Codex raised 5 concerns, then 3, then 3. Claude Code addressed 8. Still disagree after 2 rounds: needs your judgment.",
+    ],
+    [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns", three), reviewed(null, "Still wrong.")], refinements: [fix(ADDRESSED)], cap: 1 }, "unresolved", "Codex raised 3 concerns, then concerns again. Claude Code addressed 1. Still disagree after 1 round: needs your judgment."],
     [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns")], refinements: [fix("Addressed:\n- none\nNot addressed, and why:\n- calc.py:2: intended", false)], cap: 2 }, "unresolved", "Codex raised 1 concern. Claude Code changed nothing and explained 1. Needs your judgment."],
     [{ agent: "codex", builder: "claude-code", reviews: [reviewed("concerns"), { outcome: "failed", verdict: null, text: "" }], refinements: [fix(ADDRESSED)], cap: 2 }, "failed", "Codex raised 1 concern. Claude Code addressed 1. Codex's next review did not finish: needs your judgment."],
     [{ agent: "codex", builder: "claude-code", reviews: [{ outcome: "timed_out", verdict: null, text: "" }], refinements: [], cap: 2 }, "failed", "Codex's review did not finish: needs your judgment."],

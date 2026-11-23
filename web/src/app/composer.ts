@@ -1,4 +1,4 @@
-import type { Delivery, IssueChoice, KnownRepository, ReviewerChoice, RunMode } from "../api/client.ts";
+import type { Delivery, IssueChoice, KnownRepository, ModelList, ReviewerChoice, RunMode } from "../api/client.ts";
 
 /*
  * The composer on the home screen: one box that sends a chat prompt, starts a task or plans a run, depending on what
@@ -127,11 +127,18 @@ export function rowsFor(f: { repo: RepoPick; kind: Kind; reviewOffered: boolean;
   ];
 }
 
+/** A mode the owner chose here, and the repository it was chosen for. */
+export interface ChosenMode {
+  repo: string;
+  mode: RunMode;
+}
+
 /** What the composer remembers on this device, so the next start is: type, send. */
 export interface Remembered {
   repo: Exclude<RepoPick, { kind: "needed" }>;
   kind: Kind;
-  mode: RunMode | null;
+  /** The mode chosen here, for the repository it was chosen for; never Fully autonomous, which is a default only when set in Settings. */
+  mode: ChosenMode | null;
   /** The reviewer's select value: "" for Off. */
   review: string;
   delivery: Delivery;
@@ -139,7 +146,7 @@ export interface Remembered {
 
 export const DEFAULTS: Remembered = { repo: { kind: "none" }, kind: "task", mode: null, review: "", delivery: "branch" };
 
-export const writeRemembered = (r: Remembered): string => JSON.stringify(r);
+export const writeRemembered = (r: Remembered): string => JSON.stringify({ ...r, mode: r.mode?.mode === "full" ? null : r.mode });
 
 /** What was remembered, each part checked on its own: a part that is not what it should be is the default. */
 export function readRemembered(raw: string | null): Remembered {
@@ -155,10 +162,46 @@ export function readRemembered(raw: string | null): Remembered {
   return {
     repo: typeof repo === "object" && repo !== null && (repo.kind === "known" || repo.kind === "other") && typeof repo.path === "string" ? { kind: repo.kind, path: repo.path } : DEFAULTS.repo,
     kind: r.kind === "task" || r.kind === "run" ? r.kind : DEFAULTS.kind,
-    mode: r.mode === "manual" || r.mode === "semi" || r.mode === "full" ? r.mode : DEFAULTS.mode,
+    mode: rememberedMode(r.mode),
     review: typeof r.review === "string" ? r.review : DEFAULTS.review,
     delivery: r.delivery === "branch" || r.delivery === "pull_request" ? r.delivery : DEFAULTS.delivery,
   };
+}
+
+/** A remembered mode: Manual or Semi-autonomous for a named repository. Anything else, a bare mode an earlier version kept among it, is no choice. */
+function rememberedMode(value: unknown): ChosenMode | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { repo, mode } = value as Record<string, unknown>;
+  return typeof repo === "string" && repo !== "" && (mode === "manual" || mode === "semi") ? { repo, mode } : null;
+}
+
+/**
+ * The mode a run would start in: the one chosen here when it was chosen for this repository, else the default from
+ * Settings (Manual until the owner changes it there); null while that is being read.
+ */
+export function modeFor(chosen: ChosenMode | null, repoPath: string, settingsDefault: RunMode | null): RunMode | null {
+  return chosen !== null && chosen.repo === repoPath ? chosen.mode : settingsDefault;
+}
+
+/** The model chip under the box: the model Send uses first, and for a run that builds on a model of its own, that one after it. */
+export function chipModel(o: { run: boolean; sameBuild: boolean; plan: string; build: string }): string {
+  return o.run && !o.sameBuild ? `${o.plan}, then ${o.build}` : o.plan;
+}
+
+/**
+ * Whether choosing an option in a setting's view goes back to the list of settings at once: yes, unless the option
+ * opens a field to fill in (Another folder…, Other…), the view is a field itself, it holds a second choice (Models), or
+ * the option carries a warning to read (Fully autonomous).
+ */
+export function returnsToList(o: { view: Row; value: string; run: boolean }): boolean {
+  if (o.view === "spec" || o.view === "commands" || o.view === "issue") return false;
+  if (o.view === "repository") return o.value !== "?other";
+  // The Models view holds two choices: the agent and its model in a chat, the planning and build models in a run.
+  if (o.view === "models") return false;
+  if (o.view === "review") return !o.value.endsWith(" ?other");
+  // Fully autonomous stays in view with its warning, which is read before going on.
+  if (o.view === "mode") return o.value !== "full";
+  return true;
 }
 
 /**
@@ -197,4 +240,35 @@ export const commandsWords = (n: number): string => (n === 0 ? "None" : n === 1 
 export function splitPath(path: string): [string, string] {
   const at = path.replace(/\/+$/, "").lastIndexOf("/");
   return at === -1 ? ["", path] : [path.slice(0, at + 1), path.slice(at + 1)];
+}
+
+/** The model part of a reviewer value for the agent's own default; it holds a character no model name may. */
+export const REVIEW_DEFAULT = "?default";
+/** The model part of a reviewer value for a model name typed in. */
+export const REVIEW_OTHER = "?other";
+
+/** One reviewer option: the select value (`agent model`, apart by a space), the agent's name, and the model in words. */
+export interface ReviewRow {
+  value: string;
+  agent: string;
+  name: string;
+  description: string;
+  other: boolean;
+}
+
+/**
+ * The reviewer options, by agent: the agent's own default model (with what the agent says it is), the model configured
+ * for it in Botbench's settings when there is one, and Other… for any other name. An agent's every model is not listed:
+ * the option picker holds about ten rows, and a list of all of them had no default among some forty-five.
+ */
+export function reviewRows(reviewers: readonly { agent: string; models: ModelList }[], nameOf: (agent: string) => string): ReviewRow[] {
+  return reviewers.flatMap(({ agent, models }) => {
+    const name = nameOf(agent);
+    const row = (model: string, description: string): ReviewRow => ({ value: `${agent} ${model}`, agent, name, description, other: model === REVIEW_OTHER });
+    return [
+      row(REVIEW_DEFAULT, models.cliDefault === null ? "its default model" : `its default model (${models.cliDefault})`),
+      ...(models.default === null ? [] : [row(models.default, `${models.default}, as configured`)]),
+      row(REVIEW_OTHER, "Other model…"),
+    ];
+  });
 }

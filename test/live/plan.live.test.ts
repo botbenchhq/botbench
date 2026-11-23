@@ -176,7 +176,7 @@ test("live: a planner told to create a file cannot: it has no tool that writes, 
   // How it was started: no tool that writes exists for the model, and no settings of the repository or the owner load.
   const args = claudeArgs({ readOnly: true, gated: true, model: "haiku", confinement: { cwd: dir, dataDir: live.home, allowedHosts: [] } });
   assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep,Bash");
-  assert.equal(args[args.indexOf("--disallowedTools") + 1], "Write,Edit,MultiEdit,NotebookEdit");
+  assert.ok(args[args.indexOf("--disallowedTools") + 1]!.startsWith("Write,Edit,MultiEdit,NotebookEdit,"));
   assert.equal(args.includes("--allowedTools"), false);
   assert.equal(args[args.indexOf("--setting-sources") + 1], "");
 

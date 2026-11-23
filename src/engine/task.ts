@@ -11,7 +11,7 @@ import type { TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import type { Confinement } from "../confinement.ts";
 import { commitWork, createWorktree, describeWork, removeWorktree, sharedGitDir, sourceHead, type Worktree } from "../worktrees.ts";
-import { closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
+import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESUME_PROMPT, resumeProblem, stopSurvivor } from "./recover.ts";
 import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
@@ -44,7 +44,8 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   accepted: [],
   rejected: [],
   interrupted: ["building", "verifying"],
-  failed: [],
+  // Only by the owner's Resume of a task whose builder changed no file (`changedNothing`).
+  failed: ["building"],
   cancelled: [],
 };
 
@@ -266,12 +267,19 @@ function plannedRunOf(db: DatabaseSync, task: Task): { id: number; status: strin
  */
 export function stageOf(db: DatabaseSync, task: Task): "setup" | "turn" | "checks" | null {
   if (task.worktreePath === null) return null;
-  const from = task.status === "interrupted" ? db.prepare("SELECT status FROM task_events WHERE task_id = ? AND status <> 'interrupted' ORDER BY id DESC LIMIT 1").get(task.id)?.status : task.status;
+  const stopped = task.status === "interrupted" || changedNothing(task);
+  const from = stopped ? db.prepare("SELECT status FROM task_events WHERE task_id = ? AND status NOT IN ('interrupted', 'failed') ORDER BY id DESC LIMIT 1").get(task.id)?.status : task.status;
   if (from === "verifying") return task.headCommit === null ? null : "checks";
   // An agent is sent its prompt only once its task names its attempt, so a task with none has had nothing written by an agent.
   if (from === "building") return task.attemptId === null ? "setup" : "turn";
   return null;
 }
+
+/** The reason a task fails with when its builder's turn ended and its branch holds no change from its base. */
+export const CHANGED_NOTHING = "Claude Code finished without changing any file.";
+
+/** Whether a task failed because its builder changed no file: the one failed task the owner can resume. */
+export const changedNothing = (task: Pick<Task, "status" | "reason">): boolean => task.status === "failed" && task.reason !== null && task.reason.startsWith(CHANGED_NOTHING);
 
 /** Why a stopped task cannot be resumed, in words for the owner; null when it can. */
 export function resumeBlocker(db: DatabaseSync, task: Task): string | null {
@@ -283,7 +291,8 @@ export function resumeBlocker(db: DatabaseSync, task: Task): string | null {
 
 /** For a stopped task that can be resumed: what Resume will do, in words for the owner. Null for every other task. */
 export function resumeNote(db: DatabaseSync, task: Task): string | null {
-  if (task.status !== "interrupted" || resumeBlocker(db, task) !== null) return null;
+  if ((task.status !== "interrupted" && !changedNothing(task)) || resumeBlocker(db, task) !== null) return null;
+  if (changedNothing(task)) return "Resume starts Claude Code again in the same session, in the task's copy of the project, tells it that it changed no file, and asks it to do the task now.";
   const stage = stageOf(db, task);
   if (stage === "checks") return "Resume runs this repository's checks again from the start, on the work committed to the task's branch.";
   if (stage === "setup") return "Resume runs this repository's setup commands again from the start in the task's copy of the project, then starts Claude Code on the task.";
@@ -393,6 +402,12 @@ export function createTasks(options: TasksOptions): Tasks {
   };
   /** Whether the builder's driver runs every shell command confined: only then may a run's mode let one run without asking. */
   const confined = driver.capabilities.confinedCommands === true;
+  /**
+   * The builder's way to the permission gate, the same for its build, a round of fixes, a resume and an answer after a
+   * restart: one place, so no kind of builder attempt is admitted as less confined than it is (run 3 of the self-review:
+   * a round of fixes was, and asked the owner about every command).
+   */
+  const admitBuilder = (task: Task, resumes?: number): Admission => broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath!, confined, ...(resumes === undefined ? {} : { resumes }) });
   let closed = false;
   let current: DriverSession | null = null;
   /** Set while a turn runs: called when Botbench begins to stop, it decides whether that turn's task is parked. */
@@ -426,14 +441,18 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /** Commit whatever is in the task's worktree and move the task to where its turn left it. */
   const finish = async (task: Task, to: TaskStatus, reason?: string): Promise<void> => {
-    const headCommit = await commit(task, reason);
-    if (headCommit !== null) move(task.id, to, { headCommit, ...(reason === undefined ? {} : { reason }) });
+    const headCommit = (await commit(task, reason))?.headCommit;
+    if (headCommit !== undefined) move(task.id, to, { headCommit, ...(reason === undefined ? {} : { reason }) });
   };
-  /** Commit whatever is in the task's worktree; the commit, or null when it could not be made and the task has failed saying why. */
-  const commit = async (task: Task, reason?: string): Promise<string | null> => {
+  /**
+   * Commit whatever is in the task's worktree. The commit, and whether the branch then holds any change from its base;
+   * null when it could not be made and the task has failed saying why.
+   */
+  const commit = async (task: Task, reason?: string): Promise<{ headCommit: string; changed: boolean } | null> => {
     try {
       await commitWork({ path: task.worktreePath!, message: `Botbench task ${task.id}: ${firstLine(task.prompt)}` });
-      return (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! })).headCommit;
+      const work = await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! });
+      return { headCommit: work.headCommit, changed: work.files.length > 0 };
     } catch (err) {
       // The files are still in the worktree; the task says what happened to it and why they are not committed.
       move(task.id, "failed", { reason: `${reason ? `${reason} ` : ""}The work could not be committed: ${words(err)}` });
@@ -478,10 +497,16 @@ export function createTasks(options: TasksOptions): Tasks {
    * The builder finished: commit its work, then run the repository's check commands on it. The task goes on to wait
    * for the owner whatever the checks found; it says what that was.
    */
-  const verify = async (task: Task, stopped?: AbortSignal): Promise<void> => {
-    const headCommit = await commit(task);
-    if (headCommit === null) return;
-    await checkCommitted(task, headCommit, stopped);
+  const verify = async (task: Task, reply: string, stopped?: AbortSignal): Promise<void> => {
+    const made = await commit(task);
+    if (made === null) return;
+    // Nothing to check or review: the task fails, saying so, and the owner can resume it or discard it. A round of fixes
+    // that changes nothing is another matter (`refined`): the build before it did change the work.
+    if (!made.changed) {
+      const last = reply.trim() === "" ? "It wrote no message." : `Its last message: ${reply.trim().length > 600 ? `${reply.trim().slice(0, 600)}…` : reply.trim()}`;
+      return void move(task.id, "failed", { headCommit: made.headCommit, reason: `${CHANGED_NOTHING} ${last}` });
+    }
+    await checkCommitted(task, made.headCommit, stopped);
   };
 
   /** Run the repository's checks on the work committed at `headCommit`, then go on to the review. */
@@ -548,7 +573,9 @@ export function createTasks(options: TasksOptions): Tasks {
    */
   const handOver = async (task: Task, from: "building" | "verifying" | "reviewing", change: TaskChange): Promise<void> => {
     if (runModeOf(db, task.runId) !== "full") return void moveFrom(task.id, from, "awaiting_decision", change);
-    const verdict = qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null);
+    // A build that changed nothing never gets here (`verify`); rounds of fixes that undid every change of the build would.
+    const empty = await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).then((work) => work.files.length === 0, () => true);
+    const verdict = empty ? ({ accept: false, why: "It needs your review: its branch holds no change." } as const) : qualifies(task.id, change.checks ?? getTask(db, task.id)?.checks ?? null);
     const ready = moveFrom(task.id, from, "awaiting_decision", verdict.accept ? change : { ...change, reason: verdict.why });
     if (ready === null || !verdict.accept) return;
     try {
@@ -571,7 +598,9 @@ export function createTasks(options: TasksOptions): Tasks {
     const latest = taskReview(db, task.id)!;
     let files: string[] = [];
     if (fresh) files = (await describeWork({ path: task.worktreePath!, baseCommit: task.baseCommit! }).catch(() => ({ files: [] as { path: string }[] }))).files.map((file) => file.path);
-    const prompt = refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null });
+    const issue = fresh ? runIssue(db, task.runId) : null;
+    // A new session has not seen the issue a run was started from: it is given again, as the first build's prompt gives it.
+    const prompt = `${refinePrompt({ reviewer, review: latest.text, task: fresh ? { prompt: task.prompt, files } : null })}${issue === null ? "" : `\n\n${outsideTextPrompt(issue)}`}`;
     // voice: not on screen. Botbench's words to the agent; the transcript shows the prompt as it was sent.
     return again ? prompt.replace("[From Botbench, not from the owner] ", "[From Botbench, not from the owner] Botbench stopped before you finished this round of fixes; the files in this folder are as you left them, and anything you were running then was stopped. Do the round again from where it stands now.\n\n") : prompt;
   };
@@ -586,7 +615,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (at === null) return;
     const attempt = at.attemptId === null ? undefined : db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(at.attemptId);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
-    const admission = broker.admit({ taskId: at.id, role: IMPLEMENTER, worktree: at.worktreePath! });
+    const admission = admitBuilder(at);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
@@ -608,7 +637,7 @@ export function createTasks(options: TasksOptions): Tasks {
   const refined = async (task: Task, round: number, attemptId: number | null, end: "completed" | "error", reply: string, detail: string | null, stopped?: AbortSignal): Promise<void> => {
     const from = taskReviews(db, task.id).at(-1)?.headCommit ?? task.headCommit!;
     const startedAt = db.prepare("SELECT ts FROM task_events WHERE task_id = ? AND status = 'building' ORDER BY id DESC LIMIT 1").get(task.id)?.ts;
-    const headCommit = await commit(task);
+    const headCommit = (await commit(task))?.headCommit ?? null;
     const problem = end === "completed" ? null : `${agentName(driver.name)}'s round of fixes ended with an error${detail === null ? "." : `: ${detail}`}`;
     insertRefinement(db, { taskId: task.id, round, attemptId, outcome: end === "completed" ? "finished" : "failed", changed: headCommit !== null && headCommit !== from, reply, problem, fromCommit: from, headCommit, startedAt: typeof startedAt === "string" ? startedAt : now() });
     options.onTaskChange(getTask(db, task.id)!);
@@ -679,7 +708,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
 
     // The attempt's own way to the permission gate. It is released whichever way the build ends.
-    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, confined });
+    const admission = admitBuilder(task);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
@@ -806,7 +835,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // A round of fixes that completed or failed goes on through the loop; one stopped by a restart is taken up again like a build.
     else if (refineRound !== null && (end === "completed" || (end === "error" && resumed !== "answer"))) await refined(task, refineRound, session.attemptId, end, reply, detail, stopped);
-    else if (end === "completed") await verify(task, stopped);
+    else if (end === "completed") await verify(task, reply, stopped);
     // Botbench is stopping: the task is left as it is, uncommitted, and the next start takes it up again.
     else if (closed && (end === "not sent" || end === "interrupted")) leave(id, "building", "this task was being built");
     else if (end === "not sent") await finish(task, "interrupted", "Botbench stopped before the prompt was sent.");
@@ -869,7 +898,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // The model stays the one the task was started with, whatever is configured by now.
     const previous = task.attemptId!;
     const resumeCursor = String(db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(previous)!.resume_cursor);
-    const admission = broker.admit({ taskId: id, role: IMPLEMENTER, worktree: task.worktreePath!, resumes: previous, confined });
+    const admission = admitBuilder(task, previous);
     let session: DriverSession;
     try {
       const gitDir = await sharedGitDir(task.repo);
@@ -894,13 +923,14 @@ export function createTasks(options: TasksOptions): Tasks {
    * known to be stopped, taking up the session it had reported (told what happened), or with the task's own prompt
    * when it had reported none.
    */
-  const carryOn = async (id: number, by: "restart" | "owner"): Promise<void> => {
+  const carryOn = async (id: number, by: "restart" | "owner", changedNothingBefore = false): Promise<void> => {
     const task = getTask(db, id);
     if (!task || (task.status !== "building" && task.status !== "verifying") || closed) return;
-    await atWork(task, (stop) => carryOnNow(task, by, stop));
+    await atWork(task, (stop) => carryOnNow(task, by, stop, changedNothingBefore));
   };
 
-  const carryOnNow = async (task: Task, by: "restart" | "owner", stop: AbortController): Promise<void> => {
+  /** `changedNothingBefore`: the owner resumed a task whose builder's turn had ended without changing a file, and it is told so. */
+  const carryOnNow = async (task: Task, by: "restart" | "owner", stop: AbortController, changedNothingBefore = false): Promise<void> => {
     const stage = stageOf(db, task);
     const commands = options.repoCommands?.(task.repo) ?? { setup: [], checks: [] };
     if (stage === null || !fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) {
@@ -915,7 +945,7 @@ export function createTasks(options: TasksOptions): Tasks {
     if (problem !== null) return void moveFrom(task.id, "building", "interrupted", { reason: `${problem} Nothing more was run in its copy of the project.` });
     const attempt = db.prepare("SELECT resume_cursor FROM attempts WHERE id = ?").get(task.attemptId!);
     const cursor = driver.capabilities.resume && typeof attempt?.resume_cursor === "string" && attempt.resume_cursor !== "" ? attempt.resume_cursor : null;
-    const admission = broker.admit({ taskId: task.id, role: IMPLEMENTER, worktree: task.worktreePath!, confined });
+    const admission = admitBuilder(task);
     let session: DriverSession;
     try {
       if (closed) throw new Error("Botbench is stopping.");
@@ -929,7 +959,7 @@ export function createTasks(options: TasksOptions): Tasks {
     }
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
     const reviewer = refineRoundOf(db, task.id) === null ? null : reviewAssignment(db, task.id)?.agent ?? null;
-    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? builderPrompt(task) : CONTINUE_PROMPT;
+    const prompt = reviewer !== null ? await refinePromptFor(task, reviewer, cursor === null, true) : cursor === null ? builderPrompt(task) : changedNothingBefore ? CHANGED_NOTHING_PROMPT : CONTINUE_PROMPT;
     await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
   };
 
@@ -1078,7 +1108,8 @@ export function createTasks(options: TasksOptions): Tasks {
     if (closed) throw new TaskError(503, "Botbench is shutting down.");
     const task = getTask(db, id);
     if (!task) throw new TaskError(404, "No such task.");
-    if (task.status !== "interrupted") throw new TaskError(409, `Only a stopped task can be resumed. This task ${STANDS[task.status]}.`);
+    const again = changedNothing(task);
+    if (task.status !== "interrupted" && !again) throw new TaskError(409, `Only a stopped task, or one whose builder changed no file, can be resumed. This task ${STANDS[task.status]}.`);
     const blocker = resumeBlocker(db, task);
     if (blocker !== null) throw new TaskError(409, blocker);
     const to = stageOf(db, task) === "checks" ? "verifying" : "building";
@@ -1099,7 +1130,7 @@ export function createTasks(options: TasksOptions): Tasks {
     options.onTaskChange(resumed);
     if (run !== null) options.onRunChange?.(run);
     chain = chain
-      .then(() => carryOn(id, "owner"))
+      .then(() => carryOn(id, "owner", again))
       .then(() => {
         const runId = getTask(db, id)?.runId ?? null;
         settle(runId);

@@ -45,7 +45,7 @@ test("a plain command splits into its words; anything the shell would interpret 
 test("the floor is a short table of named rules", () => {
   assert.deepEqual(
     FLOOR_RULES.map((rule) => rule.name),
-    ["recursive-delete-outside-worktree", "git-push", "git-config-override", "sudo", "download-into-shell", "shell-runs-text", "recursive-permissions-outside-worktree", "disk-tool", "guarded-place", "not-a-plain-command"],
+    ["recursive-delete-outside-worktree", "git-push", "git-config-override", "sudo", "download-into-shell", "shell-runs-text", "recursive-permissions-outside-worktree", "disk-tool", "guarded-place", "program-named-by-the-shell", "leaves-the-sandbox", "not-a-plain-command"],
   );
 });
 
@@ -179,6 +179,15 @@ test("a command that is not one plain command is never eligible, and is still re
     ["echo $HOME", "guarded-place"],
     ["echo $PATH", "not-a-plain-command"],
     ["ls *", "not-a-plain-command"],
+    // Globs and variables inside the task's copy, or in a temporary folder, are no guarded place.
+    ["for f in docs/*.md; do sed -n 1,5p $f; done", "not-a-plain-command"],
+    ["perl -0pi -e 's/a/b/' x.md; f=x.md; wc -l $f; git status --short", "not-a-plain-command"],
+    ["FOO=1 npm test | tail -5", "not-a-plain-command"],
+    ["git log --oneline | head; git diff --stat", "not-a-plain-command"],
+    ["[ -f x.md ] && wc -l x.md; [[ -d src ]] || ls", "not-a-plain-command"],
+    ["ls src/*.ts | wc -l", "not-a-plain-command"],
+    ["cat .*rc | head", "not-a-plain-command"],
+    ["ls /tmp/x* | head", "not-a-plain-command"],
     ["", "not-a-plain-command"],
     ["echo \u0000", "not-a-plain-command"],
     ["'unclosed", "not-a-plain-command"],
@@ -292,6 +301,37 @@ test("the ways round the floor that the critique found each ask", () => {
     ["bash --rcfile evil.sh", "shell-runs-text"],
     ["bash --init-file evil.sh -i", "shell-runs-text"],
     // Guarded places named by another user's home, a directory shorthand, or as the value of an option.
+    // A guarded place reached through a glob or a variable after it: found in the self-review of the modes, where a chained
+    // command runs confined without asking in semi-autonomous unless a piece of it is on the floor.
+    ["for f in ~/.ssh/*; do cat $f; done", "guarded-place"],
+    // A program or git subcommand the shell builds, and so the floor cannot read (the critique of the self-review fixes).
+    ["g=git; $g push", "program-named-by-the-shell"],
+    ["sed -n 1p a; $'git' push", "program-named-by-the-shell"],
+    ["ls; git $'push'", "program-named-by-the-shell"],
+    ["ls; git pu$@sh origin", "program-named-by-the-shell"],
+    ["ls; git $(echo push)", "program-named-by-the-shell"],
+    ["ls; git `echo push`", "program-named-by-the-shell"],
+    ["ls; git {push,}", "program-named-by-the-shell"],
+    ["ls; git pus? origin", "program-named-by-the-shell"],
+    ["ls; =git push", "program-named-by-the-shell"],
+    ["echo push | xargs git", "program-named-by-the-shell"],
+    ["s=sudo; $s ls", "program-named-by-the-shell"],
+    ["ls; git pu\\\nsh origin", "git-push"],
+    ["echo Z2l0IHB1c2g= | base64 -d | bash /dev/stdin", "shell-runs-text"],
+    ["echo x | bash /dev/fd/0", "shell-runs-text"],
+    // Programs that start work outside the sandbox: an app, AppleScript, a login item or a scheduled job.
+    ["ls; open -a Terminal x", "leaves-the-sandbox"],
+    ["osascript -e 'do shell script \"x\"'", "leaves-the-sandbox"],
+    ["launchctl load x.plist", "leaves-the-sandbox"],
+    ["crontab x", "leaves-the-sandbox"],
+    ["python3 - <<'PY'\ns=open('a').read()\nopen('a','w').write(s)\nPY", "not-a-plain-command"],
+    ["cat ~/.ss*/id_ed25519 | head", "guarded-place"],
+    ["ls /Users/owner/.aws/* | wc -l", "guarded-place"],
+    ["cp x ~/.zsh* && ls", "guarded-place"],
+    ["ls ~/* | head", "guarded-place"],
+    ["ls /Users/*/x | head", "guarded-place"],
+    ["cat /etc/*.conf | head", "guarded-place"],
+    ["cat ~/.ssh/$KEY | head", "guarded-place"],
     ["cp x ~owner/.zshrc", "guarded-place"],
     ["cp x ~+/../.zshrc", "guarded-place"],
     ["cp x ~-/x", "guarded-place"],

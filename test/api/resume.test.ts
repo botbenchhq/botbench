@@ -84,7 +84,8 @@ test("Resume is refused without a session, for a task that does not exist, and f
   for (const [other, word] of others) {
     const refused = await call(api, "POST", `/api/tasks/${other.id}/resume`, {});
     assert.equal(refused.status, 409, JSON.stringify(refused.body));
-    assert.match(String(refused.body.error), /Only a stopped task can be resumed/);
+    // A failed task is refused too: only one failed because its builder changed no file can be resumed (test/engine/no-change.test.ts).
+    assert.match(String(refused.body.error), /Only a stopped task, or one whose builder changed no file, can be resumed/);
     assert.match(String(refused.body.error), word);
     assert.equal(getTask(api.server.db, other.id)!.status, other.status);
   }

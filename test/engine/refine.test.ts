@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
-import { createBroker, type Broker } from "../../src/approvals/broker.ts";
+import { actionLog, createBroker, listApprovals, type Broker } from "../../src/approvals/broker.ts";
 import { reviewOutcome as reviewOutcomeOf } from "../../src/engine/modes.ts";
 import { loopRecord, outcomeLine, reviewOutcome, taskRefinements } from "../../src/engine/refine.ts";
 import { taskReviews } from "../../src/engine/review.ts";
@@ -69,7 +69,7 @@ async function line(t: T, builds: BuildTurn[], reviews: ReviewSession[], o: { ho
 }
 
 /** Approve a one-task run with Codex as its reviewer and `cap` rounds of fixes; returns the run and its task. */
-function approved(e: Line, cap = 2, mode: "manual" | "full" = "manual", buildModel?: string): { runId: number; taskId: number } {
+function approved(e: Line, cap = 2, mode: "manual" | "semi" | "full" = "manual", buildModel?: string): { runId: number; taskId: number } {
   const run = storePlan(e.db, createRun(e.db, { repo: e.repo, prompt: "Add a function", baseCommit: e.base, reviewer: { agent: "codex", model: "gpt-6-luna" }, maxRefineRounds: cap, mode, ...(buildModel === undefined ? {} : { buildModel }) }).id, TASK);
   const { tasks } = e.runs.approve(run.id, run.planVersion);
   return { runId: run.id, taskId: tasks[0]!.id };
@@ -143,7 +143,7 @@ test("the cap: once the run's rounds of fixes are used up and the reviewer still
   assert.equal(e.builder.started.length, 2, "one build and one round of fixes");
   assert.equal(e.reviewer.started.length, 2);
   assert.deepEqual(taskReviews(e.db, taskId).map((r) => r.verdict), ["concerns", "concerns"]);
-  assert.deepEqual(outcome(e.db, taskId), { outcome: "unresolved", line: "Codex raised 1 concern. Claude Code addressed 1. Still disagree after 1 round: needs your judgment." });
+  assert.deepEqual(outcome(e.db, taskId), { outcome: "unresolved", line: "Codex raised 1 concern, then 1. Claude Code addressed 1. Still disagree after 1 round: needs your judgment." });
 });
 
 test("a run with a cap of 0 is reviewed once and its builder is not asked for fixes", async (t) => {
@@ -295,4 +295,15 @@ test("the round of fixes runs on the run's build model, as its build did", async
   approved(e, 2, "manual", "sonnet");
   await e.tasks.idle();
   assert.deepEqual(e.builder.started.map((options) => options.model), ["sonnet", "sonnet"]);
+});
+
+test("semi-autonomous: a round of fixes runs its confined commands without asking, as the build does (run 3 of the self-review asked for each)", async (t) => {
+  const e = await line(t, ["done", "ask"], ["review"]);
+  const { taskId } = approved(e, 1, "semi");
+  await e.tasks.idle();
+  const task = getTask(e.db, taskId)!;
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  assert.equal(e.builder.started.length, 2, "a build and a round of fixes");
+  assert.equal(listApprovals(e.db).length, 0, "nothing was put to the owner");
+  assert.deepEqual(actionLog(e.db, taskId).filter((entry) => entry.rule === "mode_allowed").map((entry) => entry.command), ["sh other.sh"]);
 });

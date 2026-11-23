@@ -188,6 +188,14 @@ export async function decideTask(db: DatabaseSync, input: DecideInput): Promise<
 }
 
 /**
+ * What a decision did beyond the branch, in the one sentence every record of it uses: nothing is ever merged, and a
+ * branch is pushed only by a run that opens a pull request for an accepted task (engine/delivery.ts).
+ */
+export function acceptedWords(delivery: "branch" | "pull_request"): string {
+  return delivery === "pull_request" ? "Nothing was merged; the run then pushes the branch and opens a pull request." : "Nothing was merged or pushed.";
+}
+
+/**
  * A fully autonomous run's accept of a task that qualified, with the reasons: the owner's Accept, made by the mode. It
  * keeps the branch and removes the copy; nothing is merged (a run that chose pull requests then delivers it). Throws a TaskError, with nothing changed, when the
  * task is not ready for review, a decision on it is under way, or the checks left files in its copy, which only the
@@ -264,7 +272,7 @@ async function decide(db: DatabaseSync, task: Task, decision: DecisionKind, disc
   const files = leftovers.length === 0 ? "" : ` The copy held ${leftovers.length === 1 ? "1 file" : `${leftovers.length} files`} the checks left, removed with it as you confirmed: ${listed(leftovers)}.`;
   // A run that chose pull requests pushes an accepted task's branch next (engine/delivery.ts): the entry says so.
   const delivers = decision === "accept" && task.runId !== null && db.prepare("SELECT delivery FROM runs WHERE id = ?").get(task.runId)?.delivery === "pull_request";
-  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. ${delivers ? "Nothing was merged; the run then pushes the branch and opens a pull request." : "Nothing was merged or pushed."}${files}${note === null ? "" : ` Your note: ${note}`}`;
+  const detail = `${discard ? "Deleted" : "Kept"} the branch ${branch} and ${copy}. ${acceptedWords(delivers ? "pull_request" : "branch")}${files}${note === null ? "" : ` Your note: ${note}`}`;
   const made = transaction(db, () => {
     const now_ = getTask(db, task.id)!;
     ready(now_);
