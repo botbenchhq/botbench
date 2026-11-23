@@ -76,7 +76,7 @@
 <line x1="568" y1="268" x2="616" y2="268" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
 <line x1="760" y1="268" x2="808" y2="268" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
 <line x1="280" y1="232" x2="280" y2="140" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
-<line x1="328" y1="140" x2="328" y2="232" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<line x1="328" y1="140" x2="328" y2="232" stroke="#636366" stroke-width="1.2" marker-end="url(#arrow)"/>
 <path d="M 496,304 V 328 Q 496,336 488,336 H 336 Q 328,336 328,328 V 304" fill="none" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
 <path d="M 664,304 V 352 Q 664,360 656,360 H 288 Q 280,360 280,352 V 304" fill="none" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
 <line x1="904" y1="304" x2="904" y2="424" stroke="#8F6202" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
@@ -139,10 +139,10 @@
 <text x="832" y="441" fill="#636366" font-size="7" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">END</text>
 <text x="880" y="466" fill="#1C1C1E" font-size="12" font-weight="600" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Accepted</text>
 <text x="880" y="482" fill="#636366" font-size="9" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">branch kept, PR if chosen</text>
-<text x="432" y="96" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">After a restart, a task that was working is retried once.</text>
-<text x="432" y="114" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">If that fails it reads Stopped, and waits for your Resume.</text>
-<text x="48" y="456" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">In a fully autonomous run a task is accepted without you</text>
-<text x="48" y="474" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">only when every check passed and the review is satisfied.</text>
+<text x="432" y="96" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">A restart retries a working task once. A second restart</text>
+<text x="432" y="114" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">leaves it Stopped, until you choose Resume.</text>
+<text x="48" y="456" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">In a fully autonomous run Botbench accepts a task itself</text>
+<text x="48" y="474" fill="#1C1C1E" font-size="14" font-style="italic" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">only when its conditions hold. Otherwise it waits for you.</text>
 <line x1="40" y1="528" x2="952" y2="528" stroke="rgba(28,28,30,0.10)" stroke-width="0.8"/>
 <text x="40" y="546" fill="#636366" font-size="8" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.18em">LEGEND</text>
 <rect x="40" y="560" width="14" height="10" rx="2" fill="#FEF3C7" stroke="#8F6202" stroke-width="1"/>
@@ -155,6 +155,8 @@
 <text x="429" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">End</text>
 <line x1="471" y1="565" x2="499" y2="565" stroke="#636366" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
 <text x="507" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Back for another round</text>
+<line x1="642" y1="565" x2="670" y2="565" stroke="#8F6202" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<text x="678" y="568.5" fill="#636366" font-size="8.5" font-family="system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif">Accepted work</text>
       </svg>
     </div>
   </div>
