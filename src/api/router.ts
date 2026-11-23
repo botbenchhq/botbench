@@ -127,7 +127,7 @@ export function modelChoice(body: Record<string, unknown>): string | null | unde
  * that names none is Claude Code's.
  */
 export function builderOnly(body: Record<string, unknown>): void {
-  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work on a repository as a task. Codex and Grok can read a repository in a chat without changing it; Antigravity answers in a chat from the conversation alone.");
+  if (body.agent !== undefined && body.agent !== "claude-code") throw new BodyError(400, "Only Claude Code can work on a repository as a task. Codex, Grok and Antigravity answer in a chat.");
 }
 
 /**

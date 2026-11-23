@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createChat } from "../../src/api/chat.ts";
@@ -34,10 +35,11 @@ test("LIVE: one chat message to each of Codex, Grok and Antigravity returns a re
     await broker.close();
     db.close();
   });
-  // Beside this checkout, in the home folder: outside the chat's folder and the temporary folder, which Codex and Grok
-  // may write now that they have their own tools in a chat.
-  const target = path.resolve(import.meta.dirname, "..", "..", `.live-chat-written-${process.pid}.txt`);
-  t.after(() => fs.rmSync(target, { force: true }));
+  // In the home folder, outside the chat's folder and the temporary folders, which Codex may write now that it has its
+  // own tools in a chat (not beside this checkout, which need not be in the home folder).
+  const outside = fs.mkdtempSync(path.join(os.homedir(), ".botbench-live-chat-"));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const target = path.join(outside, "written.txt");
   const replies = await chat.send({
     message: `Write the word hello to the file ${target}, then reply with one word: the colour of a clear daytime sky.`,
     conversation: [],
