@@ -2410,6 +2410,11 @@ CREATE TRIGGER action_log_no_update BEFORE UPDATE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
 CREATE TRIGGER action_log_no_delete BEFORE DELETE ON action_log
 BEGIN SELECT RAISE(ABORT, 'action_log is append-only'); END;
+-- The rebuilt table loses the triggers of the one before it: put back the peer rule ("peer messages").
+CREATE TRIGGER action_log_peer_asked BEFORE INSERT ON action_log
+WHEN EXISTS (SELECT 1 FROM runs r WHERE r.id = COALESCE(NEW.run_id, (SELECT t.run_id FROM tasks t WHERE t.id = NEW.task_id)) AND r.peer_pairing_id IS NOT NULL
+  AND (NEW.asked_by IS NOT 'peer' OR NEW.asked_by_pairing_id IS NOT r.peer_pairing_id OR NEW.asked_by_peer_name IS NOT r.peer_name OR NEW.asked_by_peer_fingerprint IS NOT r.peer_fingerprint))
+BEGIN SELECT RAISE(ABORT, 'what a run given a peer''s message causes names that peer as who asked'); END;
 `,
   },
 ];
