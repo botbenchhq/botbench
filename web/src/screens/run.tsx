@@ -7,7 +7,8 @@ import { DecisionControls, DecisionOutcome } from "../components/decision.tsx";
 import { PullRequestLink, pullRequestWords } from "../components/pull-request.tsx";
 import { CHECKS_LINE, ChecksResult, CommandRounds, latestRound } from "../components/evidence.tsx";
 import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
-import { editChanged, fromLines, toLines } from "../app/plan-edit.ts";
+import { setLeaveGuard } from "../app/arrival.ts";
+import { editChanged, editStands, fromLines, NEW_EDIT, openEdit, type PlanEdit } from "../app/plan-edit.ts";
 import { modeSentence } from "../app/run-words.ts";
 import { APPROVAL_LIMIT_WORDS, limitName } from "../app/composer.ts";
 import { cancelStatement } from "../app/row-menu.ts";
@@ -26,10 +27,8 @@ const UNDO_SECONDS = 10;
 /** When something happened, as the run's history says it. */
 const when = (iso: string): string => new Date(iso).toLocaleString();
 const tasksWord = (n: number): string => `${n} ${n === 1 ? "task" : "tasks"}`;
-/** The criteria as the editor holds them: one on each line. */
-
 /** Which row of the plan is being edited: one of its tasks by position from 0, or a new one at the end. */
-type Editing = { at: number | "new"; title: string; criteria: string; problem: { title?: string; criteria?: string; save?: string } };
+type Editing = PlanEdit & { problem: { title?: string; criteria?: string; save?: string } };
 /** A task that was just deleted and can still be put back. */
 type Deleted = { task: PlanTask; at: number; left: number; undoing: boolean };
 
@@ -69,7 +68,8 @@ function PlanEditor({ editing, name, saving, onChange, onSave, onCancel }: { edi
     <form
       onSubmit={submit}
       onKeyDown={(e) => {
-        if (e.key !== "Escape" || saving) return;
+        // Escape while text is being composed belongs to the input method.
+        if (e.key !== "Escape" || saving || e.nativeEvent.isComposing) return;
         // The same key press would otherwise close the question that Cancel may open.
         e.preventDefault();
         onCancel();
@@ -131,15 +131,34 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [connected, setConnected] = useState(true);
   const [editing, setEditing] = useState<Editing | null>(null);
-  // Cancel was pressed on an edit that holds typed words: the question whether to lose them is open.
-  const [leaving, setLeaving] = useState(false);
-  const unsaved = editing !== null && run !== null && editChanged(editing, run.plan);
+  // The question whether to lose typed words is open: asked by Cancel or Escape (`to` null), or by a change of address,
+  // which is then where the owner goes once the words are discarded.
+  const [leaving, setLeaving] = useState<{ to: string | null } | null>(null);
+  // Said in place of an editor that was closed because the plan moved on in another window.
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+  const waitingForPlan = run?.status === "awaiting_plan_approval";
+  const unsaved = editing !== null && run !== null && waitingForPlan && editChanged(editing);
+  useEffect(() => {
+    // The plan was approved, the run cancelled or the task taken out elsewhere: there is no editor to show any more.
+    if (editing === null || run === null || editStands(editing, run.plan, waitingForPlan)) return;
+    if (editChanged(editing)) setEditNotice("The plan changed in another window, so the task you were editing was closed. What you typed was not saved.");
+    setEditing(null);
+    setLeaving(null);
+  }, [editing, run, waitingForPlan]);
   useEffect(() => {
     if (!unsaved) return;
-    // Closing the tab or loading the page again asks first, in the browser's own words.
+    // Closing the tab or loading the page again asks first, in the browser's own words. A change of address inside
+    // Botbench (a row of the column, the navigation, Back) asks with the same question as Cancel.
     const ask = (event: BeforeUnloadEvent): void => event.preventDefault();
     window.addEventListener("beforeunload", ask);
-    return () => window.removeEventListener("beforeunload", ask);
+    setLeaveGuard((to) => {
+      setLeaving({ to });
+      return false;
+    });
+    return () => {
+      window.removeEventListener("beforeunload", ask);
+      setLeaveGuard(null);
+    };
   }, [unsaved]);
   const [busy, setBusy] = useState<"save" | "approve" | "changes" | "cancel" | null>(null);
   const [decisionProblem, setDecisionProblem] = useState<string | null>(null);
@@ -229,17 +248,21 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
   const editRow = (): number => (editing === null || run === null ? 0 : editing.at === "new" ? run.plan.length : editing.at);
   /** Cancel or Escape in the editor: at once when nothing was typed, and after a question when words would be lost. */
   const cancelEdit = (): void => {
-    if (unsaved) return setLeaving(true);
+    if (unsaved) return setLeaving({ to: null });
     const at = editRow();
     setEditing(null);
     focusEdit(at);
   };
+  /** The question's answer. Kept: the dialog gives focus back to where it was. Discarded: the row, or the address the owner was going to. */
   const answeredLeaving = (discard: boolean): void => {
-    setLeaving(false);
-    if (!discard) return void window.requestAnimationFrame(() => document.getElementById("plan-title")?.focus());
+    const to = leaving?.to ?? null;
+    setLeaving(null);
+    if (!discard) return;
     const at = editRow();
     setEditing(null);
-    focusEdit(at);
+    if (to === null) return focusEdit(at);
+    setLeaveGuard(null);
+    window.location.hash = to;
   };
 
   const saveEdit = (): void => {
@@ -450,6 +473,11 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
 
             <StricterMode key={run.mode} run={run} onChanged={setRun} onSignedOut={onSignedOut} />
 
+            {editNotice !== null && (
+              <Alert tone="note" role="status" testId="edit-closed">
+                {editNotice}
+              </Alert>
+            )}
             {gate && run.reason !== null && (
               <Alert tone="warning" role="status">
                 {run.reason}
@@ -469,7 +497,7 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                         {editing?.at === i ? (
                           <PlanEditor editing={editing} name={`Task ${i + 1}`} saving={busy === "save"} onChange={setEditing} onSave={saveEdit} onCancel={cancelEdit} />
                         ) : (
-                          <PlanRow task={task} number={i + 1} locked={busy !== null || editing !== null} onEdit={() => setEditing({ at: i, title: task.title, criteria: toLines(task.criteria), problem: {} })} onDelete={() => remove(i)} />
+                          <PlanRow task={task} number={i + 1} locked={busy !== null || editing !== null} onEdit={() => (setEditNotice(null), setEditing({ ...openEdit(i, task), problem: {} }))} onDelete={() => remove(i)} />
                         )}
                       </li>
                     ))}
@@ -479,14 +507,14 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                       </li>
                     )}
                   </ol>
-                  {leaving && (
+                  {leaving !== null && (
                     <ConfirmDialog title="Discard what you typed?" confirmLabel="Discard changes" cancelLabel="Keep editing" disabled={false} losing testId="discard-edit" onClose={answeredLeaving}>
                       <p>Your changes to this task are not saved. The plan stays as it was.</p>
                     </ConfirmDialog>
                   )}
                   {editing?.at !== "new" && (
                     <div className="ds-editable-list__add">
-                      <button type="button" data-add-task disabled={busy !== null || editing !== null || run.plan.length >= 20} onClick={() => setEditing({ at: "new", title: "", criteria: "", problem: {} })} className="ds-button ds-button--quiet">
+                      <button type="button" data-add-task disabled={busy !== null || editing !== null || run.plan.length >= 20} onClick={() => (setEditNotice(null), setEditing({ ...NEW_EDIT, problem: {} }))} className="ds-button ds-button--quiet">
                         <Icon name="plus" className="ds-button__icon" />
                         Add task
                       </button>

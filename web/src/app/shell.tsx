@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { hasSession } from "../api/client.ts";
-import { arrive, noteNavigation, tabTitle } from "./arrival.ts";
+import { arrive, mayLeave, noteNavigation, tabTitle } from "./arrival.ts";
 import { parseRoute, type Route } from "./route.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
 import { PeerCardsProvider } from "./peer-cards.tsx";
@@ -21,10 +21,26 @@ type Session = "checking" | "unreachable" | "signed-out" | "signed-in";
 
 function useRoute(): Route {
   const [hash, setHash] = useState(window.location.hash);
+  // The address of the screen now shown, and whether the next change is this hook putting it back.
+  const shown = useRef(window.location.hash);
+  const restoring = useRef(false);
   useEffect(() => {
     const onChange = (): void => {
+      const to = window.location.hash;
+      if (restoring.current) {
+        restoring.current = false;
+        return;
+      }
+      // A screen with unsaved words is asked first. When it says no, the address goes back to it, and the screen
+      // itself goes on to `to` once the owner has answered.
+      if (to !== shown.current && !mayLeave(to)) {
+        restoring.current = true;
+        window.location.replace(shown.current === "" ? "#/" : shown.current);
+        return;
+      }
+      shown.current = to;
       noteNavigation();
-      setHash(window.location.hash);
+      setHash(to);
     };
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);
@@ -85,7 +101,8 @@ const openRow = (route: Route): string | null => (route.screen === "run" ? `run 
 /**
  * From 1024px, every screen but Settings (with Permissions and Usage, its sections there) has the column of runs and
  * tasks beside it, as the design system's split panel lays them out. The column is drawn here, above the screens, so
- * opening a row replaces only the screen: the column keeps its search, its scroll position and its focus. The screen
+ * opening a row replaces only the screen: the column keeps its search and its scroll position. Focus goes to the
+ * opened screen's heading, as on any arrival (arrival.ts), unless the owner is typing in the column's search. The screen
  * is in a plain region of its own, not a section, so its header and navigation stay the page's landmarks. Below 1024px
  * the screen is laid out alone, exactly as before, but in the same place in the tree, so it is never drawn anew.
  */

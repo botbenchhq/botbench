@@ -608,7 +608,7 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     send();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (sendsOn({ key: event.key, shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, isComposing: event.nativeEvent.isComposing }, { fine })) {
+    if (sendsOn({ key: event.key, shiftKey: event.shiftKey, metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode }, { fine })) {
       event.preventDefault();
       send();
     }
@@ -680,7 +680,13 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
   const builderDown = builder.state !== "ready";
   // With a keyboard and a mouse, the line that says which key sends is part of what the box is described by.
-  const keysHint = fine && !showStop && !builderDown;
+  // Arrival put focus on the chat's heading, which only a screen reader meets, because the box was not ready yet
+  // (arrival.ts): with a keyboard, the box takes it once it can.
+  useEffect(() => {
+    if (fine && !builderDown && document.activeElement?.closest(".ds-visually-hidden") != null) promptRef.current?.focus();
+  }, [fine, builderDown]);
+  // It stays while the agent works: Enter is still Send's key then, and the line above says when sending is possible again.
+  const keysHint = fine && !builderDown;
   const boxDescribedBy = [describedBy, keysHint ? "composer-keys" : null].filter((id) => id != null).join(" ") || undefined;
   const name = repoName(repo, known);
 

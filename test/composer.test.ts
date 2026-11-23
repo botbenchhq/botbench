@@ -477,7 +477,7 @@ test("the task screen's words for a move: one button per agent, what a move does
 });
 
 test("Enter sends from a keyboard and a mouse; on a touch screen it starts a new line, and Cmd or Ctrl with Enter sends everywhere", () => {
-  const key = (over: Partial<Parameters<typeof sendsOn>[0]> = {}) => ({ key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, isComposing: false, ...over });
+  const key = (over: Partial<Parameters<typeof sendsOn>[0]> = {}) => ({ key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, isComposing: false, keyCode: 13, ...over });
   assert.equal(sendsOn(key(), { fine: true }), true);
   assert.equal(sendsOn(key(), { fine: false }), false);
   // Shift with Enter is the new line, and Option with Enter is left to the browser.
@@ -489,6 +489,8 @@ test("Enter sends from a keyboard and a mouse; on a touch screen it starts a new
     // The Enter that picks a word while composing Japanese, Chinese or Korean text never sends.
     assert.equal(sendsOn(key({ isComposing: true }), { fine }), false);
     assert.equal(sendsOn(key({ isComposing: true, metaKey: true }), { fine }), false);
+    // Safari: the Enter that ends a composition arrives after the composition, marked only by its key code.
+    assert.equal(sendsOn(key({ keyCode: 229 }), { fine }), false);
     assert.equal(sendsOn(key({ key: "a", metaKey: true }), { fine }), false);
   }
 });

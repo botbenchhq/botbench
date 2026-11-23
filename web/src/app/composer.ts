@@ -460,6 +460,8 @@ export interface SendKey {
   altKey: boolean;
   /** The key belongs to text still being composed (Japanese, Chinese, Korean input): Enter there picks a word. */
   isComposing: boolean;
+  /** 229 marks a key the input method took. Safari reports the Enter that ends a composition this way, after `isComposing` is already false. */
+  keyCode: number;
 }
 
 /**
@@ -468,7 +470,7 @@ export interface SendKey {
  * Send is the button. Cmd or Ctrl with Enter sends on both.
  */
 export function sendsOn(event: SendKey, pointer: { fine: boolean }): boolean {
-  if (event.key !== "Enter" || event.isComposing) return false;
+  if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return false;
   if (event.metaKey || event.ctrlKey) return true;
   return pointer.fine && !event.shiftKey && !event.altKey;
 }

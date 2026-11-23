@@ -396,6 +396,15 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
   useEffect(() => {
     if (section === "paired" && !wide) document.querySelector('[data-testid="paired-workbench"]')?.scrollIntoView({ block: "start" });
   }, [section, wide]);
+  // The two-pane Settings draws no new screen when another section is chosen, so the section itself takes focus then:
+  // a keyboard or a screen reader starts in what the row opened. Not on the first draw, which the screen's heading has.
+  const detail = useRef<HTMLElement>(null);
+  const drawn = useRef<SettingsSection | null | undefined>(undefined);
+  useEffect(() => {
+    const before = drawn.current;
+    drawn.current = section;
+    if (wide && before !== undefined && before !== section && section !== "agents") detail.current?.focus();
+  }, [section, wide]);
   useEffect(() => {
     if (section !== "agents") return;
     agentsHeading.current?.scrollIntoView({ block: "start" });
@@ -545,7 +554,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
       <Frame current={null}>
         <main data-testid="settings-panes" className="ds-app-shell__main ds-master-detail min-w-0 px-lg">
           <div className="ds-master-detail__list">
-            <PageHeader title="Settings" compact>
+            <PageHeader title="Settings" tab={chosen.name} compact>
               <p className="ds-page-header__description">Each change is saved as you make it.</p>
             </PageHeader>
             <ul data-testid="settings-sections" className="ds-list">
@@ -561,7 +570,7 @@ export function SettingsScreen({ section, onSignedOut }: { section: SettingsSect
             </ul>
           </div>
           {/* The section's own groups carry its headings, so the region is named by the row that opened it. */}
-          <section data-testid="settings-section" className="ds-master-detail__detail ds-settings-page" aria-label={chosen.name}>
+          <section ref={detail} tabIndex={-1} data-testid="settings-section" className="ds-master-detail__detail ds-settings-page" aria-label={chosen.name}>
             {content[chosen.section]}
           </section>
         </main>

@@ -109,6 +109,35 @@ test.describe("at 1280×800, with a mouse", () => {
     await page.goto(`${botbench.base}/#/no/such/screen`);
     await expect(page).toHaveTitle("No such screen \u2013 Botbench");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+
+    // Chat's heading is for a screen reader only, so with a keyboard the message box takes focus, where it can be seen.
+    await page.getByRole("navigation", { name: "Screens" }).first().getByRole("link", { name: "Chat" }).click();
+    await expect(page).toHaveTitle("Chat \u2013 Botbench");
+    await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeFocused();
+    // A change of address the owner did not make from here (a notification's, another screen's) never takes focus from a field being typed in.
+    await search(page).pressSequentially("login");
+    await page.evaluate(() => (window.location.hash = "#/work"));
+    await expect(page).toHaveTitle("Work \u2013 Botbench");
+    await expect(search(page)).toBeFocused();
+    await search(page).fill("");
+
+    // The two-pane Settings draws no new screen for another section: the tab is named for the section and the section takes focus.
+    await page.goto(`${botbench.base}/#/settings`);
+    await expect(page).toHaveTitle("Agents \u2013 Botbench");
+    const sections = page.getByTestId("settings-sections");
+    await sections.getByRole("link", { name: "Permissions" }).click();
+    await expect(page).toHaveTitle("Permissions \u2013 Botbench");
+    await expect(page.getByTestId("settings-section")).toBeFocused();
+    await sections.getByRole("link", { name: "Usage" }).click();
+    await expect(page).toHaveTitle("Usage \u2013 Botbench");
+    await expect(page.getByTestId("settings-section")).toBeFocused();
+    await checkDesign(page, "settings, wide, a section arrived on with focus");
+
+    // The first screen after a page load is left alone: nothing is focused for the reader.
+    await page.goto(`${botbench.base}/#/work`);
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1, name: "Work" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Work" })).not.toBeFocused();
   });
 
   test("leaving a plan task with typed words asks first, and keeps them when the answer is to keep editing; a Settings choice says when it was saved", async ({ page, botbench, seeded }) => {
@@ -131,16 +160,54 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(question).toContainText("Your changes to this task are not saved. The plan stays as it was.");
     await expect(question.getByRole("button", { name: "Keep editing" })).toBeFocused();
     await checkDesign(page, "run, wide, the question before typed words are discarded");
+    // Keep editing returns to the words as typed, with focus back where it was.
     await question.getByRole("button", { name: "Keep editing" }).click();
     await expect(question).toHaveCount(0);
     await expect(title).toHaveValue("Write the importer");
-    await expect(title).toBeFocused();
+    await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+    await title.focus();
     await page.keyboard.press("Escape");
     await expect(question).toBeVisible();
+    await question.getByRole("button", { name: "Keep editing" }).click();
+    await expect(title).toBeFocused();
+
+    // Leaving for another screen asks the same question. Kept: the run is still the screen, at its own address.
+    await rows(page).nth(2).click();
+    await expect(question).toContainText("Discard what you typed?");
+    await question.getByRole("button", { name: "Keep editing" }).click();
+    await expect(page).toHaveURL(new RegExp(`#/runs/${seeded.planned.id}$`));
+    await expect(title).toHaveValue("Write the importer");
+    // Discarded: the owner goes where they were going, and the plan is as it was.
+    await rows(page).nth(2).click();
+    await question.getByRole("button", { name: "Discard changes" }).click();
+    await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
+    await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
+    await rows(page).nth(1).click();
+    await expect(page.getByRole("list", { name: "Plan" })).toContainText("Write the exporter");
+    // With nothing typed, leaving asks nothing.
+    await page.locator('[data-edit="0"]').click();
+    await rows(page).nth(2).click();
+    await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
+    await expect(question).toHaveCount(0);
+
+    // Cancel with typed words, then Discard changes: the row is back, with focus on its Edit button.
+    await rows(page).nth(1).click();
+    await page.locator('[data-edit="0"]').click();
+    await title.fill("Write the importer");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await question.getByRole("button", { name: "Discard changes" }).click();
     await expect(title).toHaveCount(0);
-    await expect(page.getByRole("list", { name: "Plan" })).toContainText("Write the exporter");
     await expect(page.locator('[data-edit="0"]')).toBeFocused();
+
+    // The run is cancelled in another window while a task holds typed words: the editor closes and the screen says why.
+    await page.locator('[data-edit="0"]').click();
+    await title.fill("Write the importer");
+    const cancelled = await page.evaluate((id) => fetch(`/api/runs/${id}/cancel`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: "{}" }).then((r) => r.status), seeded.planned.id);
+    expect(cancelled).toBe(200);
+    await expect(title).toHaveCount(0, { timeout: 20_000 });
+    await expect(question).toHaveCount(0);
+    await expect(page.getByTestId("edit-closed")).toHaveText(/The plan changed in another window, so the task you were editing was closed\. What you typed was not saved\./);
+    await checkDesign(page, "run, wide, an edit closed because the plan changed elsewhere");
 
     // A select shows the choice before Botbench has kept it, so the row says when it has.
     await page.goto(`${botbench.base}/#/settings/workbench`);
@@ -309,6 +376,8 @@ test.describe("at 390×844", () => {
     await signIn(page, botbench);
     await expect(page.getByTestId("work-column")).toHaveCount(0);
     await expect(page.locator(".ds-split-panel")).toHaveCount(0);
+    // A touch screen: Enter starts a new line there, so no line says that it sends.
+    await expect(page.getByTestId("composer-keys")).toHaveCount(0);
     await checkDesign(page, "chat, phone, no column");
     await page.evaluate((id) => (window.location.hash = `#/tasks/${id}`), seeded.ready.id);
     await expect(page.getByRole("heading", { level: 1, name: seeded.ready.title })).toBeVisible();
