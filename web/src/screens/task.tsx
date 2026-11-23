@@ -14,6 +14,8 @@ import { modelName, modelState, sessionModel, useModelList } from "../components
 import { ResumeControl } from "../components/resume.tsx";
 import { answeredOther, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
 import { folderName } from "../app/composer.ts";
+import { overlapLines } from "../app/peers.ts";
+import { usePeersOf } from "../components/other-workbenches.tsx";
 import { mergeEvents, Transcript } from "../components/transcript.tsx";
 
 /** What is known about one file's diff: being fetched, fetched, or why it could not be. */
@@ -157,6 +159,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
   const working = task?.status === "building" && !task.resuming && attemptId !== null && !shown.some((e) => e.type === "turn_ended") ? (asking === undefined ? "Claude Code is working." : "") : null;
   // The branch is where the decision needs it once the task is ready for review (and, decided, in the outcome); before, it is a detail.
   const branchInDetails = task !== null && task.branch !== null && task.decision === null && task.status !== "awaiting_decision" && task.remains?.discardedAt == null;
+  // At review time: another workbench's open pull request that changes the same files, from the short-lived view of the remote.
+  const peers = usePeersOf(task?.status === "awaiting_decision" ? task.repo : "", onSignedOut);
+  const overlaps = task?.status === "awaiting_decision" && task.files !== null ? overlapLines(peers, task.files.map((f) => f.path)) : [];
 
   return (
     <Frame current={null} banner={connected ? undefined : <StreamBanner />} showing={waiting.map((approval) => approval.id)}>
@@ -369,6 +374,11 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
             {task.status === "awaiting_decision" && (
               <section aria-labelledby="decide-heading" className="ds-stack ds-gap-sm">
                 <h2 id="decide-heading">Your decision</h2>
+                {overlaps.map((line) => (
+                  <p key={line} data-testid="peer-overlap">
+                    {line}
+                  </p>
+                ))}
                 <p>{`Accept keeps the branch for you to merge yourself and removes the task's copy of the project. Reject removes the copy too, and asks whether to keep the branch.${task.pullRequest.choice === "pull_request" ? " This run then pushes an accepted task's branch and opens a pull request for it." : ""}${task.checks === "failed" ? " The checks failed; you can still accept or reject it." : ""}`}</p>
                 {task.leftovers !== null && task.leftovers.length > 0 && <p>{`The checks left ${task.leftovers.length === 1 ? "1 file" : `${task.leftovers.length} files`} in the task's copy that ${task.leftovers.length === 1 ? "is" : "are"} not on the branch. Accept and Reject list ${task.leftovers.length === 1 ? "it" : "them"} before anything is removed.`}</p>}
                 <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={load} onSignedOut={onSignedOut} />

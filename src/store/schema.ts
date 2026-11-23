@@ -1143,4 +1143,22 @@ CREATE TABLE push_sent (
 );
 `,
   },
+  {
+    // The workbench's names (src/workbench.ts): the name this installation's task branches carry, the latest row being
+    // the one in use. Append-only, so every name it has had stays known as its own, and a branch made before a rename
+    // is still recognised as this installation's.
+    name: "workbench_names",
+    sql: `
+CREATE TABLE workbench_names (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 30 AND name NOT GLOB '*[^a-z0-9-]*' AND name NOT GLOB '-*' AND name NOT GLOB '*-'),
+  source TEXT NOT NULL CHECK (source IN ('host', 'owner', 'settings_file')),
+  chosen_at TEXT NOT NULL
+);
+CREATE TRIGGER workbench_names_no_update BEFORE UPDATE ON workbench_names
+BEGIN SELECT RAISE(ABORT, 'workbench names are append-only'); END;
+CREATE TRIGGER workbench_names_no_delete BEFORE DELETE ON workbench_names
+BEGIN SELECT RAISE(ABORT, 'workbench names are append-only'); END;
+`,
+  },
 ];

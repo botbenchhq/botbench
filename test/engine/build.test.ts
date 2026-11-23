@@ -12,6 +12,7 @@ import { createTasks, getTask, moveTask, type Tasks } from "../../src/engine/tas
 import { MIGRATIONS } from "../../src/store/schema.ts";
 import { migrate, openStore, schemaVersion } from "../../src/store/db.ts";
 import { createWorktree } from "../../src/worktrees.ts";
+import { workbenchName } from "../../src/workbench.ts";
 import { buildReplayDriver, type BuildReplay, type BuildTurn } from "../support/replay-build.ts";
 import { checkoutState, git, initRepo, ownerCommit, botbenchBranches, tempDir, worktreeCount, write } from "../support/repo.ts";
 
@@ -107,7 +108,7 @@ test("AE1: deleting one of three planned tasks and approving creates exactly two
   await e.tasks.idle();
 
   assert.equal(worktreeCount(e.repo), 3, "the owner's checkout and exactly two task worktrees");
-  assert.deepEqual(botbenchBranches(e.repo), tasks.map((task) => `botbench/run-${run.id}/task-${task.id}`));
+  assert.deepEqual(botbenchBranches(e.repo), tasks.map((task) => `botbench/${workbenchName(e.db)}/run-${run.id}/task-${task.id}`));
   for (const [i, made] of tasks.entries()) {
     const built = getTask(e.db, made.id)!;
     assert.equal(built.status, "awaiting_decision", `task ${i + 1}: ${built.reason}`);

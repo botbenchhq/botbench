@@ -3,6 +3,7 @@ import { appendLog } from "../approvals/broker.ts";
 import { repositoryDelivery, type Config } from "../config.ts";
 import { ghArgs, githubRepoOf, redact, repoName, type GitHub, type PullRequest, type RepoRef } from "../github.ts";
 import { now, transaction } from "../store/db.ts";
+import { isOwnBranch, notOwnWords, parseTaskBranch, workbenchName } from "../workbench.ts";
 import { branchCommit, BRANCH_PREFIX, pushTaskBranch, remoteAddress, remoteBranchCommit } from "../worktrees.ts";
 import { onTaskAccepted, taskDecision } from "./decision.ts";
 import { count, loopRecord, outcomeLine, parseFindings, parseRefineReply } from "./refine.ts";
@@ -225,8 +226,10 @@ export function pullRequestText(db: DatabaseSync, task: Task, repo?: RepoRef): {
   const latest = checks.filter((e) => e.round === round);
   const run = task.runId === null ? undefined : db.prepare("SELECT * FROM runs WHERE id = ?").get(task.runId);
   const mode = isRunMode(run?.mode) ? MODE_WORDS[run.mode] : null;
+  // The workbench the branch was made on (its name in the branch), or this one for a branch from before workbenches had names.
+  const workbench = (task.branch === null ? null : parseTaskBranch(task.branch)?.workbench) ?? workbenchName(db);
   const parts = [
-    "Built with Botbench: an accepted task, pushed and opened by Botbench on the owner's machine. Nothing was merged.",
+    `Built on ${workbench} with Botbench: an accepted task, pushed and opened by Botbench on the owner's machine. Nothing was merged.`,
     "## What was asked",
     fenced(plan ? String(plan.title) : task.prompt),
   ];
@@ -321,7 +324,8 @@ export function createDeliveries(options: DeliveryOptions): Deliveries {
       throw new DeliveryFailure("check", `${why} Nothing was sent.`);
     };
     const branch = task.branch!;
-    if (!branch.startsWith(BRANCH_PREFIX)) fail(`The branch ${branch} is not one Botbench made under its own name (${BRANCH_PREFIX}…), so it is not pushed.`);
+    if (parseTaskBranch(branch)?.prefix !== "botbench") fail(`The branch ${branch} is not one Botbench made under its own name (${BRANCH_PREFIX}…), so it is not pushed.`);
+    if (!isOwnBranch(db, branch)) fail(`${notOwnWords(branch)} It is not pushed.`);
     const { remote, baseBranch } = repositoryDelivery(config, task.repo);
     let address: { configured: string; fetch: string; push: string } | null;
     try {

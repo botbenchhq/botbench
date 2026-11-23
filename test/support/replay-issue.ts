@@ -42,6 +42,7 @@ export function replayIssues(base: Partial<GitHub> = {}): { github: GitHub; read
       defaultBranch: base.defaultBranch ?? unused("the default branch"),
       findPullRequest: base.findPullRequest ?? unused("pull requests"),
       openPullRequest: base.openPullRequest ?? unused("pull requests"),
+      openPullRequests: base.openPullRequests ?? unused("open pull requests"),
       async issue(repo, number) {
         reads.push({ repo, number });
         const same = repoName(repo).toLowerCase() === repoName(ISSUE_REPO);

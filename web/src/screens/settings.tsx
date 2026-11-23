@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import { ApiError, getAgents, getDefaultMode, openEventStream, setDefaultMode, type AgentState, type RunMode } from "../api/client.ts";
+import { ApiError, getAgents, getDefaultMode, getWorkbench, openEventStream, setDefaultMode, setWorkbench, type AgentState, type RunMode, type WorkbenchSetting } from "../api/client.ts";
 import { chooseAppearance, useAppearance, type Appearance } from "../app/appearance.ts";
 import { DeviceSettings } from "../app/device-settings.tsx";
 import { NotificationSettings } from "../app/notification-settings.tsx";
@@ -49,6 +49,102 @@ const MODES: { value: Appearance; label: string }[] = [
   { value: "light", label: "Light" },
   { value: "auto", label: "Match device" },
 ];
+
+/** The same rule the server holds a workbench name to (src/workbench.ts), so a name it would refuse is said before it is sent. */
+const WORKBENCH = /^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/;
+
+/**
+ * This workbench's name (Peers P1): its new task branches carry it, so they never clash with another workbench's on a
+ * shared remote. Saved with Save name; a name the settings file sets is shown, and changed there.
+ */
+function WorkbenchName({ onSignedOut }: { onSignedOut: () => void }) {
+  const id = useId();
+  const [current, setCurrent] = useState<WorkbenchSetting | null>(null);
+  const [typed, setTyped] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const failed = (what: string) => (err: unknown) => {
+    if (err instanceof ApiError && err.status === 401) return onSignedOut();
+    setProblem(err instanceof ApiError ? `${what} ${err.message}` : `${what.replace(/\.$/, "")}: Botbench could not be reached.`);
+  };
+  useEffect(() => {
+    getWorkbench().then((found) => {
+      setCurrent(found);
+      setTyped(found.name);
+    }, failed("The workbench name could not be read."));
+  }, [onSignedOut]);
+  const save = (): void => {
+    setSaved(false);
+    if (!WORKBENCH.test(typed)) return setProblem('A workbench name is 1 to 30 lowercase letters, digits and hyphens, and starts and ends with a letter or digit, such as "jons-mac".');
+    setProblem(null);
+    setWorkbench(typed).then((found) => {
+      setCurrent(found);
+      setTyped(found.name);
+      setSaved(true);
+    }, failed("The workbench name was not saved."));
+  };
+  const fromFile = current?.setInFile === true;
+  return (
+    <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-heading`}>
+      <h2 className="ds-settings-row__heading" id={`${id}-heading`}>
+        Workbench
+      </h2>
+      <form
+        className="ds-settings-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <div className="ds-settings-row__text">
+          <label className="ds-settings-row__label" htmlFor={`${id}-name`}>
+            Workbench name
+          </label>
+          <p className="ds-settings-row__description" id={`${id}-about`}>
+            {fromFile
+              ? 'Set in the settings file ("workbench"), so it is changed there.'
+              : `New task branches carry this name, such as botbench/${current?.name ?? "name"}/run-1/task-1, so they never clash with another workbench's on a shared remote. Changing it affects only new branches.`}
+          </p>
+          {problem !== null && (
+            <p role="alert" id={`${id}-problem`} className="ds-settings-row__error">
+              {problem}
+            </p>
+          )}
+          {saved && problem === null && (
+            <p role="status" data-testid="workbench-saved" className="ds-settings-row__description">
+              Saved.
+            </p>
+          )}
+        </div>
+        <div className="ds-settings-row__control ds-cluster ds-gap-sm">
+          <input
+            data-testid="workbench-name"
+            className="ds-field__control"
+            id={`${id}-name`}
+            type="text"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            maxLength={30}
+            value={typed}
+            readOnly={fromFile || current === null}
+            aria-invalid={problem !== null || undefined}
+            aria-describedby={problem === null ? `${id}-about` : `${id}-about ${id}-problem`}
+            onChange={(e) => {
+              setTyped(e.currentTarget.value);
+              setSaved(false);
+            }}
+          />
+          {!fromFile && current !== null && (
+            <button type="submit" className="ds-button" disabled={typed === current.name}>
+              Save name
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
 
 /**
  * Settings (unit 16), with its real sections only. Agents: each agent Botbench can drive, as its CLI reports itself
@@ -156,6 +252,8 @@ export function SettingsScreen({ onSignedOut }: { onSignedOut: () => void }) {
               </Alert>
             )}
           </div>
+
+          <WorkbenchName onSignedOut={onSignedOut} />
 
           <div className="ds-settings-row__group" role="group" aria-labelledby={`${id}-appearance`}>
             <h2 className="ds-settings-row__heading" id={`${id}-appearance`}>

@@ -24,6 +24,8 @@ import { createDictation, type DictationOptions } from "./dictation/dictation.ts
 import { createDeliveries } from "./engine/delivery.ts";
 import { createRuns } from "./engine/run.ts";
 import { createGitHub, type GitHub } from "./github.ts";
+import { createPeers } from "./engine/peers.ts";
+import { chooseWorkbench, workbenchName } from "./workbench.ts";
 import { createTasks } from "./engine/task.ts";
 import { createPush, type Push } from "./push.ts";
 import { openStore } from "./store/db.ts";
@@ -89,6 +91,9 @@ export interface StartOptions {
 export async function startServer(options: StartOptions): Promise<BotbenchServer> {
   const { config, home } = options;
   const db = openStore(home);
+  // The workbench's name: the settings file's when it sets one; else the one kept, made from the host name at first start.
+  if (config.workbench !== undefined) chooseWorkbench(db, config.workbench, "settings_file");
+  else workbenchName(db);
   // A review folder of a Botbench that stopped mid-review is never used again (src/drivers/cli-sandbox.ts).
   removeLeftoverReviewFolders(home);
   const login = loadOrCreateLoginToken(home);
@@ -146,7 +151,9 @@ export async function startServer(options: StartOptions): Promise<BotbenchServer
   // Pushes and pull requests use the owner's own git and gh; only for a run that chose them, or the owner's own action.
   const github = options.github ?? createGitHub();
   const deliveries = createDeliveries({ db, config, github, onTaskChange: stream.announceTask });
-  const ctx = { db, config, driver, reviewers, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
+  // What other workbenches have in flight on a repository's remote: read only, kept for a short time.
+  const peers = createPeers({ db, config, github });
+  const ctx = { db, config, driver, reviewers, turns, chat, tasks, runs, broker, stream, push, connect, dictation, deliveries, github, peers, ...(maxRecordingBytes === undefined ? {} : { maxRecordingBytes }), clientDir: options.clientDir ?? path.join(ROOT, "web", "dist") };
 
   let port = config.port;
   const auth = createAuth({ token: login.token, db, listen: config.listen, port: () => port, publicHosts: config.publicHosts ?? [], signInDelayMs: options.signInDelayMs });
