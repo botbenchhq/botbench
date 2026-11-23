@@ -176,6 +176,7 @@ export function ConnectSheet({ driver, product, state, onState, onClose }: { dri
           <li className="ds-device-code__step">
             <p>
               Open the sign-in page at <span data-ds-content="">{place(url)}</span> on this device or another one, and sign in.
+              {state.keptByBotbench && ` This is a sign-in for Botbench alone: ${product} in a terminal or its app keeps its own.`}
             </p>
           </li>
           {state.code !== null && (
@@ -186,7 +187,7 @@ export function ConnectSheet({ driver, product, state, onState, onClose }: { dri
           )}
           {state.takesCode ? (
             <li className="ds-device-code__step">
-              <p>The page then shows a code. Copy it and paste it here.</p>
+              <p>{state.keptByBotbench ? "The page then shows a code. Copy it, or the page's whole address, and paste it here." : "The page then shows a code. Copy it and paste it here."}</p>
               <PasteCode driver={driver} disabled={flow !== "waiting"} onState={onState} />
             </li>
           ) : (
@@ -288,7 +289,13 @@ export function AgentConnection({ agent, product, installed, supported, signedIn
     return (
       <>
         <ConfirmAction label="Disconnect" opener={{ small: true, name: `Disconnect ${product}` }} title={`Disconnect ${product}?`} confirmLabel="Disconnect" cancelLabel="Keep connected" disabled={busy} losing testId={`disconnect-${agent}`} onConfirm={disconnect}>
-          Botbench runs <code data-ds-content="">{connect.signOutCommand}</code>, {product}'s own sign-out. It is then signed out on this Mac, in a terminal too, until it is connected again.
+          {connect.keptByBotbench ? (
+            <>Botbench removes the sign-in it keeps for {product} in its own folder. {product} is then not connected in Botbench until you connect it again. {product} in a terminal or its app, signed in on its own, is not changed.</>
+          ) : (
+            <>
+              Botbench runs <code data-ds-content="">{connect.signOutCommand}</code>, {product}'s own sign-out. It is then signed out on this Mac, in a terminal too, until it is connected again.
+            </>
+          )}
         </ConfirmAction>
         {problem !== null && (
           <p className="ds-field__error" role="alert">

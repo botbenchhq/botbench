@@ -280,11 +280,12 @@ test("fully autonomous is refused at the start, with the reason, on a repository
   assert.equal(semi.mode, "semi");
 });
 
-test("a mode that is none of the three is refused, and a run's mode cannot be changed once it exists", async (t) => {
+test("a mode that is none of the three is refused, and a run's mode cannot be made looser once it exists", async (t) => {
   const e = await line(t, []);
   await assert.rejects(e.runs.start({ repo: e.repo, prompt: "Add a file", mode: "yolo" }), /"mode" must be "manual", "semi" or "full"/);
   const run = createRun(e.db, { repo: e.repo, prompt: "Add a file", baseCommit: e.base, mode: "semi" });
-  assert.throws(() => e.db.prepare("UPDATE runs SET mode = 'full' WHERE id = ?").run(run.id), /a run's mode is chosen when it starts and never changed/);
+  // Stricter is allowed while the run works (test/engine/stricter-mode.test.ts); looser never.
+  assert.throws(() => e.db.prepare("UPDATE runs SET mode = 'full' WHERE id = ?").run(run.id), /a run's mode can only be made stricter/);
   assert.equal(getRun(e.db, run.id)!.mode, "semi");
   // Left out, a run is manual unless the owner chose another default.
   assert.equal(createRun(e.db, { repo: e.repo, prompt: "Another", baseCommit: e.base }).mode, "manual");

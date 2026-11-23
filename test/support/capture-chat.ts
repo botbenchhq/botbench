@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { AGY_EXTRA_ENV, agyArgs, agyInput, agyProfile, agyReader, writeReviewAgent } from "../../src/drivers/antigravity.ts";
+import { acpLines } from "../../src/drivers/acp-turn.ts";
+import { AGY_CHAT_TOOLS, AntigravityDriver } from "../../src/drivers/antigravity.ts";
+import { openStore } from "../../src/store/db.ts";
 import { makeReviewFolder, proxyEnv, sandboxed, startProviderProxy } from "../../src/drivers/cli-sandbox.ts";
 import { codexArgs, parseCodexLine } from "../../src/drivers/codex.ts";
 import type { DriverEvent } from "../../src/drivers/events.ts";
@@ -77,14 +79,20 @@ async function grok(text: string) {
     folder.remove();
   }
 }
+/** As AntigravityDriver starts a chat turn, on Botbench's own profile in ~/.botbench (src/drivers/antigravity.ts); its ACP lines. */
 async function antigravity(text: string) {
+  const lines: string[] = [];
+  const db = openStore(home);
   const folder = makeReviewFolder(home);
   try {
-    writeReviewAgent(folder.path);
-    const s = sandboxed(agyProfile({ dataDir: home, folder: folder.path }), "agy", agyArgs({ model: MODELS.antigravity }));
-    return await run(s.command, s.args, folder.path, AGY_EXTRA_ENV, agyInput(text));
+    const driver = new AntigravityDriver({ dataDir: path.join(os.homedir(), ".botbench"), onLine: (line) => lines.push(line) });
+    const session = await driver.startAttempt({ db, cwd: folder.path, chatTools: { readable: [] }, confinement: { dataDir: home, allowedHosts: [] }, model: MODELS.antigravity });
+    await session.sendTurn(text);
+    await session.close();
+    return { lines, exitCode: 0 };
   } finally {
     folder.remove();
+    db.close();
   }
 }
 
@@ -95,7 +103,7 @@ const [c, g, a] = await Promise.all([codex(prompt), grok(prompt), antigravity(pr
 const answers: ChatEntry[] = [
   { from: `Codex (${MODELS.codex})`, text: reply(c.lines.flatMap(parseCodexLine)) },
   { from: `Grok (${MODELS.grok})`, text: reply(read(g.lines, grokReader())) },
-  { from: `Antigravity (${MODELS.antigravity})`, text: reply(read(a.lines, agyReader())) },
+  { from: `Antigravity (${MODELS.antigravity})`, text: reply(read(a.lines, acpLines("Antigravity", AGY_CHAT_TOOLS)())) },
 ];
 for (const answer of answers) if (answer.text.trim() === "") throw new Error(`${answer.from} gave no answer; nothing was written.`);
 const compare = await codex(comparePrompt({ question: QUESTION, answers }));

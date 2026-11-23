@@ -1,6 +1,6 @@
 # Five product experiments
 
-Each compares Botbench with existing tools on real work and answers one yes-or-no question. They are the way this library moves from "the source shows" to "we saw". None has been run.
+Each compares Botbench with existing tools on real work and answers one yes-or-no question. They are the way this library moves from "the source shows" to "we saw". First versions of experiments 2 and 3 were run on 23 November 2026; the records are in [`results/`](results/README.md). Experiment 3 held. Experiment 2 did not pass.
 
 ## Rules for all five
 

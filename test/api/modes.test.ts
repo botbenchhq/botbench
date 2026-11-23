@@ -62,17 +62,66 @@ test("a mode that is none of the three is refused with 400 before anything is lo
   assert.equal(runCount(api), 0);
 });
 
-test("a run shows its mode in the list and on its own screen, and no request changes it", async (t) => {
+test("a run shows its mode in the list and on its own screen, and no request but the owner's change of mode changes it", async (t) => {
   const api = await start(t);
   const run = createRun(api.server.db, { repo: api.repo, prompt: "Add a file", baseCommit: api.commit, mode: "semi" });
   const stored = storePlan(api.server.db, run.id, [{ title: "Add a file", criteria: ["It exists"] }]);
   assert.equal((await call(api, "GET", `/api/runs/${run.id}`)).body.mode, "semi");
   assert.equal(((await call(api, "GET", "/api/runs")).body.runs as Body[])[0]!.mode, "semi");
-  // There is no route for it, and an edit of the plan that names a mode changes the plan only.
+  // Only its own route changes it (below), and an edit of the plan that names a mode changes the plan only.
   for (const method of ["PATCH", "PUT", "POST"]) assert.equal((await call(api, method, `/api/runs/${run.id}`, { mode: "full" })).status, 404, method);
   const edited = await call(api, "PATCH", `/api/runs/${run.id}/plan`, { planVersion: stored.planVersion, tasks: [{ title: "Add a file", criteria: ["It exists"] }], mode: "full" });
   assert.equal(edited.status, 200);
   assert.equal(edited.body.mode, "semi");
+});
+
+test("the owner makes a run that has not finished stricter on its own route: the run answers with its new mode, the stricter modes left and the change in its history", async (t) => {
+  const api = await start(t);
+  const { db } = api.server;
+  const run = createRun(db, { repo: api.repo, prompt: "Add a file", baseCommit: api.commit, mode: "full" });
+  storePlan(db, run.id, [{ title: "Add a file", criteria: ["It exists"] }]);
+  const shown = await call(api, "GET", `/api/runs/${run.id}`);
+  assert.deepEqual([shown.body.mode, shown.body.modeChoices, shown.body.modeChanges], ["full", ["semi", "manual"], []]);
+  // Reading the run changes nothing: only the owner's request does.
+  assert.equal((await call(api, "GET", `/api/runs/${run.id}`)).body.mode, "full");
+
+  const semi = await call(api, "POST", `/api/runs/${run.id}/mode`, { mode: "semi" });
+  assert.equal(semi.status, 200);
+  assert.deepEqual([semi.body.mode, semi.body.modeChoices], ["semi", ["manual"]]);
+  const manual = await call(api, "POST", `/api/runs/${run.id}/mode`, { mode: "manual" });
+  assert.deepEqual([manual.status, manual.body.mode, manual.body.modeChoices], [200, "manual", []]);
+  assert.deepEqual((manual.body.modeChanges as Body[]).map((change) => change.words), ["You changed the mode from fully autonomous to semi-autonomous.", "You changed the mode from semi-autonomous to manual."]);
+  assert.equal(((await call(api, "GET", "/api/runs")).body.runs as Body[])[0]!.mode, "manual");
+  const owner = db.prepare("SELECT actor, mode_from, mode_to, detail FROM run_events WHERE run_id = ? AND mode_to IS NOT NULL ORDER BY id").all(run.id).map((row) => ({ ...row }));
+  assert.deepEqual(owner, [
+    { actor: "owner", mode_from: "full", mode_to: "semi", detail: "mode changed by the owner from fully autonomous to semi-autonomous" },
+    { actor: "owner", mode_from: "semi", mode_to: "manual", detail: "mode changed by the owner from semi-autonomous to manual" },
+  ]);
+});
+
+test("a looser or the same mode, an unknown mode, a finished run or no such run is answered with a plain error, and the mode is as it was", async (t) => {
+  const api = await start(t);
+  const { db } = api.server;
+  const run = createRun(db, { repo: api.repo, prompt: "Add a file", baseCommit: api.commit, mode: "semi" });
+  const answered = async (body: unknown, id = run.id) => {
+    const res = await call(api, "POST", `/api/runs/${id}/mode`, body);
+    return [res.status, res.body.error];
+  };
+  assert.deepEqual(await answered({ mode: "full" }), [409, `Run ${run.id} is semi-autonomous. A run's mode can be made stricter while it works, never looser, so it cannot become fully autonomous.`]);
+  assert.deepEqual(await answered({ mode: "semi" }), [409, `Run ${run.id} is already semi-autonomous.`]);
+  assert.deepEqual(await answered({ mode: "yolo" }), [400, '"mode" must be "manual", "semi" or "full".']);
+  assert.deepEqual(await answered({}), [400, '"mode" must be "manual", "semi" or "full".']);
+  assert.deepEqual(await answered({ mode: "manual" }, 9999), [404, "No such run."]);
+  db.prepare("UPDATE runs SET status = 'cancelled' WHERE id = ?").run(run.id);
+  assert.deepEqual(await answered({ mode: "manual" }), [409, `Run ${run.id} has finished, so its mode can no longer be changed.`]);
+  const after = await call(api, "GET", `/api/runs/${run.id}`);
+  assert.deepEqual([after.body.mode, after.body.modeChoices, after.body.modeChanges], ["semi", [], []]);
+  // Without the owner's session nothing is changed.
+  const live = createRun(db, { repo: api.repo, prompt: "Add a file", baseCommit: api.commit, mode: "semi" });
+  const res = await fetch(`${api.base}/api/runs/${live.id}/mode`, { method: "POST", headers: JSON_TYPE, body: JSON.stringify({ mode: "manual" }) });
+  assert.equal(res.status, 401);
+  await res.arrayBuffer();
+  assert.equal((await call(api, "GET", `/api/runs/${live.id}`)).body.mode, "semi");
 });
 
 test("Settings: the default mode is the settings file's until the owner picks one, which is kept; a value that is no mode is refused", async (t) => {
