@@ -151,7 +151,8 @@ test("an entry the owner's config adds to the floor reaches the running broker: 
   for (const [id, command] of [["toolu_2", "npm publish --tag next"], ["toolu_3", `cat ${path.join(repo, "home", "login-token")}`]] as const) {
     let settled = false;
     void ask(command, id).then(() => (settled = true));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Until its approval is written, after the request has crossed the socket: up to two seconds on a busy machine.
+    for (const until = Date.now() + 2000; !settled && !listApprovals(server.db, "pending").some((a) => a.command === command) && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(settled, false, command);
   }
   assert.deepEqual(listApprovals(server.db, "pending").map((a) => a.command), ["npm publish --tag next", `cat ${path.join(repo, "home", "login-token")}`]);

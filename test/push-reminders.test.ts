@@ -111,13 +111,19 @@ function ready(b: Bench): number {
   return task.id;
 }
 
+/** Until `n` approvals wait, once their requests have crossed the socket and been written: up to two seconds on a busy machine. */
+async function waiting(b: Bench, n: number): Promise<void> {
+  for (const until = Date.now() + 2000; listApprovals(b.db, "pending").length < n && Date.now() < until; ) await sleep(5);
+  assert.equal(listApprovals(b.db, "pending").length, n, `${n} approvals wait`);
+}
+
 const sentRows = (b: Bench): unknown[] => b.db.prepare("SELECT subject, subject_id, title FROM push_sent ORDER BY rowid").all().map((row) => ({ ...row }));
 
 test("an approval is announced once and the announcement is kept in the store: one announced before a restart is not announced again after it", async (t) => {
   const b = await bench(t);
   const task = building(b);
   void task.ask("git push origin main");
-  await sleep(30);
+  await waiting(b, 1);
   await b.push.idle();
   assert.deepEqual(b.titles(), ["An approval is waiting"]);
   const approval = listApprovals(b.db, "pending")[0]!;
@@ -135,7 +141,7 @@ test("an approval still waiting past the reminder wait is reminded of once, and 
   const b = await bench(t);
   const task = building(b);
   void task.ask("git push origin main");
-  await sleep(30);
+  await waiting(b, 1);
   const approval = listApprovals(b.db, "pending")[0]!;
   await sleep(WAIT_MS / 2);
   await b.push.idle();
@@ -158,7 +164,7 @@ test("after a restart, an approval still pending sends nothing more, not even th
   void kept.ask("git push origin main");
   const answered = building(b);
   const answering = answered.ask("npm publish");
-  await sleep(30);
+  await waiting(b, 2);
   const [left, toAnswer] = listApprovals(b.db, "pending");
   b.broker.answer(toAnswer!.id, "decline");
   await answering;
@@ -176,7 +182,7 @@ test("an approval past its run's approval time limit when Botbench starts is den
   const b = await bench(t);
   const task = building(b, { limit: 1 });
   void task.ask("git push origin main");
-  await sleep(30);
+  await waiting(b, 1);
   const approval = listApprovals(b.db, "pending")[0]!;
   // Stopped past both its time limit and the reminder wait.
   await b.restart({ before: () => sleep(WAIT_MS * 2) });
