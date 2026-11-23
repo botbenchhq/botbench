@@ -48,7 +48,7 @@ test("the check reads GitHub's latest release with no credentials; none publishe
   t.after(() => releases.close());
   assert.equal(await latestRelease(releases.url), null);
   releases.publish({ tag: "v0.2.0", notes: notesFor("0.2.0", "update Botbench from Settings") });
-  assert.deepEqual(await latestRelease(releases.url), { version: "0.2.0", tag: "v0.2.0", summary: "update Botbench from Settings", url: "https://github.com/jon-lange/botbench/releases/tag/v0.2.0" });
+  assert.deepEqual(await latestRelease(releases.url), { version: "0.2.0", tag: "v0.2.0", summary: "update Botbench from Settings", url: "https://github.com/botbenchhq/botbench/releases/tag/v0.2.0" });
   const sent = releases.requests.at(-1)!.headers;
   assert.equal(sent.authorization, undefined);
   assert.equal(sent.cookie, undefined);

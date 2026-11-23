@@ -4,7 +4,7 @@ import { ghArgs, parseIssueRelation, parseIssueView, parseWatchedIssues, repoNam
 
 /*
  * Output captured once from the real gh tool by test/live/watch.live.test.ts (BOTBENCH_CAPTURE_GH=1), against the
- * owner's repository jon-lange/botbench, read only: the open issues carrying the watched label, listed with Botbench's
+ * owner's repository botbenchhq/botbench, read only: the open issues carrying the watched label, listed with Botbench's
  * exact arguments (`gh issue list --label=... --json=...`, the command is written in the file), the first of them read
  * as the composer reads an issue (`gh issue view` and `gh api`), and the head of one `gh api -i` answer. It holds no
  * token. Like replay-github.ts, this is the owner's approved exception to "no fakes": captured real output replayed
@@ -12,7 +12,7 @@ import { ghArgs, parseIssueRelation, parseIssueView, parseWatchedIssues, repoNam
  */
 
 export const WATCH_REPO: RepoRef = { host: "github.com", owner: "jon-lange", name: "botbench" };
-export const WATCH_ADDRESS = "https://github.com/jon-lange/botbench.git";
+export const WATCH_ADDRESS = "https://github.com/botbenchhq/botbench.git";
 
 export interface WatchCapture {
   /** The exact command the list was taken with, as one line. */
@@ -30,7 +30,7 @@ export const CAPTURE_COMMAND = "BOTBENCH_CAPTURE_GH=1 BOTBENCH_LIVE_TESTS=1 node
 /** The capture, or an error saying how to take it: it is taken from the owner's own gh, never made up. */
 export function loadWatchCapture(): WatchCapture {
   if (!fs.existsSync(WATCH_CAPTURE_FILE)) {
-    throw new Error(`${path.relative(process.cwd(), WATCH_CAPTURE_FILE)} has not been captured yet. With gh signed in and an open issue of jon-lange/botbench carrying the label, run once: ${CAPTURE_COMMAND}`);
+    throw new Error(`${path.relative(process.cwd(), WATCH_CAPTURE_FILE)} has not been captured yet. With gh signed in and an open issue of botbenchhq/botbench carrying the label, run once: ${CAPTURE_COMMAND}`);
   }
   return JSON.parse(fs.readFileSync(WATCH_CAPTURE_FILE, "utf8")) as WatchCapture;
 }
@@ -63,7 +63,7 @@ export function replayWatchGh(o: { answer?: (args: readonly string[]) => GhResul
   };
 }
 
-/** The issue reads of the replay, added to `base`: the captured issue of jon-lange/botbench, read as the composer reads it. */
+/** The issue reads of the replay, added to `base`: the captured issue of botbenchhq/botbench, read as the composer reads it. */
 export function replayWatchIssue(base: GitHub): GitHub {
   const capture = loadWatchCapture();
   const { number } = capturedIssue(capture);

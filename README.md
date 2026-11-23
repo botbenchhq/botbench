@@ -82,7 +82,7 @@ Every task ends in things you can inspect: a branch, its diff, the output of you
 
 *The reviewer is another vendor's agent. Here Codex reviewed Claude Code's work in three rounds, and the task waited for a person to decide.*
 
-Botbench is built with Botbench where it can be. [Pull request #113](https://github.com/jon-lange/botbench/pull/113) is one it pushed and opened: its description is the task's evidence, from what was asked to the review.
+Botbench is built with Botbench where it can be. [Pull request #113](https://github.com/botbenchhq/botbench/pull/113) is one it pushed and opened: its description is the task's evidence, from what was asked to the review.
 
 ### The acceptance test
 
@@ -125,7 +125,7 @@ About ten minutes. It ends with a branch made by Claude Code in a practice repos
 **1. Get it and build the screens.** The server has nothing to install to run; the first `npm ci` brings what the build of the screens needs.
 
 ```sh
-git clone https://github.com/jon-lange/botbench.git
+git clone https://github.com/botbenchhq/botbench.git
 cd botbench
 npm ci
 npm ci --prefix web
@@ -224,10 +224,10 @@ Coding is where this starts. It is not meant to be where it ends.
 
 What is being built next, each with its issue:
 
-- **More between workbenches that talk directly** (Peers P5, [#154](https://github.com/jon-lange/botbench/issues/154), [ADR 0004](docs/adr/0004-peers-direct-messages.md)): pairing and questions and answers work today. The other six kinds of message (interface proposals, counters, accepts, blockers, review requests and verdicts), pairing across two Macs on a private network, and more than one pairing are planned. How much of it a person must approve is an open question, set out in [`docs/product/peers-autonomy-tradeoff.md`](docs/product/peers-autonomy-tradeoff.md); today the owner approves every message that leaves and handles every message that arrives.
-- **Work that depends on a teammate's work**, including two changes to different files that must meet one shared contract ([#172](https://github.com/jon-lange/botbench/issues/172)).
-- **One container per task** ([#72](https://github.com/jon-lange/botbench/issues/72)).
-- **A shorter first run** ([#174](https://github.com/jon-lange/botbench/issues/174)).
+- **More between workbenches that talk directly** (Peers P5, [#154](https://github.com/botbenchhq/botbench/issues/154), [ADR 0004](docs/adr/0004-peers-direct-messages.md)): pairing and questions and answers work today. The other six kinds of message (interface proposals, counters, accepts, blockers, review requests and verdicts), pairing across two Macs on a private network, and more than one pairing are planned. How much of it a person must approve is an open question, set out in [`docs/product/peers-autonomy-tradeoff.md`](docs/product/peers-autonomy-tradeoff.md); today the owner approves every message that leaves and handles every message that arrives.
+- **Work that depends on a teammate's work**, including two changes to different files that must meet one shared contract ([#172](https://github.com/botbenchhq/botbench/issues/172)).
+- **One container per task** ([#72](https://github.com/botbenchhq/botbench/issues/72)).
+- **A shorter first run** ([#174](https://github.com/botbenchhq/botbench/issues/174)).
 
 The order and the reasons are in [the plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md). The direction is in [`docs/product/positioning-concept.md`](docs/product/positioning-concept.md), and how Botbench compares with other projects, from a read of their source, is in [`docs/competitive/`](docs/competitive/README.md).
 
@@ -318,7 +318,7 @@ Do not put Botbench on the public internet. Its sign-in is one token, made for a
 | Know why it drives the vendors' programs, and how secrets are kept from agents | [`docs/adr/`](docs/adr/) |
 | Add another agent | [`CONTRIBUTING.md`, Adding an agent](CONTRIBUTING.md#adding-an-agent) |
 | Contribute a fix, run the tests | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| Report a bug | [GitHub issues](https://github.com/jon-lange/botbench/issues), with what you did, what you expected and what Botbench printed |
+| Report a bug | [GitHub issues](https://github.com/botbenchhq/botbench/issues), with what you did, what you expected and what Botbench printed |
 | Report a security problem | Not in an issue. See [`CONTRIBUTING.md`, Reporting a security problem](CONTRIBUTING.md#reporting-a-security-problem) |
 | See what is planned, and why | [The plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
 

@@ -22,7 +22,7 @@ What was actually run, as opposed to read. Each file is the record of one run of
   - **No warning about a workbench's own open pull requests:** one workbench built two issues that conflict with each other.
 - *Equal in both arms:* every issue finished; each branch alone passed its hidden tests (11 of 11); the merged result passed 7 of 10.
 
-**What this changes.** The claim on an issue is the least of the problem. The cost is in work that touches the same code under different issue numbers, and in how often a person is asked. Both point at the same next work: knowing what each workbench is changing before it starts, not at review ([#172](https://github.com/jon-lange/botbench/issues/172)), claims that lapse and cannot be doubled ([#173](https://github.com/jon-lange/botbench/issues/173), #188), warnings that carry signal (#189), and a decision on how much a person must approve for a team's own issues (see `docs/product/peers-autonomy-tradeoff.md`; the same question as for messages).
+**What this changes.** The claim on an issue is the least of the problem. The cost is in work that touches the same code under different issue numbers, and in how often a person is asked. Both point at the same next work: knowing what each workbench is changing before it starts, not at review ([#172](https://github.com/botbenchhq/botbench/issues/172)), claims that lapse and cannot be doubled ([#173](https://github.com/botbenchhq/botbench/issues/173), #188), warnings that carry signal (#189), and a decision on how much a person must approve for a team's own issues (see `docs/product/peers-autonomy-tradeoff.md`; the same question as for messages).
 
 ## Not yet run
 

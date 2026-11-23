@@ -1,5 +1,5 @@
 
-> @jon-lange/botbench@0.1.0 test
+> @botbenchhq/botbench@0.1.0 test
 > node web/vendor/design-system/checker/check.mjs --config web/design-system.config.json && node --test 'test/*.test.ts' 'test/!(live)/**/*.test.ts'
 
 0 findings, 0 waivers, 0 declared gaps, 38 files scanned, 41 rules

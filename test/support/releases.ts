@@ -35,17 +35,17 @@ export async function startReleaseServer(): Promise<ReleaseServer> {
   const requests: ReleaseServer["requests"] = [];
   const server = http.createServer((req, res) => {
     requests.push({ path: req.url ?? "", headers: req.headers });
-    if (req.url !== "/repos/jon-lange/botbench/releases/latest" || current === null) {
+    if (req.url !== "/repos/botbenchhq/botbench/releases/latest" || current === null) {
       res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ message: "Not Found", documentation_url: "https://docs.github.com/rest/releases/releases#get-the-latest-release", status: "404" }));
       return;
     }
-    const body = { ...captured, tag_name: current.tag, name: current.tag, body: current.notes, html_url: `https://github.com/jon-lange/botbench/releases/tag/${current.tag}` };
+    const body = { ...captured, tag_name: current.tag, name: current.tag, body: current.notes, html_url: `https://github.com/botbenchhq/botbench/releases/tag/${current.tag}` };
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(body));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
-    url: `http://127.0.0.1:${port}/repos/jon-lange/botbench/releases/latest`,
+    url: `http://127.0.0.1:${port}/repos/botbenchhq/botbench/releases/latest`,
     requests,
     publish: (r) => (current = r),
     close: () => new Promise((resolve) => (server.closeAllConnections(), server.close(() => resolve()))),
@@ -54,7 +54,7 @@ export async function startReleaseServer(): Promise<ReleaseServer> {
 
 /** Notes as release-please writes them. */
 export const notesFor = (version: string, line: string): string =>
-  `## [${version}](https://github.com/jon-lange/botbench/compare/v0.1.0...v${version}) (2026-11-24)\n\n\n### Features\n\n* ${line} ([#200](https://github.com/jon-lange/botbench/issues/200)) ([1a2b3c4](https://github.com/jon-lange/botbench/commit/1a2b3c4d5e6f))\n`;
+  `## [${version}](https://github.com/botbenchhq/botbench/compare/v0.1.0...v${version}) (2026-11-24)\n\n\n### Features\n\n* ${line} ([#200](https://github.com/botbenchhq/botbench/issues/200)) ([1a2b3c4](https://github.com/botbenchhq/botbench/commit/1a2b3c4d5e6f))\n`;
 
 /** Set package.json's version (and the lockfile's, when there is one) in a checkout. */
 export function bumpVersion(dir: string, version: string): void {

@@ -25,7 +25,7 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 // code to Codex replaying its real CLI (test/support/replay-github.ts, test/support/replay-chat.ts: the owner's approved
 // exception). Then the real Botbench process shows them.
 
-const ADDRESS = "https://github.com/jon-lange/botbench-delivery-fixture.git";
+const ADDRESS = "https://github.com/botbenchhq/botbench-delivery-fixture.git";
 
 interface Seeded {
   home: string;

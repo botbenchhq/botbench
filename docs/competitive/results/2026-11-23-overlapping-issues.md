@@ -1,13 +1,13 @@
 # Experiment 2, first version: three workbenches, overlapping issues
 
-Tracking issue: jon-lange/botbench #169. Run on 2026-11-23 (UTC), on the owner's Mac.
+Tracking issue: botbenchhq/botbench #169. Run on 2026-11-23 (UTC), on the owner's Mac.
 
 ## What was run
 
 - Botbench at `origin/main` commit `0d4b131324085b32978eaedc07559b76f38d1fad`, from a temporary git worktree at `<scratch>/exp2/botbench` (now removed). Three instances from that one folder: exp-a on port 4796, exp-b on 4797, exp-c on **4799** (4798 was already held by another process I do not own, `node scripts/listener.js`; I left it alone). Each had its own `BOTBENCH_HOME` under `<scratch>/exp2/homes/`. One settings file, `<scratch>/exp2/botbench.local.json`, passed with `BOTBENCH_CONFIG`, held all three clones' settings keyed by path (confirmed in `src/config.ts`: `repositories` is keyed by full path, matched by real path). Per clone: `"checks": ["npm test"]`, `"claimIssues": true`. Also `autonomy.mode: "semi"`, `maxCheckFixRounds: 1`, Claude Code model `haiku`. The settings file's `workbench` key is global, so the names were set per instance through `PUT /api/settings`.
 - Claude Code 2.1.322, model `claude-haiku-5-5` everywhere (planner and builder in arm A, the sessions in arm B). No reviewer. Node 26.13.0. Nothing ran with permissions bypassed.
 - Build note: `npm run build --prefix web` fails on a fresh checkout until the root `npm ci` is also run (the web type check reads `../src` and needs `@types/node`). The README quickstart only says `npm ci --prefix web`.
-- Practice repository: **jon-lange/botbench-experiment-overlap-1602d9** (private). It is `textkit`, a zero-dependency Node library: 8 source files under `src/`, one test file `test/basic.test.js`, `npm test` = `node --test test/`. Left in place with all pull requests open. Nothing was merged.
+- Practice repository: **botbenchhq/botbench-experiment-overlap-1602d9** (private). It is `textkit`, a zero-dependency Node library: 8 source files under `src/`, one test file `test/basic.test.js`, `npm test` = `node --test test/`. Left in place with all pull requests open. Nothing was merged.
 - Arm A was driven through the HTTP API by a script per developer (`<scratch>/exp2/dev.mjs`). It acts only on what that workbench's API returns. The warning words were made by importing Botbench's own `web/src/app/peers.ts` (`issueWarnings`, `overlapLines`, `oldClaims`), the same functions the composer and the task screen call, on the same `/api/peers` view, so the words are the ones the screens show. Logs: `<scratch>/exp2/arma/*.jsonl`.
 - Arm B: three `claude -p` sessions, default permission mode, `--allowedTools Read Edit Write Glob Grep "Bash(npm test)" "Bash(npm test:*)" "Bash(node --test:*)" "Bash(git:*)" "Bash(gh issue view:*)" "Bash(gh pr create:*)"`, each in its own fresh clone, each given its whole ordered list in one prompt (`<scratch>/exp2/armb/run.sh`).
 - Arm B ran first (11:11 to 11:13). That way its sessions could not see Botbench's pull requests. Botbench's view of other workbenches lists only `botbench/<workbench>/…` branches, so arm B's pull requests did not show up in arm A's warnings.
