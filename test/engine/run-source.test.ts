@@ -132,8 +132,8 @@ test("a run is made only from a task that is ready for review, accepted or rejec
   for (const done of ["awaiting_decision", "accepted", "rejected"] as const) {
     const task = finishedTask(r, done);
     assert.deepEqual(checkSource(r.db, { kind: "task", id: task.id }, r.repo), { kind: "task", id: task.id, repo: r.repo, branch: task.branch, label: `From task ${task.id}` });
-    // A rejected task's branch was deleted (as this one chose): the planner is told so, from the decision's record.
-    assert.equal(sourcePrompt(r.db, { kind: "task", id: task.id }).includes("deleted when the task was rejected"), done === "rejected");
+    // Whatever the decision (a rejected one deleted its branch here), the planner is told the task's id and branch name only.
+    assert.equal(sourcePrompt(r.db, { kind: "task", id: task.id }), `Botbench's record: the owner made this run from task ${task.id} in this repository, whose work is on the branch \`${task.branch}\`. The work above is the owner's own note; nothing an agent wrote is included.`);
   }
   const building = finishedTask(r, "building");
   assert.throws(() => checkSource(r.db, { kind: "task", id: building.id }, r.repo), refused(409, new RegExp(`^Task ${building.id} is still being built, so no run can be made from it yet\\. .*ready for review, accepted or rejected\\.$`)));

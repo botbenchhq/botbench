@@ -1,5 +1,4 @@
 import type { DatabaseSync } from "node:sqlite";
-import { taskDecision } from "./decision.ts";
 import { RunError } from "./run.ts";
 import { getTask, type TaskStatus } from "./task.ts";
 
@@ -114,15 +113,13 @@ export const runsMadeFrom = (db: DatabaseSync, taskId: number): number[] => db.p
 
 /**
  * What the planner of a run made from a source is told of it, from Botbench's own records only: for a task, its id and
- * its branch's name (and that the branch is gone, when it was deleted on rejecting); for a chat, only that it was one.
+ * its branch's name and nothing else (not its status or the owner's decision); for a chat, only that it was one.
  */
 export function sourcePrompt(db: DatabaseSync, source: RunSource): string {
   const note = "The work above is the owner's own note; nothing an agent wrote is included.";
   if (source.kind === "chat") return `Botbench's record: the owner made this run from a chat in Botbench. ${note}`;
-  const task = getTask(db, source.id);
-  const branch = task?.branch ?? null;
-  const gone = taskDecision(db, source.id)?.branch === "deleted";
-  const where = branch === null ? "which has no branch" : `whose work is on the branch \`${branch}\`${gone ? " (deleted when the task was rejected)" : ""}`;
+  const branch = getTask(db, source.id)?.branch ?? null;
+  const where = branch === null ? "which has no branch" : `whose work is on the branch \`${branch}\``;
   return `Botbench's record: the owner made this run from task ${source.id} in this repository, ${where}. ${note}`;
 }
 
