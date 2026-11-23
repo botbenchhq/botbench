@@ -50,14 +50,17 @@ import path from "node:path";
 import { test as base, type Locator, type Page } from "@playwright/test";
 import { MODE_SENTENCE } from "../web/src/app/run-words.ts";
 import { loadGhCapture } from "../test/support/replay-github.ts";
-import { ISSUE_ADDRESS, ISSUE_NUMBER } from "../test/support/replay-issue.ts";
+import { ISSUE_ADDRESS, ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../test/support/replay-issue.ts";
+import { parseIssueView } from "../src/github.ts";
 import { git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, chooseRepository, closeContext, choose, expect, messageBox, openComposer, openWork, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, chooseRepository, closeContext, choose, expect, messageBox, openComposer, openRow, openWork, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1280, height: 800 };
 const ENTRY = path.resolve(import.meta.dirname, "serve-replayed-northstar.ts");
+/** The issue as the replayed real gh answered for it. */
+const ISSUE = parseIssueView(loadIssueCapture().outputs.issue.result.stdout, ISSUE_REPO, ISSUE_NUMBER);
 
 /** The run's message, the same on both workbenches: it names the one issue, and asks for one task the planner cannot widen. */
 const MESSAGE = `Issue #${ISSUE_NUMBER}. Plan exactly one task, titled: Create calc.py as an exact copy of calc.txt in this first pass, then fix what the review finds. Its one criterion: calc.py defines add(a, b). Read calc.txt only, write with your Write or Edit tool, and run no command.`;
@@ -174,6 +177,16 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await matchDevice(page);
   await openComposer(page);
   await judge(page, "A, the composer", "a-composer", messageBox(page));
+  // The issue is read through the replayed real gh and shown to the owner, then not attached: a run that read an
+  // issue's text cannot be fully autonomous (see the header), so the run names it in its message instead.
+  await chooseRepository(page, world.alice);
+  const intake = await openRow(page, "From an issue");
+  await intake.getByLabel("Issue number or address").fill(String(ISSUE_NUMBER));
+  await intake.getByRole("button", { name: "Look it up" }).click();
+  await expect(intake.getByTestId("issue-preview").getByRole("heading", { name: ISSUE.title })).toBeVisible();
+  await expect(intake.getByTestId("issue-preview")).toContainText(`#${ISSUE_NUMBER} of github.com/cli/cli`);
+  await judge(page, "A, the issue as read", "a-issue-read", intake.getByTestId("issue-preview"));
+  await closeContext(page);
   await startRunIn(page, world.alice, MESSAGE, { mode: "Fully autonomous", review: "codex ?default", delivery: "Open a pull request" });
   await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
   const runA = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
@@ -273,6 +286,11 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   expect(task.branch).toMatch(new RegExp(`^botbench/alice/run-${runA}/task-${taskId}$`));
   const delivered = remoteBranches(world.bare);
   expect(delivered.get(task.branch), "the task's branch is on the shared remote at its head commit").toBe(task.headCommit);
+  // What was delivered fixes the review's concern and the check's failure, not only a summary that says so.
+  const deliveredCalc = git(world.bare, "show", `${task.headCommit}:calc.py`);
+  expect(deliveredCalc, "the delivered add adds").toMatch(/return a \+ b/);
+  expect(deliveredCalc, "the delivered add no longer subtracts").not.toMatch(/return a - b/);
+  expect(git(world.bare, "show", `${task.headCommit}:check-token.txt`).trim(), "the delivered token file is what the check wants").toBe(world.token);
   expect(delivered.get(lock), "A's claim stays, as its run opened a pull request").toBe(claimed.get(lock));
   expect(delivered.get(claimBranch)).toBe(claimed.get(lock));
   expect([...delivered.keys()].filter((branch) => branch.startsWith("botbench/bob/")), "nothing of B's is on the remote").toEqual([]);
