@@ -251,11 +251,9 @@ test("a task whose time to try again passed while Botbench was stopped is resume
 
   const opened = Date.now();
   const second = await e.open([finishes("two")]);
-  // Resumed at once; its checks, which then take it to Ready for review, may take longer on a busy machine.
-  await until(() => second.driver.starts.length === 1, "the task is resumed", 5000);
-  assert.ok(attemptStart(e.db, getTask(e.db, started.id)!.attemptId!) - opened < 3000, "resumed at once");
-  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the resumed task is ready for review");
+  await until(() => getTask(e.db, started.id)!.status === "awaiting_decision", "the task is resumed and ready for review", 5000);
   assert.equal(second.driver.starts.length, 1);
+  assert.ok(attemptStart(e.db, getTask(e.db, started.id)!.attemptId!) - opened < 3000, "resumed at once");
 });
 
 test("a run cancelled while a task waits ends that task as cancelled with its work committed; it never resumes, also after a restart, and the run's queued task is cancelled too", WITHIN, async (t) => {
