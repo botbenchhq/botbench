@@ -284,7 +284,10 @@ function allowAll(t: T, e: Line): void {
 const payloads = (db: DatabaseSync, attemptId: number): { type: string; at: number; payload: Record<string, unknown> }[] =>
   db.prepare("SELECT type, ts, payload FROM events WHERE attempt_id = ? ORDER BY id").all(attemptId).map((row) => ({ type: String(row.type), at: Date.parse(String(row.ts)), payload: JSON.parse(String(row.payload)) as Record<string, unknown> }));
 
-test("a builder whose command runs quietly for many times the silence limit, within the command's own limit, is not stopped: the clock waits for the command", WITHIN, async (t) => {
+/** The tests below wait several silence limits, each set from this machine's pace: a loaded machine needs longer. */
+const LONGER = { timeout: 180_000 };
+
+test("a builder whose command runs quietly for many times the silence limit, within the command's own limit, is not stopped: the clock waits for the command", LONGER, async (t) => {
   const limitMs = await limitFor(400);
   // Four limits of a real sleep, printing nothing, then a change to the copy; the recorded call names no limit of its
   // own, so it has Claude Code's two minutes.
@@ -317,7 +320,7 @@ test("a builder whose command runs quietly for many times the silence limit, wit
   assert.equal(git(e.repo, "show", `${task.branch!}:hello.txt`), "hi\n");
 });
 
-test("a command past its own time limit is still stopped: once that limit has passed the silence limit counts again, and the task says which command ran and for how long", WITHIN, async (t) => {
+test("a command past its own time limit is still stopped: once that limit has passed the silence limit counts again, and the task says which command ran and for how long", LONGER, async (t) => {
   const limitMs = await limitFor(400);
   const pids = tempDir("botbench-silence-pids-");
   t.after(() => fs.rmSync(pids, { recursive: true, force: true }));
@@ -330,7 +333,7 @@ test("a command past its own time limit is still stopped: once that limit has pa
 
   const task = getTask(e.db, started.id)!;
   assert.equal(task.status, "interrupted", task.reason ?? "");
-  assert.match(task.reason!, new RegExp(`^Claude Code went silent: it sent nothing for \\d+(\\.\\d)? seconds? while its command sh other\\.sh ran, past the command's own time limit of ${escaped(durationWords(limitMs))} and then the silence limit of ${escaped(durationWords(limitMs))} in Botbench's settings, so Botbench stopped it and everything it had started\\. The work done up to then is committed\\. Resume starts Claude Code again where it left off\\.$`));
+  assert.match(task.reason!, new RegExp(`^Claude Code went silent: it sent nothing more while its command sh other\\.sh ran for \\d+(\\.\\d)? seconds?, past the command's own time limit of ${escaped(durationWords(limitMs))} and then the silence limit of ${escaped(durationWords(limitMs))} in Botbench's settings, so Botbench stopped it and everything it had started\\. The work done up to then is committed\\. Resume starts Claude Code again where it left off\\.$`));
   const stored = payloads(e.db, task.attemptId!);
   const call = stored.find((event) => event.type === "tool_call")!;
   assert.equal((call.payload.input as { timeout: number }).timeout, limitMs);
@@ -342,4 +345,29 @@ test("a command past its own time limit is still stopped: once that limit has pa
   // The command and everything it started are gone.
   const sleeper = Number(fs.readFileSync(path.join(pids, "sleep"), "utf8").trim());
   await until(() => !alive(sleeper), "the command's sleep is stopped");
+});
+
+test("the owner's time to allow a command is not the command's: its own limit counts from the answer, so a quiet command after a long wait is not stopped", LONGER, async (t) => {
+  const limitMs = await limitFor(400);
+  // The call's own limit is one silence limit; the owner takes three to answer; then the command sleeps one and a half,
+  // printing nothing: past its limit counted from the call, within it counted from the answer.
+  const sleepMs = limitMs * 1.5;
+  const e = await line(t, buildReplayDriver(["ask"], { run: { timeoutMs: limitMs } }), limitMs, { files: { "README.md": "# Sample\n", "other.sh": `sleep ${sleepMs / 1000}\nprintf 'hi\\n' > hello.txt\n` } });
+  setAskEveryCommand(e.db, true);
+
+  const started = await e.tasks.start(e.repo, "Run the tests");
+  await until(() => listApprovals(e.db, "pending").length === 1, "the request waits for the owner");
+  await pause(limitMs * 3);
+  e.broker.answer(listApprovals(e.db, "pending")[0]!.id, "allow");
+  await e.tasks.idle();
+
+  const task = getTask(e.db, started.id)!;
+  assert.equal(task.status, "awaiting_decision", task.reason ?? "");
+  const stored = payloads(e.db, task.attemptId!);
+  const call = stored.find((event) => event.type === "tool_call")!;
+  const resolved = stored.find((event) => event.type === "permission_resolved")!;
+  const result = stored.find((event) => event.type === "tool_result")!;
+  assert.ok(result.at - call.at >= limitMs * 2 + limitMs, `from the call to its result took ${result.at - call.at} ms: more than its own limit and the silence limit after it`);
+  assert.ok(result.at - resolved.at >= sleepMs, `the command ran for ${result.at - resolved.at} ms`);
+  assert.equal(git(e.repo, "show", `${task.branch!}:hello.txt`), "hi\n");
 });

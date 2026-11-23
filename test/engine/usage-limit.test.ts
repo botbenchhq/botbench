@@ -242,12 +242,17 @@ test("a task whose time to try again passed while Botbench was stopped is resume
   // The wait the configuration names is an hour: a task that was not woken at once by the start would wait that long
   // (or for ever), so waiting for the resume with a generous ceiling tells the two apart on a machine of any speed.
   const e = await line(t, { waitMs: 60 * 60_000 });
-  const resetsAt = inMs(800);
-  const first = await e.open([limited("one", resetsAt)]);
+  // The agent gives a reset time 0.8 seconds after it reports the limit, worked out as it reports it, as a real agent's
+  // is: one fixed before the task started would already have passed on a loaded machine by the time it was reported,
+  // and Botbench would then rightly wait the configured hour instead (seen failing that way).
+  const soon = `$('${process.execPath}' -e 'console.log(new Date(Date.now() + 800).toISOString())')`;
+  const first = await e.open([`read go; echo one > one.txt; echo limit ${soon}; exit 1`]);
   const started = await first.tasks.start(e.repo, "Add two files");
   await until(() => getTask(e.db, started.id)!.status === "waiting_for_limit", "the task waits for the limit");
+  const retryAt = Date.parse(getTask(e.db, started.id)!.retryAt!);
+  assert.ok(retryAt - Date.now() < 60_000, `the agent's own reset time was kept, not the configured hour: it retries at ${getTask(e.db, started.id)!.retryAt}`);
   await first.close();
-  await pause(Math.max(0, Date.parse(resetsAt) - Date.now()) + 200);
+  await pause(Math.max(0, retryAt - Date.now()) + 200);
 
   const opened = Date.now();
   const second = await e.open([finishes("two")]);

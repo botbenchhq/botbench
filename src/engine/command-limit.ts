@@ -32,10 +32,20 @@ export interface RunningCommand {
  */
 export function commandOf(call: { id: string; name: string; input: unknown }, startedAt: number): RunningCommand | null {
   const input = call.input as { command?: unknown; timeout?: unknown } | null;
-  if (typeof input !== "object" || input === null || typeof input.command !== "string") return null;
-  const named = typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0 ? Math.min(input.timeout, MAX_COMMAND_LIMIT_MS) : null;
-  return { id: call.id, command: input.command, startedAt, limitMs: named ?? (call.name === "Bash" ? DEFAULT_COMMAND_LIMIT_MS : MAX_COMMAND_LIMIT_MS) };
+  if (typeof input !== "object" || input === null) return null;
+  // An agent of the Agent Client Protocol may give its command as the program and its arguments.
+  const command = typeof input.command === "string" ? input.command : Array.isArray(input.command) && input.command.every((part) => typeof part === "string") ? input.command.join(" ") : null;
+  if (command === null) return null;
+  // Only Claude Code's Bash is known to take its timeout in milliseconds: another agent's number could be seconds.
+  const named = call.name === "Bash" && typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0 ? Math.min(input.timeout, MAX_COMMAND_LIMIT_MS) : null;
+  return { id: call.id, command, startedAt, limitMs: named ?? (call.name === "Bash" ? DEFAULT_COMMAND_LIMIT_MS : MAX_COMMAND_LIMIT_MS) };
 }
+
+/**
+ * A command whose call waited for an answer starts running when it is allowed: the owner's time to answer is not the
+ * command's, so its own limit is counted from then. Returns the command as it runs from `at`.
+ */
+export const allowedAt = (command: RunningCommand, at: number): RunningCommand => ({ ...command, startedAt: at });
 
 /** When the silence clock may run again with these commands running: the latest end of their own limits; 0 for none. */
 export const pausedUntil = (running: Iterable<RunningCommand>): number => {
@@ -53,7 +63,8 @@ export function oldestCommand(running: Iterable<RunningCommand>): RunningCommand
 
 /**
  * The commands still running at the end of a list of events, in the driver's event shapes, each with the time it was
- * stored: those of the last turn whose call has neither returned nor been refused. For the task screen's transcript.
+ * stored: those of the last turn whose call has neither returned nor been refused, each timed from its call or, when it
+ * asked first, from the answer that let it run. For the task screen's transcript.
  */
 export function runningCommands(events: readonly { type: string; ts: string; payload: unknown }[]): RunningCommand[] {
   const running = new Map<string, RunningCommand>();
@@ -64,7 +75,11 @@ export function runningCommands(events: readonly { type: string; ts: string; pay
       const command = commandOf({ id: p.id, name: p.name, input: p.input }, Date.parse(event.ts));
       if (command !== null && Number.isFinite(command.startedAt)) running.set(command.id, command);
     } else if ((event.type === "tool_result" || event.type === "permission_denied") && typeof p?.id === "string") running.delete(p.id);
-    else if (event.type === "permission_resolved" && typeof p?.toolCallId === "string" && NOT_RUN.has(String(p.decision))) running.delete(p.toolCallId);
+    else if (event.type === "permission_resolved" && typeof p?.toolCallId === "string") {
+      const command = running.get(p.toolCallId);
+      if (NOT_RUN.has(String(p.decision))) running.delete(p.toolCallId);
+      else if (command !== undefined && Number.isFinite(Date.parse(event.ts))) running.set(p.toolCallId, allowedAt(command, Date.parse(event.ts)));
+    }
   }
   return [...running.values()];
 }

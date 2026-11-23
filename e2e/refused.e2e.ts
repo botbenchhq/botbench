@@ -116,3 +116,57 @@ test("seven refused commands, six of them here-documents of thousands of charact
     }
   }
 });
+
+// While a quiet command runs (#198): a real Botbench process whose Claude Code replays a recorded turn that runs
+// `sh other.sh` (e2e/serve-replayed-command.ts); the replay runs the test's own other.sh for real, which sleeps and prints
+// nothing. The task screen says which command runs, and its clock counts up against the command's own limit.
+const running = base.extend<{ dir: string; repo: string; botbench: Botbench }>({
+  dir: async ({}, use) => {
+    const dir = tempDir("botbench-e2e-running-");
+    await use(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  },
+  repo: async ({ dir }, use) => {
+    const repo = path.join(dir, "repo");
+    initRepo(repo, { "README.md": "# Sample\n", "other.sh": "sleep 120\n" });
+    await use(fs.realpathSync(repo));
+  },
+  botbench: async ({ dir }, use) => {
+    const botbench = await startBotbench({ home: path.join(dir, "home"), entry: path.resolve(import.meta.dirname, "serve-replayed-command.ts") });
+    await use(botbench);
+    await botbench.stop();
+  },
+});
+
+running("a task whose agent runs a quiet command says which command runs and for how long, within its own time limit, at 390 and 1280, light and dark", async ({ page, botbench, repo }) => {
+  await signIn(page, botbench);
+  const started = await page.request.post(`${botbench.base}/api/tasks`, { data: { repo, prompt: "Run the tests" } });
+  expect(started.status(), await started.text()).toBe(200);
+  const { taskId } = (await started.json()) as { taskId: number };
+  await page.goto(`${botbench.base}/#/tasks/${taskId}`);
+  // A confined command runs without asking; where it cannot be shown to run confined it asks, and the owner allows it.
+  const allow = page.getByRole("button", { name: "Allow", exact: true });
+  const line = page.getByText("Claude Code is running sh other.sh.");
+  await expect(line.or(allow)).toBeVisible({ timeout: 60_000 });
+  if (await allow.isVisible()) await allow.click();
+  await expect(line).toBeVisible({ timeout: 60_000 });
+  const clock = page.getByTestId("running-for");
+  await expect(clock).toHaveText(/^ \d+s so far, within its own time limit of 2 minutes\.$/);
+  // It counts up while the command runs.
+  const first = Number((await clock.textContent())!.match(/(\d+)s/)![1]);
+  await expect.poll(async () => Number((await clock.textContent())!.match(/(\d+)s/)![1]), { timeout: 10_000 }).toBeGreaterThan(first);
+
+  for (const size of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.setViewportSize(size);
+      await page.evaluate((mode) => window.localStorage.setItem("botbench.appearance", mode), colorScheme);
+      await page.reload();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme);
+      await expect(line).toBeVisible();
+      await expect(clock).toHaveText(/so far, within its own time limit of 2 minutes\.$/);
+      expect(await pageScrollsSideways(page), `the page scrolls sideways at ${size.width}, ${colorScheme}`).toBe(false);
+      await checkDesign(page, `a running command at ${size.width}, ${colorScheme}`);
+      if (SHOTS) await tallShot(page, path.join(SHOTS, `running-${size.width}-${colorScheme}.png`));
+    }
+  }
+});

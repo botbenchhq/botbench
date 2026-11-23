@@ -19,6 +19,9 @@ test("a shell command's limit is the timeout it names, cut to Claude Code's ten 
   assert.equal(commandOf({ ...call, input: { ...(call.input as object), timeout: 300_000 } }, 0)!.limitMs, 300_000);
   assert.equal(commandOf({ ...call, input: { ...(call.input as object), timeout: 3_600_000 } }, 0)!.limitMs, MAX_COMMAND_LIMIT_MS);
   assert.equal(commandOf({ id: "item-1", name: "shell", input: { command: "npm test" } }, 0)!.limitMs, MAX_COMMAND_LIMIT_MS);
+  // Another agent's timeout may not be milliseconds: it is not read. A command as the program and its arguments is one.
+  assert.equal(commandOf({ id: "item-2", name: "shell", input: { command: "npm test", timeout: 300 } }, 0)!.limitMs, MAX_COMMAND_LIMIT_MS);
+  assert.equal(commandOf({ id: "acp-1", name: "execute", input: { command: ["npm", "test"] } }, 0)!.command, "npm test");
   // Not a command: a file tool, or a call with no command line.
   assert.equal(commandOf({ id: "r", name: "Read", input: { file_path: "a.ts" } }, 0), null);
   assert.equal(commandOf({ id: "n", name: "Bash", input: null }, 0), null);
@@ -33,11 +36,13 @@ test("the clock pauses until the latest own limit of the commands running, and t
   assert.equal(oldestCommand([]), null);
 });
 
-test("from a stored transcript: the command is running between its call and its result, through the request and its answer, and not after; a refused one is not running", () => {
+test("from a stored transcript: the command is running between its call and its result, timed from the answer that allowed it, through the request and its answer, and not after; a refused one is not running", () => {
   const result = stored.findIndex((event) => event.type === "tool_result");
   const resolved = stored.findIndex((event) => event.type === "permission_resolved");
   const running = runningCommands(stored.slice(0, result));
-  assert.deepEqual(running.map((c) => [c.command, c.startedAt, c.limitMs]), [["sh other.sh", Date.parse(at(2)), DEFAULT_COMMAND_LIMIT_MS]]);
+  // It asked first, so it runs from the answer that allowed it, not from the call.
+  assert.deepEqual(running.map((c) => [c.command, c.startedAt, c.limitMs]), [["sh other.sh", Date.parse(at(resolved)), DEFAULT_COMMAND_LIMIT_MS]]);
+  assert.deepEqual(runningCommands(stored.slice(0, resolved)).map((c) => c.startedAt), [Date.parse(at(2))], "before the answer, from the call");
   assert.deepEqual(runningCommands(stored.slice(0, result + 1)), []);
   assert.deepEqual(runningCommands(stored), []);
   // Declined: the call never runs, though the CLI's own result has not come yet.

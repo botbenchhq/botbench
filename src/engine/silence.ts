@@ -3,7 +3,7 @@ import type { DriverSession } from "../drivers/contract.ts";
 import { killProcessGroup, processGroupAlive } from "../drivers/launch.ts";
 import { now } from "../store/db.ts";
 import { firstLine } from "../shorten.ts";
-import { commandOf, durationWords, NOT_RUN, oldestCommand, pausedUntil, type RunningCommand } from "./command-limit.ts";
+import { allowedAt, commandOf, durationWords, NOT_RUN, oldestCommand, pausedUntil, type RunningCommand } from "./command-limit.ts";
 
 export { durationWords };
 
@@ -71,7 +71,11 @@ export function watchSilence(session: DriverSession, limitMs: number, waiting: (
       const command = commandOf(event, Date.now());
       if (command !== null) running.set(command.id, command);
     } else if (event.type === "tool_result" || event.type === "permission_denied") running.delete(event.id);
-    else if (event.type === "permission_resolved" && NOT_RUN.has(event.decision)) running.delete(event.toolCallId);
+    else if (event.type === "permission_resolved") {
+      const command = running.get(event.toolCallId);
+      if (NOT_RUN.has(event.decision)) running.delete(event.toolCallId);
+      else if (command !== undefined) running.set(event.toolCallId, allowedAt(command, Date.now()));
+    }
     arm();
   });
   function clear(): void {
@@ -94,7 +98,7 @@ export function silenceReason(agent: string, limitMs: number, during: StoppedDur
 
 /** The part of a silence reason that names the command that was running: what ran, for how long, and the two limits it went past. */
 function commandSilence({ command, at }: StoppedDuring, limitMs: number): string {
-  return `it sent nothing for ${durationWords(roundedMs(at - command.startedAt))} while its command ${firstLine(command.command, 80)} ran, past the command's own time limit of ${durationWords(command.limitMs)} and then the silence limit of ${durationWords(limitMs)} in Botbench's settings`;
+  return `it sent nothing more while its command ${firstLine(command.command, 80)} ran for ${durationWords(roundedMs(at - command.startedAt))}, past the command's own time limit of ${durationWords(command.limitMs)} and then the silence limit of ${durationWords(limitMs)} in Botbench's settings`;
 }
 
 /** A measured time rounded to what the owner reads: whole minutes from a minute up, tenths of a second below. */
@@ -108,7 +112,7 @@ export function plannerSilenceReason(agent: string, limitMs: number, during: Sto
 }
 
 /** Whether a task was stopped because its builder went silent: its Resume tells the agent so. */
-export const stoppedForSilence = (task: { status: string; reason: string | null }): boolean => task.status === "interrupted" && task.reason !== null && / went silent: it sent nothing for /.test(task.reason);
+export const stoppedForSilence = (task: { status: string; reason: string | null }): boolean => task.status === "interrupted" && task.reason !== null && / went silent: it sent nothing (for|more while its command) /.test(task.reason);
 
 /**
  * Make sure nothing of an attempt's process group is left: the group its driver recorded is killed if anything of it
