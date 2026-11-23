@@ -13,6 +13,8 @@ import { PullRequestSection } from "../components/pull-request.tsx";
 import { modelName, modelState, sessionModel, useModelList } from "../components/model-picker.tsx";
 import { ResumeControl } from "../components/resume.tsx";
 import { answeredOther, fileMarks, fileMarksLine, notMergedLine, offersMerge, statusSentence, taskTitle } from "../components/task-status.ts";
+import { LOOKS } from "../components/looks.ts";
+import { StatusBadge } from "../components/status.tsx";
 import { folderName } from "../app/composer.ts";
 import { overlapLines } from "../app/peers.ts";
 import { usePeersOf } from "../components/other-workbenches.tsx";
@@ -344,9 +346,9 @@ export function TaskScreen({ id, onSignedOut }: { id: number; onSignedOut: () =>
                             <summary className="ds-disclosure__summary">
                               <code data-ds-content="">{file.path}</code>
                               {fileMarks(file).map((mark) => (
-                                <span key={mark} className="ds-badge ds-badge--warning">
+                                <StatusBadge key={mark} look={LOOKS.fileMark}>
                                   {mark}
-                                </span>
+                                </StatusBadge>
                               ))}
                               <span className="ds-disclosure__meta">
                                 {file.status} <Counts file={file} />

@@ -22,6 +22,8 @@ export const LOOKS = {
   // Not in the set, and no tone of the set says "where this came from": a run or task that read a GitHub issue, which
   // people outside the project wrote. Drawn neutral, with words that say it.
   outsideText: { tone: "neutral", icon: "info" },
+  // Not in the set: a mark on a changed file (protected, or not expected from the plan). A caution, not a failure.
+  fileMark: { tone: "warning", icon: "circle-alert" },
 } as const satisfies Record<string, { tone: Tone; icon: string }>;
 // Each icon is checked against the sprite's names where it is drawn, in status.tsx.
 
