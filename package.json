@@ -1,6 +1,6 @@
 {
   "name": "@botbenchhq/botbench",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A self-hosted software factory that drives the AI coding CLIs you already pay for",
   "private": true,
   "type": "module",
