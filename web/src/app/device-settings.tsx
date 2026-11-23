@@ -4,7 +4,11 @@ import { ConfirmAction } from "../components/confirm.tsx";
 import { DeviceCode } from "../components/connect-sheet.tsx";
 import { Alert } from "../components/header.tsx";
 import { QrCode } from "../components/qr-code.tsx";
+import { byteCapacity, MAX_VERSION } from "./qr.ts";
 import { groupCode, signInAddress } from "./sign-in-code.ts";
+
+/** Whether the encoder can draw this text: at most what a version-10 symbol holds. */
+const qrFits = (text: string): boolean => new TextEncoder().encode(text).length <= byteCapacity(MAX_VERSION);
 
 const when = (ts: string): string => new Date(ts).toLocaleString();
 const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -75,10 +79,19 @@ function AddDevice({ onSignedOut }: { onSignedOut: () => void }) {
         <div className="ds-device-code" data-testid="pairing">
           <ol className="ds-device-code__steps">
             <li className="ds-device-code__step">
-              <p>
-                On the other device, scan this QR code with the camera, or open <span data-ds-content="">{window.location.origin}</span> and choose Code.
-              </p>
-              <QrCode text={signInAddress(window.location.origin, shown.code)} label={`QR code of the sign-in address with the code ${shown.code}`} testId="pairing-qr" />
+              {qrFits(signInAddress(window.location.origin, shown.code)) ? (
+                <>
+                  <p>
+                    On the other device, scan this QR code with the camera, or open <span data-ds-content="">{window.location.origin}</span> and choose Code.
+                  </p>
+                  <QrCode text={signInAddress(window.location.origin, shown.code)} label={`QR code of the sign-in address with the code ${shown.code}`} testId="pairing-qr" />
+                </>
+              ) : (
+                // An address too long for the QR code: the code alone still adds the device.
+                <p>
+                  On the other device, open <span data-ds-content="">{window.location.origin}</span> and choose Code.
+                </p>
+              )}
             </li>
             <li className="ds-device-code__step">
               <p>Enter this code there, if the QR code did not fill it in:</p>
