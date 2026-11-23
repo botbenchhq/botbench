@@ -117,8 +117,10 @@ test("an empty note, one over the length limit, one that is not text, and a body
     assert.match(String(refused.body.error), reason);
   }
   assert.equal(stored(api, task.id), 0);
-  // At the limit it is taken.
+  // At the limit it is taken; and a note is stored exactly as typed, its indentation and line breaks included.
   assert.equal((await send(api, task.id, { text: "x".repeat(MAX_NOTE) })).status, 200);
+  const indented = "    keep this indented\n  and this\n";
+  assert.equal(((await send(api, task.id, { text: indented })).body.note as Body).text, indented);
 });
 
 test("a note to a task that is not building, or to no task, is refused with the reason and the right status, and nothing is stored for it", async (t) => {

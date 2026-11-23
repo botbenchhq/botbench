@@ -17,7 +17,7 @@ import { autoAccept, modeRefusals, reviewOutcome, runModeOf } from "./modes.ts";
 import { insertRefinement, loopVerdict, parseRefineReply, refineCap, refineRoundOf, taskRefinements } from "./refine.ts";
 import { reviewAssignment, runReview, storeUnfinishedReview, taskReview, taskReviews } from "./review.ts";
 import { agentName, IMPLEMENTER, refinePrompt } from "./roles.ts";
-import { claimNote, leftBuilding, NOT_DELIVERED, NOTE_REFUSED, NOTE_TOO_LATE, noteProblem, queueNoteIn, settleWaiting, settleWaitingIn, type TaskNote } from "./notes.ts";
+import { deliverNoteIn, leftBuilding, NOT_DELIVERED, NOTE_REFUSED, NOTE_TOO_LATE, noteProblem, queueNoteIn, settleWaiting, settleWaitingIn, waitingNote, type TaskNote } from "./notes.ts";
 import { firstLine } from "../shorten.ts";
 import { confirmGroupGone, durationWords, SILENCE_LIMIT_MS, silenceReason, stoppedForSilence, watchSilence, type SilenceWatch } from "./silence.ts";
 import { protectedWords, taskScope, type FileScope } from "./scope.ts";
@@ -843,7 +843,8 @@ export function createTasks(options: TasksOptions): Tasks {
 
   /**
    * `drive`'s work. The prompt is sent, and then, while each turn ends normally and the owner's note waits
-   * (engine/notes.ts), the note is claimed and sent as the next message of the same session: the same attempt, its
+   * (engine/notes.ts), the note is sent as the next message of the same session, and marked delivered with the session's
+   * record of it (`sendNote`): the same attempt, its
    * admission, confinement and permission check, so it adds no permission beyond the build's. Only once no note waits
    * does the task go on to be committed and checked. A turn that ends any other way leaves a waiting note unsent, marked
    * not delivered with the reason.
@@ -890,17 +891,27 @@ export function createTasks(options: TasksOptions): Tasks {
     let end: TurnEndReason | "not sent";
     /** The silence watch of each turn sent, the last one's turn the one that ended last. */
     const watches: SilenceWatch[] = [];
-    /** Send one message and wait for its turn to end, with the silence limit watching that turn. */
-    const send = async (message: string): Promise<TurnEndReason> => {
+    /** Send one message, with the silence limit watching its turn; resolves with how the turn ended. */
+    const startTurn = (message: string): Promise<TurnEndReason> => {
       // Registered after the listener above, so it reads the requests the CLI waits on as they stand after each event.
       const silence = watchSilence(session, silenceLimit, () => asking.size > 0);
       watches.push(silence);
-      try {
-        return await session.sendTurn(message);
-      } finally {
-        silence.clear();
-      }
+      return session.sendTurn(message).finally(() => silence.clear());
     };
+    /**
+     * Send the waiting note as the next message, and mark it delivered in the same transaction as the session's record of
+     * it: a driver records the message it takes before it hands it on, in the same step as `sendTurn`, and records
+     * nothing for one it refuses. So the note is marked delivered only once the session took it, and the record and the
+     * mark are stored together or not at all. One the session refused stays waiting, and is settled when the turn ends.
+     */
+    const sendNote = (note: TaskNote): Promise<TurnEndReason> =>
+      transaction(db, () => {
+        const before = Number(db.prepare("SELECT coalesce(max(id), 0) AS id FROM events WHERE attempt_id = ?").get(session.attemptId)!.id);
+        const turn = startTurn(note.text);
+        const took = db.prepare("SELECT 1 FROM events WHERE attempt_id = ? AND id > ? AND type = 'user_prompt' LIMIT 1").get(session.attemptId, before) !== undefined;
+        if (took) deliverNoteIn(db, note.id, session.attemptId);
+        return turn;
+      });
     /** Whether the task goes on after a turn that ended normally: Botbench is not stopping and its run was not cancelled. */
     const goesOn = (): boolean => !closed && stopped?.aborted !== true && !cancelled(task);
     /** The builder's reply to this drive's own prompt: a round of fixes is recorded from it, not from its answer to a note. */
@@ -909,15 +920,20 @@ export function createTasks(options: TasksOptions): Tasks {
       // Botbench began stopping, or the run was cancelled, while the attempt was starting: the turn is not sent.
       if (!goesOn()) end = "not sent";
       else {
-        let last = await send(prompt);
+        let last = await startTurn(prompt);
         ownReply = reply;
-        // The owner's note, as the next message of this session. It is claimed (marked delivered) in the write that
-        // takes it out of waiting, before it is sent, so nothing sends it twice; one sent meanwhile waits for this turn.
+        // The owner's note, as the next message of this session (`sendNote`); one sent meanwhile waits for this turn.
         while (last === "completed" && goesOn()) {
-          const next = claimNote(db, id, session.attemptId);
+          const next = waitingNote(db, id);
           if (next === null) break;
+          const turn = sendNote(next);
           options.onTaskChange(getTask(db, id)!);
-          last = await send(next.text);
+          last = await turn;
+          // The session did not take it (the note still waits): it is not sent again; the end below settles it.
+          if (waitingNote(db, id)?.id === next.id) {
+            if (last === "completed") last = "error";
+            break;
+          }
         }
         end = last;
       }

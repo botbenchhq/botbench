@@ -99,8 +99,8 @@ test("a note sent while the builder works is its next message in the same attemp
   await e.builder.held(0);
   const attemptId = getTask(e.db, task.id)!.attemptId!;
 
-  const sent = e.tasks.sendNote(task.id, `  ${NOTE}\n`);
-  assert.equal(sent.note.text, NOTE, "kept without the blank space around it");
+  const sent = e.tasks.sendNote(task.id, NOTE);
+  assert.equal(sent.note.text, NOTE);
   assert.equal(sent.note.state, "waiting");
   assert.equal(sent.replaced, null);
   assert.equal(waitingNote(e.db, task.id)?.text, NOTE);
