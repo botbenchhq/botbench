@@ -199,10 +199,11 @@ export function DeviceSettings({ onSignedOut }: { onSignedOut: () => void }) {
             <p className="ds-settings-row__label">{device.device}</p>
             <p className="ds-settings-row__description">{`Signed in ${when(device.signedInAt)}. Last used ${when(device.lastUsedAt)}.`}</p>
           </div>
-          <div className="ds-settings-row__control">
+          {/* The device names the group, so a Sign out that is busy, and reads "Signing out", still says which device. */}
+          <div className="ds-settings-row__control" role="group" aria-label={device.device} data-ds-content-label="">
             {device.current && <p className="ds-settings-row__status">This device</p>}
             {device.current ? (
-              <ConfirmAction label="Sign out" opener={{ small: false, name: "Sign out this device" }} title="Sign out this device?" confirmLabel="Sign out" cancelLabel="Stay signed in" disabled={busy !== null && busy !== device.id} busy={busy === device.id} busyLabel="Signing out" losing testId="sign-out-dialog" onConfirm={() => signOut(device)}>
+              <ConfirmAction label="Sign out" opener={{ small: false, name: "Sign out this device", object: "this device" }} title="Sign out this device?" confirmLabel="Sign out" cancelLabel="Stay signed in" disabled={busy !== null && busy !== device.id} busy={busy === device.id} busyLabel="Signing out" losing testId="sign-out-dialog" onConfirm={() => signOut(device)}>
                 <p>You will need the login token to sign in again on this device.</p>
               </ConfirmAction>
             ) : (

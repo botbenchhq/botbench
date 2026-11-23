@@ -178,7 +178,7 @@ test("Take back stays focused and busy while it is sent, and the focus then goes
     const rows = page.getByTestId("grant-list").getByRole("listitem");
     await expect(rows.getByTestId("grant-command")).toHaveText(["npm test", "npm run lint", "make build"]);
 
-    // While the request is held, the pressed button says Taking back, is busy, stays enabled and keeps the focus the closing dialog gave back to it.
+    // While the request is held, the pressed button says Taking back and still names its command, is busy, stays enabled and keeps the focus the closing dialog gave back to it.
     let release = (): void => {};
     const held = new Promise<void>((resolve) => (release = resolve));
     await page.route(/\/api\/grants\/\d+\/revoke$/, async (route) => {
@@ -187,8 +187,9 @@ test("Take back stays focused and busy while it is sent, and the focus then goes
     });
     await page.getByRole("button", { name: "Take back npm run lint" }).click();
     await page.getByTestId("take-back-confirm").getByRole("button", { name: "Take it back" }).click();
-    const taking = rows.nth(1).getByRole("button", { name: "Taking back" });
+    const taking = rows.nth(1).getByRole("button", { name: "Taking back npm run lint", exact: true });
     await expect(taking).toHaveAttribute("aria-busy", "true");
+    await expect(taking).toHaveText("Taking back npm run lint");
     await expect(taking).toBeEnabled();
     await expect(taking).toBeFocused();
     // A second press is ignored: no dialog opens.
@@ -197,10 +198,25 @@ test("Take back stays focused and busy while it is sent, and the focus then goes
     await expect(page.getByRole("button", { name: "Take back npm test" })).toBeDisabled();
     await checkDesign(page, "trust, taking back");
     await expect(taking).toBeFocused();
-    release();
 
+    // Until the list is read again the row stays, and its button stays busy: the request is held here to see it.
+    let read = (): void => {};
+    const reading = new Promise<void>((resolve) => (read = resolve));
+    await page.route(/\/api\/grants$/, async (route) => {
+      await reading;
+      await route.continue();
+    });
+    const asked = page.waitForRequest(/\/api\/grants$/);
+    release();
+    await asked;
+    await expect(rows).toHaveCount(3);
+    await expect(taking).toHaveAttribute("aria-busy", "true");
+    await taking.press("Enter");
+    await expect(page.getByTestId("take-back-confirm")).toHaveCount(0);
+    read();
     // The row is gone, and the focus is on the row that took its place.
     await expect(rows.getByTestId("grant-command")).toHaveText(["npm test", "make build"]);
+    await page.unroute(/\/api\/grants$/);
     await page.unroute(/\/api\/grants\/\d+\/revoke$/);
     await expect(page.getByRole("button", { name: "Take back make build" })).toBeFocused();
     // The last row gone: the row before it.

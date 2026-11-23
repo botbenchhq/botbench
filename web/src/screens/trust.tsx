@@ -238,16 +238,17 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
     [onSignedOut],
   );
 
-  const load = useCallback((): void => {
+  /** Reads the grants and the log's newest page again; the promise ends when the grants have answered, read or not. */
+  const load = useCallback((): Promise<void> => {
     const read = ++reads.current;
-    listGrants().then((answer) => {
+    getActionLog(PAGE).then((page) => read === reads.current && setLog(page), failed("The activity could not be read."));
+    return listGrants().then((answer) => {
       setGrants(answer.grants);
       setOfferAfter(answer.offerStandingAfter);
     }, failed("The always-allowed commands could not be read."));
-    getActionLog(PAGE).then((page) => read === reads.current && setLog(page), failed("The activity could not be read."));
   }, [failed]);
 
-  useEffect(load, [load]);
+  useEffect(() => void load(), [load]);
 
   // The row of a grant taken back held the focus, on its Take back button. Once the list no longer has it, the focus
   // goes to the Take back button of the row that took its place, or to the section's heading when none is left. A
@@ -281,14 +282,14 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
     setProblem(null);
     const at = grants?.findIndex((g) => g.id === grant.id) ?? 0;
     revokeGrant(grant.id).then(() => {
-      setTakingBack(null);
       setTaken({ id: grant.id, at });
-      load();
+      // The button stays busy until the list is read again and its row goes: it is never live again in between.
+      void load().then(() => setTakingBack(null));
     }, (err: unknown) => {
       failed("Always allow was not taken back.")(err);
       // Taken back elsewhere meanwhile, the row goes all the same once the list is read again.
       setTaken({ id: grant.id, at });
-      load();
+      void load();
     });
   };
 
@@ -332,7 +333,7 @@ export function Permissions({ onSignedOut }: { onSignedOut: () => void }) {
                   <div className="ds-list__action">
                     <ConfirmAction
                       label="Take back"
-                      opener={{ small: true, name: `Take back ${visible(grant.command)}` }}
+                      opener={{ small: true, name: `Take back ${visible(grant.command)}`, object: visible(grant.command), theirs: true }}
                       title="Stop always allowing this command?"
                       confirmLabel="Take it back"
                       cancelLabel="Keep it"

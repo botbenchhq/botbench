@@ -22,7 +22,7 @@ function NoteRow({ note, number, locked, forgetting, onEdit, onForget }: { note:
         <button type="button" data-memory-edit={note.id} disabled={locked || forgetting} data-ds-content-label="" aria-label={`Edit note ${number}: ${note.text}`} onClick={onEdit} className="ds-button ds-button--quiet ds-button--small">
           Edit
         </button>
-        <ConfirmAction label="Forget" opener={{ small: true, name: `Forget note ${number}: ${note.text}` }} title="Forget this note?" confirmLabel="Forget" cancelLabel="Keep it" disabled={locked} busy={forgetting} busyLabel="Forgetting" losing testId={`memory-forget-${note.id}`} onConfirm={onForget}>
+        <ConfirmAction label="Forget" opener={{ small: true, name: `Forget note ${number}: ${note.text}`, object: `note ${number}: ${note.text}`, theirs: true }} title="Forget this note?" confirmLabel="Forget" cancelLabel="Keep it" disabled={locked} busy={forgetting} busyLabel="Forgetting" losing testId={`memory-forget-${note.id}`} onConfirm={onForget}>
           <p>Botbench removes it from memory and keeps no copy there. Agents are no longer given it. Chats and runs that already had it keep their words.</p>
         </ConfirmAction>
       </span>
@@ -82,7 +82,9 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
   const [editing, setEditing] = useState<Editing | null>(null);
   /** The id of the note being forgotten. */
   const [forgetting, setForgetting] = useState<number | null>(null);
-  const [focusEdit, setFocusEdit] = useState<number | null>(null);
+  /** Where the focus goes once the list is drawn again: a note's Edit button, or the heading when no note is left. */
+  const [focusEdit, setFocusEdit] = useState<number | "heading" | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const group = useRef<HTMLDivElement>(null);
 
   const failed = (what: string) => (err: unknown): void => {
@@ -100,8 +102,10 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
   // After Save or Cancel, the focus goes back to the row's Edit button.
   useEffect(() => {
     if (focusEdit === null) return;
-    group.current?.querySelector<HTMLButtonElement>(`[data-memory-edit="${focusEdit}"]`)?.focus();
     setFocusEdit(null);
+    // Only a focus that went with the editor or the row is placed; one the owner moved elsewhere meanwhile stays.
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    (focusEdit === "heading" ? heading.current : group.current?.querySelector<HTMLButtonElement>(`[data-memory-edit="${focusEdit}"]`))?.focus();
   }, [focusEdit, list, editing]);
 
   const close = (noteId: number): void => {
@@ -144,9 +148,9 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
       (found) => {
         setList(found);
         setForgetting(null);
-        // The focus goes to the Edit button of the note that took its place, or of the one before it when it was last.
-        const next = takesItsPlace(found.notes, at);
-        if (next !== undefined) setFocusEdit(next.id);
+        // The focus goes to the Edit button of the note that took its place, or of the one before it when it was last,
+        // or to the heading when no note is left.
+        setFocusEdit(takesItsPlace(found.notes, at)?.id ?? "heading");
       },
       (err: unknown) => {
         setForgetting(null);
@@ -159,7 +163,7 @@ export function MemorySettings({ onSignedOut }: { onSignedOut: () => void }) {
   const notes = list?.notes ?? [];
   return (
     <div ref={group} data-testid="memory-settings" className="ds-settings-row__group" role="group" aria-labelledby={`${id}-heading`}>
-      <h2 className="ds-settings-row__heading" id={`${id}-heading`}>
+      <h2 ref={heading} tabIndex={-1} className="ds-settings-row__heading" id={`${id}-heading`}>
         Memory
       </h2>
       <p className="ds-settings-row__description">

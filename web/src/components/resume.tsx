@@ -35,7 +35,8 @@ export function ResumeControl({ taskId, note, name, primary, onResumed, onSigned
         </Alert>
       )}
       <p data-testid="resume-note">{note}</p>
-      <div className="ds-cluster">
+      {/* What is resumed names the group, so the button that is busy, and reads "Resuming", still says which task. */}
+      <div className="ds-cluster" role={name === undefined ? undefined : "group"} aria-label={name}>
         <BusyButton variant={primary ? "primary" : "secondary"} busy={busy} busyLabel="Resuming" aria-label={name === undefined ? undefined : `Resume ${name}`} onClick={resume}>
           Resume
         </BusyButton>

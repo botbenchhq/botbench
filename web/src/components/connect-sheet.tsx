@@ -290,7 +290,7 @@ export function AgentConnection({ agent, product, installed, supported, signedIn
   if (signedIn) {
     return (
       <>
-        <ConfirmAction label="Disconnect" opener={{ small: true, name: `Disconnect ${product}` }} title={`Disconnect ${product}?`} confirmLabel="Disconnect" cancelLabel="Keep connected" disabled={false} busy={busy} busyLabel="Disconnecting" losing testId={`disconnect-${agent}`} onConfirm={disconnect}>
+        <ConfirmAction label="Disconnect" opener={{ small: true, name: `Disconnect ${product}`, object: product }} title={`Disconnect ${product}?`} confirmLabel="Disconnect" cancelLabel="Keep connected" disabled={false} busy={busy} busyLabel="Disconnecting" losing testId={`disconnect-${agent}`} onConfirm={disconnect}>
           {connect.keptByBotbench ? (
             <>Botbench removes the sign-in it keeps for {product} in its own folder. {product} is then not connected in Botbench until you connect it again. {product} in a terminal or its app, signed in on its own, is not changed.</>
           ) : (
