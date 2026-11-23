@@ -237,7 +237,8 @@ function givenPath(tool: string, command: string): string | null {
     // A Read with nothing but its path is shown as the path itself.
     return tool === "Read" && command !== "" ? command : null;
   }
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  // A Read's path alone may itself read as JSON (a file named `123` or `null`): it is still the path.
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return tool === "Read" && command !== "" ? command : null;
   const fields = input as Record<string, unknown>;
   const found = fields.file_path ?? fields.notebook_path;
   return typeof found === "string" && found !== "" ? found : null;

@@ -255,7 +255,12 @@ function decide(request: GateRequest, grants: readonly Grant[], settings: FloorS
   if (readField !== undefined) {
     const where = input[readField];
     if (request.tool !== "Read" && (reachesOut(input.pattern) || reachesOut(input.glob))) return { verdict: "ask", why: "outside_copy" };
-    if (where === undefined && request.tool !== "Read") return { verdict: "allow", rule: "worktree_read" };
+    // A search with no path looks in the folder the agent stands in: allowed only when that folder is the worktree or inside it.
+    if (where === undefined && request.tool !== "Read") {
+      const here = path.resolve(request.cwd);
+      const inCopy = (here === path.resolve(request.worktree) && real(here) === real(path.resolve(request.worktree))) || insideWorktree(request.worktree, request.worktree, here) !== null;
+      return inCopy ? { verdict: "allow", rule: "worktree_read" } : { verdict: "ask", why: "outside_copy" };
+    }
     const target = typeof where === "string" ? path.resolve(request.cwd, where) : null;
     const inside = target !== null && (target === path.resolve(request.worktree) || insideWorktree(request.worktree, request.cwd, where) !== null);
     if (inside) return { verdict: "allow", rule: "worktree_read" };

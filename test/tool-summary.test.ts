@@ -160,6 +160,7 @@ test("an approval card names the file of a file tool and the folder otherwise, i
   // A relative path from a folder nobody reported: the path as given, and that its start is not known.
   assert.deepEqual(placeWords({ tool: "Write", cwd: "", target: null, command: JSON.stringify({ file_path: "src/a.ts", content: "x" }) }), { term: "File", words: "src/a.ts (the folder it starts from was not reported)" });
   assert.deepEqual(placeWords({ tool: "Read", cwd: "", target: null, command: "notes.md" }), { term: "File", words: "notes.md (the folder it starts from was not reported)" });
+  for (const name of ["123", "null", "[1]", '"x"']) assert.deepEqual(placeWords({ tool: "Read", cwd: "", target: null, command: name }), { term: "File", words: `${name} (the folder it starts from was not reported)` }, name);
   assert.deepEqual(bannedIn("src/a.ts (the folder it starts from was not reported)"), []);
   // A search: the folder it looks in.
   assert.deepEqual(placeWords({ tool: "Grep", cwd: ".", target: "/etc", command: "{}" }), { term: "Folder", words: "/etc (outside the task's copy)" });

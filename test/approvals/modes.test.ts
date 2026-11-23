@@ -54,15 +54,18 @@ const KINDS = {
   "edit outside the copy from a sub-folder": { tool: "Write", input: { file_path: "../../elsewhere.txt", content: "x" }, cwd: path.join(WORKTREE, "sub"), shell: false, floor: false },
   "read of this session's saved output": { tool: "Read", input: { file_path: path.join(SESSION_OUTPUT, "toolu_01.txt") }, shell: false, floor: false, savedOutput: true },
   "read of another session's saved output": { tool: "Read", input: { file_path: path.join(SESSION_OUTPUT, "..", "..", "other-session", "tool-results", "toolu_01.txt") }, shell: false, floor: false },
+  "search with no path from inside the copy": { tool: "Grep", input: { pattern: "x" }, cwd: path.join(WORKTREE, "sub"), shell: false, floor: false, read: true },
+  "search with no path from outside the copy": { tool: "Glob", input: { pattern: "**/*.pem" }, cwd: path.dirname(WORKTREE), shell: false, floor: false },
   "read elsewhere in the CLI's folder": { tool: "Read", input: { file_path: path.join(HOME, ".claude", "settings.json") }, shell: false, floor: false },
-} as const satisfies Record<string, { tool: string; input: Record<string, unknown>; shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; cwd?: string; savedOutput?: boolean; granted?: boolean }>;
+} as const satisfies Record<string, { tool: string; input: Record<string, unknown>; shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; cwd?: string; savedOutput?: boolean; granted?: boolean; read?: boolean }>;
 type Kind = keyof typeof KINDS;
 
 const ask = (request: GateRequest, grants: Grant[] = []): GateVerdict => gate(request, grants, { home: HOME });
 
 /** The rule the owner gave, written out once, independent of the gate's own code. */
-function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean): GateVerdict["verdict"] | "preapproved" | "mode" | "edit" | "saved output" {
-  const k: { shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; savedOutput?: boolean; granted?: boolean } = KINDS[kind];
+function expected(mode: RunMode, kind: Kind, confined: boolean, preapproved: boolean): GateVerdict["verdict"] | "preapproved" | "mode" | "edit" | "saved output" | "worktree_read" {
+  const k: { shell: boolean; floor: boolean; unconfinable?: boolean; inside?: boolean; savedOutput?: boolean; granted?: boolean; read?: boolean } = KINDS[kind];
+  if (k.read) return "worktree_read";
   const nobody = mode === "full" ? "refuse" : "ask";
   // An edit inside the copy and a read of the session's own saved output run in every mode, confined or not.
   if (k.inside) return "edit";

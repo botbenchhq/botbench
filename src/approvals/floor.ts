@@ -250,21 +250,24 @@ const allLive = (segments: readonly Words[]): QuotedWord[][] => segments.map((se
 
 /**
  * The keychain and SSH key tools, when a word may name one as a program. A relative path shown to lie inside the task's
- * worktree (`ls docs/security`) is the project's own file and is not one, as long as it stands as an argument; any other
- * path of that name is (`/usr/bin/security`, `~/bin/security`, `./security` after a `cd` or from a folder outside the
- * worktree), and so is one in a program's place (`./security`, `env docs/security`), whatever file it is.
+ * worktree (`ls docs/security`) is the project's own file and is not one, but only as an argument of a program known only
+ * to read files; any other path of that name is (`/usr/bin/security`, `~/bin/security`, `./security` after a `cd` or from
+ * a folder outside the worktree), and so is one given to any other program (`./security`, `env docs/security`, `stdbuf
+ * -o0 docs/security`), whatever file it is.
  */
 const KEY_TOOLS = new Set(["security", "ssh-add", "ssh-keygen"]);
-/** Programs that run the program named by a later word. */
-const RUNS_NEXT = new Set(["env", "exec", "command", "nice", "nohup", "time", "timeout", "xargs", "sudo", "doas", "caffeinate", "arch", "builtin", "then", "do", "else", "!"]);
+/** Programs that only read or list the files they are given, and run none of them: the one place a project file of a key tool's name is an argument and nothing more. */
+const READS_FILES = new Set(["ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc", "file", "stat", "du", "diff", "less", "more", "tree", "git"]);
+/** Words that make a reading program run something after all (`find -exec`, `git -c`). */
+const RUNS_SOMETHING = /^-(exec|execdir|ok|okdir|c)$/;
 const namesKeyTool = (segment: Words, i: number, reading: Reading): boolean => {
   const word = segment[i]!;
   if (!KEY_TOOLS.has(program(word))) return false;
   const projectFile = word.includes("/") && !word.startsWith("/") && !word.startsWith("~") && insideWorktree(word, reading);
-  // In a program's place: the first word that sets no variable, or a word after one that runs the next.
+  // An argument of a program known only to read: the piece's program (after any variables it sets) is one, and nothing in it runs another.
   const first = segment.findIndex((w) => !ASSIGNS.test(w));
-  const programPlace = i === first || segment.slice(0, i).some((w) => RUNS_NEXT.has(program(w)));
-  return !projectFile || programPlace;
+  const readOnly = first !== -1 && first < i && READS_FILES.has(program(segment[first]!)) && !segment.some((w) => RUNS_SOMETHING.test(w));
+  return !(projectFile && readOnly);
 };
 
 /** The last rule of the floor, which no other matched: the command is not one plain command, and so never runs on a grant. */
