@@ -3,7 +3,7 @@ import { answerPeerCard, ApiError, dismissPeerCard, dontSendPeerDraft, givePeerC
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { PeerCardsContext } from "../app/peer-cards.tsx";
 import { threadHref } from "../app/paired-words.ts";
-import { visible } from "./approval-card.tsx";
+import { visible } from "./approval-words.ts";
 import { LOOKS } from "./looks.ts";
 import { RepoChoice } from "./repo-choice.tsx";
 import { StatusBadge } from "./status.tsx";

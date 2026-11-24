@@ -3,7 +3,7 @@ import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, getCheckTogether, setCheckTogetherRequired, startCheckTogether, type CheckTogetherView, type CombinedCheck } from "../api/client.ts";
 import { checkButton, commitsLine, othersCodeLine, outcomeLine, requirementLine, staleLine } from "../app/check-together.ts";
 import { CommandEvidence } from "./evidence.tsx";
-import { Alert } from "./header.tsx";
+import { Alert } from "./alert.tsx";
 import { LOOKS } from "./looks.ts";
 import { StatusBadge } from "./status.tsx";
 

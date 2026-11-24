@@ -6,7 +6,8 @@ import { createTask, moveTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, checkLayout, checkWords, expect, signIn } from "./helpers.ts";
+import { checkDesign, checkScreen, checkWords, expect, goTo, messageBox, signIn } from "./helpers.ts";
+import { choice, choose, GROUPS } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 import { escapeRegExp } from "../test/support/regexp.ts";
 
@@ -72,12 +73,13 @@ const test = base.extend<{ dir: string; seeded: Seeded; botbench: Botbench }>({
 });
 
 const column = (page: Page): Locator => page.getByRole("region", { name: "Chats and work" });
-const search = (page: Page): Locator => column(page).getByLabel("Search chats and work");
-const count = (page: Page): Locator => column(page).getByTestId("work-column-count");
-const rows = (page: Page): Locator => column(page).locator(".ds-list__link");
-const ALL = FILLERS + 3;
 /** Work, from the navigation of whichever screen is shown: the run screen, rebuilt on shadcn/ui, has its own and no column. */
 const toWork = (page: Page): Promise<void> => page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Work", exact: true }).click();
+/** The run with its plan, from its row on Work: Work is the inventory itself, and has no column beside it. */
+const toRun = async (page: Page): Promise<void> => {
+  await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
+  await page.getByTestId("work-row").getByRole("link").filter({ hasText: /Plan the billing export|billing/i }).first().click();
+};
 
 // A desktop: a mouse and a keyboard, no touch screen.
 test.describe("at 1280×800, with a mouse", () => {
@@ -85,26 +87,26 @@ test.describe("at 1280×800, with a mouse", () => {
 
   test("arriving on a screen names the tab for it and puts focus on its heading, the page can be zoomed, and the message box says which key sends", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
-    await expect(rows(page)).toHaveCount(ALL);
     // Pinch zoom is the browser's to give: the page sets no limit on it.
     expect(await page.locator('meta[name="viewport"]').getAttribute("content")).toBe("width=device-width, initial-scale=1, viewport-fit=cover");
-    await expect(page).toHaveTitle("Chat \u2013 Botbench");
+    await expect(page).toHaveTitle("New chat or task \u2013 Botbench");
     // A mouse and a keyboard: Enter sends, and the line under the box says so and describes the box.
     await expect(page.getByTestId("composer-keys")).toHaveText("Enter sends. Shift with Enter starts a new line.");
     await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toHaveAccessibleDescription(/Enter sends\. Shift with Enter starts a new line\./);
 
-    // A task, opened from the column: the tab is named by Botbench's own name for it, and focus leaves the row for the heading.
-    await rows(page).nth(2).click();
+    // A task, opened from its row on Work: the tab is named by Botbench's own name for it, and focus leaves the row for the heading.
+    await goTo(page, "Work");
+    await page.getByTestId("work-row").getByRole("link").filter({ hasText: seeded.ready.title }).first().click();
     await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
-    await rows(page).nth(1).click();
+    await page.goBack();
+    await toRun(page);
     await expect(page).toHaveTitle(`Run ${seeded.planned.id} \u2013 Botbench`);
     // A run's heading is its title, the owner's own words; the tab has Botbench's name for it.
     await expect(page.getByRole("heading", { level: 1, name: seeded.planned.title })).toBeFocused();
     await page.goto(`${botbench.base}/#/work`);
     await expect(page).toHaveTitle("Work \u2013 Botbench");
     await expect(page.getByRole("heading", { level: 1, name: "Work" })).toBeFocused();
-    await checkDesign(page, "work, wide, arrived on with focus on its heading");
     // Back is a change of address like any other.
     await page.goBack();
     await expect(page).toHaveTitle(`Run ${seeded.planned.id} \u2013 Botbench`);
@@ -113,28 +115,22 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(page).toHaveTitle("No such screen \u2013 Botbench");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 
-    // Chat's heading is for a screen reader only, so with a keyboard the message box takes focus, where it can be seen.
+    // With no chat, Chat is New chat or task: with a keyboard its heading passes focus on to the message box, where typing starts.
     await page.getByRole("navigation", { name: "Screens" }).first().getByRole("link", { name: "Chat" }).click();
-    await expect(page).toHaveTitle("Chat \u2013 Botbench");
+    await expect(page).toHaveTitle("New chat or task \u2013 Botbench");
     await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeFocused();
-    // A change of address the owner did not make from here (a notification's, another screen's) never takes focus from a field being typed in.
-    await search(page).pressSequentially("login");
-    await page.evaluate(() => (window.location.hash = "#/work"));
-    await expect(page).toHaveTitle("Work \u2013 Botbench");
-    await expect(search(page)).toBeFocused();
-    await search(page).fill("");
 
-    // The two-pane Settings draws no new screen for another section: the tab is named for the section and the section takes focus.
+    // Settings keeps its navigation in place when another group is chosen: the tab is named for the group and the group's heading takes focus.
     await page.goto(`${botbench.base}/#/settings`);
-    await expect(page).toHaveTitle("Agents \u2013 Botbench");
-    const sections = page.getByTestId("settings-sections");
-    await sections.getByRole("link", { name: "Permissions" }).click();
-    await expect(page).toHaveTitle("Permissions \u2013 Botbench");
-    await expect(page.getByTestId("settings-section")).toBeFocused();
-    await sections.getByRole("link", { name: "Usage" }).click();
-    await expect(page).toHaveTitle("Usage \u2013 Botbench");
-    await expect(page.getByTestId("settings-section")).toBeFocused();
-    await checkDesign(page, "settings, wide, a section arrived on with focus");
+    await expect(page).toHaveTitle("Agents and models \u2013 Botbench");
+    const sections = page.getByTestId("settings-nav");
+    await sections.getByRole("link", { name: "Permissions and autonomy" }).click();
+    await expect(page).toHaveTitle("Permissions and autonomy \u2013 Botbench");
+    await expect(page.getByRole("heading", { level: 1, name: "Permissions and autonomy" })).toBeFocused();
+    await sections.getByRole("link", { name: "Usage and limits" }).click();
+    await expect(page).toHaveTitle("Usage and limits \u2013 Botbench");
+    await expect(page.getByRole("heading", { level: 1, name: "Usage and limits" })).toBeFocused();
+    await checkScreen(page, "settings, wide, a group arrived on with focus");
 
     // The first screen after a page load is left alone: nothing is focused for the reader.
     await page.goto(`${botbench.base}/#/work`);
@@ -162,7 +158,7 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(question).toContainText("Discard what you typed?");
     await expect(question).toContainText("Your changes to this task are not saved. The plan stays as it was.");
     await expect(question.getByRole("button", { name: "Keep editing" })).toBeFocused();
-    await checkLayout(page, 32, "run, wide, the question before typed words are discarded");
+    await checkScreen(page, "run, wide, the question before typed words are discarded", { floor: 32 });
     await checkWords(page, "run, wide, the question before typed words are discarded");
     // Keep editing returns to the words as typed, with focus back where it was.
     await question.getByRole("button", { name: "Keep editing" }).click();
@@ -186,7 +182,7 @@ test.describe("at 1280×800, with a mouse", () => {
     await question.getByRole("button", { name: "Discard changes" }).click();
     await expect(page).toHaveURL(/#\/work$/);
     await expect(page).toHaveTitle("Work \u2013 Botbench");
-    await rows(page).nth(1).click();
+    await toRun(page);
     await expect(page.getByRole("list", { name: "Plan" })).toContainText("Write the exporter");
     // With nothing typed, leaving asks nothing.
     await page.locator('[data-edit="0"]').click();
@@ -195,7 +191,7 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(question).toHaveCount(0);
 
     // Cancel with typed words, then Discard changes: the row is back, with focus on its Edit button.
-    await rows(page).nth(1).click();
+    await toRun(page);
     await page.locator('[data-edit="0"]').click();
     await title.fill("Write the importer");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -211,175 +207,131 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(title).toHaveCount(0, { timeout: 20_000 });
     await expect(question).toHaveCount(0);
     await expect(page.getByTestId("edit-closed")).toHaveText(/The plan changed in another window, so the task you were editing was closed\. What you typed was not saved\./);
-    await checkLayout(page, 32, "run, wide, an edit closed because the plan changed elsewhere");
+    await checkScreen(page, "run, wide, an edit closed because the plan changed elsewhere", { floor: 32 });
     await checkWords(page, "run, wide, an edit closed because the plan changed elsewhere");
 
-    // A select shows the choice before Botbench has kept it, so the row says when it has.
-    await page.goto(`${botbench.base}/#/settings/workbench`);
-    const every = page.getByTestId("ask-every-command");
-    await expect(every).toHaveValue("off");
+    // The control shows the choice before Botbench has kept it, so the row says when it has.
+    await page.goto(`${botbench.base}/#/settings/permissions`);
+    const every = choice(page, "Ask before every command");
+    await expect(every).toHaveAttribute("data-value", "off");
     await expect(page.getByTestId("ask-every-saved")).toHaveCount(0);
-    await every.selectOption("on");
+    await choose(page, "Ask before every command", "On");
     await expect(page.getByTestId("ask-every-saved")).toHaveText("Saved.");
-    await every.selectOption("off");
+    await expect(every).toHaveAttribute("data-value", "on");
+    await choose(page, "Ask before every command", "Off");
     await expect(page.getByTestId("ask-every-saved")).toHaveText("Saved.");
-    await checkDesign(page, "settings, wide, a choice saved");
+    await expect(every).toHaveAttribute("data-value", "off");
+    await checkScreen(page, "settings, wide, a choice saved");
   });
 });
 
 test.describe("at 1280×800", () => {
   test.use({ viewport: WIDE });
 
-  test("every screen but Settings has the column of chats and work, newest first with their states in words; its search filters by title as you type, counts in words, says when nothing matches and clears; opening a row keeps the column, its search and its scroll position, and marks the row current", async ({ page, botbench, seeded }) => {
+  test("no screen has a column of chats and work beside it: Work is the inventory, and a task or a run opened from it takes the window, named in the navigation", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
-    // Chat, the home screen, with the column beside it.
-    await expect(rows(page)).toHaveCount(ALL);
-    await expect(count(page)).toHaveText(`1 run and ${ALL - 1} tasks`);
-    await expect(rows(page).first()).toContainText(seeded.newest.title);
-    await expect(rows(page).first()).toContainText(`Cancelled · Task ${seeded.newest.id}`);
-    await expect(rows(page).nth(1)).toContainText(seeded.planned.title);
-    await expect(rows(page).nth(1)).toContainText(`Plan ready for review · Run ${seeded.planned.id}`);
-    await expect(rows(page).nth(2)).toContainText(seeded.ready.title);
-    await expect(rows(page).nth(2)).toContainText(`Ready for review · Task ${seeded.ready.id}`);
-    await expect(rows(page).nth(3)).toContainText("Failed");
-    await expect(rows(page).nth(2)).toHaveAttribute("href", `#/tasks/${seeded.ready.id}`);
-    await expect(rows(page).nth(1)).toHaveAttribute("href", `#/runs/${seeded.planned.id}`);
-    // No chat was had here, so none is listed (test/work-list.test.ts lists chats with the work).
-    await expect(column(page).locator('a[href^="#/chats/"]')).toHaveCount(0);
-    await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(0);
-    await checkDesign(page, "chat, wide, with the column of chats and work");
-
-    // Typing filters by title, in any case, and the count says how many of how many.
-    await search(page).pressSequentially("LOGIN");
-    await expect(rows(page)).toHaveCount(1);
-    await expect(rows(page)).toContainText(seeded.ready.title);
-    await expect(count(page)).toHaveText(`1 of ${ALL} match "LOGIN"`);
-    await checkDesign(page, "chat, wide, the column searched");
-    await search(page).fill("no such title");
-    await expect(rows(page)).toHaveCount(0);
-    await expect(column(page).locator("ul")).toHaveCount(0);
-    await expect(column(page).getByTestId("work-column-empty")).toHaveText("No title has those words. Clear the search to see them all.");
-    await expect(count(page)).toHaveText(`None of ${ALL} match "no such title"`);
-    await checkDesign(page, "chat, wide, the column searched with no match");
-    // Clear the search: every row comes back, and the field keeps the focus.
-    await column(page).getByRole("button", { name: "Clear the search" }).click();
-    await expect(search(page)).toHaveValue("");
-    await expect(search(page)).toBeFocused();
-    await expect(rows(page)).toHaveCount(ALL);
-    await expect(count(page)).toHaveText(`1 run and ${ALL - 1} tasks`);
-
-    // Search, scroll the column, then open a row: only the screen beside the column changes.
-    await search(page).fill("module");
-    await expect(rows(page)).toHaveCount(FILLERS);
-    const scroller = column(page);
-    await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-    const scrolled = await scroller.evaluate((el) => el.scrollTop);
-    expect(scrolled, "the column scrolls inside itself").toBeGreaterThan(0);
-    await scroller.evaluate((el) => ((el as HTMLElement & { kept?: boolean }).kept = true));
-    const last = rows(page).last();
-    const lastHref = (await last.getAttribute("href"))!;
-    await last.click();
-    await expect(page).toHaveURL(new RegExp(`${escapeRegExp(lastHref)}$`));
-    await expect(page.getByRole("heading", { level: 1, name: /Tidy module number/ })).toBeVisible();
-    await expect(last).toHaveAttribute("aria-current", "true");
-    await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(1);
-    expect(await scroller.evaluate((el) => (el as HTMLElement & { kept?: boolean }).kept), "the column is the same element: it was not drawn again").toBe(true);
-    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(scrolled);
-    await expect(search(page)).toHaveValue("module");
-    await checkDesign(page, "task, wide, opened from the column");
-
-    // Another row: the run. Its screen is rebuilt on shadcn/ui, with its own navigation at the left and no column
-    // beside it; the navigation names the open run.
-    await search(page).fill("billing");
-    await rows(page).first().click();
+    await goTo(page, "Work");
+    await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
+    await expect(column(page)).toHaveCount(0);
+    // The task that is ready, from its row: its screen has the navigation at the left, which names the open task.
+    await page.getByTestId("work-row").getByRole("link").filter({ hasText: seeded.ready.title }).first().click();
+    await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
+    await expect(page.getByRole("heading", { level: 1, name: seeded.ready.title })).toBeVisible();
+    await expect(column(page)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: seeded.ready.title })).toHaveAttribute("aria-current", "page");
+    await checkDesign(page, "task, wide, opened from Work");
+    // The run, the same way.
+    await page.goBack();
+    await toRun(page);
     await expect(page.getByRole("heading", { level: 1, name: seeded.planned.title })).toBeVisible();
     await expect(column(page)).toHaveCount(0);
     await expect(page.getByRole("link", { name: seeded.planned.title })).toHaveAttribute("aria-current", "page");
-    await checkLayout(page, 32, "run, wide, opened from the column");
-    await checkWords(page, "run, wide, opened from the column");
-
-    // Work has the column too; Settings does not, and the search is still there after it.
-    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Work", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
-    await expect(column(page)).toBeVisible();
-    await checkDesign(page, "work, wide, with the column");
-    await page.getByRole("link", { name: "Settings", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-    await expect(column(page)).toHaveCount(0);
-    await page.goBack();
-    await expect(search(page)).toHaveValue("billing");
+    await checkScreen(page, "run, wide, opened from Work", { floor: 32 });
+    // Home, Chat and Settings have none either.
+    for (const [screen, heading] of [["Home", "Home"], ["Chat", null], ["Settings", "Agents and models"]] as const) {
+      await page.evaluate((to) => (window.location.hash = to), screen === "Home" ? "#/" : screen === "Chat" ? "#/turn" : "#/settings");
+      if (heading !== null) await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeAttached();
+      else await expect(messageBox(page)).toBeVisible();
+      await expect(column(page)).toHaveCount(0);
+    }
   });
 
-  test("Settings is two panes: the sections on the left, only the chosen one on the right, Agents when none is chosen; #/settings/agents focuses its heading; Permissions and Usage open at their own addresses; the devices and the workbench show their controls", async ({ page, botbench }) => {
+  test("Settings is its navigation beside one group: the six groups on the left, only the chosen one on the right, Agents and models when none is chosen; each group at its own address, its heading focused on arrival; the old addresses open the new groups", async ({ page, botbench }) => {
     await signIn(page, botbench);
     await page.getByRole("link", { name: "Settings", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-    const sections = page.getByTestId("settings-sections").getByRole("link");
-    const shown = page.getByTestId("settings-section");
-    await expect(sections).toHaveText(["Agents", "Appearance", "Notifications", "Signed-in devices", "This workbench", "Paired workbench", "Permissions", "Usage"]);
-    await expect(sections.nth(0)).toHaveAttribute("aria-current", "true");
-    await expect(page.locator('[data-testid="settings-sections"] [aria-current]')).toHaveCount(1);
-    await expect(page.getByRole("region", { name: "Agents" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Agents and models", level: 1 })).toBeVisible();
+    const sections = page.getByTestId("settings-nav").getByRole("listitem").getByRole("link");
+    const shown = page.getByTestId("settings");
+    await expect(sections).toHaveText(Object.values(GROUPS));
+    await expect(sections.nth(0)).toHaveAttribute("aria-current", "page");
+    await expect(page.locator('[data-testid="settings-nav"] [aria-current]')).toHaveCount(1);
+    await expect(page.getByTestId("settings-nav").getByRole("link", { name: "Back to Home" })).toHaveAttribute("href", "#/");
     await expect(shown.getByTestId("agent-claude-code")).toBeVisible();
-    // Only the chosen section: the others are not on the screen.
-    await expect(page.getByRole("group", { name: "Appearance" })).toHaveCount(0);
+    await expect(shown.getByTestId("fallback-list")).toBeVisible();
+    // Only the chosen group: the others are not on the screen, nor is the phone's list of groups.
     await expect(page.getByTestId("devices")).toHaveCount(0);
-    await expect(page.getByTestId("settings-links")).toHaveCount(0);
+    await expect(page.getByTestId("settings-groups")).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Chats and work" })).toHaveCount(0);
-    await checkDesign(page, "settings, wide, Agents");
+    await checkScreen(page, "settings, wide, Agents and models");
 
-    await sections.filter({ hasText: "Appearance" }).click();
-    await expect(page).toHaveURL(/#\/settings\/appearance$/);
-    await expect(shown.getByRole("group", { name: "Appearance" }).getByLabel("Mode")).toBeVisible();
+    await sections.filter({ hasText: "Execution environments" }).click();
+    await expect(page).toHaveURL(/#\/settings\/environments$/);
+    await expect(shown.getByTestId("execution-settings")).toBeVisible();
+    await expect(shown.getByTestId("watch-settings")).toBeVisible();
     await expect(shown.getByTestId("agent-claude-code")).toHaveCount(0);
-    await expect(sections.nth(1)).toHaveAttribute("aria-current", "true");
-    await checkDesign(page, "settings, wide, Appearance");
+    await expect(sections.nth(1)).toHaveAttribute("aria-current", "page");
+    await checkScreen(page, "settings, wide, Execution environments");
 
-    await sections.filter({ hasText: "Notifications" }).click();
+    await sections.filter({ hasText: "Workbench identity" }).click();
+    await expect(page).toHaveURL(/#\/settings\/identity$/);
+    await expect(shown.getByLabel("Appearance", { exact: true })).toBeVisible();
+    await expect(shown.getByTestId("workbench-name")).toBeVisible();
+    await expect(shown.getByTestId("update-settings")).toBeVisible();
+    await expect(shown.getByTestId("memory-settings")).toBeVisible();
+    await checkScreen(page, "settings, wide, Workbench identity");
+
+    await sections.filter({ hasText: "Permissions and autonomy" }).click();
+    await expect(page).toHaveURL(/#\/settings\/permissions$/);
+    await expect(shown.getByTestId("default-mode-picker")).toBeVisible();
+    await expect(shown.getByTestId("ask-every-command")).toBeVisible();
+    await expect(shown.getByTestId("chat-web-access")).toBeVisible();
+    await expect(shown.getByRole("heading", { name: "Always allowed" })).toBeVisible();
+    await expect(shown.getByRole("heading", { name: "Activity" })).toBeVisible();
+    await expect(sections.nth(3)).toHaveAttribute("aria-current", "page");
+    await checkScreen(page, "settings, wide, Permissions and autonomy");
+
+    await sections.filter({ hasText: "Usage and limits" }).click();
+    await expect(page).toHaveURL(/#\/settings\/usage$/);
+    await expect(shown.getByTestId("usage-empty")).toBeVisible();
+    await expect(shown.getByTestId("usage-limit")).toBeVisible();
+    await checkScreen(page, "settings, wide, Usage and limits");
+
+    await sections.filter({ hasText: "Connections and peers" }).click();
+    await expect(page).toHaveURL(/#\/settings\/connections$/);
+    await expect(shown.getByTestId("paired-workbench")).toBeVisible();
     await expect(shown.getByTestId("notifications")).toBeVisible();
-
-    await sections.filter({ hasText: "Signed-in devices" }).click();
     await expect(shown.getByTestId("device")).toHaveCount(1);
     await expect(shown.getByTestId("device")).toContainText("This device");
     await expect(shown.getByRole("button", { name: "Sign out" })).toBeVisible();
-    await checkDesign(page, "settings, wide, Signed-in devices");
+    await checkScreen(page, "settings, wide, Connections and peers");
 
-    await sections.filter({ hasText: "This workbench" }).click();
-    await expect(page).toHaveURL(/#\/settings\/workbench$/);
-    await expect(shown.getByRole("group", { name: "Runs" })).toBeVisible();
-    await expect(shown.getByTestId("ask-every-command")).toBeVisible();
-    await expect(shown.getByTestId("chat-web-access")).toBeVisible();
-    await expect(shown.getByTestId("workbench-name")).toBeVisible();
-    await expect(shown.getByTestId("memory-settings")).toBeVisible();
-    await checkDesign(page, "settings, wide, This workbench");
-
-    await sections.filter({ hasText: "Permissions" }).click();
-    await expect(page).toHaveURL(/#\/trust$/);
-    await expect(shown.getByRole("heading", { name: "Always allowed" })).toBeVisible();
-    await expect(shown.getByRole("heading", { name: "Activity" })).toBeVisible();
-    await expect(sections.nth(6)).toHaveAttribute("aria-current", "true");
-    await checkDesign(page, "settings, wide, Permissions");
-
-    await sections.filter({ hasText: "Usage" }).click();
-    await expect(page).toHaveURL(/#\/usage$/);
-    await expect(shown.getByTestId("usage-empty")).toBeVisible();
-    await checkDesign(page, "settings, wide, Usage");
-
-    // The address that opens Settings at Agents, from the home screen's link: its heading takes the focus, as before.
+    // The address that opens Settings at its agents, from the home screen's link: the group's heading takes the focus.
     await page.evaluate(() => (window.location.hash = "#/settings/agents"));
-    await expect(shown.getByRole("heading", { name: "Agents" })).toBeFocused();
-    await expect(sections.nth(0)).toHaveAttribute("aria-current", "true");
-    // Opened directly, Permissions is a section of Settings too.
-    await page.goto(`${botbench.base}/#/trust`);
-    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-    await expect(sections.nth(6)).toHaveAttribute("aria-current", "true");
+    await expect(page.getByRole("heading", { name: "Agents and models", level: 1 })).toBeFocused();
+    await expect(sections.nth(0)).toHaveAttribute("aria-current", "page");
+    // The addresses Permissions and Usage had, and the old sections', open the groups that hold them now.
+    for (const [old, at, n] of [["#/trust", "permissions", 3], ["#/usage", "usage", 4], ["#/settings/devices", "connections", 5], ["#/settings/appearance", "identity", 2]] as const) {
+      await page.goto(`${botbench.base}/${old}`);
+      await expect(page).toHaveURL(new RegExp(`#/settings/${at}$`));
+      await expect(sections.nth(n)).toHaveAttribute("aria-current", "page");
+    }
   });
 });
 
 test.describe("at 390×844", () => {
   test.use({ viewport: PHONE });
 
-  test("no column of chats and work and no section list: the screens and the one-column Settings, with its rows to Permissions and Usage, are as before", async ({ page, botbench, seeded }) => {
+  test("no column of chats and work and no settings navigation: the screens are as before, and Settings is the list of its six groups, each a screen of its own", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
     await expect(page.getByTestId("work-column")).toHaveCount(0);
     await expect(page.locator(".ds-split-panel")).toHaveCount(0);
@@ -391,21 +343,20 @@ test.describe("at 390×844", () => {
     await expect(page.getByTestId("work-column")).toHaveCount(0);
     await checkDesign(page, "task, phone, no column");
 
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    await goTo(page, "Settings");
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-    await expect(page.getByTestId("settings-sections")).toHaveCount(0);
-    await expect(page.getByTestId("settings-panes")).toHaveCount(0);
-    await expect(page.getByTestId("settings-links").getByRole("link")).toHaveText([/^Permissions/, /^Usage/]);
-    // Every group, one under the other, in the order it always had.
-    await expect(page.locator("main .ds-settings-row__heading")).toHaveText(["Agents", "Runs", "Web", "Watched issues", "Where commands run", "Workbench", "Memory", "Paired workbench", "Version", "Appearance", "Notifications", "Signed-in devices"]);
-    await checkDesign(page, "settings, phone, one column");
+    await expect(page.getByTestId("settings-nav")).toHaveCount(0);
+    // The six groups, each a row that opens it, in the order the navigation has them from 1024px.
+    const groups = page.getByTestId("settings-groups").getByRole("link");
+    await expect(groups).toHaveText(Object.values(GROUPS).map((name) => new RegExp(`^${name}`)));
+    await checkScreen(page, "settings, phone, the list of groups");
 
-    await page.getByTestId("settings-links").getByRole("link", { name: /^Permissions/ }).click();
-    await expect(page).toHaveURL(/#\/trust$/);
-    await expect(page.getByRole("heading", { name: "Permissions", level: 1 })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "#/settings");
-    await checkDesign(page, "permissions, phone, its own screen");
+    await groups.filter({ hasText: "Permissions and autonomy" }).click();
+    await expect(page).toHaveURL(/#\/settings\/permissions$/);
+    await expect(page.getByRole("heading", { name: "Permissions and autonomy", level: 1 })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Settings" })).toHaveAttribute("href", "#/settings");
+    await checkScreen(page, "permissions, phone, its own screen");
     await page.evaluate(() => (window.location.hash = "#/settings/agents"));
-    await expect(page.getByRole("heading", { name: "Agents" })).toBeFocused();
+    await expect(page.getByRole("heading", { name: "Agents and models", level: 1 })).toBeFocused();
   });
 });

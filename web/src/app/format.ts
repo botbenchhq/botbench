@@ -17,7 +17,7 @@
  * - a choice between two sentences that say different things, not a noun's number: "It waited … for you." or "They
  *   waited … in the middle, … at most." (app/paired-words.ts), "Claude Code only" or a list (app/handoff-words.ts
  *   `orderWords`), characters for a one-line command and lines for a longer one (screens/task.tsx), a list of one
- *   item or of several joined with "and", and "once" for a count of 1 (components/approval-card.tsx `times`);
+ *   item or of several joined with "and", and "once" for a count of 1 (components/approval-words.ts `times`);
  * - `noteTooLong` (app/run-source.ts), which repeats the server's own sentence, digit for digit, so that the composer
  *   and the server refuse a note in the same words;
  * - `limitName` (app/composer.ts), an approval time limit named by its largest whole unit ("1 hour", "1 day"), which

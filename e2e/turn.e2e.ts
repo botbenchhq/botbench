@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { checkDesign, checkWords, copyShot, expect, nav, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
+import { checkDesign, checkScreen, checkWords, contextSheet, copyShot, expect, nav, SCREENS, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
@@ -11,7 +11,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.goto(botbench.base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("button")).toHaveCount(1);
-  await checkDesign(page, "sign-in");
+  await checkScreen(page, "sign-in");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u4-sign-in.png") });
   await copyShot(page, "sign-in");
 
@@ -46,9 +46,9 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await expect(page.locator('[data-event="turn_ended"]')).toHaveCount(0);
   expect(await page.getByRole("log").innerText(), "what is drawn in the transcript").not.toMatch(/completed|tokens|worked for/i);
   // The model is named once, in the chip: the model that answered is the one asked for, so the transcript has no row for it.
-  await expect(page.getByTestId("turn-model")).toHaveCount(0);
   await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
+  // The chat is named by its first message.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(prompt);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByLabel("Message Claude Code")).toHaveValue("");
   // The transcript is in order: prompt, reply.
@@ -61,8 +61,8 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   // New chat begins again: the transcript is put away on this device, also after a reload, and the next prompt starts afresh.
   await page.getByRole("button", { name: "New chat" }).click();
   await expect(page.locator("[data-event]")).toHaveCount(0);
-  // An empty chat shows nothing above the box, and New chat, a quiet icon in the header, goes until there is something to put away.
-  await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toHaveCount(0);
+  // New chat or task takes the screen, and New chat, a quiet icon at the top of a chat, goes until there is something to put away.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("What do you want to do?");
   await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
   await checkDesign(page, "chat, after New chat");
   await page.reload();
@@ -169,7 +169,7 @@ test("LIVE: words the owner or the agent wrote are never judged, and the same wo
     const label = document.createElement("p");
     label.id = "planted-for-the-check";
     label.textContent = "Turn completed.";
-    document.querySelector("main")!.append(label);
+    document.querySelector('[data-testid="screen"]')!.append(label);
   });
   await expect(checkWords(page, "chat, with an internal word planted in the interface")).rejects.toThrow(/internal words on the screen/);
   await page.evaluate(() => document.getElementById("planted-for-the-check")!.remove());
@@ -228,42 +228,37 @@ test("LIVE: Stop ends a running turn, and prompt text is shown as text, never as
   expect(await page.evaluate(() => (window as unknown as { botbenchXss?: number }).botbenchXss)).toBeUndefined();
 });
 
-test("the chat box names the agent in its placeholder and for assistive technology, with no label drawn; the model is one chip that opens Add context; nothing idle shows in the header", async ({ page, botbench }) => {
+test("with no chat on the device the screen is New chat or task: the box names the agent, the model is one chip that opens Add context, and one sentence says what Send will start", async ({ page, botbench }) => {
   // The real Claude Code is asked whether it is signed in and which models it offers; no prompt is sent.
   await signIn(page, botbench);
   await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await expect(page.getByTestId("driver-state")).toHaveCount(0);
   const box = page.getByRole("textbox", { name: "Message Claude Code" });
   await expect(box).toHaveAttribute("placeholder", "Message Claude Code");
-  await expect(page.locator("form.ds-composer label")).toHaveCount(0);
+  await expect(page.getByTestId("composer").locator("label")).toHaveText("Message Claude Code");
   await expect(page.getByText("Prompt", { exact: true })).toHaveCount(0);
 
   // The model is one chip under the box, showing the current choice; the list and its helper line are behind it, in the sheet.
   const chip = page.getByRole("button", { name: /^Agent and model: / });
   await expect(chip).toHaveAttribute("aria-haspopup", "dialog");
   await expect(page.getByText("The list is what Claude Code reports on this Mac.")).toBeHidden();
-  // Nothing has arrived, so there is nothing to jump to: the block is in the page, hidden.
-  await expect(page.locator(".ds-jump-to-latest")).toBeHidden();
-  // With no approval waiting the header shows no approvals line, and Settings is an icon with a name.
-  await expect(page.getByTestId("approval-tray")).toBeEmpty();
+  // With no approval waiting nothing says so.
   await expect(page.getByText("No approvals are waiting.")).toHaveCount(0);
-  const settings = page.getByRole("banner").getByRole("link", { name: "Settings" });
-  await expect(settings).toBeVisible();
-  await expect(settings).toHaveText("");
-  // An empty chat is the box and nothing above it: the view's one h1 is there for assistive technology only, and New chat
-  // comes only once there is a chat to put away. The navigation is two destinations.
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["Chat"]);
-  expect(await page.getByRole("heading", { level: 1 }).evaluate((el) => el.closest(".ds-visually-hidden") !== null), "the h1 is visually hidden").toBe(true);
-  await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toHaveCount(0);
-  await expect(page.getByTestId("composer-about")).toHaveCount(0);
+  await expect(page.getByTestId("approval-card")).toHaveCount(0);
+  // With no chat the screen is New chat or task: its one h1, the four intents with a chat chosen, and the one sentence
+  // that says what Send will start. New chat comes only once there is a chat to put away.
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(["What do you want to do?"]);
+  await expect(page.getByTestId("intents").getByRole("radio")).toHaveCount(4);
+  await expect(page.getByRole("radio", { name: "Ask a question" })).toBeChecked();
+  await expect(page.getByTestId("composer-about")).toContainText("Send asks Claude Code.");
   await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await checkDesign(page, "chat, empty");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat.png") });
   await tempShot(page, "home-empty");
 
   await chip.click();
-  await expect(page.locator("dialog.ds-sheet").getByRole("heading", { name: "Model" })).toBeVisible();
+  await expect(contextSheet(page).getByRole("heading", { name: "Agent and model" })).toBeVisible();
   await expect(page.getByTestId("model-source")).toHaveText("The list is what Claude Code reports on this Mac.");
   await checkDesign(page, "chat, model open");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat-model.png") });
@@ -274,7 +269,7 @@ test("with Claude Code signed out, the composer says why it cannot send, and Che
   const empty = tempDir("botbench-e2e-claude-config-");
   const botbench = await startBotbench({ env: { CLAUDE_CONFIG_DIR: empty } });
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
@@ -300,15 +295,15 @@ test("with Claude Code signed out, the composer says why it cannot send, and Che
 });
 
 test("a wrong token shows an error and stays on sign-in", async ({ page, botbench }) => {
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await page.getByLabel("Login token").fill("not-the-token");
   await page.getByRole("button", { name: "Sign in" }).click();
   // The alert names its tone in a word, then says what happened and what to do.
-  await expect(page.getByRole("alert")).toHaveText("ErrorWrong token. Check it and try again.");
+  await expect(page.getByRole("alert")).toHaveText("Error: Wrong token. Check it and try again.");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toBeVisible();
   await expect(page.getByLabel("Message Claude Code")).toHaveCount(0);
-  await checkDesign(page, "sign-in, with an error");
+  await checkScreen(page, "sign-in, with an error");
   // No session came of it: the API still refuses this browser.
   expect((await page.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
   expect((await page.request.get(`${botbench.base}/api/driver`)).status()).toBe(401);

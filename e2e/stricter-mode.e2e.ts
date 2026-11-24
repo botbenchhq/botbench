@@ -4,7 +4,7 @@ import { test as base, type Page } from "@playwright/test";
 import { createRun, storePlan } from "../src/engine/run.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, checkLayout, checkWords, choose, closeContext, contextSheet, expect, messageBox, openComposer, openRow, openRunMenu, signIn, SHOTS, tallShot } from "./helpers.ts";
+import { checkDesign, checkScreen, checkWords, choose, closeContext, contextSheet, expect, messageBox, openComposer, openRow, openRunMenu, SHOTS, signIn, tallShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Making a run's mode stricter from its screen's menu, and the composer opening on the mode last chosen for a repository, at a
@@ -87,7 +87,7 @@ for (const [size, viewport] of [["390", { width: 390, height: 844 }], ["1280", {
         await expect(offer.getByRole("radio", { name: "Manual" })).not.toBeChecked();
         await expect(offer.getByText("never looser")).toBeVisible();
         await expect(offer.getByRole("button", { name: "Change mode" })).toBeDisabled();
-        await checkLayout(page, floor, `run, stricter mode offered, ${size} ${theme}`);
+        await checkScreen(page, `run, stricter mode offered, ${size} ${theme}`, { floor: floor });
         await checkWords(page, `run, stricter mode offered, ${size} ${theme}`);
         await shot(page, `stricter-mode-offered-${size}-${theme}.png`);
 
@@ -103,7 +103,7 @@ for (const [size, viewport] of [["390", { width: 390, height: 844 }], ["1280", {
         // A manual run has no stricter mode: its menu holds Cancel run alone.
         await expect((await openRunMenu(page)).getByRole("menuitem")).toHaveText(["Cancel run"]);
         await page.keyboard.press("Escape");
-        await checkLayout(page, floor, `run, made manual, ${size} ${theme}`);
+        await checkScreen(page, `run, made manual, ${size} ${theme}`, { floor: floor });
         await checkWords(page, `run, made manual, ${size} ${theme}`);
         await shot(page, `stricter-mode-changed-${size}-${theme}.png`);
 

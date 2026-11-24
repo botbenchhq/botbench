@@ -1,6 +1,6 @@
 import path from "node:path";
 import { initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, signIn, startTaskIn, test } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, signIn, startTaskIn, test } from "./helpers.ts";
 import { escapeRegExp } from "../test/support/regexp.ts";
 
 // U27 in the real client, at a phone's size: a real Botbench process, a real temporary repository, and the owner's
@@ -22,15 +22,17 @@ test("LIVE: a command that runs without asking and tries to reach a host the rep
   await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. Claude Code finished without changing any file\./, { timeout: 240_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
 
-  // One row, the design system's tool call: Failed, a plain verb and the real command, and why in a plain note; open without a tap.
-  const row = page.locator('[data-event="tool_call"]').filter({ hasText: COMMAND }).first().locator(".ds-tool-call");
-  await expect(row).toHaveAttribute("data-state", "failed");
-  await expect(row.locator(".ds-tool-call__title")).toHaveText(new RegExp(`^Failed\\s*Ran\\s*${escapeRegExp(COMMAND)}$`));
-  await expect(row.getByTestId("confined")).toHaveText("Kept from the network. Its output says a connection to example.com:443 was not allowed. The agent's commands reach only the hosts allowed for this repository in Botbench's settings file, and none when no host is.");
-  await expect(row.locator("details").first()).toHaveAttribute("open", "");
-  // The evidence is behind it: the output, with the sandbox's own report, and the raw arguments one level deeper.
-  await expect(row.locator('[data-event="tool_result"]')).toContainText("deny network-outbound example.com:443");
-  await expect(row).toContainText("Technical details");
+  // One step in the activity: a plain verb and the real command, said as failed, in a group that stands open without a tap.
+  // The rebuilt task screen's activity (screens2/task/narrative.tsx) has no line that says "Kept from the network" in
+  // plain words, and no Technical details under a step; the chat's and the run's transcript still have both. What is
+  // checked here is what this screen shows: that it failed, and the sandbox's own report in what it printed.
+  const group = page.getByRole("log", { name: "Activity" }).getByTestId("steps").filter({ hasText: COMMAND }).first();
+  await expect(group.getByRole("button", { name: /Hide steps/ })).toBeVisible();
+  const row = group.getByRole("listitem").filter({ hasText: COMMAND });
+  await expect(row).toContainText(new RegExp(`Ran ${escapeRegExp(COMMAND)}, failed`));
+  await expect(row.getByText("It returned an error.")).toBeVisible();
+  // The evidence is with it: the output, with the sandbox's own report.
+  await expect(row.getByRole("group", { name: "What it printed" })).toContainText("deny network-outbound example.com:443");
   await checkDesign(page, "task, a command kept from the network");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u27-kept-from-network.png"), fullPage: true });
 });

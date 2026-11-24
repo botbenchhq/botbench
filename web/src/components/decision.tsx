@@ -1,13 +1,9 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
-import { acceptTask, ApiError, rejectTask, runChecksAgain, type EvidenceState, type TaskDecision, type TaskDetail } from "../api/client.ts";
-import { Alert } from "./header.tsx";
+import { acceptTask, ApiError, rejectTask, runChecksAgain, type EvidenceState, type TaskDecision } from "../api/client.ts";
+import { Alert } from "./alert.tsx";
 import { ConfirmAction } from "./confirm.tsx";
-import { ChecksFinding, latestRound, REVIEW_LINE } from "./evidence.tsx";
 import { Icon } from "./icon.tsx";
-import { LOOKS } from "./looks.ts";
-import { StatusBadge } from "./status.tsx";
-import { offersMerge } from "./task-status.ts";
 import { number, plural } from "../app/format.ts";
 
 /** Put `value` on the clipboard; resolves with whether it was, in words. */
@@ -102,54 +98,8 @@ export function Leftovers({ files }: { files: readonly string[] }) {
 
 const LEFT_BEHIND = "These files were left by the checks and are not on the branch:";
 
-/** The files of a copy that differs from its commit, each with what differs, as the server lists them. */
-function DifferingFiles({ files }: { files: EvidenceState["files"] }) {
-  return (
-    <ul data-testid="evidence-files" className="ds-list ds-list--dense">
-      {files.map((file) => (
-        <li key={file.path} className="ds-list__row">
-          <div className="ds-list__content">
-            <span className="ds-list__body">
-              <code data-ds-content="" className="ds-list__primary">
-                {file.path}
-              </code>
-              <span className="ds-list__secondary">{file.change === "changed" ? "Changed since the commit" : "Not on the branch"}</span>
-            </span>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /** The words for the no-checks accept, one place: it is never called plain Accept. */
 const ACCEPT_UNVERIFIED = "Accept without verification";
-
-/**
- * The state of a task's evidence, in the server's own words (`EvidenceState.words`): whether its checks are about the
- * commit Accept would keep, the files of a copy that differs from it, what git ignores there, and, apart, the commit
- * the review read. Nothing here is worked out by the client. `evidence` null: the server could not read it, and says why.
- */
-export function EvidenceLines({ evidence, problem }: { evidence: EvidenceState | null; problem: string | null }) {
-  if (evidence === null) return problem === null ? null : <span data-testid="evidence-problem">{problem}</span>;
-  return (
-    <>
-      <span data-testid="evidence-words" data-evidence={evidence.state}>
-        {evidence.words}
-      </span>
-      {evidence.ignoredWords !== null && (
-        <span data-testid="evidence-ignored" data-ds-content="" className="ds-review-decision__caveat">
-          {evidence.ignoredWords}
-        </span>
-      )}
-      {evidence.review !== null && !evidence.review.current && (
-        <span data-testid="evidence-review" className="ds-review-decision__caveat">
-          {evidence.review.words}
-        </span>
-      )}
-    </>
-  );
-}
 
 /**
  * Accept and Reject, for a task that is ready for review. Which Accept there is comes from the server's state of the
@@ -295,77 +245,6 @@ export function DecisionControls({ taskId, leftovers, evidence, evidenceProblem 
         </ConfirmAction>
       </div>
     </div>
-  );
-}
-
-/**
- * The end of a task on its own screen, as the design system's review decision: a section headed by its own heading, the
- * checks' and the review's findings one line each, then Accept and Reject with the note, or, once decided, the result
- * in their place. `children` says what Accept and Reject do, before the note. When the owner's decision is sent from
- * here, focus moves to the section's heading, so it does not drop to the page when the buttons go.
- */
-export function ReviewDecision({ task, onDecided, onSignedOut, children }: { task: TaskDetail; onDecided: () => void; onSignedOut: () => void; children?: ReactNode }) {
-  const heading = useRef<HTMLHeadingElement>(null);
-  const sent = useRef(false);
-  const id = useId();
-  const decision = task.decision;
-  useEffect(() => {
-    if (decision === null || !sent.current) return;
-    sent.current = false;
-    heading.current?.focus();
-  }, [decision !== null]);
-
-  const byMode = decision?.decidedBy === "mode";
-  return (
-    <section aria-labelledby={id} data-testid="decision" className="ds-review-decision">
-      <h2 ref={heading} id={id} tabIndex={-1} className="ds-review-decision__title">
-        {byMode ? "Decision" : "Your decision"}
-      </h2>
-      <dl className="ds-review-decision__evidence">
-        <div className="ds-review-decision__line">
-          <dt className="ds-review-decision__source">Checks</dt>
-          <dd data-testid="decision-checks" className="ds-review-decision__finding">
-            <ChecksFinding checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />
-          </dd>
-        </div>
-        <div className="ds-review-decision__line">
-          <dt className="ds-review-decision__source">Review</dt>
-          <dd data-testid="decision-review" className="ds-review-decision__finding">
-            {task.reviewer === null ? "Not reviewed: this run has no reviewer." : (task.reviewLine ?? "Not reviewed.")}
-            {task.reviewer !== null && task.reviewLine !== null && <span className="ds-review-decision__caveat">{REVIEW_LINE}</span>}
-          </dd>
-        </div>
-        {/* While it waits for the decision: whether that evidence is about the commit Accept would keep, as the server says it. */}
-        {decision === null && (task.evidenceState !== null || task.evidenceProblem !== null) && (
-          <div className="ds-review-decision__line">
-            <dt className="ds-review-decision__source">Evidence</dt>
-            <dd data-testid="decision-evidence" className="ds-review-decision__finding">
-              <EvidenceLines evidence={task.evidenceState} problem={task.evidenceProblem} />
-            </dd>
-          </div>
-        )}
-      </dl>
-      {decision === null && task.evidenceState?.state === "differs" && <DifferingFiles files={task.evidenceState.files} />}
-      {decision === null ? (
-        <>
-          {children}
-          <DecisionControls taskId={task.id} leftovers={task.leftovers} evidence={task.evidenceState} primary onDecided={onDecided} onSending={(sending) => (sent.current = sending)} onSignedOut={onSignedOut} />
-        </>
-      ) : (
-        <div className="ds-review-decision__result">
-          {/* An accept made without verification is said as that, and is not drawn as a success. */}
-          <StatusBadge look={decision.decision === "accept" ? (decision.checks === "none" ? LOOKS.acceptedUnverified : LOOKS.accepted) : LOOKS.rejected}>
-            {decision.decision === "accept" ? (byMode ? "Accepted without you" : decision.checks === "none" ? "Accepted without verification" : "Accepted") : "Rejected"}
-          </StatusBadge>
-          {/* The result lines its items up at the start, each as wide as its content; these take the section's width, so a
-              long branch, path or merge command wraps or scrolls inside its own field and never widens the page. */}
-          <div className="ds-stack ds-gap-sm">
-            {decision.reasons !== null && <p data-testid="decided-by">{decision.reasons}</p>}
-            <DecisionOutcome decision={decision} repo={task.repo} merge={offersMerge(task)} pushed={task.pullRequest.pushed ? task.pullRequest.remote : null} />
-          </div>
-        </div>
-      )}
-    </section>
   );
 }
 

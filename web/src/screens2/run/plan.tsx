@@ -1,4 +1,4 @@
-import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, type FormEvent } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/ui/button";
 import { Card } from "@/ui/card";
@@ -6,11 +6,11 @@ import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { Separator } from "@/ui/separator";
 import { Textarea } from "@/ui/textarea";
-import { cn } from "@/ui/lib/utils";
 import type { PlanTask } from "../../api/client.ts";
 import { counted } from "../../app/format.ts";
 import type { PlanEdit } from "../../app/plan-edit.ts";
 import { tasksWord } from "../../components/run-status.ts";
+import { DecisionSurface } from "../decision/decision-surface.tsx";
 
 /*
  * A run's plan while it waits for the owner: each task a card with its title and acceptance criteria, edited in place,
@@ -161,26 +161,6 @@ export function PlanList({ plan, editing, locked, saving, deleted, onEdit, onAdd
 }
 
 /**
- * The decision surface of a rebuilt screen at its routine level, as the review's decision card draws it: a neutral
- * raised card with what is asked as its heading. Local to the run until the shared decision component lands; then the
- * plan gate takes that one.
- */
-export function DecisionCard({ testId, label, heading, className, children }: { testId: string; label: string; heading: string; className?: string; children: ReactNode }) {
-  return (
-    <Card data-testid={testId} role="group" aria-label={label} className={cn("gap-4 p-5", className)}>
-      <div className="flex flex-col gap-1">
-        <p className="flex items-center gap-2 text-meta font-semibold text-attention">
-          <span aria-hidden="true" className="size-2 rounded-full bg-attention" />
-          Needs your decision
-        </p>
-        <h2 className="text-heading font-semibold tracking-tight">{heading}</h2>
-      </div>
-      {children}
-    </Card>
-  );
-}
-
-/**
  * The decision on the plan: Approve, the screen's one filled button, and Request changes with its feedback for the
  * planner. In the inspector (`compact` false) the field is always there. In the sticky area under a narrower screen
  * (`compact`) the area is the two buttons until Request changes is pressed, which opens the field in it; pressed again
@@ -248,13 +228,13 @@ export function PlanDecision({ count, compact, busy, problem, feedback, asking, 
   }
   // In the inspector the two decisions stand apart: Approve with what it starts, then the feedback with Request changes.
   return (
-    <DecisionCard testId="plan-decision" label="Decision" heading="Approve this plan?">
+    <DecisionSurface level="approval" signal="Needs your decision" title="Approve this plan?" data-testid="plan-decision" className="gap-4 p-5">
       <p className="text-base text-muted-foreground">{starts}</p>
       {approveButton}
       <Separator />
       {fieldBlock}
       {problemBlock}
       {changesButton}
-    </DecisionCard>
+    </DecisionSurface>
   );
 }

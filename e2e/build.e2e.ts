@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { RUN_TASK_STATE, SHOTS, askCancelRun, checkDesign, checkRebuilt, expect, offersCancelRun, openRunId, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
+import { askCancelRun, checkDesign, checkScreen, expect, offersCancelRun, openRunId, RUN_TASK_STATE, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Building a run in the real client, at a phone's size, against a real Botbench process whose settings give the
@@ -109,7 +109,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
     await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText(/^(Working|Needs input)$/, { timeout: 60_000 });
     await expect(rows.nth(1).locator(RUN_TASK_STATE)).toHaveText("Queued");
     expect(await offersCancelRun(page), "the run's menu offers Cancel run").toBe(true);
-    await checkRebuilt(page, "run, building");
+    await checkScreen(page, "run, building", { least: true });
     await shot(page, "u12-run-building.png");
     // The task being built is one tap away, with its transcript live.
     await expect(rows.nth(0).getByRole("link").first()).toHaveAttribute("href", /#\/tasks\/\d+$/);
@@ -137,7 +137,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
       await expect(check.locator(".ds-check-list__log")).toHaveText(/preparing the copy/);
     }
     expect(await offersCancelRun(page), "a run whose tasks are all built can no longer be cancelled").toBe(false);
-    await checkRebuilt(page, "run, built, setup output open");
+    await checkScreen(page, "run, built, setup output open", { least: true });
 
     // A built task's own screen shows the same evidence.
     await rows.nth(0).getByRole("link").first().click();
@@ -165,18 +165,18 @@ test("LIVE (planner only): cancel a run while it builds: the dialog says what is
     const rows = page.getByTestId("run-tasks").locator(":scope > li");
     await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText("Working");
     await expect(rows.nth(0)).toContainText("Preparing a separate copy of the project");
-    await checkRebuilt(page, "run, setting up");
+    await checkScreen(page, "run, setting up", { least: true });
 
     const dialog = await askCancelRun(page);
     await expect(dialog).toContainText("Cancel this run?");
     await expect(dialog).toContainText("Tasks that have finished keep their branches");
-    await checkRebuilt(page, "run, cancel while building");
+    await checkScreen(page, "run, cancel while building", { least: true });
     await dialog.getByRole("button", { name: "Cancel run" }).click();
     await expect(page.getByTestId("run-status")).toHaveText(/^Cancelled\./);
     for (const row of await rows.all()) await expect(row.locator(RUN_TASK_STATE)).toHaveText("Cancelled", { timeout: 15_000 });
     await expect(rows.nth(0).locator(".ds-check-list__result")).toHaveText(/^Stopped/);
     await expect(page.getByTestId("run-menu")).toHaveCount(0);
-    await checkRebuilt(page, "run, cancelled while building");
+    await checkScreen(page, "run, cancelled while building", { least: true });
     const attempts = (await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { tasks: { attemptId: number | null }[] };
     expect(attempts.tasks.map((task) => task.attemptId)).toEqual([null, null]);
     await rows.nth(1).getByRole("link").first().click();

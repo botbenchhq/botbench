@@ -7,9 +7,9 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { storeChecks } from "../test/support/checks.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
-import { checkWords, expect, SHOTS, signIn } from "./helpers.ts";
+import { checkScreen, checkWords, expect, SCREENS, SHOTS, signIn, watchRefused } from "./helpers.ts";
 
-// The review screen rebuilt on shadcn/ui and Tailwind 4 (ADR 0012), at a task's address with ?new=1, in the real
+// The review of a task on its screen rebuilt on shadcn/ui and Tailwind 4 (ADR 0012), at the task's own address, in the real
 // client against a real Botbench process, which serves it with its real content security policy. No model turn: before
 // Botbench starts, three tasks are put in its real store through the engine itself, each with its work committed to its
 // real branch in a real temporary repository, and their checks stored as the engine stores them (test/support/checks.ts).
@@ -70,52 +70,15 @@ const test = base.extend<{ dir: string; seeded: Seeded; botbench: Botbench; refu
     await use(botbench);
     expect((await botbench.stop()).leftover).toEqual([]);
   },
-  // Everything the browser refused or complained of while the test ran: a violation of the content security policy
-  // (the page's own event, and Chrome's console line for one), any console error, any failed request, any page error.
-  refused: async ({ page }, use) => {
-    const refused: string[] = [];
-    await page.exposeFunction("botbenchRefused", (line: string) => void refused.push(line));
-    await page.addInitScript(() => {
-      document.addEventListener("securitypolicyviolation", (event) => void (window as unknown as { botbenchRefused(line: string): void }).botbenchRefused(`policy: ${event.violatedDirective} refused ${event.blockedURI} (${event.sourceFile ?? "inline"}:${event.lineNumber})`));
-    });
-    page.on("console", (message) => {
-      // Before signing in, the client asks whether it has a session and is told it has none: Chrome prints that 401.
-      if (message.type() === "error" && message.location().url.endsWith("/api/session") && /status of 401/.test(message.text())) return;
-      if (message.type() === "error" || /content security policy/i.test(message.text())) refused.push(`console ${message.type()}: ${message.text()} (${message.location().url})`);
-    });
-    page.on("pageerror", (error) => refused.push(`page error: ${error.message}`));
-    page.on("requestfailed", (request) => {
-      // The live-updates request is ended by the page itself when a screen goes: that is not a refusal.
-      if (request.failure()?.errorText !== "net::ERR_ABORTED") refused.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
-    });
-    await use(refused);
-  },
+  // Everything the browser refused or complained of while the test ran (helpers.ts, `watchRefused`).
+  refused: async ({ page }, use) => use(await watchRefused(page)),
 });
 
 const short = (commit: string): string => commit.slice(0, 7);
-const open = (page: Page, botbench: Botbench, id: number): Promise<unknown> => page.goto(`${botbench.base}/#/tasks/${id}?new=1`);
+const open = (page: Page, botbench: Botbench, id: number): Promise<unknown> => page.goto(`${botbench.base}/#/tasks/${id}`);
 const actions = (page: Page) => page.getByTestId("decision-actions").getByRole("button");
 
-/** What stands in for the old design checks on a rebuilt screen: nothing scrolls sideways, and no control is under `floor` px high. */
-async function checkLayout(page: Page, floor: number, screen: string): Promise<void> {
-  const found = await page.evaluate((least) => {
-    const low: string[] = [];
-    for (const el of document.querySelectorAll("button, input, [role=radio], [role=tab], a[href]")) {
-      const box = el.getBoundingClientRect();
-      // Not drawn, a link inside a sentence, or the hidden input a drawn radio keeps for a form.
-      if (box.height === 0 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true") continue;
-      // A control drawn smaller carries its pointer target on a pseudo-element.
-      const target = getComputedStyle(el, "::after");
-      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
-      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
-    }
-    const small = [...document.querySelectorAll("body *")].filter((el) => el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
-    return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth };
-  }, floor);
-  expect(found, screen).toEqual({ low: [], small: [], sideways: 0 });
-}
-
-/** A picture of the screen at `docs/design/spike/<name>.png` when BOTBENCH_SHOTS names that folder. */
+/** A picture of the screen at `<BOTBENCH_SHOTS>/<name>.png` when BOTBENCH_SHOTS names a folder (docs/design/built). */
 async function shot(page: Page, name: string): Promise<void> {
   if (!SHOTS) return;
   await page.evaluate(() => document.fonts.ready);
@@ -138,7 +101,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("branch")).toHaveText(seeded.current.branch);
     await expect(page.getByTestId("commit")).toHaveText(short(seeded.current.commit));
     // The navigation holds the screens that exist, and names the open task.
-    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(["Chat", "Work", "Settings"]);
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
     await expect(page.getByRole("link", { name: seeded.current.title })).toHaveAttribute("aria-current", "page");
 
     // An overlay the library places itself (the whole commit, on hover or focus) is placed under the same policy: beneath its trigger.
@@ -186,7 +149,7 @@ test.describe("at 1440×900, with a mouse", () => {
     if (SHOTS) await name.screenshot({ path: path.join(SHOTS, "mark-navigation-dark.png") });
     expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"Inter Variable"/);
     expect(await page.evaluate(() => getComputedStyle(document.querySelector("[data-testid=diff]")!).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
-    await checkLayout(page, 32, "review, 1440, dark");
+    await checkScreen(page, "review, 1440, dark", { floor: 32 });
     await checkWords(page, "review, rebuilt");
     await shot(page, "review-1440-dark");
 
@@ -210,7 +173,7 @@ test.describe("at 1440×900, with a mouse", () => {
     const dialog = page.getByRole("alertdialog", { name: "Reject this task?" });
     await expect(dialog.getByRole("radio", { name: "Keep the branch" })).toBeChecked();
     await expect(dialog.getByRole("button")).toHaveText(["Cancel", "Reject"]);
-    await checkLayout(page, 32, "review, the Reject dialog");
+    await checkScreen(page, "review, the Reject dialog", { floor: 32 });
     await checkWords(page, "review, the Reject dialog");
     await shot(page, "review-1440-dark-reject");
     await page.keyboard.press("Escape");
@@ -229,12 +192,6 @@ test.describe("at 1440×900, with a mouse", () => {
     expect(git(seeded.repo, "rev-parse", seeded.current.branch).trim()).toBe(seeded.current.commit);
     expect(fs.existsSync(path.join(seeded.home, "worktrees", `run-${seeded.current.id}`, `task-${seeded.current.id}`))).toBe(false);
     await checkWords(page, "review, rebuilt, accepted");
-
-    // The old screen is still the task's own address, drawn as before.
-    await page.goto(`${botbench.base}/#/tasks/${seeded.current.id}`);
-    await expect(page.locator(".ds-page-header__title")).toHaveText(seeded.current.title);
-    expect(await page.evaluate(() => document.documentElement.hasAttribute("data-ui"))).toBe(false);
-    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(22, 22, 24)");
 
     expect(refused, "nothing was refused by the content security policy, and the console holds no error").toEqual([]);
     // And the record above would have held one: a style element written into the page now is refused, and is recorded.
@@ -271,22 +228,32 @@ test.describe("at 390×844, on a phone", () => {
     await open(page, botbench, seeded.unchecked.id);
     await expect(page.getByTestId("verification-heading")).toHaveText("No checks are set up for this repository");
     await expect(page.getByTestId("verification").getByTestId("evidence-words")).toHaveText("No checks are set up for this repository, so nothing verified this work. You can accept it without verification.");
-    await expect(actions(page)).toHaveText(["Reject", "Accept without verification"]);
+    // Under 1024px the decision stays in reach at the foot of the window, and its panel is a sheet, one tap away.
+    const foot = page.getByTestId("foot-actions").getByRole("button");
+    await expect(foot).toHaveText(["Reject", "Accept without verification"]);
+    await expect(page.getByTestId("foot-line")).toHaveText("No checks ran on this work.");
     await expect(page.getByRole("button", { name: "Accept", exact: true })).toHaveCount(0);
-    expect(await actions(page).evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).backgroundColor))).toEqual(["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0)"]);
+    expect(await foot.evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).backgroundColor))).toEqual(["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0)"]);
     await expect(page.locator("[data-testid=diff] [data-line=added]")).toBeVisible();
-    await checkLayout(page, 44, "review, 390");
+    await checkScreen(page, "review, 390", { floor: 44 });
     await checkWords(page, "review, rebuilt, phone");
     await shot(page, "review-390-dark");
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "review-390-dark-full.png"), fullPage: true });
 
-    // The navigation is behind the menu button, as a sheet.
-    await page.getByRole("button", { name: "Screens menu" }).click();
-    await expect(page.getByRole("dialog").getByRole("link", { name: "Work" })).toBeVisible();
-    await page.keyboard.press("Escape");
+    // The navigation is the bar at the foot, and the decision's panel opens as a sheet with the same buttons.
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
+    await expect(page.getByRole("button", { name: "Screens menu" })).toBeHidden();
+    await page.getByRole("button", { name: "More" }).click();
+    const sheet = page.getByRole("dialog", { name: "Decision" });
+    await expect(sheet.getByTestId("accepting-will").getByRole("listitem")).toHaveCount(3);
+    await expect(actions(page)).toHaveText(["Reject", "Accept without verification"]);
+    await checkScreen(page, "review, 390, the decision sheet", { floor: 44 });
+    await shot(page, "review-390-dark-sheet");
 
     await actions(page).filter({ hasText: "Accept without verification" }).click();
     await expect(page.getByTestId("decision-result")).toContainText("Accepted without verification");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("task-state")).toHaveText("Accepted");
     await expect(page.getByTestId("task-status")).toHaveText(/^Accepted without verification: no checks ran on it\. /);
     expect(refused).toEqual([]);
   });

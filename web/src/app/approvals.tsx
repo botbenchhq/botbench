@@ -49,14 +49,17 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
   const [workChanges, setWorkChanges] = useState(0);
   // The same for a paired workbench: its cards, messages and pairing are read again when this moves.
   const [peerChanges, setPeerChanges] = useState(0);
+  // Whether that connection is up. True until it is known to be down: nothing is said while the first one opens.
+  const [connected, setConnected] = useState(true);
   useEffect(() => {
     refresh();
     const changed = (): void => setWorkChanges((n) => n + 1);
     const peers = (): void => setPeerChanges((n) => n + 1);
     return openEventStream(0, {
       onEvent: () => {},
-      onConnection: (connected) => {
-        if (!connected) return;
+      onConnection: (up) => {
+        setConnected(up);
+        if (!up) return;
         refresh();
         changed();
         peers();
@@ -77,7 +80,9 @@ export function ApprovalsProvider({ onSignedOut, children }: { onSignedOut: () =
   return (
     <ApprovalsContext.Provider value={value}>
       <WorkChangesContext.Provider value={workChanges}>
-        <PeerChangesContext.Provider value={peerChanges}>{children}</PeerChangesContext.Provider>
+        <PeerChangesContext.Provider value={peerChanges}>
+          <ConnectionContext.Provider value={connected}>{children}</ConnectionContext.Provider>
+        </PeerChangesContext.Provider>
       </WorkChangesContext.Provider>
     </ApprovalsContext.Provider>
   );
@@ -88,3 +93,6 @@ export const WorkChangesContext = createContext(0);
 
 /** How many times live updates said a paired workbench's cards, messages or pairing may have changed, or came back up. */
 export const PeerChangesContext = createContext(0);
+
+/** Whether live updates are connected, as the one connection every signed-in screen shares reports it (the shell's line under its bar). */
+export const ConnectionContext = createContext(true);

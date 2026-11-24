@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { allowCommands, askCancelRun, checkDesign, checkRebuilt, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, RUN_TASK_STATE, runSteps, runTaskRows, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { allowCommands, askCancelRun, checkDesign, checkScreen, checkWords, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, primaries, RUN_TASK_STATE, runSteps, runTaskRows, SCREENS, SHOTS, signIn, test, watchRequests, workRows, workState } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -42,7 +42,8 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // the destinations…" below. Here the run is started from the Runs view, as an owner would.
   await openWork(page);
   await page.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeAttached();
+  // The Add context sheet opens over the composer on Repository, so the composer's own button is behind it.
+  await expect(page.getByRole("button", { name: "Choose a Repository", includeHidden: true })).toBeAttached();
 
   // The repository is checked as it is typed; its pre-approved commands are confirmed here, for this run.
   await chooseRepository(page, repo);
@@ -71,7 +72,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(stations.locator("[data-step=name]")).toHaveText(["Plan", "Build", "Decide"]);
   await expect(stations.nth(1)).toHaveAttribute("data-state", "not-started");
   await expect(stations.nth(2)).toHaveAttribute("data-state", "not-started");
-  await checkRebuilt(page, "run, planning");
+  await checkScreen(page, "run, planning", { least: true });
   // While the planner works there is no plan to approve, and nothing offers to.
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   expect(await offersCancelRun(page), "the run's menu offers Cancel run").toBe(true);
@@ -100,7 +101,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   const made = page.getByTestId("plan-made");
   await expect(made.getByRole("button", { name: "How the plan was made" })).toHaveAttribute("aria-expanded", "false");
   await expect(made.locator('[data-event="user_prompt"]')).toBeHidden();
-  await checkRebuilt(page, "run, plan awaiting approval");
+  await checkScreen(page, "run, plan awaiting approval", { least: true });
   await copyShot(page, "run-plan-review");
   await shot(page, "u11-plan.png");
 
@@ -109,7 +110,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   const title = page.getByLabel("Task 1 title");
   await expect(title).toBeFocused();
   await expect(page.getByLabel("Task 1 acceptance criteria")).not.toHaveValue("");
-  await checkRebuilt(page, "run, one task being edited");
+  await checkScreen(page, "run, one task being edited", { least: true });
   await title.fill("");
   await page.getByRole("button", { name: "Save task" }).click();
   await expect(title).toHaveAttribute("aria-invalid", "true");
@@ -125,7 +126,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(rows).toHaveCount(2);
   await expect(approve).toHaveText("Approve 2 tasks");
   await expect(page.getByRole("status").filter({ hasText: "Task 3 deleted from the plan." })).toBeVisible();
-  await checkRebuilt(page, "run, after a delete");
+  await checkScreen(page, "run, after a delete", { least: true });
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(rows).toHaveCount(3);
   await expect(approve).toHaveText("Approve 3 tasks");
@@ -135,7 +136,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // Cancelling asks first, and keeping the run changes nothing.
   const dialog = await askCancelRun(page);
   await expect(dialog).toContainText("Cancel this run?");
-  await checkRebuilt(page, "run, cancel dialog");
+  await checkScreen(page, "run, cancel dialog", { least: true });
   await dialog.getByRole("button", { name: "Keep run" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(approve).toHaveText("Approve 2 tasks");
@@ -151,7 +152,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(stations.nth(0)).toHaveAttribute("data-state", "done");
   await expect(stations.nth(1)).toHaveAttribute("data-state", /^(running|waiting)$/);
   await expect(stations.nth(1)).toHaveAttribute("aria-current", "step");
-  await checkRebuilt(page, "run, approved and building");
+  await checkScreen(page, "run, approved and building", { least: true });
 
   // Cancelled at once, so this test builds nothing: the turn that may have begun is stopped.
   await (await askCancelRun(page)).getByRole("button", { name: "Cancel run" }).click();
@@ -165,14 +166,13 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\.$/);
   await checkDesign(page, "task of a cancelled run");
 
-  // Work knows it: the run, once, under Finished, the one group that holds anything. Its tasks are on its own screen.
+  // Work knows it: the run, once, as Cancelled. Its tasks are on its own screen.
   await openWork(page);
-  await expect(page.getByRole("group", { name: "Show" }).getByLabel(/^Finished/)).toBeChecked();
-  const listed = page.getByTestId("board-group").getByRole("listitem");
+  const listed = workRows(page);
   await expect(listed).toHaveCount(1);
   await expect(listed).toContainText("Add three files");
-  await expect(listed).toContainText("Cancelled");
-  await checkDesign(page, "work, one run");
+  await expect(workState(listed)).toHaveText("Cancelled");
+  await checkWords(page, "work, one run");
   await copyShot(page, "work");
   await shot(page, "u11-runs.png");
 
@@ -186,12 +186,13 @@ test("the navigation lists the destinations; New run opens the composer asking f
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
   // Starting something new is a button in Work, not a destination.
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await openWork(page);
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Work");
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
-  await checkDesign(page, "work, none yet");
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
+  await checkWords(page, "work, none yet");
   await page.getByRole("link", { name: "New run" }).click();
+  // The sheet opens on Repository, over the screen: once it is there it is closed.
+  await expect(page.getByTestId("context-sheet")).toBeVisible();
   await closeContext(page);
   await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
   await checkDesign(page, "composer, a new run with no repository");
@@ -205,7 +206,8 @@ test("the navigation lists the destinations; New run opens the composer asking f
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
   await closeContext(page);
   await messageBox(page).fill("Add a.txt containing a.");
-  await expect(page.locator(".ds-button--primary")).toHaveCount(1);
+  // Send is the screen's one filled button.
+  expect(await primaries(page)).toEqual(["Send"]);
   await checkDesign(page, "composer, a run filled in");
 });
 
@@ -225,7 +227,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
   const sheet = await openRow(page, "Spec file");
   await sheet.getByLabel("Spec file path").fill(missing);
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
-  await expect(sheet.locator('[data-row="spec"] .ds-context-list__value')).toHaveText("no-such-spec.md");
+  await expect(sheet.locator('[data-row="spec"] [data-testid="context-row-value"]')).toHaveText("no-such-spec.md");
   await closeContext(page);
   await messageBox(page).fill("and a prompt as well");
   await expect(send).toBeDisabled();
@@ -240,7 +242,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
 
   // Nothing started: no run is listed, and no planner was launched.
   await openWork(page);
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
   const runs = (await (await page.request.get(`${botbench.base}/api/runs`)).json()) as { runs: unknown[] };
   expect(runs.runs).toEqual([]);
   expect(worktreeCount(repo)).toBe(1);

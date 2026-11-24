@@ -77,8 +77,8 @@ test("an issue is looked up and shown as plain text, attached as the row's value
   await sheet.getByRole("button", { name: "Attach this issue" }).click();
   await expect(sheet.getByTestId("issue-attached")).toHaveText("Attached to this run.");
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
-  const row = sheet.locator(".ds-context-list__button", { hasText: "From an issue" });
-  await expect(row.locator(".ds-context-list__value")).toHaveText(issueWords({ number: ISSUE_NUMBER, title: issue.title }));
+  const row = sheet.locator("button[data-row]", { hasText: "From an issue" });
+  await expect(row.locator('[data-testid="context-row-value"]')).toHaveText(issueWords({ number: ISSUE_NUMBER, title: issue.title }));
 
   // Fully autonomous was chosen before: Send is disabled now, saying why, and the Mode view cannot choose it.
   await closeContext(page);

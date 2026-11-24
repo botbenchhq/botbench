@@ -6,7 +6,7 @@ import { insertStanding, realRepo } from "../src/approvals/grants.ts";
 import { createTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, checkScreen, copyShot, expect, nav, openCanDo, openFromSettings, primaries, SCREENS, SHOTS, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Botbench process whose settings offer standing
@@ -52,22 +52,21 @@ async function cardOf(page: Page, id: number): Promise<Locator> {
 
 test("Permissions starts empty in words, with nothing to tap and nothing in the tray", async ({ page, botbench }) => {
   await signIn(page, botbench);
-  // Permissions is a screen of its own, reached from Settings, with a link back. With nothing granted and nothing logged it says so in words.
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  // Permissions and autonomy is a group of Settings, a screen of its own at a phone's width, with the way back to Settings. With nothing granted and nothing logged it says so in words.
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await openFromSettings(page, "Permissions");
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Check a command", "Activity"]);
-  await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Default mode", "Always allowed", "Check a command", "Activity"]);
+  await expect(page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
   await expect(page.getByTestId("grants-none")).toHaveText("Nothing is always allowed. After you have allowed the same command once, its request offers Always allow.");
   await expect(page.getByTestId("log-none")).toHaveText("Nothing has been asked, allowed or run yet.");
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
   await expect(page.getByTestId("action-log")).toHaveCount(0);
-  // The one control is the command check's, which changes nothing; with no repository known its picker says so.
-  await expect(page.getByRole("button")).toHaveText(["Check"]);
+  // Besides the two explanations to open, the one button is the command check's, which changes nothing; with no repository known its picker says so.
+  await expect(page.getByTestId("settings").getByRole("button")).toHaveText(["More about this", "More about this", "Check"]);
   await expect(page.getByTestId("check-repository")).toBeDisabled();
   await expect(page.getByTestId("check-repository")).toHaveText("No repository yet");
-  await expect(page.getByTestId("approval-tray")).toBeEmpty();
-  await checkDesign(page, "trust, empty");
+  await expect(page.getByRole("link", { name: /^Needs input/ })).toHaveCount(0);
+  await checkScreen(page, "trust, empty");
 });
 
 test("Check a command answers for each mode in words, the rule behind each named, and changes nothing, at a phone's width and a desktop's, light and dark", async ({ page }) => {
@@ -97,8 +96,7 @@ test("Check a command answers for each mode in words, the rule behind each named
       "Semi-autonomousAsks you. On the always-ask list: it sends commits to another computer. Rule: git-push",
       "Fully autonomousRefused: a fully autonomous run asks you nothing, so what would ask is not run. On the always-ask list: it sends commits to another computer. Rule: git-push",
     ]);
-    expect(await primaries(page), "the check is no primary action").toEqual([]);
-    await checkDesign(page, "trust, a command that asks, dark");
+    await checkScreen(page, "trust, a command that asks, dark");
 
     // A new command clears the old answer until it is checked.
     await box.fill("npm test");
@@ -126,12 +124,12 @@ test("Check a command answers for each mode in words, the rule behind each named
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await run("git push");
-    await checkDesign(page, "trust, a command that asks, light");
+    await checkScreen(page, "trust, a command that asks, light");
     for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(result).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px`).toBe(true);
-      await checkDesign(page, `trust, a command that asks, light, ${width}px`);
+      await checkScreen(page, `trust, a command that asks, light, ${width}px`);
     }
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "dark"));
     // Loaded again at a phone's width, then widened, as the light pass does.
@@ -144,7 +142,7 @@ test("Check a command answers for each mode in words, the rule behind each named
       await page.setViewportSize({ width, height: 900 });
       await expect(result).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `nothing runs off the side at ${width}px, dark`).toBe(true);
-      await checkDesign(page, `trust, a command that runs, dark, ${width}px`);
+      await checkScreen(page, `trust, a command that runs, dark, ${width}px`);
     }
 
     // Nothing was asked, logged or granted.
@@ -196,7 +194,7 @@ test("Take back stays focused and busy while it is sent, and the focus then goes
     await taking.press("Enter");
     await expect(page.getByTestId("take-back-confirm")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Take back npm test" })).toBeDisabled();
-    await checkDesign(page, "trust, taking back");
+    await checkScreen(page, "trust, taking back");
     await expect(taking).toBeFocused();
 
     // Until the list is read again the row stays, and its button stays busy: the request is held here to see it.
@@ -229,7 +227,7 @@ test("Take back stays focused and busy while it is sent, and the focus then goes
     await page.getByTestId("take-back-confirm").getByRole("button", { name: "Take it back" }).click();
     await expect(page.getByTestId("grants-none")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Always allowed" })).toBeFocused();
-    await checkDesign(page, "trust, nothing left after Take back");
+    await checkScreen(page, "trust, nothing left after Take back");
   } finally {
     expect((await botbench.stop()).leftover).toEqual([]);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -252,49 +250,52 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   const first = await cardOf(page, 1);
   await expect(first.getByTestId("approval-command")).toHaveText(COMMAND);
   await expect(first.getByTestId("standing-offer")).toHaveCount(0);
-  await expect(first.getByRole("button")).toHaveText(["Allow", "Decline"]);
+  await expect(first.getByTestId("decision-actions").getByRole("button")).toHaveText(["Decline", "Allow"]);
+  await expect(first.getByRole("button")).toHaveText(["Decline", "Allow", "Add a note for Claude Code"]);
   await first.getByRole("button", { name: "Allow", exact: true }).click();
 
-  // The second card: the same command was allowed once, which is the configured number. It offers, set apart above the answers, which end the card.
+  // The second card: the same command was allowed once, which is the configured number. It offers, set apart under the
+  // answers, behind a disclosure of its own that is closed until it is asked for.
   const card = await cardOf(page, 2);
   await expect(card.getByTestId("approval-command")).toHaveText(COMMAND);
   const offer = card.getByTestId("standing-offer");
   await expect(offer).toBeVisible();
+  await expect(card.getByTestId("decision-actions").getByRole("button")).toHaveText(["Decline", "Allow"]);
+  await expect(card.getByRole("button")).toHaveText(["Decline", "Allow", "Always allow this command", "Add a note for Claude Code"]);
+  await expect(offer.getByRole("button", { name: "Always allow this command" })).toHaveAttribute("aria-expanded", "false");
+  await offer.getByRole("button", { name: "Always allow this command" }).click();
   await expect(offer).toContainText("You have allowed this command once.");
   // What the button would cover is said before it is tapped.
   await expect(offer).toContainText("Always allow would cover this exact command, in the Build step, from this folder, in this repository. You confirm it first.");
-  await expect(card.getByRole("button")).toHaveText(["Always allow…", "Allow", "Decline"]);
-  await expect.poll(() => primaries(page), { message: "Allow stays the one primary action" }).toEqual(["Allow"]);
-  const look = (el: Element): { background: string; text: string; border: string } => {
-    const style = getComputedStyle(el);
-    return { background: style.backgroundColor, text: style.color, border: style.borderTopColor };
-  };
+  await expect(offer).toContainText("It lasts until you take it back on the Permissions screen.");
+  await expect(card.getByRole("button")).toHaveText(["Decline", "Allow", "Always allow this command", "Always allow…", "Add a note for Claude Code"]);
+  await expect.poll(() => primaries(page), { message: "Allow stays the one primary action; the offer is not drawn as one" }).toEqual(["Allow"]);
   const open = offer.getByRole("button", { name: "Always allow…" });
-  expect(await open.evaluate(look), "the offer is drawn as a secondary control").toEqual(SECONDARY_LOOK);
+  await expect(open).toHaveAttribute("aria-haspopup", "dialog");
   const allowBox = (await card.getByRole("button", { name: "Allow", exact: true }).boundingBox())!;
   const openBox = (await open.boundingBox())!;
-  expect(allowBox.y - (openBox.y + openBox.height), "the offer is set apart, above Allow").toBeGreaterThanOrEqual(24);
-  await expect(card.getByTestId("standing-confirm")).toHaveCount(0);
+  expect(openBox.y - (allowBox.y + allowBox.height), "the offer is set apart, under the answers").toBeGreaterThanOrEqual(24);
+  await expect(page.getByTestId("standing-confirm")).toHaveCount(0);
   await checkDesign(page, "task, a card that offers standing permission");
   await copyShot(page, "approval-always-allow");
 
-  // Opening the offer grants nothing: it states the scope in words and asks for a confirmation.
+  // Opening the offer grants nothing: it states the scope in words and asks for a confirmation, in a dialog over the screen.
   await open.click();
-  const confirm = card.getByTestId("standing-confirm");
+  const confirm = page.getByTestId("standing-confirm");
   await expect(confirm).toBeVisible();
   await expect(confirm.getByRole("heading")).toHaveText(`Always allow ${COMMAND} in this project?`);
   await expect(confirm).toContainText("Botbench runs exactly this command without asking you");
   await expect(confirm).toContainText("A different argument still asks, and dangerous commands always ask.");
   await expect(confirm).toContainText("You can take it back on the Permissions screen.");
   await expect(confirm.getByTestId("standing-command")).toHaveText(COMMAND);
-  expect(await confirm.getByTestId("standing-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
+  expect(await confirm.getByTestId("standing-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
   await expect(confirm.getByTestId("standing-repo")).toHaveText(repo);
   await expect(confirm.getByTestId("standing-directory")).toHaveText("The top folder of the task's copy");
   await expect(confirm.getByTestId("standing-role")).toHaveText("Build");
-  await expect(confirm.getByRole("button")).toHaveText(["Always allow", "Cancel"]);
+  await expect(confirm.getByRole("button")).toHaveText(["Cancel", "Always allow"]);
   // Focus starts on the button that changes nothing, so Enter cannot grant by accident.
   await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
-  expect(await primaries(page), "the confirmation is not a second primary action").toEqual(["Allow"]);
+  expect(await primaries(page), "the confirmation is not a second primary action").not.toContain("Always allow");
   expect(await api(page, botbench, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
   await checkDesign(page, "task, the standing permission confirmation");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u10-offer.png"), fullPage: true });
@@ -309,26 +310,29 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   // Cancel closes it and still grants nothing; the card waits as before.
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(confirm).toHaveCount(0);
-  await expect(card.getByRole("button")).toHaveText(["Always allow…", "Allow", "Decline"]);
+  await expect(card.getByRole("button")).toHaveText(["Decline", "Allow", "Always allow this command", "Always allow…", "Add a note for Claude Code"]);
   expect(await api(page, botbench, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
-  // The card is on this screen: the tray is not drawn, and only tells a screen reader, once, that the approval is here.
+  // The card is on this screen: the shell's line links nowhere, and only tells a screen reader, once, that the approval is here.
   await expect(tray).toHaveText("An approval is waiting on this screen.");
+  await expect(page.getByTestId("needs-input")).toHaveCount(0);
 
-  // Confirming grants it and allows this request. The third run needs no card, and the transcript says why it ran.
+  // Confirming grants it and allows this request. The third run needs no card, and the activity says why it ran.
   await open.click();
-  await card.getByRole("button", { name: "Always allow", exact: true }).click();
+  await confirm.getByRole("button", { name: "Always allow", exact: true }).click();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(page.getByTestId("task-status")).toHaveText(BUILT, { timeout: 120_000 });
   await expect(tray).toBeEmpty();
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
-  const resolved = page.locator('[data-event="permission_resolved"]');
+  // The review opens on its Review tab; the answers are in the activity, the tab beside it. The asking has no line of its own.
+  await page.getByRole("tab", { name: /^Activity/ }).click();
+  const resolved = page.getByRole("log", { name: "Activity" }).getByTestId("answer");
   await expect(resolved).toHaveCount(3);
   await expect(resolved.nth(0)).toContainText("You allowed");
   await expect(resolved.nth(1)).toContainText("You allowed");
   await expect(resolved.nth(2)).toContainText("Always allowed");
   await expect(resolved.nth(2)).toContainText("allowed without asking you: you chose Always allow for this command");
   await expect(resolved.nth(2)).not.toContainText("You allowed");
-  await expect(page.locator('[data-event="permission_request"]')).toHaveCount(0);
+  await expect(page.getByRole("log", { name: "Activity" }).getByTestId("step-now")).toHaveCount(0);
   await expect(await openCanDo(page)).toContainText("with Ask before every command on in Settings, every one waits for your answer first, unless you chose Always allow for it (see Permissions)");
   expect((await api<{ approvals: { status: string }[] }>(page, botbench, "/api/approvals")).approvals.map((a) => a.status)).toEqual(["allowed", "allowed"]);
   const branch = (await page.getByTestId("branch").textContent())!;
@@ -344,7 +348,8 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   const again = await cardOf(page, 4);
   await expect(again.getByTestId("approval-command")).toHaveText("git push");
   await expect(again.getByTestId("standing-offer")).toHaveCount(0);
-  await expect(again.getByRole("button")).toHaveText(["Allow", "Decline"]);
+  await expect(again.getByTestId("decision-actions").getByRole("button")).toHaveText(["Decline", "Allow"]);
+  await expect(again.getByRole("button")).toHaveText(["Decline", "Allow", "Add a note for Claude Code"]);
   await expect(page.getByRole("button", { name: /stop asking|standing|always|every time|remember/i })).toHaveCount(0);
   expect((await api<{ approvals: Record<string, unknown>[] }>(page, botbench, "/api/approvals?status=pending")).approvals.map((a) => [a.command, "standingOffer" in a])).toEqual([["git push", false]]);
   await checkDesign(page, "task, a card for a command on the safety floor");
@@ -360,7 +365,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   expect(await shape(grants)).toEqual(["UL", "LI"]);
   const grant = grants.getByRole("listitem");
   await expect(grant.getByTestId("grant-command")).toHaveText(COMMAND);
-  expect(await grant.getByTestId("grant-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
+  expect(await grant.getByTestId("grant-command").evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
   await expect(grant).toContainText("Claude Code runs this without asking you during the Build step.");
   await expect(grant).toContainText("The top folder of a task's copy");
   await expect(grant).toContainText(repo);
@@ -369,9 +374,10 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(page.getByTestId("grants-none")).toHaveCount(0);
 
   // The action log, newest first: what was asked, decided and run, by which rule in words, for which task.
+  // The activity is a table: what happened, the command or action, and the task and time.
   const log = page.getByTestId("action-log");
-  expect(await shape(log)).toEqual(["UL", "LI"]);
-  const entries = log.getByRole("listitem");
+  await expect(log.getByRole("columnheader")).toHaveText(["What happened", "Command or action", "Task and time"]);
+  const entries = log.getByTestId("activity-entry");
   await expect(entries).toHaveText([
     /You denied.*git push.*Task 2/s,
     /Asked you.*git push.*Always asks: git-push.*Task 2/s,
@@ -386,15 +392,14 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   ]);
   // Ten entries are one page: nothing older, so no control for it.
   await expect(page.getByRole("button", { name: "Show older activity" })).toHaveCount(0);
-  await expect(page.getByRole("button")).toHaveText(["Take back", "Check"]);
-  expect(await primaries(page), "Trust has no primary action").toEqual([]);
-  await checkDesign(page, "trust, with a standing permission and the log");
+  await expect(page.getByTestId("settings").getByRole("button")).toHaveText(["More about this", "More about this", "See what ran in Activity", "Take back", "Check"]);
+  await checkScreen(page, "trust, with a standing permission and the log");
   await copyShot(page, "permissions");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u10-trust.png"), fullPage: true });
 
   // Take back asks first, in words; keeping it changes nothing.
   await grant.getByRole("button", { name: "Take back" }).click();
-  const sure = grant.getByTestId("take-back-confirm");
+  const sure = page.getByTestId("take-back-confirm");
   await expect(sure.getByRole("heading")).toHaveText("Stop always allowing this command?");
   await expect(sure).toContainText("The next time this command is asked for, Botbench asks you again.");
   await expect(sure).toContainText(COMMAND);
@@ -402,15 +407,15 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(sure.getByRole("button")).toHaveText(["Keep it", "Take it back"]);
   await expect(sure.getByRole("button", { name: "Keep it" })).toBeFocused();
   expect((await api<{ grants: unknown[] }>(page, botbench, "/api/grants")).grants.length).toBe(1);
-  await checkDesign(page, "trust, the take back confirmation");
-  await grant.getByRole("button", { name: "Keep it" }).click();
+  await checkScreen(page, "trust, the take back confirmation");
+  await sure.getByRole("button", { name: "Keep it" }).click();
   await expect(sure).toHaveCount(0);
   await expect(grants.getByRole("listitem")).toHaveCount(1);
   expect((await api<{ grants: unknown[] }>(page, botbench, "/api/grants")).grants.length).toBe(1);
 
   // Confirmed: the grant leaves the list, the log says so first, and the older entry is one tap away.
   await grant.getByRole("button", { name: "Take back" }).click();
-  await grant.getByRole("button", { name: "Take it back" }).click();
+  await sure.getByRole("button", { name: "Take it back" }).click();
   await expect(page.getByTestId("grant-list")).toHaveCount(0);
   await expect(page.getByTestId("grants-none")).toBeVisible();
   expect(await api(page, botbench, "/api/grants")).toEqual({ grants: [], offerStandingAfter: 1 });
@@ -422,7 +427,7 @@ test("LIVE: a card for a command allowed before offers standing permission with 
   await expect(entries).toHaveCount(11);
   await expect(entries.last()).toHaveText(/Asked you.*sh make-marker\.sh.*Task 1/s);
   await expect(older).toHaveCount(0);
-  await checkDesign(page, "trust, after taking back");
+  await checkScreen(page, "trust, after taking back");
 
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "all of it without a reload").toBe(true);
   expect(foreign, "requests to anything but Botbench").toEqual([]);

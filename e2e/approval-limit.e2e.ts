@@ -6,7 +6,7 @@ import { createRun, storePlan } from "../src/engine/run.ts";
 import { createTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, checkLayout, checkWords, choose, chooseRepository, contextSheet, expect, openComposer, openFromSettings, openRow, signIn } from "./helpers.ts";
+import { checkDesign, checkScreen, checkWords, choose, chooseRepository, contextSheet, expect, openComposer, openFromSettings, openRow, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // A run's approval time limit in the real client: chosen in the composer's Add context sheet for a run, and shown on
@@ -77,31 +77,30 @@ for (const [size, viewport] of Object.entries(SIZES)) {
         await expect(page.getByTestId("run-facts").getByText("Approval time limit", { exact: true })).toBeVisible();
         // The run screen is a rebuilt one: its words and its layout are checked in place of the old design checks.
         const floor = viewport.width < 1024 ? 44 : 32;
-        await checkLayout(page, floor, `run with an approval time limit, ${size}, ${scheme}`);
+        await checkScreen(page, `run with an approval time limit, ${size}, ${scheme}`, { floor: floor });
         await checkWords(page, `run with an approval time limit, ${size}, ${scheme}`);
         await fits(page, `run with an approval time limit, ${size}, ${scheme}`, [limit]);
 
         await page.goto(`${botbench.base}/#/runs/${seeded.free}`);
         await expect(page.getByTestId("run-mode")).toBeVisible();
         await expect(limit).toHaveText("Off. Requests wait for your answer, however long that takes.");
-        await checkLayout(page, floor, `run with no approval time limit, ${size}, ${scheme}`);
+        await checkScreen(page, `run with no approval time limit, ${size}, ${scheme}`, { floor: floor });
         await checkWords(page, `run with no approval time limit, ${size}, ${scheme}`);
         await fits(page, `run with no approval time limit, ${size}, ${scheme}`, [limit]);
       });
 
       test(`Permissions names an approval nobody answered in time, and a request denied again, in plain words (${size}, ${scheme})`, async ({ page, botbench }) => {
-        // Opened from Settings at a phone's width, then widened, as e2e/trust.e2e.ts does: from 1024px Settings is two
-        // panes and its list of links is not shown.
+        // Opened from Settings at a phone's width, through its list of groups, then widened, as e2e/trust.e2e.ts does.
         await page.setViewportSize(SIZES.phone);
         await signIn(page, botbench);
         await openFromSettings(page, "Permissions");
         await page.setViewportSize(viewport);
-        await expect(page.getByRole("heading", { name: "Permissions", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Permissions and autonomy", level: 1 })).toBeVisible();
         const expired = page.getByText("Denied by Botbench: nobody answered in time", { exact: true });
         const repeated = page.getByText("Denied without asking: you denied it before in this task", { exact: true });
         await expect(expired).toBeVisible();
         await expect(repeated).toBeVisible();
-        await checkDesign(page, `permissions with the new rules, ${size}, ${scheme}`);
+        await checkScreen(page, `permissions with the new rules, ${size}, ${scheme}`);
         await fits(page, `permissions with the new rules, ${size}, ${scheme}`, [expired, repeated]);
       });
 
@@ -111,10 +110,10 @@ for (const [size, viewport] of Object.entries(SIZES)) {
         await chooseRepository(page, seeded.repo);
         // A task on its own has no such row.
         await choose(page, "What to do", "One task");
-        await expect(contextSheet(page).locator(".ds-context-list__label", { hasText: /^Approval time limit$/ })).toHaveCount(0);
+        await expect(contextSheet(page).locator('[data-testid="context-row-label"]', { hasText: /^Approval time limit$/ })).toHaveCount(0);
         await choose(page, "What to do", "Plan a run");
-        const row = contextSheet(page).locator(".ds-context-list__button", { has: page.locator(".ds-context-list__label", { hasText: /^Approval time limit$/ }) });
-        await expect(row.locator(".ds-context-list__value")).toHaveText("Off");
+        const row = contextSheet(page).locator("button[data-row]", { has: page.locator('[data-testid="context-row-label"]', { hasText: /^Approval time limit$/ }) });
+        await expect(row.locator('[data-testid="context-row-value"]')).toHaveText("Off");
         await fits(page, `composer rows, ${size}, ${scheme}`, [row]);
 
         const sheet = await openRow(page, "Approval time limit");
@@ -127,12 +126,12 @@ for (const [size, viewport] of Object.entries(SIZES)) {
         await expect(sheet.getByText("Requests wait for your answer, however long that takes.")).toBeVisible();
         await expect(sheet.getByText("A request nobody answers within 1 hour is denied.")).toBeVisible();
         await checkDesign(page, `composer, approval time limit, ${size}, ${scheme}`);
-        await fits(page, `composer, approval time limit, ${size}, ${scheme}`, [sheet.locator(".ds-sheet__body")]);
+        await fits(page, `composer, approval time limit, ${size}, ${scheme}`, [sheet.getByTestId("context-body")]);
 
         // Chosen, it goes back to the rows, which say it.
         await sheet.getByRole("radio", { name: "1 hour", exact: true }).click();
         await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
-        await expect(row.locator(".ds-context-list__value")).toHaveText("1 hour");
+        await expect(row.locator('[data-testid="context-row-value"]')).toHaveText("1 hour");
         await checkDesign(page, `composer rows with a limit, ${size}, ${scheme}`);
       });
     });

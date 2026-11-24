@@ -5,7 +5,7 @@ import { createTask, moveTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, expect, messageBox, signIn } from "./helpers.ts";
+import { checkDesign, checkScreen, expect, messageBox, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Crossing the 1024px width, where a screen gains or loses the column of chats and work beside it (issue #156): from
@@ -59,7 +59,7 @@ async function across(page: Page, still: (width: number) => Promise<void>): Prom
 }
 
 for (const appearance of ["light", "dark"] as const) {
-  test(`${appearance}: from 1280 to 390 and back, Chat keeps its h1 and the unsent message, a task keeps its h1 and the unsent note, and Permissions draws its own h1 at each width`, async ({ page, botbench, seeded }) => {
+  test(`${appearance}: from 1280 to 390 and back, New chat or task keeps its h1 and the unsent message, a task keeps its h1 and the unsent note, and Permissions draws its own h1 at each width`, async ({ page, botbench, seeded }) => {
     await page.setViewportSize(WIDE);
     await page.goto(botbench.base);
     await page.evaluate((choice) => window.localStorage.setItem("botbench.appearance", choice), appearance);
@@ -67,48 +67,55 @@ for (const appearance of ["light", "dark"] as const) {
     await signIn(page, botbench);
     await expect(page.locator("html")).toHaveAttribute("data-theme", appearance);
 
-    // Chat, with the column beside it: a message typed and not sent stays through both crossings.
+    // New chat or task (the home screen with no chat), a rebuilt screen with its own navigation and no column beside
+    // it: a message typed and not sent stays through both crossings.
     const message = "Draft that is not sent yet: rename the timeout setting";
-    await expect(page.getByRole("region", { name: "Chats and work" })).toBeVisible();
     await messageBox(page).fill(message);
-    await expect(h1(page)).toHaveText("Chat");
-    await across(page, async (width) => {
+    await expect(h1(page)).toHaveText("What do you want to do?");
+    await across(page, async () => {
       await expect(h1(page)).toHaveCount(1);
-      await expect(h1(page)).toHaveText("Chat");
+      await expect(h1(page)).toHaveText("What do you want to do?");
       await expect(messageBox(page)).toHaveValue(message);
-      await expect(page.getByRole("region", { name: "Chats and work" })).toHaveCount(width >= 1024 ? 1 : 0);
+      await expect(page.getByRole("region", { name: "Chats and work" })).toHaveCount(0);
     });
     await checkDesign(page, `chat, ${appearance}, wide again after a phone's width`);
 
     // A task that is ready for review: its title is its h1, and a note typed in its box and not sent stays.
     await page.goto(`${botbench.base}/#/tasks/${seeded.taskId}`);
     await expect(h1(page)).toHaveText(TITLE);
+    // The note box is the other way on from the decision, in the decision's pane; under 1024px that pane is a sheet.
+    await page.getByRole("button", { name: "Send Claude Code a note instead" }).click();
     const note = page.getByTestId("task-note").getByLabel("Your note");
     const typed = "Also keep the old timeout as a fallback";
     await note.fill(typed);
-    await across(page, async () => {
+    await across(page, async (width) => {
       await expect(h1(page)).toHaveCount(1);
       await expect(h1(page)).toHaveText(TITLE);
+      if (width < 1024) await page.getByRole("button", { name: "More" }).click();
       await expect(note).toHaveValue(typed);
+      if (width < 1024) await page.keyboard.press("Escape");
       await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
     });
     await page.setViewportSize(PHONE);
+    await expect(page.locator("[data-shell]")).toHaveAttribute("data-shell", "one");
     await checkDesign(page, `task, ready for review, ${appearance}, at a phone's width after a wide one`);
     await page.setViewportSize(WIDE);
 
-    // Permissions: Settings' section when wide, its own screen when narrow, each with its h1.
+    // Permissions and autonomy: beside the settings navigation when wide, a screen of its own when narrow, with its
+    // one h1 either way. Its old address opens it.
     await page.goto(`${botbench.base}/#/trust`);
-    await expect(h1(page)).toHaveText("Settings");
-    await expect(page.getByTestId("settings-section")).toHaveAttribute("aria-label", "Permissions");
+    await expect(h1(page)).toHaveText("Permissions and autonomy");
+    await expect(page.getByTestId("settings-nav").locator("[aria-current=page]")).toHaveText("Permissions and autonomy");
     await page.setViewportSize(PHONE);
     await expect(h1(page)).toHaveCount(1);
-    await expect(h1(page)).toHaveText("Permissions");
+    await expect(h1(page)).toHaveText("Permissions and autonomy");
     await expect(h1(page)).toBeInViewport();
+    await expect(page.getByTestId("settings-nav")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Always allowed", level: 2 })).toBeVisible();
-    await checkDesign(page, `permissions, ${appearance}, at a phone's width after a wide one`);
+    await checkScreen(page, `permissions, ${appearance}, at a phone's width after a wide one`);
     await page.setViewportSize(WIDE);
     await expect(h1(page)).toHaveCount(1);
-    await expect(h1(page)).toHaveText("Settings");
-    await expect(page.getByTestId("settings-section")).toHaveAttribute("aria-label", "Permissions");
+    await expect(h1(page)).toHaveText("Permissions and autonomy");
+    await expect(page.getByTestId("settings-nav").locator("[aria-current=page]")).toHaveText("Permissions and autonomy");
   });
 }

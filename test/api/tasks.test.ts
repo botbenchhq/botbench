@@ -234,6 +234,8 @@ test("a committed task is described with its changed files, each marked as the p
     builder: "claude-code",
     handoffs: [],
     moveTo: [],
+    canStop: false,
+    resumeTakesNote: false,
     maxRefineRounds: 0,
     reviewLine: null,
     decision: null,

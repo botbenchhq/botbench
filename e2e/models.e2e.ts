@@ -16,10 +16,10 @@ const NAME = "Haiku [\\d.]+";
 const UNKNOWN = `botbench-no-such-model-${"1".repeat(77)}`;
 
 /** The model chip under the box, which opens Add context on the model's view. */
-const chip = (page: Page) => page.locator(".ds-composer__chip");
+const chip = (page: Page) => page.getByTestId("agent-chip");
 async function openModels(page: Page) {
   // While a repository is still to be chosen, the chip asks for it, and the model is a row of the sheet.
-  if ((await chip(page).getAttribute("aria-describedby")) === null) await chip(page).click();
+  if ((await chip(page).count()) > 0) await chip(page).click();
   else await openRow(page, "Model");
   const sheet = contextSheet(page);
   await expect(sheet.getByRole("heading", { name: "Model" })).toBeVisible();
@@ -180,9 +180,10 @@ test("LIVE: for a task a model is picked and sent, and the task screen names a m
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
 
-  // The model that answered is the one asked for: the screen has no model line, and the transcript no row for it.
+  // The model that answered is the one asked for: the screen has no line that says another one answered. (Its activity
+  // never has a row for the model.)
+  await expect(page.getByTestId("task-state")).toHaveText("Ready for review");
   await expect(page.getByTestId("task-model")).toHaveCount(0);
-  await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
   const taskId = Number(/#\/tasks\/(\d+)$/.exec(page.url())![1]);
   expect(((await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { requestedModel: string | null }).requestedModel).toBe(CHEAP);
   await checkDesign(page, "task, with its model");
@@ -194,7 +195,7 @@ test("where Claude Code reports no list, the picker offers the configured models
   const withoutClaude = (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== "" && !fs.existsSync(path.join(dir, "claude"))).join(path.delimiter);
   const botbench = await startBotbench({ env: { PATH: withoutClaude }, settings: { drivers: { "claude-code": { model: "sonnet", models: ["opus", "sonnet"] } } } });
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");

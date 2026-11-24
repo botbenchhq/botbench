@@ -73,19 +73,14 @@ for (const mode of ["dark", "light"] as const) {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "auto");
 
     const heading = (name: string) => (p: Page) => p.getByRole("heading", { name, level: 1 });
-    await screen(page, botbench, { hash: "#/", name: "Chat", ready: () => messageBox(page), mode });
-    await screen(page, botbench, { hash: "#/work", name: "Work", ready: heading("Work"), mode });
+    // Home and Work are rebuilt on shadcn/ui and are not drawn with the design system's classes: their own tests judge
+    // them (e2e/home.e2e.ts, e2e/work.e2e.ts; ADR 0012).
+    await screen(page, botbench, { hash: "#/turn", name: "Chat", ready: () => messageBox(page), mode });
     await screen(page, botbench, { hash: `#/tasks/${seeded.task}`, name: "task, ready for review", ready: (p) => p.getByTestId("task-status"), mode });
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
     // The run screen is rebuilt on shadcn/ui (ADR 0012) and is not drawn with the design system's classes: its checks, in dark and in light, are e2e/run.e2e.ts's.
-    await screen(page, botbench, { hash: "#/settings", name: "Settings, Agents", ready: (p) => p.getByRole("region", { name: "Agents" }), mode });
-    await screen(page, botbench, { hash: "#/settings/appearance", name: "Settings, Appearance", ready: (p) => p.getByTestId("settings-section").getByRole("group", { name: "Appearance" }), mode });
-    await screen(page, botbench, { hash: "#/settings/notifications", name: "Settings, Notifications", ready: (p) => p.getByTestId("notifications"), mode });
-    await screen(page, botbench, { hash: "#/settings/devices", name: "Settings, Signed-in devices", ready: (p) => p.getByTestId("device").first(), mode });
-    await screen(page, botbench, { hash: "#/settings/workbench", name: "Settings, This workbench", ready: (p) => p.getByTestId("workbench-name"), mode });
-    // From 1024px Permissions and Usage are sections of the two-pane Settings, at their own addresses.
-    await screen(page, botbench, { hash: "#/trust", name: "Settings, Permissions", ready: (p) => p.getByRole("region", { name: "Permissions" }), mode });
-    await screen(page, botbench, { hash: "#/usage", name: "Settings, Usage", ready: (p) => p.getByRole("region", { name: "Usage" }), mode });
+    // Settings and its groups are built on shadcn/ui (ADR 0012), not on the design system's classes these checks read:
+    // e2e/next-settings.e2e.ts and e2e/wide.e2e.ts check them at this width.
 
     // The composer, for a run, and its Add context sheet: an open dialog is a view of its own. With no repository
     // remembered the sheet opens by itself on its Repository view; it is closed first, so the composer is judged alone.

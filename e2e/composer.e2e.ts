@@ -1,17 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, closeContext, contextSheet, expect, messageBox, openContext, openRow, openWork, primaries, SHOTS, signIn, test, tempShot } from "./helpers.ts";
+import { checkDesign, choose, closeContext, contextRow, contextRows as rows, contextSheet, expect, messageBox, modelChip, openContext, openRow, openWork, primaries, signIn, tempShot, test } from "./helpers.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
 
 // The composer on the home screen, at a phone's size, with no model turn: a real Botbench process, real temporary
 // repositories it knows of from its settings file, and the built client in Chrome.
-
-/** The context list's rows as they read: the setting, then its value. */
-const rows = (page: import("@playwright/test").Page) =>
-  contextSheet(page)
-    .locator(".ds-context-list__button")
-    .evaluateAll((buttons) => buttons.map((b) => `${b.querySelector(".ds-context-list__label")!.textContent} ${b.querySelector(".ds-context-list__value")!.textContent}`));
 
 async function withKnownRepository(run: (botbench: Awaited<ReturnType<typeof startBotbench>>, repo: string) => Promise<void>): Promise<void> {
   const dir = fs.realpathSync(tempDir("botbench-e2e-composer-"));
@@ -27,20 +21,20 @@ async function withKnownRepository(run: (botbench: Awaited<ReturnType<typeof sta
   }
 }
 
-test("the composer is one box with no label above it; Add context's rows follow what is chosen, each row changes its setting, and the choices are remembered after a reload", async ({ page }) => {
+test("the composer is one box named for what it sends; Add context's rows follow what is chosen, each row changes its setting, and the choices are remembered after a reload", async ({ page }) => {
   await withKnownRepository(async (botbench, repo) => {
     await signIn(page, botbench);
     const box = messageBox(page);
-    // No visible label: the box is named for assistive technology, and its placeholder says the same.
+    // On New chat or task the box carries its name above it; the name for assistive technology and the placeholder say the same.
     await expect(box).toHaveAttribute("aria-label", "Message Claude Code");
     await expect(box).toHaveAttribute("placeholder", "Message Claude Code");
-    await expect(page.locator("form.ds-composer label")).toHaveCount(0);
-    // One row under the text: Add context, the one model chip, and Send (Dictate only where the Mac can transcribe).
-    const bar = page.locator(".ds-composer__bar");
-    await expect(bar.locator("> *").first()).toHaveAccessibleName("Add context");
-    await expect(bar.locator(".ds-composer__chip")).toHaveCount(1);
-    await expect(bar.locator(".ds-composer__chip")).toHaveAccessibleName(/^Agent and model: .+ Claude Code$/);
-    await expect(bar.locator(".ds-composer__chip")).not.toContainText("Reading the models");
+    await expect(page.getByTestId("composer").locator("label")).toHaveText("Message Claude Code");
+    // In the box: the chips of what will be sent (for a chat, the one model chip), then Add context and Send (Dictate only where the Mac can transcribe).
+    await expect(page.getByTestId("composer").getByRole("button", { name: "Add context" })).toBeVisible();
+    await expect(page.getByTestId("composer-chips").getByRole("button")).toHaveCount(1);
+    await expect(modelChip(page)).toHaveAccessibleName(/^Agent and model: .+ Claude Code$/);
+    await expect(modelChip(page)).not.toContainText("Reading the models");
+    await expect(page.getByTestId("composer-about")).toContainText("Send asks Claude Code.");
     await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
     await checkDesign(page, "composer, empty");
     expect(await primaries(page)).toEqual(["Send"]);
@@ -77,7 +71,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
       await closeContext(page);
       await expect(page.getByTestId("composer-about")).toContainText("Codex works on a new branch");
       // The model chip names the builder chosen, not Claude Code (#153).
-      await expect(bar.locator(".ds-composer__chip")).toHaveAccessibleName(/^Agent and model: (.+ )?Codex$/);
+      await expect(modelChip(page)).toHaveAccessibleName(/^Agent and model: (.+ )?Codex$/);
       await tempShot(page, "composer-builder-codex");
       await openContext(page);
       await choose(page, "Builder", "Claude Code");
@@ -100,7 +94,7 @@ test("the composer is one box with no label above it; Add context's rows follow 
     await checkDesign(page, "add context, mode with its warning");
     await tempShot(page, "sheet-mode-warning");
     await sheet.getByRole("button", { name: "Back to Add context" }).click();
-    await expect(sheet.locator(".ds-context-list__value--warning")).toHaveText("Fully autonomous");
+    await expect(contextRow(page, "Mode").getByTestId("context-row-value")).toHaveText("Fully autonomous");
     // Fully autonomous keeps the run to one task unless the owner says otherwise; the choice is offered in every mode.
     await expect.poll(() => rows(page)).toContain("Tasks One task");
     await openRow(page, "Tasks");
@@ -151,13 +145,15 @@ test("New task and New run open the composer with their kind chosen and the shee
     await expect(sheet.getByRole("heading", { name: "Repository" })).toBeVisible();
     await expect(sheet.getByRole("radio", { name: "Another folder…" })).toBeVisible();
     await closeContext(page);
-    const chip = page.getByRole("button", { name: "Choose a Repository" });
+    // On New chat or task the repository is a chip among the others, and says one is still to be chosen.
+    const chip = page.getByTestId("repository-chip");
     const send = page.getByRole("button", { name: "Send" });
-    await expect(chip).toBeVisible();
-    await expect(page.locator(".ds-composer__chip")).toHaveCount(1);
+    await expect(chip).toHaveAccessibleName("Choose a repository");
+    await expect(chip).toHaveAccessibleDescription("Choose a repository");
+    await expect(page.getByRole("radio", { name: "Plan a run" })).toBeChecked();
     await expect(send).toBeDisabled();
     await expect(send).toHaveAccessibleDescription("Choose a repository");
-    await expect(chip).toHaveAccessibleDescription("Choose a repository");
+    await expect(page.getByTestId("composer-about")).toContainText("Send starts nothing yet.");
     await messageBox(page).fill("Add a changelog");
     await checkDesign(page, "composer, a repository is required");
     await tempShot(page, "composer-required");
@@ -174,7 +170,7 @@ test("New task and New run open the composer with their kind chosen and the shee
     await expect(send).toBeDisabled();
     await expect(send).toHaveAccessibleDescription(/Give the full path, starting with \//);
     // None is a choice: a chat needs no repository.
-    await page.getByRole("button", { name: "Choose a Repository" }).click();
+    await chip.click();
     await sheet.getByRole("radio", { name: "None (just chat)" }).click();
     await closeContext(page);
     await expect(send).toBeEnabled();
@@ -186,17 +182,21 @@ test("New task and New run open the composer with their kind chosen and the shee
     await page.goto(`${botbench.base}/#/tasks/new`);
     await expect(page).toHaveURL(/#\/turn$/);
     await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe the task");
+    // The sheet opened on Repository, over the screen: closed, Send says what it waits for.
+    await closeContext(page);
     await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
     await page.goto(`${botbench.base}/#/runs/new`);
     await expect(page).toHaveURL(/#\/turn$/);
     await expect(messageBox(page)).toHaveAttribute("aria-label", "Describe what to plan");
+    await closeContext(page);
     await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
 
     // On the home screen itself, with no repository, Send is a chat and nothing is required, whatever kind was used last.
     await page.reload();
     await expect(page).toHaveURL(/#\/turn$/);
     await expect(contextSheet(page)).toBeHidden();
-    await expect(page.getByRole("button", { name: "Choose a Repository" })).toHaveCount(0);
+    await expect(page.getByTestId("repository-chip")).toHaveCount(0);
+    await expect(page.getByRole("radio", { name: "Ask a question" })).toBeChecked();
     await messageBox(page).fill("Hello");
     await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   });

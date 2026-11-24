@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, checkRebuilt, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, checkScreen, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // LIVE. The modes, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
@@ -57,12 +57,12 @@ test("LIVE modes: semi-autonomous builds without plan approval and runs a task's
   await signIn(page, botbench);
 
   // Settings: the default mode is Manual until the owner picks another, which a new run then starts with.
-  await page.goto(`${botbench.base}/#/settings`);
+  await page.goto(`${botbench.base}/#/settings/permissions`);
   const defaults = page.getByTestId("default-mode-picker");
   await expect(defaults.getByRole("radio", { name: "Manual" })).toBeChecked();
   await defaults.getByRole("radio", { name: "Semi-autonomous" }).check();
   await expect.poll(async () => ((await (await page.request.get(`${botbench.base}/api/settings`)).json()) as { defaultMode: string }).defaultMode).toBe("semi");
-  await checkDesign(page, "settings, default mode");
+  await checkScreen(page, "settings, default mode");
 
   // Semi-autonomous: building starts on the planner's plan, whose one task must run a command, without the owner's approval.
   await openComposer(page);
@@ -107,21 +107,28 @@ test("LIVE modes: semi-autonomous builds without plan approval and runs a task's
   expect(run.tasks.map((task) => [task.status, task.checks, task.decision?.decidedBy, task.decision?.branch, task.reason])).toEqual(run.tasks.map(() => ["accepted", "passed", "mode", "kept", null]));
   expect(run.status).toBe("done");
   await expect(page.getByTestId("run-status")).toHaveText(/^Done\. Every task that was built is decided: this run is fully autonomous/);
-  await checkRebuilt(page, "run, fully autonomous, done");
+  await checkScreen(page, "run, fully autonomous, done", { least: true });
   await page.getByTestId("run-tasks").getByRole("link").first().click();
-  // The review decision holds the result in place of the buttons: the badge says who accepted it.
-  const decision = page.getByRole("region", { name: "Decision", exact: true });
+  // Nothing is left to decide: no buttons at the foot, and the task's state says what became of the branch.
+  await expect(page.getByTestId("task-status")).toHaveText("Accepted without you, as its run is fully autonomous. Botbench kept the branch and removed the task's copy of the project.");
+  await expect(page.getByTestId("foot-actions")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
+  // The decision's panel, a sheet at a phone's width, holds the result in place of the buttons: the badge says who accepted it.
+  await page.getByTestId("foot").getByRole("button", { name: "The decision" }).click();
+  const decision = page.getByRole("dialog", { name: "Decision" }).getByTestId("decision");
   await expect(decision.getByRole("heading", { level: 2 })).toHaveText("Decision");
-  await expect(decision.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted without you");
-  await expect(decision.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
-  await expect(page.getByTestId("decided-by")).toHaveText("Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and nothing an agent asked for was refused.");
-  await expect(page.getByTestId("not-merged")).toContainText("Nothing has been merged or pushed.");
+  await expect(decision.getByTestId("decision-result").getByText("Accepted without you", { exact: true })).toBeVisible();
+  await expect(decision.getByTestId("decision-actions")).toHaveCount(0);
+  await expect(decision.getByTestId("decision-result").getByText("Accepted without you, as this run is fully autonomous: every check passed, this run has no reviewer, and nothing an agent asked for was refused.", { exact: true })).toBeVisible();
+  await expect(decision.getByTestId("decided-branch")).not.toBeEmpty();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Decision" })).toHaveCount(0);
   await checkDesign(page, "task, accepted without the owner");
   await shot(page, "modes-full-task.png");
 
   // Activity says the mode accepted it.
   await page.goto(`${botbench.base}/#/trust`);
   await expect(page.getByText("Accepted without you: fully autonomous").first()).toBeVisible();
-  await checkDesign(page, "permissions, activity with the mode's accept");
+  await checkScreen(page, "permissions, activity with the mode's accept");
   expect(foreign).toEqual([]);
 });

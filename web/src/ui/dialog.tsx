@@ -18,13 +18,17 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
 function DialogContent({
   className,
   children,
+  showCloseButton = true,
   ...props
-}: DialogPrimitive.Popup.Props) {
+}: DialogPrimitive.Popup.Props & {
+  /** False for a dialog that draws its own close button in a header of its own (the Add context sheet). */
+  showCloseButton?: boolean
+}) {
   return (
     <DialogPrimitive.Portal data-slot="dialog-portal">
       <DialogPrimitive.Backdrop
         data-slot="dialog-overlay"
-        className="fixed inset-0 isolate z-50 bg-black/55 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+        className="fixed inset-0 isolate z-50 bg-scrim duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
       />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
@@ -35,7 +39,7 @@ function DialogContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close
+        {showCloseButton && <DialogPrimitive.Close
           data-slot="dialog-close"
           render={
             <Button
@@ -47,7 +51,7 @@ function DialogContent({
         >
           <XIcon />
           <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
+        </DialogPrimitive.Close>}
       </DialogPrimitive.Popup>
     </DialogPrimitive.Portal>
   )

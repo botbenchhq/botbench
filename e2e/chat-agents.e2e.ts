@@ -8,7 +8,7 @@ import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { openStore } from "../src/store/db.ts";
 import { chatReplayDriver } from "../test/support/replay-chat.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, chooseRepository, closeContext, expect, messageBox, openRow, signIn, tallShot, tempShot } from "./helpers.ts";
+import { checkDesign, chooseRepository, closeContext, contextRow, expect, messageBox, openRow, signIn, tallShot, tempShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Chat with any agent, or several at once, in the real client at a phone's size.
@@ -139,7 +139,7 @@ test("the agent choice lists every agent and Ask several at once on a phone, the
   await sheet.getByRole("radio", { name: "Claude Code", exact: true }).check();
   await checkDesign(page, "chat, agent and model, every agent at once");
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
-  await expect(sheet.locator(".ds-context-list__button", { hasText: /^Model/ })).toHaveText(/Claude Code$/);
+  await expect(contextRow(page, "Model")).toHaveText(/Claude Code$/);
   await closeContext(page);
   // The chip names Claude Code's default as Claude Code alone, with no stray comma.
   await expect(page.getByRole("button", { name: /^Agent and model: / })).not.toContainText(",");
@@ -165,7 +165,7 @@ test("the agent choice lists every agent and Ask several at once on a phone, the
   await expect(sheet.getByTestId("builder-only")).toHaveCount(0);
   await expect(sheet.getByRole("radio", { name: "Ask several", exact: true })).toBeEnabled();
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
-  await expect(sheet.locator(".ds-context-list__button", { hasText: /^Repository/ })).toHaveText(/None \(just chat\)$/);
+  await expect(contextRow(page, "Repository")).toHaveText(/None \(just chat\)$/);
 });
 
 test("LIVE: Codex chosen for a chat answers, and its reply is named as Codex's", async ({ page, botbench }) => {

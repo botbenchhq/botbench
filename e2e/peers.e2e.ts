@@ -8,7 +8,7 @@ import { claimBranchName, lockBranch } from "../src/engine/claim-branch.ts";
 import { commitWork, createWorktree, makeClaimCommit, pushNewBranches } from "../src/worktrees.ts";
 import { PEERS_ADDRESS } from "../test/support/replay-peers.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, chooseRepository, closeContext, expect, messageBox, signIn } from "./helpers.ts";
+import { checkDesign, checkScreen, checkWords, chooseRepository, closeContext, expect, messageBox, SHOTS, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Named workbenches that see each other's work (Peers P1, P2, P3) in the real client, at a phone's size, with no model
@@ -90,7 +90,8 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(others.getByTestId("peer-claim").filter({ hasText: "issue #90" })).toContainText("bob · Started on issue #90 3 hours ago and has shown no work on it for 3 hours: it may have stopped, or be waiting for its owner · github.com/jon-lange/botbench");
   // This workbench's own branch is not listed.
   await expect(others).not.toContainText(seeded.branch);
-  await checkDesign(page, "Work, with another workbench's branch");
+  await checkWords(page, "Work, with another workbench's branch");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "work-other-workbenches.png"), fullPage: true });
 
   // The task's own branch carries this workbench's name.
   await page.goto(`${botbench.base}/#/tasks/${seeded.taskId}`);
@@ -126,11 +127,11 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   await expect(page.getByTestId("peer-taken-over")).toHaveText("bob's claim on issue #90 is taken over: your run goes ahead, and Botbench leaves its branches as they are.");
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
-  await page.goto(`${botbench.base}/#/settings`);
+  await page.goto(`${botbench.base}/#/settings/identity`);
   const name = page.getByLabel("Workbench name");
   await expect(name).toHaveValue("alice");
   await expect(page.getByText("New task branches carry this name, such as botbench/alice/run-1/task-1")).toBeVisible();
-  await checkDesign(page, "Settings, with the workbench name");
+  await checkScreen(page, "Settings, with the workbench name");
   await name.fill("Alice/x");
   await page.getByRole("button", { name: "Save name" }).click();
   await expect(page.getByRole("alert")).toContainText("lowercase letters, digits and hyphens");

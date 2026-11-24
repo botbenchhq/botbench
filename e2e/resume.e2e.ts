@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, checkRebuilt, expect, RUN_TASK_STATE, SHOTS, signIn, tallShot } from "./helpers.ts";
+import { checkDesign, checkScreen, expect, RUN_TASK_STATE, SHOTS, signIn, tallShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Resume, in the real client at a phone's size, against a real Botbench process and the owner's Claude Code on its
@@ -12,7 +12,7 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 /** After a restart the device is still signed in: its session is kept in Botbench's database, so no login is asked for. */
 async function stillSignedIn(page: Page, botbench: Botbench): Promise<void> {
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toHaveCount(0);
 }
@@ -99,7 +99,7 @@ test("LIVE: a task stopped by two restarts shows Stopped with what happened and 
   await expect(resume).toBeVisible();
   // With nothing ready for review the run has ended; Resume takes it up again.
   await expect(page.getByTestId("run-status")).toHaveText(/^Nothing to review\./);
-  await checkRebuilt(page, "run, with a task stopped by restarts");
+  await checkScreen(page, "run, with a task stopped by restarts", { least: true });
   if (SHOTS) await tallShot(page, path.join(SHOTS, "u15-run-stopped.png"));
 
   // Its own screen says the same and offers the same action.
@@ -121,7 +121,7 @@ test("LIVE: a task stopped by two restarts shows Stopped with what happened and 
     }
     await expect(row.locator(RUN_TASK_STATE)).toHaveText("Ready for review", { timeout: 1_000 });
   }).toPass({ timeout: 240_000, intervals: [1_000] });
-  await checkRebuilt(page, "run, resumed task ready for review");
+  await checkScreen(page, "run, resumed task ready for review", { least: true });
   // Re-driven by a third attempt, and it finished the work. What it was told, and the refusals of Resume, are proven
   // a layer down (test/engine/recover.test.ts, test/api/resume.test.ts).
   const done = await getJson<{ branch: string; attemptId: number }>(page, botbench, `/api/tasks/${taskId}`);

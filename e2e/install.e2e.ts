@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { chromium } from "@playwright/test";
 import { tempDir } from "./botbench.ts";
-import { checkDesign, expect, signIn, test, THEME_COLOR } from "./helpers.ts";
+import { checkDesign, checkScreen, expect, signIn, test, THEME_COLOR } from "./helpers.ts";
 
 // Installing Botbench, in the real client at a phone's size: a real Botbench process serving the built client, and
 // Chrome's own installability checks read through its DevTools protocol. No CLI turn.
@@ -50,19 +50,19 @@ test("the manifest and service worker pass Chrome's install checks, the worker r
 
   // Settings: notifications are off on a browser that has not been asked, and the one control to allow them is there.
   await signIn(page, botbench);
-  await page.goto(`${botbench.base}/#/settings`);
+  await page.goto(`${botbench.base}/#/settings/connections`);
   const section = page.getByRole("group", { name: "Notifications" });
   await expect(section.getByTestId("notifications-state")).toHaveText("Off");
   await expect(section.getByRole("button", { name: "Allow notifications" })).toBeEnabled();
   await expect(section.getByRole("button", { name: "Send a test notification" })).toHaveCount(0);
-  await checkDesign(page, "settings, notifications off");
+  await checkScreen(page, "settings, notifications off");
 
   // Refused in the browser itself (a real browser setting, made through Chrome's own protocol): said so, and no control offered.
   await cdp.send("Browser.setPermission", { permission: { name: "notifications" }, setting: "denied", origin: botbench.base });
   await page.reload();
   await expect(section.getByTestId("notifications-state")).toHaveText("Not allowed in the browser's settings");
   await expect(section.getByRole("button")).toHaveCount(0);
-  await checkDesign(page, "settings, notifications blocked");
+  await checkScreen(page, "settings, notifications blocked");
   } finally {
     await context.close();
     fs.rmSync(profile, { recursive: true, force: true });

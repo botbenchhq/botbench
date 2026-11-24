@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, nav, openCanDo, openDetails, openNewTask, openRow, openWork, signIn, startTaskIn, test, watchRequests } from "./helpers.ts";
+import { checkDesign, checkWords, closeContext, contextSheet, copyShot, expect, filledButtons, goTo, messageBox, nav, openCanDo, openDetails, openNewTask, openRow, openWork, SCREENS, SHOTS, signIn, startTaskIn, test, watchRequests, workRows, workState } from "./helpers.ts";
 import type { Page } from "@playwright/test";
 
 /** The Folder path field of the Repository view, with Another folder chosen. */
@@ -35,22 +35,22 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   const prompt = "Create a file named hello.txt containing exactly: hi";
   await startTaskIn(page, repo, prompt);
 
-  // The task screen: the state in words, then the transcript as it happens.
+  // The task screen: the state in words, then the activity as it happens.
   await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
   await expect(page.getByTestId("task-status")).toHaveText(/^(Queued|Working)\./);
-  // The repository by its name; its full path and, while the task is worked on, the branch are in Details.
+  // The repository by its name, and its full path in Details; the branch is named under the title.
   await expect(page.getByTestId("task-name")).toHaveText(`Task 1 · ${path.basename(repo)}`);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Create a file named hello.txt containing…");
   await expect((await openDetails(page)).getByTestId("task-repo")).toHaveText(repo);
-  await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt, { timeout: 60_000 });
+  const log = page.getByRole("log", { name: "Activity" });
+  await expect(log.getByTestId("prompt")).toContainText(prompt, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText("Working. Claude Code is working in a separate copy of the project.");
+  await expect(page.getByTestId("task-state")).toHaveText("Working");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
-  await expect(page.getByTestId("task-details").getByTestId("branch")).toHaveText(/^botbench\/[a-z0-9-]+\/run-\d+\/task-\d+$/);
-  await expect(page.locator('[data-event="tool_call"]').first()).toContainText("hello.txt", { timeout: 120_000 });
-  // Every action is one plain line taken from the real tool and its arguments; raw arguments are never the line.
-  const wrote = page.locator('[data-event="tool_call"]').filter({ hasText: "hello.txt" }).first();
-  await expect(wrote.locator(".ds-tool-call__title")).toHaveText(/^(Working|Done|Needs input|Denied)\s*(Writing|Wrote|Wants to write|Did not write|Editing|Edited|Running|Ran|Wants to run|Did not run)\s*\S/);
-  await expect(wrote.locator("summary").first()).not.toContainText("{");
+  await expect(page.getByTestId("branch")).toHaveText(/^botbench\/[a-z0-9-]+\/run-\d+\/task-\d+$/);
+  // The agent's steps arrive in the activity as they happen: one that runs or waits stands open, and those that are
+  // over fold under a line that counts them. Each step's own line is read once the task is built, below.
+  await expect(log.getByTestId("step-now").or(log.getByTestId("steps")).first()).toBeVisible({ timeout: 120_000 });
 
   // The model sometimes also wants to run a command (to look around, or to check its work). Since unit 7 that
   // pauses for the owner. This test is about the edit, so any such request is declined, as an owner could.
@@ -62,37 +62,37 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
     }
     await expect(page.getByTestId("task-status")).toHaveText(built, { timeout: 2_000 });
   }).toPass({ timeout: 180_000, intervals: [1_000] });
-  await expect(page.locator('[data-event="turn_ended"]').locator("summary")).toHaveText(/^Worked for (\d+m )?\d+s$/);
-  // No working note is left once the turn is over.
-  await expect(page.getByRole("log").getByRole("status")).toHaveCount(0);
+  await expect(page.getByTestId("task-state")).toHaveText("Ready for review");
 
-  // The changed file with its line counts, expandable to its diff.
+  // The review opens on its Review tab: the changed file with its line counts, and its diff.
   const files = page.getByTestId("changed-files");
-  await expect(files.getByRole("listitem")).toHaveCount(1);
-  // Each file is a native disclosure: its summary is the control, and the browser carries its expanded state.
-  const file = files.locator("summary").filter({ hasText: "hello.txt" });
-  const disclosure = files.locator("details");
-  await expect(file).toHaveText(/hello\.txt.*added.*\+1 line added.*−0 lines removed/);
-  await expect(disclosure).not.toHaveAttribute("open");
-  await expect(page.getByTestId("diff")).toHaveCount(0);
-  // The keyboard alone opens it.
+  await expect(files.getByRole("heading")).toHaveText("1 file changed");
+  await expect(files).toContainText(/hello\.txt\s*added\s*\+1 line added\s*−0 lines removed/);
+  // Each file is a disclosure: its button is the control and carries its expanded state. The first file's is open.
+  const file = files.getByRole("button", { name: "hello.txt" });
+  const diff = page.getByTestId("diff");
+  await expect(file).toHaveAttribute("aria-expanded", "true");
+  await expect(diff).toBeVisible();
+  // The keyboard alone closes it, and opens it again.
   await file.focus();
   await page.keyboard.press("Enter");
-  await expect(disclosure).toHaveAttribute("open");
-  const diff = page.getByTestId("diff");
-  await expect(diff).toContainText("+++ b/hello.txt");
-  await expect(diff).toContainText("+hi");
-  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
-  // hello.txt is prose: its diff wraps to the screen's width (bb-diff-prose, web/src/index.css) instead of scrolling
-  // inside its block, and the page itself never scrolls sideways. That a code file's long line scrolls inside its block
-  // is checked with a code file, in task-layout.e2e.ts.
-  await expect(page.locator("figure.ds-diff")).toHaveClass(/(^|\s)bb-diff-prose(\s|$)/);
-  expect(await diff.locator(".ds-diff__text").first().evaluate((el) => getComputedStyle(el).whiteSpace), "a prose diff's lines wrap").toBe("pre-wrap");
-  const scroller = page.getByTestId("diff-scroll");
-  expect(await scroller.evaluate((el) => el.scrollWidth - el.clientWidth), "a prose diff does not scroll sideways inside its block").toBe(0);
+  await expect(file).toHaveAttribute("aria-expanded", "false");
+  await expect(diff).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(file).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("group", { name: "Changes in hello.txt" })).toBeVisible();
+  await expect(diff.locator("[data-line=hunk]").first()).toContainText("@@");
+  await expect(diff.locator("[data-line=added] [data-text]")).toHaveText("hi");
+  expect(await diff.evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
+  // hello.txt is prose: its diff wraps to the screen's width instead of scrolling inside its block, and the page itself
+  // never scrolls sideways. That a code file's long line scrolls inside its block is checked with a code file, in
+  // task-layout.e2e.ts.
+  await expect(diff).toHaveAttribute("data-prose", "true");
+  expect(await diff.locator("[data-line=added] [data-text]").first().evaluate((el) => getComputedStyle(el).whiteSpace), "a prose diff's lines wrap").toBe("pre-wrap");
+  expect(await diff.evaluate((el) => el.scrollWidth - el.clientWidth), "a prose diff does not scroll sideways inside its block").toBe(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), "the page does not scroll sideways").toBe(0);
-  // Lines are told apart by their sign, not by colour alone.
-  expect(await diff.locator('[data-line="added"]').first().textContent()).toMatch(/^\+/);
+  // Lines are told apart by their sign, not by colour alone: the line's number, then its sign, then its text.
+  await expect(diff.locator("[data-line=added]").first().locator("span").nth(1)).toHaveText("+");
 
   // The branch, by name, with a copy control that copies it.
   const branch = (await page.getByTestId("branch").textContent())!;
@@ -100,8 +100,6 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await page.getByRole("button", { name: "Copy branch name" }).click();
   await expect(page.getByTestId("branch-copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(branch);
-  // Ready for review: the branch is where the decision needs it, no longer in Details.
-  await expect(page.getByTestId("task-details").getByTestId("branch")).toHaveCount(0);
   await expect(page.getByTestId("not-merged")).toHaveText("Nothing has been merged or pushed.");
   await expect((await openCanDo(page)).getByTestId("can-do-text")).toHaveText(
     "Claude Code may read and change files inside this task's copy of the project without asking. A shell command kept inside this copy runs without asking, apart from those the safety rules always ask you about; with Ask before every command on in Settings, every one waits for your answer first, unless you chose Always allow for it (see Permissions). Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
@@ -109,41 +107,58 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   // This repository has no checks set up, so the accept there is says so, and is not drawn as the screen's primary
   // action; nothing claims to merge, push, approve or stop.
   await expect(page.getByTestId("evidence-words")).toHaveText("No checks are set up for this repository, so nothing verified this work. You can accept it without verification.");
-  await expect(page.locator(".ds-button--primary")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /accept|reject/i })).toHaveText(["Accept without verification", "Reject"]);
+  // The decision stays in reach at the foot of the window: Reject, then the accept there is, neither filled.
+  expect(await filledButtons(page), "no button is drawn as the primary action").toEqual([]);
+  await expect(page.getByTestId("foot-line")).toHaveText("No checks ran on this work.");
+  await expect(page.getByTestId("foot-actions").getByRole("button")).toHaveText(["Reject", "Accept without verification"]);
+  await expect(page.getByRole("button", { name: /accept|reject/i })).toHaveText(["Reject", "Accept without verification"]);
   await expect(page.getByRole("button", { name: /merge|push|approve|stop/i })).toHaveCount(0);
 
   await checkDesign(page, "task, finished with a diff open");
-  // One tap on an action shows what is behind its line.
-  await file.click();
-  await wrote.locator("summary").first().click();
-  await expect(wrote.locator("details").first()).toHaveAttribute("open");
-  await expect(wrote.locator("pre").first()).toContainText("hello.txt");
-  await checkDesign(page, "task, finished with a tool row open");
-  await copyShot(page, "task-finished-tool-open");
-  await wrote.locator("summary").first().click();
-  await file.click();
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u6-task.png"), fullPage: true });
 
-  // Collapsing works too.
+  // The activity is the tab beside the review. No working note is left once the turn is over.
+  await page.getByRole("tab", { name: /^Activity/ }).click();
+  await expect(log.getByTestId("prompt")).toContainText(prompt);
+  await expect(log.getByTestId("working")).toHaveCount(0);
+  await expect(log.getByTestId("step-now")).toHaveCount(0);
+  await expect(log.getByRole("status")).toHaveCount(0);
+  // The steps are over, folded under lines that count them; one tap shows each. Every step is one plain line taken
+  // from the real tool and its arguments; raw arguments are never the line.
+  const show = log.getByRole("button", { name: /Show steps/ });
+  while ((await show.count()) > 0) await show.first().click();
+  const wrote = log.getByTestId("steps").getByRole("listitem").filter({ hasText: "hello.txt" }).first();
+  await expect(wrote).toContainText(/(Wrote|Could not write|Edited|Could not edit|Ran|Did not run)\s+\S/);
+  await expect(wrote).not.toContainText("{");
+  // One tap on a step shows what is behind its line: what it printed.
+  const behind = wrote.getByRole("button");
+  if ((await behind.getAttribute("aria-expanded")) !== "true") await behind.click();
+  await expect(wrote.getByRole("group", { name: "What it printed" })).toBeVisible();
+  await checkDesign(page, "task, finished with a step open");
+  await copyShot(page, "task-finished-tool-open");
+
+  // Back on the review, collapsing the file works too.
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
+  await expect(diff).toBeVisible();
   await file.click();
   await expect(page.getByTestId("diff")).toHaveCount(0);
 
   // Work shows the task with its state in words, and leads back to it.
   await openWork(page);
-  const rows = page.getByTestId("board-group").getByRole("link");
+  const rows = workRows(page).getByRole("link");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Ready for review");
   await expect(rows.first()).toContainText(prompt);
-  await checkDesign(page, "work, with one task");
+  await checkWords(page, "work, with one task");
   await copyShot(page, "work");
   await rows.first().click();
   await expect(page.getByTestId("branch")).toHaveText(branch);
-  await expect(page.locator('[data-event="user_prompt"]')).toContainText(prompt);
+  await page.getByRole("tab", { name: /^Activity/ }).click();
+  await expect(log.getByTestId("prompt")).toContainText(prompt);
 
   // The turn screen is still there and still works as the first screen. Its composer opens on what was used last: a
   // task in this repository.
-  await nav(page).getByRole("link", { name: "Chat" }).click();
+  await goTo(page, "Chat");
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Describe the task" })).toBeEnabled();
 
@@ -152,16 +167,15 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("the navigation is Chat and Work, and Work says there is nothing yet; Tasks leads there; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
+test("the navigation is Home, Work and Chat, and Work says there is nothing yet; Tasks leads there; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
-  // The navigation lists the two destinations, and gets to each.
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  // The navigation lists the destinations, and gets to each.
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
   await openWork(page);
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Work");
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
-  await checkDesign(page, "work, none yet");
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
+  await checkWords(page, "work, none yet");
   // The old addresses of the lists lead to Work.
   for (const old of ["#/tasks", "#/runs"]) {
     await page.evaluate((to) => (window.location.hash = to), old);
@@ -169,8 +183,8 @@ test("the navigation is Chat and Work, and Work says there is nothing yet; Tasks
     await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
   }
   await openNewTask(page);
-  // New task opens the composer on the home screen with One task chosen.
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
+  // New task opens New chat or task with Start one task chosen.
+  await expect(page.getByRole("radio", { name: "Start one task" })).toBeChecked();
   await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
 
   // The path is checked as it is typed, and the answer is in words.
@@ -271,7 +285,7 @@ test("an address that names no screen says so in words, and a long one stays ins
 test("a task address that names no task says so in words", async ({ page, botbench }) => {
   await signIn(page, botbench);
   await page.goto(`${botbench.base}/#/tasks/4242`);
-  await expect(page.getByRole("alert")).toHaveText("ErrorThere is no task 4242.");
+  await expect(page.getByRole("alert")).toHaveText("There is no task 4242.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(0);
 });
@@ -295,12 +309,14 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await expect(page.getByRole("log")).toHaveCount(0);
     await expect(page.getByTestId("changed-files")).toHaveCount(0);
     await expect(page.getByTestId("branch")).toHaveCount(0);
-    await expect(page.getByRole("button")).toHaveCount(0);
+    // Nothing was left and nothing can be resumed: no Resume, no Discard, only the way to the task's details.
+    await expect(page.getByRole("button")).toHaveText(["Details"]);
     await checkDesign(page, "task, failed");
 
     await openWork(page);
-    await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Create hello\.txt.*Failed.*Task 1 · /);
-    await expect(page.getByTestId("board-group")).not.toContainText("second line");
+    await expect(workRows(page).getByRole("link")).toHaveText([/^Create hello\.txt.*Failed · Task 1 · /]);
+    await expect(workState(workRows(page))).toHaveText("Failed");
+    await expect(workRows(page)).not.toContainText("second line");
     expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
   } finally {

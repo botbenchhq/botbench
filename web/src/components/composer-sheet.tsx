@@ -1,10 +1,10 @@
-import { useLayoutEffect, useRef, type ChangeEvent, type ReactNode, type RefObject } from "react";
+import type { ReactNode } from "react";
 import type { Delivery, KnownRepository, OnLimit, RunMode, UpdateWithMain } from "../api/client.ts";
 import { MAIN_CHOICE_WORDS } from "../app/main-words.ts";
-import { APPROVAL_LIMITS, APPROVAL_LIMIT_WORDS, BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, limitName, READ_ABOUT, returnsToList, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
+import { APPROVAL_LIMITS, APPROVAL_LIMIT_WORDS, BUILDER_WORDS, ISSUE_NOT_FULL, LIMIT_WORDS, limitName, READ_ABOUT, splitPath, type Builder, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
 import { IssueOptions, type IssueChoiceState } from "./issue-choice.tsx";
 import { AgentOptions, type ChatAgentsState } from "./agent-choice.tsx";
-import { Icon, type IconName } from "./icon.tsx";
+import type { IconName } from "./icon.tsx";
 import { ModePicker } from "./mode-choice.tsx";
 import { ModelOptions, type ModelChoiceState } from "./model-picker.tsx";
 import { Option } from "./option.tsx";
@@ -15,7 +15,7 @@ import { ReviewOptions, type ReviewChoiceState } from "./review-choice.tsx";
 export type SheetView = "rows" | Row;
 
 /** Each row's name on the row, its view's title and its icon. */
-const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
+export const ROW: Record<Row, { label: string; title: string; icon: IconName }> = {
   repository: { label: "Repository", title: "Repository", icon: "folder" },
   read: { label: "Read a repository", title: "Let this chat read a repository", icon: "search" },
   kind: { label: "What to do", title: "What to do", icon: "git-branch" },
@@ -81,81 +81,10 @@ export interface SheetState {
 }
 
 /**
- * The Add context sheet: a bottom sheet on a phone, a side panel from 768px. Its rows show each setting's value; a row
- * opens that setting's view in the same sheet, with Back to the rows. Choosing sets the value at once.
+ * One setting's view in the Add context sheet (screens2/chat/context-sheet.tsx draws the sheet and its rows): the
+ * options of that setting, as they always were. Choosing sets the value at once.
  */
-export function ContextSheet({ sheetRef, view, setView, state }: { sheetRef: RefObject<HTMLDialogElement | null>; view: SheetView; setView: (view: SheetView) => void; state: SheetState }) {
-  /** The row whose view is open, so Back can put the focus on it again. */
-  const pressed = useRef<Row | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  /** Whether the last choice in a view was made by pointer: a choice made with the arrow keys stays in the view, so the next arrow still works. */
-  const byPointer = useRef(false);
-  /** A choice made by tapping an option goes back to the list, one tap less, unless the option opens a field (`returnsToList`). */
-  const chosen = (e: ChangeEvent<HTMLDivElement>): void => {
-    const input = e.target;
-    if (shown === "rows" || !byPointer.current || !(input instanceof HTMLInputElement) || input.type !== "radio") return;
-    if (returnsToList({ view: shown, value: input.value, run: state.rows.includes("spec") })) setView("rows");
-  };
-  const shown: SheetView = view !== "rows" && !state.rows.includes(view) ? "rows" : view;
-  const title = shown === "rows" ? "Add context" : shown === "models" && state.rows.includes("spec") ? "Models" : shown === "models" ? "Agent and model" : ROW[shown].title;
-
-  // A view takes the focus on its chosen option (else its first control); the rows give it back to the row that was pressed.
-  useLayoutEffect(() => {
-    const dialog = sheetRef.current;
-    if (dialog === null || !dialog.open) return;
-    const body = bodyRef.current;
-    if (body === null) return;
-    if (shown === "rows") {
-      if (pressed.current !== null) body.querySelector<HTMLElement>(`[data-row="${pressed.current}"]`)?.focus();
-      return;
-    }
-    pressed.current = shown;
-    (body.querySelector<HTMLElement>("input:checked") ?? body.querySelector<HTMLElement>("input:not([disabled]), button, textarea"))?.focus();
-  }, [shown, sheetRef]);
-
-  return (
-    <dialog ref={sheetRef} className="ds-sheet" aria-labelledby="context-title" onClose={() => setView("rows")}>
-      <form className="ds-sheet__header" method="dialog">
-        {shown === "rows" ? (
-          <h2 className="ds-sheet__title" id="context-title">
-            {title}
-          </h2>
-        ) : (
-          <div className="ds-cluster ds-gap-xs">
-            <button type="button" className="ds-button ds-button--quiet ds-icon-button" aria-label="Back to Add context" onClick={() => setView("rows")}>
-              <Icon name="chevron-left" className="ds-button__icon" />
-            </button>
-            <h2 className="ds-sheet__title" id="context-title">
-              {title}
-            </h2>
-          </div>
-        )}
-        <button type="submit" className="ds-button ds-button--quiet ds-icon-button" value="close" aria-label="Close Add context">
-          <Icon name="x" className="ds-button__icon" />
-        </button>
-      </form>
-      <div ref={bodyRef} className="ds-sheet__body" onPointerDown={() => (byPointer.current = true)} onKeyDown={() => (byPointer.current = false)} onChange={chosen}>
-        {shown === "rows" ? (
-          <ul className="ds-context-list" aria-label="Settings of what you send">
-            {state.rows.map((row) => (
-              <li key={row}>
-                <button type="button" data-row={row} className="ds-context-list__button" onClick={() => setView(row)}>
-                  <Icon name={ROW[row].icon} className="ds-context-list__icon" />
-                  <span className="ds-context-list__label">{row === "models" && state.rows.includes("spec") ? "Models" : ROW[row].label}</span>{" "}
-                  <span className={state.warning[row] === true ? "ds-context-list__value ds-context-list__value--warning" : "ds-context-list__value"}>{state.values[row]}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <View row={shown} state={state} />
-        )}
-      </div>
-    </dialog>
-  );
-}
-
-function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
+export function View({ row, state }: { row: Row; state: SheetState }): ReactNode {
   if (row === "repository") return <RepositoryOptions state={state} />;
   if (row === "read") return <ReadOptions state={state} />;
   if (row === "kind")

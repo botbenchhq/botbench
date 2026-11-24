@@ -55,7 +55,7 @@ import { loadGhCapture } from "../test/support/replay-github.ts";
 import { ISSUE_ADDRESS, ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../test/support/replay-issue.ts";
 import { parseIssueView } from "../src/github.ts";
 import { git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, checkRebuilt, chooseRepository, closeContext, choose, expect, messageBox, openComposer, openRow, openRunId, openWork, runTaskRows, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, checkScreen, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, openWork, runTaskRows, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const PHONE = { width: 390, height: 844 };
@@ -163,9 +163,9 @@ async function matchDevice(page: Page): Promise<void> {
  */
 /**
  * The design checks and screenshots of one screen at 390x844 and 1280x800, dark and light. `reopen` puts back what a
- * change of size closed (the Add context sheet does not stay open across a resize).
+ * change of size closed (the Add context sheet does not stay open across a resize). `check` is the design system's
+ * rendered check, or, for a screen rebuilt on shadcn/ui (Work), which is not drawn with its classes, the words check.
  */
-// `check` is the design check for a screen still drawn with the design system's classes; a rebuilt screen (the run) is held to `checkRebuilt`.
 async function judge(page: Page, screen: string, name: string, ready: Locator, reopen?: () => Promise<void>, check: (page: Page, screen: string) => Promise<void> = checkDesign): Promise<void> {
   for (const [size, viewport] of [["phone", PHONE], ["desktop", DESKTOP]] as const) {
     for (const mode of ["dark", "light"] as const) {
@@ -237,7 +237,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   const claimed = remoteBranches(world.bare);
   expect(claimed.get(lock), "the issue's lock is on the remote").toBeDefined();
   expect(claimed.get(claimBranch), "A's named claim is at the lock's commit").toBe(claimed.get(lock));
-  await judge(page, "A, the run, its claim pushed", "a-run-claimed", claimA, undefined, checkRebuilt);
+  await judge(page, "A, the run, its claim pushed", "a-run-claimed", claimA, undefined, (shown, name) => checkScreen(shown, name, { least: true }));
 
   // Workbench B, on its own clone, starts on the same issue while A's claim is on the remote.
   const foreignB = watchRequests(pageB, bob);
@@ -275,7 +275,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   const afterB = remoteBranches(world.bare);
   expect([...afterB.keys()].filter((branch) => branch.startsWith("botbench/bob/")), "nothing of B's is on the remote").toEqual([]);
   expect(afterB.get(lock), "A still holds the issue's lock").toBe(claimed.get(lock));
-  await judge(pageB, "B, the run, withdrawn", "b-run-withdrawn", pageB.getByTestId("run-claim"), undefined, checkRebuilt);
+  await judge(pageB, "B, the run, withdrawn", "b-run-withdrawn", pageB.getByTestId("run-claim"), undefined, (shown, name) => checkScreen(shown, name, { least: true }));
 
   // Back on A: the planner's one task appears, and is built, checked, fixed, reviewed and fixed again with nobody asked.
   await expect(runTaskRows(page)).toHaveCount(1, { timeout: 600_000 });
@@ -285,18 +285,27 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await expect(page.getByTestId("task-status")).toBeVisible();
 
   // The end of the loop: accepted without the owner, or handed to the owner, which fails here, saying why.
-  // The task's decision block (the design system's review decision): "Decision" once a mode decided, "Your decision"
-  // while it waits for the owner, which fails below, saying why.
-  const decision = page.getByTestId("decision");
-  await expect(decision.getByRole("heading", { name: /^(Decision|Your decision)$/, level: 2 })).toBeVisible({ timeout: 1_800_000 });
-  await expect(decision.getByRole("heading", { name: "Decision", level: 2 }), `the task was not accepted by the mode: ${await page.getByTestId("task-status").textContent()}`).toBeVisible();
-  await expect(decision.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted without you");
-  await expect(decision.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
-  await expect(page.getByTestId("decided-by")).toHaveText(/^Accepted without you, as this run is fully autonomous: every check passed, the reviewer said it looks right and what it checked, and /);
+  // The task's state says which: "Accepted without you" once the mode decided, "Ready for review" while it waits for
+  // the owner, which fails below, saying why. The decision's panel is a sheet at a phone's width, opened from the foot
+  // of the window: "Decision" as its heading once a mode decided, and the result in place of the buttons.
+  await expect(page.getByTestId("task-status")).toHaveText(/^(Accepted|Ready for review)/, { timeout: 1_800_000 });
+  await expect(page.getByTestId("task-status"), `the task was not accepted by the mode: ${await page.getByTestId("task-status").textContent()}`).toHaveText(/^Accepted without you, as its run is fully autonomous\. /);
+  await expect(page.getByTestId("foot-actions")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
+  await page.getByTestId("foot").getByRole("button", { name: "The decision" }).click();
+  const decision = page.getByRole("dialog", { name: "Decision" }).getByTestId("decision");
+  await expect(decision.getByRole("heading", { name: "Decision", level: 2 })).toBeVisible();
+  await expect(decision.getByTestId("decision-result").getByText("Accepted without you", { exact: true })).toBeVisible();
+  await expect(decision.getByTestId("decision-actions")).toHaveCount(0);
+  await expect(decision.getByTestId("decision-result").getByText(/^Accepted without you, as this run is fully autonomous: every check passed, the reviewer said it looks right and what it checked, and /)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Decision" })).toHaveCount(0);
 
   // The checks: the first build's failed, the round of fixes for it passed, and so did the work after the review's round.
-  const checks = page.locator("section[aria-labelledby='checks-heading']");
-  await expect(page.getByTestId("checks-result")).toHaveText("Checks passed: 1 of 1 check passed.");
+  // The verification card holds the latest round; every round is behind one disclosure under it.
+  await expect(page.getByTestId("verification").getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
+  const checks = page.getByTestId("check-rounds");
+  await checks.locator(":scope > summary").click();
   const firstBuild = checks.locator("details.ds-disclosure", { has: page.locator("summary", { hasText: /^Checks of the first build$/ }) });
   await firstBuild.locator(":scope > summary").click();
   await expect(firstBuild.locator(".ds-check-list__summary")).toHaveText("0 of 1 check passed. 1 failed.");
@@ -311,15 +320,17 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await expect(afterFix.locator(".ds-check-list__result")).toHaveText("Passed");
 
   // The review: Codex raised a concern on the first version, Claude Code answered it with a change, and Codex was satisfied.
-  const review = page.getByTestId("review");
-  await expect(review.getByRole("heading", { name: "Codex's review", level: 2 })).toBeVisible();
+  // The verification card names the reviewer with the outcome; each review and round of fixes is one tap away.
+  const review = page.getByTestId("verification");
+  await expect(review.getByTestId("review-by")).toHaveText(/^Codex, /);
+  await expect(review.getByTestId("review-outcome")).toHaveText(/^Codex raised (concerns|\d+ concerns?)\. Claude Code (addressed \d+( and explained \d+)?|replied to them)\. Codex is satisfied\.$/);
+  await review.getByTestId("review-detail").click();
   await expect(page.getByTestId("review-round")).toHaveCount(2);
-  await expect(page.getByTestId("review-round").nth(0).getByTestId("review-verdict")).toHaveText("Verdict: concerns");
+  await expect(page.getByTestId("review-round").nth(0).getByTestId("review-verdict")).toHaveText(/^Verdict: concerns, in /);
   await expect(page.getByTestId("fixes-round")).toHaveCount(1);
-  await expect(page.getByTestId("fixes-summary")).toHaveText(/^(Addressed \d+(, explained \d+)?|Changed the work)$/);
-  await expect(page.getByTestId("review-round").nth(1).getByTestId("review-verdict")).toHaveText("Verdict: looks right");
+  await expect(page.getByTestId("fixes-summary")).toHaveText(/^(Addressed \d+(, explained \d+)?|Changed the work)(\. Committed as [0-9a-f]{7}, and the checks ran again on it\.)?$/);
+  await expect(page.getByTestId("review-round").nth(1).getByTestId("review-verdict")).toHaveText(/^Verdict: looks right, in /);
   await expect(page.getByTestId("review-round").nth(1).getByTestId("review-checked")).toBeVisible();
-  await expect(page.getByTestId("review-outcome")).toHaveText(/^Codex raised (concerns|\d+ concerns?)\. Claude Code (addressed \d+( and explained \d+)?|replied to them)\. Codex is satisfied\.$/);
 
   // Its pull request, through the replayed real gh: a number and a link, the branch on the shared remote, nothing merged.
   await expect(page.getByTestId("pull-request-state")).toHaveText(`The branch is on origin, and Botbench opened pull request #${prNumber} into main. Nothing was merged.`, { timeout: 120_000 });
@@ -344,11 +355,11 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   // The run's screen: done, its one task with its pull request.
   await page.goto(`${alice.base}/#/runs/${runA}`);
   await expect(page.getByTestId("run-task-pull-request")).toHaveText(`The branch is on origin, and Botbench opened pull request #${prNumber} into main. Nothing was merged.`);
-  await judge(page, "A, the run, done with its pull request", "a-run-done", page.getByTestId("run-task-pull-request"), undefined, checkRebuilt);
+  await judge(page, "A, the run, done with its pull request", "a-run-done", page.getByTestId("run-task-pull-request"), undefined, (shown, name) => checkScreen(shown, name, { least: true }));
   // On a phone the run screen's navigation is behind its menu button; the bar's own link leads to Work.
   await page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Work" }).click();
   await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
-  await judge(page, "A, Work", "a-work", page.getByRole("heading", { name: "Work", level: 1 }));
+  await judge(page, "A, Work", "a-work", page.getByRole("heading", { name: "Work", level: 1 }), undefined, (shown, name) => checkScreen(shown, name, { least: true }));
 
   // B's Work lists A's claim and A's pushed branch under Other workbenches; B built nothing of its own.
   await pageB.goto(`${bob.base}/#/work`);
@@ -359,7 +370,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
     await pageB.reload();
     await expect(others).toContainText(task.branch, { timeout: 5_000 });
   }).toPass({ timeout: 180_000, intervals: [5_000] });
-  await judge(pageB, "B, Work, with A's claim and branch", "b-work", others);
+  await judge(pageB, "B, Work, with A's claim and branch", "b-work", others, undefined, (shown, name) => checkScreen(shown, name, { least: true }));
   expect(git(world.bob, "for-each-ref", "--format=%(refname:short)", "refs/heads/botbench/").trim(), "B made no task branch").toBe("");
 
   expect(foreignA).toEqual([]);

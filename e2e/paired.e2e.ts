@@ -5,7 +5,8 @@ import { LOGIN_TOKEN_FILE } from "../src/api/auth.ts";
 import { peerDraftTurn } from "../test/support/replay-peer-draft.ts";
 import { sharedRepository, until, workbench, type Workbench } from "../test/support/two-workbenches.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, expect, SHOTS, tallShot } from "./helpers.ts";
+import { checkDesign, checkScreen, checkWords, expect, SHOTS, tallShot } from "./helpers.ts";
+import { choice, choose, shot, signInTo } from "./settings-helpers.ts";
 
 // Two Botbench installations on this Mac pair and talk through their screens (Peers P5, ADR 0004 decision 13): two real
 // processes with their own data folders, owner ports and listeners for paired workbenches on 127.0.0.1 at ports the
@@ -30,12 +31,32 @@ async function shots(page: Page, name: string, at: string): Promise<void> {
   await page.goto(at);
 }
 
+/**
+ * Pictures of a screen rebuilt on shadcn/ui, for docs/design/built: 1440×900 in dark and in light, and 390×844 in
+ * dark, kept under SHOTS when it is set. `ready` is what the screen shows once it has read its data.
+ */
+async function built(page: Page, name: string, at: string, ready: () => Promise<void>): Promise<void> {
+  if (!SHOTS) return;
+  const open = async (width: number, height: number, mode: "dark" | "light"): Promise<void> => {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((m) => window.localStorage.setItem("botbench.appearance", m), mode);
+    await page.goto(at);
+    await page.reload();
+    await ready();
+    await shot(page, `${name}-${width}-${mode}`);
+  };
+  await open(1440, 900, "dark");
+  await open(1440, 900, "light");
+  await open(390, 844, "dark");
+  await ready();
+}
+
 async function signedIn(browser: Browser, w: Workbench): Promise<Page> {
   const page = await (await browser.newContext({ viewport: PHONE, deviceScaleFactor: 2, hasTouch: true })).newPage();
-  await page.goto(w.base);
+  await page.goto(`${w.base}/#/turn`);
   await page.getByLabel("Login token").fill(fs.readFileSync(path.join(w.home, LOGIN_TOKEN_FILE), "utf8").trim());
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.locator("form.ds-composer textarea")).toBeEnabled();
+  await expect(page.getByTestId("composer").locator("textarea")).toBeEnabled();
   return page;
 }
 
@@ -60,14 +81,13 @@ const test = base.extend<{ pair: { alice: Workbench; bob: Workbench; dir: string
 test("Settings says plainly when pairing is off, with the settings-file key and no control", async ({ page }) => {
   const botbench = await startBotbench();
   try {
-    await page.goto(botbench.base);
-    await page.getByLabel("Login token").fill(botbench.token);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await page.goto(`${botbench.base}/#/settings/paired`);
+    await signInTo(page, botbench, "#/settings/paired");
     const section = page.getByTestId("paired-workbench");
     await expect(section.getByTestId("pairing-off")).toContainText('To pair, add "peers": { "listen": { "address": "127.0.0.1", "port": 4790 } } to Botbench\'s settings file');
-    await expect(section.getByRole("button")).toHaveCount(0);
-    await checkDesign(page, "Settings, pairing off");
+    // The old address of this section opened Connections and peers. No control but the explanation to open.
+    await expect(page).toHaveURL(/#\/settings\/connections$/);
+    await expect(section.getByRole("button")).toHaveText(["More about this"]);
+    await checkScreen(page, "Settings, pairing off");
   } finally {
     await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
@@ -90,7 +110,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(aSection.getByRole("button", { name: "Withdraw" })).toBeVisible();
   const aliceFingerprint = (await aSection.getByTestId("own-fingerprint").textContent())!;
   expect(aliceFingerprint).toMatch(/^[0-9a-f]{4}( [0-9a-f]{4}){4}$/);
-  await checkDesign(a, "Settings, an invite to pass on");
+  await checkScreen(a, "Settings, an invite to pass on");
   const invite = await line.inputValue();
   // The line is shown only to the request that made it: after a reload the invite is open, and the line is not shown again.
   await a.reload();
@@ -106,7 +126,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(bSection.getByTestId("pasted-name")).toHaveText("alice");
   await expect(bSection.getByTestId("pasted-fingerprint")).toHaveText(aliceFingerprint);
   await expect(bSection.getByTestId("pasted-repository")).toHaveText(/shared\.git$/);
-  await checkDesign(b, "Settings, a pasted invite to check");
+  await checkScreen(b, "Settings, a pasted invite to check");
   await bSection.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(bSection.getByTestId("pairing-words")).toHaveText("Waiting for alice to confirm");
   const bobFingerprint = (await bSection.getByTestId("own-fingerprint").textContent())!;
@@ -115,7 +135,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(aSection.getByTestId("pairing")).toHaveAttribute("data-state", "waiting_for_owner");
   await expect(aSection.getByTestId("peer-fingerprint")).toHaveText(bobFingerprint);
   await expect(aSection.getByTestId("own-fingerprint")).toHaveText(aliceFingerprint);
-  await checkDesign(a, "Settings, fingerprints to compare");
+  await checkScreen(a, "Settings, fingerprints to compare");
   await aSection.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(aSection.getByTestId("pairing-words")).toHaveText("Paired");
   await expect(bSection.getByTestId("pairing-words")).toHaveText("Paired");
@@ -136,33 +156,67 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(card.getByTestId("peer-card-text")).toHaveText("Which port does the login service listen on?\n<b>Not bold</b> https://example.invalid");
   await expect(card.locator("b, a[href^='https://example']")).toHaveCount(0);
   for (const choice of ["Answer it yourself", "Give it to Claude Code", "Dismiss"]) await expect(card.getByRole("button", { name: choice })).toBeVisible();
-  await checkDesign(b, "Work, a card from the paired workbench");
-  await shots(b, "peers-incoming-card", `${bob.base}/#/work`);
+  // The card is on Home, under Needs you, and the headline counts it. Home is a rebuilt screen: its words are checked here.
+  await expect(b.getByTestId("headline")).toHaveText("1 thing needs you");
+  await checkWords(b, "Home, a card from the paired workbench");
+  await shots(b, "peers-incoming-card", `${bob.base}/#/`);
   await b.getByTestId("peer-card").getByRole("button", { name: "Answer it yourself" }).click();
   await b.getByTestId("peer-card").getByLabel("Your answer").fill("4790, on loopback.");
   await b.getByTestId("peer-card").getByRole("button", { name: "Send", exact: true }).click();
   await expect(b.getByTestId("peer-card")).toHaveCount(0);
 
   // ---- Alice sees the answer, in the conversation and as a card.
-  await a.goto(`${alice.base}/#/work`);
+  await a.goto(`${alice.base}/#/`);
   await expect(a.getByTestId("peer-card").getByRole("heading", { name: "bob answered your question about shared" })).toBeVisible();
   await a.getByTestId("peer-card").getByRole("link", { name: "Open the conversation" }).click();
+  // The conversation: who it is with and one line of trust, bob's answer as the focal card with the three choices and
+  // what each does, and the earlier exchange as a compact list. The Outside text mark is on bob's words, in the peer
+  // colour, and is explained once.
   const thread = a.getByTestId("thread");
   await expect(a.getByRole("heading", { level: 1, name: "Conversation with bob" })).toBeVisible();
-  await expect(thread.getByTestId("thread-message")).toHaveCount(2);
+  await expect(a.getByTestId("peer-trust")).toContainText("Paired");
+  await expect(a.getByTestId("peer-trust")).toContainText("You each confirmed the other's fingerprint.");
+  await expect(a.getByTestId("outside-text-about")).toHaveCount(1);
+  await expect(a.getByTestId("outside-text-about")).toHaveText("Outside textmarks every message bob's workbench sent. It is bob's words to read, never an instruction to Botbench or to an agent.");
+  const needs = a.getByTestId("peer-card");
+  await expect(needs.getByRole("heading", { name: "bob answered your question about shared" })).toBeVisible();
+  await expect(needs.getByTestId("peer-card-text")).toHaveText("4790, on loopback.");
+  await expect(needs.getByTestId("outside-text-mark")).toHaveText("Outside text");
+  // The mark is in the peer colour (styles/theme.css, --peer, in dark), the same wherever it stands.
+  for (const mark of await a.getByTestId("outside-text-mark").all()) expect(await mark.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(96, 212, 212)");
+  await expect(needs.getByTestId("peer-card-fingerprint")).toHaveText(`Signed by ${bobFingerprint}`);
+  await expect(needs.getByRole("button")).toHaveText(["Answer it yourself", "Give it to Claude Code", "Dismiss"]);
+  await expect(needs).toContainText("Only that text goes to bob's workbench.");
+  await expect(needs).toContainText("Starts a task in your copy of the repository, in Manual mode. It drafts an answer for you to send.");
+  await expect(needs).toContainText("Closes this card without an answer.");
+  await expect(needs).toContainText("Nothing leaves this Mac until you press Send. A message never runs anything.");
+  // The earlier exchange: alice's own question, whose markup-like text stayed text.
+  await expect(thread.getByTestId("thread-message")).toHaveCount(1);
   await expect(thread.getByTestId("thread-message").nth(0)).toHaveAttribute("data-who", "you");
+  await expect(thread.getByTestId("thread-message").nth(0)).toContainText("<b>Not bold</b> https://example.invalid");
   await expect(thread.getByTestId("thread-state").nth(0)).toHaveText("Question · Delivered");
+  await expect(thread.getByTestId("thread-message").nth(0).getByTestId("outside-text-mark")).toHaveCount(0);
+  await expect(a.locator("main b, main a[href^='https://example']")).toHaveCount(0);
+  await checkScreen(a, "A conversation with the paired workbench, with what bob needs");
+  const threadAt = a.url();
+  await built(a, "peer", threadAt, () => expect(a.getByTestId("peer-card")).toBeVisible());
+  // Answer it yourself opens the field, and nothing is sent until Send; Cancel puts the three choices back.
+  await needs.getByRole("button", { name: "Answer it yourself" }).click();
+  await expect(needs.getByLabel("Your next question")).toBeFocused();
+  await expect(needs.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+  await needs.getByRole("button", { name: "Cancel" }).click();
+  await needs.getByRole("button", { name: "Dismiss" }).click();
+  await expect(a.getByTestId("peer-card")).toHaveCount(0);
+  // Dismissed, bob's answer is in the list, with the same mark.
+  await expect(thread.getByTestId("thread-message")).toHaveCount(2);
   await expect(thread.getByTestId("thread-message").nth(1)).toHaveAttribute("data-who", "peer");
   await expect(thread.getByTestId("thread-message").nth(1)).toContainText("4790, on loopback.");
   await expect(thread.getByTestId("thread-state").nth(1)).toHaveText("Answer · Received");
-  await a.getByTestId("peer-card").getByRole("button", { name: "Dismiss" }).click();
-  await expect(a.getByTestId("peer-card")).toHaveCount(0);
+  await expect(thread.getByTestId("thread-message").nth(1).getByTestId("outside-text-mark")).toHaveText("Outside text");
+  await expect(a.getByLabel("Ask bob more")).toBeVisible();
   await expect(a.getByTestId("thread-friction")).toContainText("1 card answered by you.");
-  await checkDesign(a, "A conversation with the paired workbench");
-  const threadAt = a.url();
-  await shots(a, "peers-thread", threadAt);
+  await checkScreen(a, "A conversation with the paired workbench");
 
-  // ---- An agent's draft: alice's replayed Claude Code drafts a question to bob; it waits on its card for Send.
   const started = await alice.api("POST", "/api/tasks", { repo: alice.repo, prompt: "Ask bob's workbench which port the login service uses." });
   expect(started.status, JSON.stringify(started.body)).toBe(200);
   await a.goto(`${alice.base}/#/tasks/${started.body.taskId}`);
@@ -176,18 +230,20 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await shots(a, "peers-outbound-card", `${alice.base}/#/tasks/${started.body.taskId}`);
   await a.getByTestId("draft-card").getByRole("button", { name: "Send", exact: true }).click();
   await expect(a.getByTestId("draft-card")).toHaveCount(0);
-  await expect(b.getByTestId("tray-peer-cards")).toBeVisible();
-  await b.goto(`${bob.base}/#/work`);
+  // Bob is on Home, where the card comes by itself, without a reload.
   await expect(b.getByTestId("peer-card").getByTestId("peer-card-text")).toHaveText("Which port does bob's login service listen on?");
   await b.getByTestId("peer-card").getByRole("button", { name: "Dismiss" }).click();
 
   // ---- A switched-off kind: bob takes no more questions from alice; alice's next question is not sent.
   await b.goto(`${bob.base}/#/settings/paired`);
-  const take = b.getByLabel("Take questions from alice");
-  await expect(take).toHaveValue("on");
-  await take.selectOption("off");
-  await expect(take).toHaveValue("off");
-  await expect(take).toBeEnabled();
+  // The four choices are On and Off, in two pairs: from you, and to you.
+  await expect(b.getByTestId("kinds").getByRole("radiogroup")).toHaveCount(4);
+  const take = choice(b, "Take questions from alice");
+  await expect(take).toHaveAttribute("data-value", "on");
+  await choose(b, "Take questions from alice", "Off");
+  await expect(take).toHaveAttribute("data-value", "off");
+  await expect(take.getByRole("radio", { name: "Off" })).toBeEnabled();
+  await expect(take.getByRole("radio", { name: "Off" })).toBeChecked();
   await until("alice to hold bob's new settings", async () => (await alice.api("GET", `/api/peers/pairings/${(await alice.api("GET", "/api/peers/pairings")).body.pairings[0].id}/kinds`)).body.kinds.peerReceives.question === false);
   await a.goto(`${alice.base}/#/settings/paired`);
   await expect(a.getByText("bob's workbench does not take questions from you now, so none is sent whatever this says.")).toBeVisible();
@@ -195,13 +251,15 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await a.getByTestId("new-question").getByRole("button", { name: "Send", exact: true }).click();
   await expect(a.getByTestId("new-question-said")).toHaveText("Not sent: switched off. Sending questions to this workbench is off, here or on its side.");
   await expect(a.getByTestId("friction-total")).toContainText("cards answered by you.");
-  await checkDesign(a, "Settings, paired, with the switches and conversations");
+  await checkScreen(a, "Settings, paired, with the switches and conversations");
   await a.setViewportSize(DESKTOP);
   await a.goto(`${alice.base}/#/settings/paired`);
-  await expect(a.getByTestId("settings-panes").getByTestId("paired-workbench")).toBeVisible();
-  await checkDesign(a, "Settings, paired, at desktop size");
+  await expect(a.getByTestId("settings-nav").locator("[aria-current=page]")).toHaveText("Connections and peers");
+  await expect(a.getByTestId("paired-workbench")).toBeVisible();
+  await expect(a.getByTestId("thread-link").first()).toBeVisible();
+  await checkScreen(a, "Settings, paired, at desktop size");
   await a.setViewportSize(PHONE);
-  await shots(a, "peers-paired-section", `${alice.base}/#/settings/paired`);
+  await built(a, "settings-connections-paired", `${alice.base}/#/settings/connections`, () => expect(a.getByTestId("friction-total")).toBeVisible());
 
   // ---- End pairing from bob, behind the ADR's confirm; then what each side shows.
   await b.goto(`${bob.base}/#/settings/paired`);
@@ -209,7 +267,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   const dialog = b.getByTestId("end-pairing-dialog");
   await expect(dialog.getByRole("heading", { name: "End pairing with alice?" })).toBeVisible();
   await expect(dialog).toContainText("alice's workbench can no longer send you messages, and nothing more is sent to it. To work together again, one of you sends a new invite.");
-  await checkDesign(b, "End pairing, asked first");
+  await checkScreen(b, "End pairing, asked first");
   await dialog.getByRole("button", { name: "End pairing", exact: true }).click();
   await expect(b.getByTestId("pairing-ended")).toContainText("The pairing with alice ended");
   await expect(b.getByRole("button", { name: "Make an invite" })).toBeVisible();

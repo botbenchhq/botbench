@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, resumeTask } from "../api/client.ts";
-import { Alert } from "./header.tsx";
+import { Alert } from "./alert.tsx";
 
 /**
  * Resume for a stopped task: what it will do, in the server's words, and the button that does it. `name` names the

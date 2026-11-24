@@ -57,7 +57,7 @@ test("on a building task the note box sends a note that waits, a second replaces
   await expect(box.getByTestId("note-text")).toHaveText(SECOND);
   await checkDesign(page, "task, building, a note waiting that replaced another");
   // Not in the transcript while it waits.
-  await expect(page.getByRole("log", { name: "Transcript" }).getByText(SECOND)).toHaveCount(0);
+  await expect(page.getByRole("log", { name: "Activity" }).getByText(SECOND)).toHaveCount(0);
 
   // The screen stops hearing about changes, as a phone that lost its connection would, and the builder goes on: the
   // note is delivered as its next message, the task's work is committed, and the task is no longer building.
@@ -81,8 +81,8 @@ test("on a building task the note box sends a note that waits, a second replaces
   await page.reload();
   await expect(page.getByTestId("task-status")).toHaveText(/^Failed\./);
   await expect(page.getByTestId("task-note")).toHaveCount(0);
-  const log = page.getByRole("log", { name: "Transcript" });
-  const prompts = log.locator('li[data-event="user_prompt"]');
+  const log = page.getByRole("log", { name: "Activity" });
+  const prompts = log.getByTestId("prompt");
   await expect(prompts).toHaveCount(2);
   await expect(prompts.nth(1)).toContainText("You");
   await expect(prompts.nth(1)).toContainText(SECOND);

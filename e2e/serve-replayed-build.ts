@@ -15,7 +15,8 @@ const RELEASE_FILE = "release-builder";
 
 const settings = startupSettings(process.env, (line) => console.log(line));
 const config = loadConfig({ defaults: DEFAULT_CONFIG_FILE, local: settings.localConfig });
-const claudeCode = buildReplayDriver([["done", "done"]], { hold: [0] });
+// A second attempt, for a test that stops the first and resumes the task (e2e/task-screens.e2e.ts): the same recorded turn, once.
+const claudeCode = buildReplayDriver([["done", "done"], ["done"]], { hold: [0] });
 const release = path.join(path.dirname(settings.homes.home), RELEASE_FILE);
 const watch = setInterval(() => {
   if (!fs.existsSync(release)) return;

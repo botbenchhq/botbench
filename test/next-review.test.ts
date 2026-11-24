@@ -9,11 +9,10 @@ import { activityLine, diffRows, offered } from "../web/src/screens2/review/revi
 
 const evidence = (state: EvidenceState["state"], canRunAgain = false): EvidenceState => ({ state, checks: state === "none" ? "none" : "passed", checkedCommit: null, headCommit: null, files: [], ignored: [], ignoredMore: 0, ignoredWords: null, words: "", canRunAgain, review: null });
 
-test("the rebuilt review screen is the task's own address with ?new=1, and the old screen keeps the plain address", () => {
-  assert.deepEqual(parseRoute("#/tasks/12"), { screen: "task", id: 12, discard: false, rebuilt: false });
-  assert.deepEqual(parseRoute("#/tasks/12?new=1"), { screen: "task", id: 12, discard: false, rebuilt: true });
-  assert.deepEqual(parseRoute("#/tasks/12?discard"), { screen: "task", id: 12, discard: true, rebuilt: false });
-  assert.deepEqual(parseRoute("#/tasks/12?new=2"), { screen: "none", what: "/tasks/12?new=2" });
+test("a task has one address, shown by the rebuilt screen: the ?new=1 it stood behind is no address any more", () => {
+  assert.deepEqual(parseRoute("#/tasks/12"), { screen: "task", id: 12, discard: false });
+  assert.deepEqual(parseRoute("#/tasks/12?discard"), { screen: "task", id: 12, discard: true });
+  assert.deepEqual(parseRoute("#/tasks/12?new=1"), { screen: "none", what: "/tasks/12?new=1" });
 });
 
 test("the actions offered are the ones the server's evidence state allows, and none when it could not be read", () => {

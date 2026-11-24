@@ -109,19 +109,22 @@ test("LIVE the refine loop: Codex raises a defect in Claude Code's first build, 
     if (task.refinements[0]!.changed) expect(Math.max(...task.evidence.filter((row) => row.kind === "check").map((row) => row.round)), "the check ran again on the fixed work").toBeGreaterThanOrEqual(2);
   }
 
-  // The screen: the outcome line, each review and each round of fixes, with the reviewer's and the builder's words one tap away.
-  const section = page.getByTestId("review");
-  await expect(section.getByRole("heading", { name: "Codex's review", level: 2 })).toBeVisible();
-  await expect(page.getByTestId("review-outcome")).toHaveText(task.reviewLine!);
+  // The screen: in the verification card, the reviewer and the outcome line; one tap away, each review and each round
+  // of fixes, with the reviewer's and the builder's words.
+  const section = page.getByTestId("verification");
+  await expect(section.getByTestId("review-by")).toHaveText(/^Codex, gpt-6-luna/);
+  await expect(section.getByTestId("review-outcome")).toHaveText(task.reviewLine!);
+  await expect(page.getByTestId("review-text").first()).toBeHidden();
+  await section.getByTestId("review-detail").click();
   await expect(page.getByTestId("review-round")).toHaveCount(task.reviews.length);
   await expect(page.getByTestId("fixes-round")).toHaveCount(task.refinements.length);
   await expect(section.getByRole("heading", { name: "Review 1", level: 3 })).toBeVisible();
+  // The builder's reply to a round of fixes is under that round, with the full review, with no further tap.
+  if (task.refinements.length > 0 && task.refinements[0]!.outcome === "finished") {
+    await expect(section.getByRole("heading", { name: "Claude Code's fixes 1", level: 3 })).toBeVisible();
+    await expect(page.getByTestId("fixes-text").first()).toBeVisible();
+  }
   await checkDesign(page, "task, ready for review, with the rounds of review and fixes");
   await shot(page, "refine-task.png");
-  if (task.refinements.length > 0 && task.refinements[0]!.outcome === "finished") {
-    await page.getByTestId("fixes-detail").first().locator("summary").click();
-    await expect(page.getByTestId("fixes-text").first()).toBeVisible();
-    await checkDesign(page, "task, a round of fixes opened");
-  }
   expect(foreign).toEqual([]);
 });

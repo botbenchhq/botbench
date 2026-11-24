@@ -1,36 +1,8 @@
-import { useId, useState } from "react";
-import { ApiError, openPullRequest, type Delivery, type PullRequestTarget, type PullRequestView } from "../api/client.ts";
+import { useState } from "react";
+import { ApiError, openPullRequest, type PullRequestTarget, type PullRequestView } from "../api/client.ts";
 import { ConfirmAction } from "./confirm.tsx";
-import { Alert } from "./header.tsx";
+import { Alert } from "./alert.tsx";
 import { Icon } from "./icon.tsx";
-
-/** New run's one choice of what becomes of each task it accepts: keep the branch (the default), or open a pull request. */
-export function DeliveryChoice({ value, onChange }: { value: Delivery; onChange: (value: Delivery) => void }) {
-  const id = useId();
-  return (
-    <fieldset className="ds-radio__group">
-      <legend className="ds-radio__legend">When you accept a task</legend>
-      <div className="ds-radio">
-        <input className="ds-radio__input" type="radio" id={`${id}-branch`} name={`${id}-delivery`} value="branch" checked={value === "branch"} onChange={() => onChange("branch")} aria-describedby={`${id}-branch-about`} />
-        <label className="ds-radio__label" htmlFor={`${id}-branch`}>
-          Keep the branch
-        </label>
-        <p className="ds-radio__description" id={`${id}-branch-about`}>
-          The work stays on its branch in the repository on this Mac. Nothing is sent anywhere.
-        </p>
-      </div>
-      <div className="ds-radio">
-        <input className="ds-radio__input" type="radio" id={`${id}-pr`} name={`${id}-delivery`} value="pull_request" checked={value === "pull_request"} onChange={() => onChange("pull_request")} aria-describedby={`${id}-pr-about`} />
-        <label className="ds-radio__label" htmlFor={`${id}-pr`}>
-          Open a pull request
-        </label>
-        <p className="ds-radio__description" id={`${id}-pr-about`}>
-          Botbench pushes the task's branch to the repository's GitHub remote with your own git and gh, and opens a pull request for it. It never merges, never pushes by force, and never pushes to your main branch. This cannot be changed once the run starts.
-        </p>
-      </div>
-    </fieldset>
-  );
-}
 
 /** A pull request's link: it opens GitHub in a new tab. */
 export function PullRequestLink({ view }: { view: PullRequestView }) {

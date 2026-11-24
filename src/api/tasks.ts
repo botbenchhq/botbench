@@ -14,7 +14,7 @@ import { loopRecord, NO_ACCOUNT, outcomeLine, parseChecked, parseRefineReply, re
 import { reviewAssignment, taskReviews } from "../engine/review.ts";
 import { commandLists, taskEvidence } from "../engine/stations.ts";
 import { checkFixView } from "../engine/check-fix.ts";
-import { checkRepository, getTask, listTasks, restartLine, resumeNote, TaskError, waitingBehind, words, type Task } from "../engine/task.ts";
+import { checkRepository, getTask, listTasks, restartLine, resumeNote, resumeTakesNote, TaskError, waitingBehind, words, type Task } from "../engine/task.ts";
 import { noteRoundLine, openNoteRound } from "../engine/note-rounds.ts";
 import { firstLine } from "../shorten.ts";
 import { beingDecided, decideTask, discardTask, EvidenceError, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
@@ -130,6 +130,25 @@ async function sendNote(req: http.IncomingMessage, res: http.ServerResponse, ctx
   // A decision at work on the task may be removing its copy: no round is started in it meanwhile.
   if (beingDecided(id)) throw new TaskError(409, "This task is being decided, so a note cannot reach Claude Code now.");
   json(res, 200, ctx.tasks.sendNote(id, body.text));
+}
+
+/**
+ * The owner's note sent with Resume, from the request's body: `{ "note": "..." }`. Left out, null or blank, there is
+ * none (the client sends its box as it is). The engine refuses one that is too long, and one nobody would read.
+ */
+async function resumeNoteOf(req: http.IncomingMessage): Promise<string | undefined> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    if (!(err instanceof BodyError)) throw err;
+    throw new TaskError(err.status === 413 ? 413 : 400, err.status === 413 ? `The note is too long: ${MAX_NOTE} characters at most.` : "Botbench could not read the request: it was not sent as JSON.");
+  }
+  // voice: not on screen. It names the API's own field for a caller whose request was malformed; the client never sends one.
+  if (!isObject(body)) throw new TaskError(400, 'expected { "note"?: "the note" }');
+  if (body.note === undefined || body.note === null) return undefined;
+  if (typeof body.note !== "string") throw new TaskError(400, 'expected { "note"?: "the note" }');
+  return body.note.trim() === "" ? undefined : body.note;
 }
 
 function loopCounts(db: DatabaseSync, taskId: number): { reviewOutcome: string; reviewRounds: number; refineRounds: number } {
@@ -325,7 +344,10 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
   return { ...summary(db, task), runsMade: runsMadeFrom(db, task.id), issueHosts: issueHostsFor(db, task.runId, repositoryHosts(ctx.config, task.repo)), earlierAttempts: earlierAttempts(db, task), handoffs: handoffsOf(db, task.id),
     // The agents the owner can move this task to now: only while its builder is at work, never its run's reviewer, and
     // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
-    moveTo: offer.now ? offer.agents : [], ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
+    moveTo: offer.now ? offer.agents : [],
+    // Whether the owner's Stop can stop this task now (its agent is at work), and whether a note can go with its Resume
+    // (the Resume starts its agent). A screen offers neither otherwise; the routes refuse them whatever a screen draws.
+    canStop: ctx.tasks.canStop(task.id), resumeTakesNote: resumeTakesNote(db, task), ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
     // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
     refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...(await evidenceStateOf(ctx, task)), ...checkRerunsOf(db, task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task),
     mainUpdate: await mainUpdateOf(ctx, task) };
@@ -407,6 +429,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const decision = /^\/api\/tasks\/([1-9]\d{0,14})\/(accept|reject)$/.exec(pathname);
   const discard = /^\/api\/tasks\/([1-9]\d{0,14})\/discard$/.exec(pathname);
   const resume = /^\/api\/tasks\/([1-9]\d{0,14})\/resume$/.exec(pathname);
+  const stop = /^\/api\/tasks\/([1-9]\d{0,14})\/stop$/.exec(pathname);
   const pullRequest = /^\/api\/tasks\/([1-9]\d{0,14})\/pull-request$/.exec(pathname);
   const note = /^\/api\/tasks\/([1-9]\d{0,14})\/notes$/.exec(pathname);
   const move = /^\/api\/tasks\/([1-9]\d{0,14})\/move$/.exec(pathname);
@@ -462,9 +485,13 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       json(res, 200, await detail(ctx, discarded));
     } else if (method === "POST" && resume) {
       const id = Number(resume[1]);
-      // A discard at work on the task may be removing its copy: nothing is started in it meanwhile.
+          // The note is read first: from the check below to the Resume nothing is awaited, so no discard starts in between.
+      const note = await resumeNoteOf(req);
       if (beingDecided(id)) throw new TaskError(409, "This task is being discarded, so it cannot be resumed.");
-      json(res, 200, await detail(ctx, ctx.tasks.resume(id)));
+      json(res, 200, await detail(ctx, ctx.tasks.resume(id, note)));
+    } else if (method === "POST" && stop) {
+      // The owner's Stop on one working task (engine/task.ts, `stop`). The body carries nothing.
+      json(res, 200, await detail(ctx, await ctx.tasks.stop(Number(stop[1]))));
     } else if (method === "POST" && pullRequest) {
       // The owner's own "Open a pull request" (or "Try again"), naming the remote and branch the confirmation showed.
       const body = await readJsonBody(req);

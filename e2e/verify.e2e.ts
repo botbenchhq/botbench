@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, openWork, signIn, startTaskIn, tallShot } from "./helpers.ts";
+import { checkDesign, checkWords, expect, openWork, SHOTS, signIn, startTaskIn, tallShot, workRows } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The verify station in the real client, at a phone's size: a real Botbench process whose settings give two real
@@ -67,46 +67,46 @@ test("LIVE: a task whose check fails says so in words with an icon, opens the fa
   await signIn(page, botbench);
 
   await buildTask(page, botbench, repos.failing);
-  const result = page.getByTestId("checks-result");
-  await expect(result).toHaveText("Checks failed: 1 of 2 checks did not pass.");
-  await expect(result.locator("svg")).toHaveCount(1);
+  // The verification card: the checks' count as its heading, beside its mark, then one row for each check.
+  const verification = page.getByTestId("verification");
+  const claims = verification.locator("[data-slot=collapsible]");
+  await expect(verification.getByTestId("verification-heading")).toHaveText("1 of 2 checks passed. 1 failed");
+  await expect(verification.locator("svg").first()).toBeVisible();
   // One short line under the checks; the full limits once, behind the task's Details.
-  await expect(page.getByTestId("checks-line")).toHaveText("The agent may have changed the code the checks run, so read their output, not only the result.");
+  await expect(verification.getByText("The agent may have changed the code the checks run, so read their output, not only the result.", { exact: true })).toBeVisible();
   await expect(page.getByTestId("checks-limits")).toBeHidden();
   await page.getByTestId("task-details").locator("summary").click();
   await expect(page.getByTestId("checks-limits")).toHaveText(/^Checks run this repository's own commands on the agent's work, on this Mac, in a sandbox: .* They can still read the rest of your home folder\.$/);
   await page.getByTestId("task-details").locator("summary").click();
-  const items = page.getByTestId("checks").locator(".ds-check-list__item");
-  await expect(items).toHaveCount(2);
-  // The failed check comes first; its result is words, and its output opens.
-  await expect(items.nth(0).locator(".ds-check-list__name")).toHaveText("sh check.sh goodbye");
-  await expect(items.nth(0).locator(".ds-check-list__result")).toHaveText("Failed, exit code 1");
-  await expect(items.nth(1).locator(".ds-check-list__result")).toHaveText("Passed");
-  await expect(page.getByTestId("checks").locator(".ds-check-list__summary")).toHaveText("1 of 2 checks passed. 1 failed.");
-  await items.nth(0).locator(".ds-check-list__toggle").click();
-  await expect(items.nth(0).locator(".ds-check-list__log")).toHaveText(/checking hello.txt for goodbye\s+hello.txt does not hold goodbye/);
+  await expect(claims).toHaveCount(2);
+  // Each check's result is words, with its mark, and the failed check's output opens.
+  const failed = claims.filter({ hasText: "sh check.sh goodbye" });
+  await expect(failed.getByText("Failed, exit code 1", { exact: true })).toBeVisible();
+  await expect(failed.locator("svg").first()).toBeVisible();
+  await expect(claims.filter({ hasText: "sh check.sh hi" }).getByText("Passed", { exact: true })).toBeVisible();
+  await failed.getByRole("button", { name: "Output of sh check.sh goodbye" }).click();
+  await expect(failed.getByRole("group", { name: "Output of sh check.sh goodbye" })).toHaveText(/checking hello.txt for goodbye\s+hello.txt does not hold goodbye/);
   await checkDesign(page, "task, checks failed, output open");
   await shot(page, "u13-checks-failed.png");
 
   await buildTask(page, botbench, repos.passing);
-  await expect(page.getByTestId("checks-result")).toHaveText("Checks passed: 1 of 1 check passed.");
-  await expect(page.getByTestId("checks").locator(".ds-check-list__result")).toHaveText("Passed");
+  await expect(verification.getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
+  await expect(verification.getByTestId("evidence-words")).toHaveText(/^Evidence is current: the checks passed on commit [0-9a-f]{7}, the commit Accept keeps\.$/);
+  await expect(claims).toHaveCount(1);
+  await expect(claims.getByText("Passed", { exact: true })).toBeVisible();
   await checkDesign(page, "task, checks passed");
   await shot(page, "u13-checks-passed.png");
 
   // A repository with no check commands: the task says so plainly, and nothing reads as a pass.
   await buildTask(page, botbench, repos.unchecked, { checking: false });
-  await expect(page.getByTestId("checks-result")).toHaveText("No checks are set up for this repository.");
-  await expect(page.getByTestId("checks")).toHaveCount(0);
+  await expect(verification.getByTestId("verification-heading")).toHaveText("No checks are set up for this repository");
+  await expect(claims).toHaveCount(0);
   await expect(page.getByText(/Checks passed|Passed/)).toHaveCount(0);
   await checkDesign(page, "task, no checks set up");
 
   // Work says the same in words.
   await openWork(page);
-  const listed = page.getByTestId("board-group").getByRole("listitem");
-  await expect(listed).toHaveCount(3);
-  await expect(listed.nth(0)).toContainText("No checks set up");
-  await expect(listed.nth(1)).toContainText("Checks passed");
-  await expect(listed.nth(2)).toContainText("Checks failed");
-  await checkDesign(page, "work, with checks");
+  const listed = workRows(page).getByTestId("work-facts");
+  await expect(listed).toHaveText(["No checks set up", "Checks passed", "Checks failed"]);
+  await checkWords(page, "work, with checks");
 });
