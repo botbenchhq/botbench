@@ -235,7 +235,7 @@ export const REVIEW_LINE = "A model's opinion, not a check.";
 export const REVIEW_LIMITS = "The reviewer read the changes where it could change nothing and reach no network. Botbench reads only its verdict and the lines under its Checked heading, which it must give to count as satisfied: with concerns, the builder is given the review to fix what it agrees with, under the same permissions as for its build, and the same reviewer looks again.";
 
 /** A review's verdict line: the verdict in words when the reply gave it in the asked form. */
-function verdictWords(review: Review): string {
+export function verdictWords(review: Review): string {
   if (review.verdict === "looks_right") return "Verdict: looks right";
   if (review.verdict === "concerns") return "Verdict: concerns";
   return "No verdict in the asked form";
@@ -296,7 +296,7 @@ export function ReviewEvidence({ review }: { review: Review }) {
 }
 
 /** A round of fixes in a few words: what the builder did, from its reply's two headings when it used them. */
-function fixesWords(fix: Refinement): string {
+export function fixesWords(fix: Refinement): string {
   const explained = fix.notAddressed === null ? "" : `, explained ${fix.notAddressed.length}`;
   if (!fix.changed) return `Changed nothing${explained}`;
   return fix.addressed === null ? "Changed the work" : `Addressed ${fix.addressed.length}${explained}`;

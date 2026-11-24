@@ -20,6 +20,14 @@ export function noteNavigation(): void {
   unclaimed = window.setTimeout(() => (navigated = false), 250);
 }
 
+/**
+ * The screen the address names is still being fetched (a rebuilt screen's code is fetched when first opened): the note
+ * is kept until that screen draws its heading, however long the fetch takes.
+ */
+export function awaitScreen(): void {
+  if (navigated) window.clearTimeout(unclaimed);
+}
+
 /** A field somebody may be typing in. */
 const typing = (el: Element): boolean => el.matches("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
 

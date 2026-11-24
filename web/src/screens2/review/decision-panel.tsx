@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Check, Minus } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Badge } from "@/ui/badge";
@@ -7,11 +7,7 @@ import { Card } from "@/ui/card";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
-import { Separator } from "@/ui/separator";
 import { acceptTask, ApiError, rejectTask, runChecksAgain, type TaskDetail } from "../../api/client.ts";
-import { agentName } from "../../app/chat.ts";
-import { MODE_NAMES } from "../../app/run-words.ts";
-import { reviewerWords } from "../../components/evidence.tsx";
 import { offered } from "./review-model.ts";
 
 /*
@@ -19,34 +15,38 @@ import { offered } from "./review-model.ts";
  * raised card, what accepting will do, an optional note, and the buttons. Which buttons there are is the server's to
  * say (`offered`, from its state of the evidence): Accept, as the one filled button, while the checks are about the
  * commit it keeps; "Accept without verification", outlined, when no checks ran; Run checks again, outlined, when they
- * are out of date; and Reject always, behind its confirmation. The requests go through the same client functions as
- * the old screen's, and the server refuses whatever the state does not allow.
+ * are out of date; and Reject always, behind its confirmation. The server refuses whatever the state does not allow.
+ * `children` follow the buttons: the other way on from a decision (a note to the agent).
  */
 
 type Busy = "accept" | "reject" | "checks" | null;
 
-export function DecisionPanel({ task, onDecided, onSignedOut }: { task: TaskDetail; onDecided: () => void; onSignedOut: () => void }) {
+/**
+ * The decision's own state and requests, kept by the task's screen so that the panel (in the pane at the right, or in
+ * its sheet under 1024px) and the bar at the foot of a narrow window are one decision, not two.
+ */
+export function useDecision(task: TaskDetail | null, onDecided: () => void, onSignedOut: () => void) {
   const [busy, setBusy] = useState<Busy>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [branch, setBranch] = useState<"keep" | "discard">("keep");
-  const id = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const sent = useRef(false);
-  const decision = task.decision;
-  const evidence = task.evidenceState;
+  const decision = task?.decision ?? null;
+  const evidence = task?.evidenceState ?? null;
   const offer = offered(evidence);
-  const left = task.leftovers ?? [];
+  const left = task?.leftovers ?? [];
 
   // When the decision was sent from here, focus moves to the panel's heading as the buttons go.
   useEffect(() => {
     if (decision === null || !sent.current) return;
     sent.current = false;
-    heading.current?.focus();
+    // Under 1024px the panel may be in its closed sheet: focus then goes to the screen's own heading, not to nowhere.
+    (heading.current ?? document.querySelector<HTMLElement>("main h1"))?.focus();
   }, [decision !== null]);
   // Run checks again stays busy until the server's next word on the evidence arrives.
-  useEffect(() => setBusy((now) => (now === "checks" ? null : now)), [evidence?.state, task.status]);
+  useEffect(() => setBusy((now) => (now === "checks" ? null : now)), [evidence?.state, task?.status]);
 
   const failed = (what: string) => (err: unknown): void => {
     setBusy(null);
@@ -58,14 +58,14 @@ export function DecisionPanel({ task, onDecided, onSignedOut }: { task: TaskDeta
   };
   const given = (): string | null => (note.trim() === "" ? null : note.trim());
   const accept = (): void => {
-    if (busy !== null || offer.accept === null) return;
+    if (task === null || busy !== null || offer.accept === null) return;
     setBusy("accept");
     setProblem(null);
     sent.current = true;
     acceptTask(task.id, offer.accept === "unverified", given()).then(onDecided, failed("The task was not accepted."));
   };
   const reject = (): void => {
-    if (busy !== null) return;
+    if (task === null || busy !== null) return;
     setRejecting(false);
     setBusy("reject");
     setProblem(null);
@@ -74,12 +74,68 @@ export function DecisionPanel({ task, onDecided, onSignedOut }: { task: TaskDeta
     rejectTask(task.id, branch, left, given()).then(onDecided, failed("The task was not rejected."));
   };
   const again = (): void => {
-    if (busy !== null) return;
+    if (task === null || busy !== null) return;
     setBusy("checks");
     setProblem(null);
     runChecksAgain(task.id).then(onDecided, failed("The checks were not started."));
   };
+  return { busy, problem, note, setNote, rejecting, setRejecting, branch, setBranch, heading, offer, left, accept, reject, again };
+}
+export type Decision = ReturnType<typeof useDecision>;
 
+/** The decision's buttons: Reject, Run checks again when the checks are out of date, and the Accept the evidence allows. */
+function DecisionActions({ d, testId, oneRow = false }: { d: Decision; testId: string; oneRow?: boolean }) {
+  const { busy, offer } = d;
+  return (
+    <div data-testid={testId} className="flex flex-wrap gap-2">
+      <Button variant="outline" className="flex-1" aria-busy={busy === "reject" || undefined} disabled={busy === "accept" || busy === "checks"} onClick={() => busy === null && d.setRejecting(true)}>
+        {busy === "reject" ? "Rejecting" : "Reject"}
+      </Button>
+      {offer.runAgain && (
+        <Button variant="outline" className="flex-1" aria-busy={busy === "checks" || undefined} disabled={busy === "reject"} onClick={d.again}>
+          {busy === "checks" ? "Starting the checks" : "Run checks again"}
+        </Button>
+      )}
+      {offer.accept !== null && (
+        // Without verification it is not the view's primary action, and is not drawn as one.
+        <Button variant={offer.accept === "accept" ? "default" : "outline"} className={offer.accept === "accept" || oneRow ? "flex-[2]" : "basis-full"} aria-busy={busy === "accept" || undefined} disabled={busy === "reject"} onClick={d.accept}>
+          {busy === "accept" ? "Accepting" : offer.accept === "unverified" ? "Accept without verification" : "Accept"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The decision at the foot of a narrow window (under 1024px), where the panel stands in a sheet: one line on what the
+ * evidence allows, in the server's words when it allows no Accept, and the same buttons. `more` opens the panel; it is
+ * all there is once the task is decided.
+ */
+export function DecisionBar({ task, d, more }: { task: TaskDetail; d: Decision; more: ReactNode }) {
+  if (task.decision !== null) return <>{more}</>;
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <p data-testid="foot-line" className="line-clamp-2 min-w-0 text-meta text-muted-foreground">
+          {d.offer.accept === "accept" ? (task.pullRequest.choice === "pull_request" ? "Accept keeps the branch, then pushes it and opens a pull request." : "Accept keeps the branch. Nothing is pushed or merged.") : d.offer.accept === "unverified" ? "No checks ran on this work." : (task.evidenceState?.words ?? task.evidenceProblem ?? "Botbench could not read the state of this task's evidence.")}
+        </p>
+        {more}
+      </div>
+      {d.problem !== null && (
+        <p role="alert" className="text-meta text-destructive">
+          {d.problem}
+        </p>
+      )}
+      <DecisionActions d={d} testId="foot-actions" oneRow />
+    </>
+  );
+}
+
+export function DecisionPanel({ task, d, children }: { task: TaskDetail; d: Decision; children?: ReactNode }) {
+  const { problem, note, setNote, heading, offer } = d;
+  const id = useId();
+  const decision = task.decision;
+  const evidence = task.evidenceState;
   const pullRequest = task.pullRequest.choice === "pull_request";
   return (
     <>
@@ -125,22 +181,8 @@ export function DecisionPanel({ task, onDecided, onSignedOut }: { task: TaskDeta
                 {problem}
               </p>
             )}
-            <div data-testid="decision-actions" className="flex flex-wrap gap-2">
-              <Button variant="outline" className="flex-1" aria-busy={busy === "reject" || undefined} disabled={busy === "accept" || busy === "checks"} onClick={() => busy === null && setRejecting(true)}>
-                {busy === "reject" ? "Rejecting" : "Reject"}
-              </Button>
-              {offer.runAgain && (
-                <Button variant="outline" className="flex-1" aria-busy={busy === "checks" || undefined} disabled={busy === "reject"} onClick={again}>
-                  {busy === "checks" ? "Starting the checks" : "Run checks again"}
-                </Button>
-              )}
-              {offer.accept !== null && (
-                // Without verification it is not the view's primary action, and is not drawn as one.
-                <Button variant={offer.accept === "accept" ? "default" : "outline"} className={offer.accept === "accept" ? "flex-[2]" : "basis-full"} aria-busy={busy === "accept" || undefined} disabled={busy === "reject"} onClick={accept}>
-                  {busy === "accept" ? "Accepting" : offer.accept === "unverified" ? "Accept without verification" : "Accept"}
-                </Button>
-              )}
-            </div>
+            <DecisionActions d={d} testId="decision-actions" />
+            {children}
           </>
         ) : (
           <div data-testid="decision-result" className="flex flex-col gap-3 text-base">
@@ -169,35 +211,16 @@ export function DecisionPanel({ task, onDecided, onSignedOut }: { task: TaskDeta
         )}
       </Card>
 
-      <section aria-labelledby={`${id}-facts`}>
-        <h2 id={`${id}-facts`} className="mb-1 text-meta font-semibold text-muted-foreground">
-          This task
-        </h2>
-      <dl data-testid="task-facts" className="flex flex-col text-sm">
-        {[
-          { name: "Mode", value: MODE_NAMES[task.mode], theirs: false },
-          { name: "Agent", value: agentName(task.builder), theirs: false },
-          { name: "Reviewer", value: task.reviewer === null ? "None" : reviewerWords(task.review ?? task.reviewer), theirs: false },
-          { name: "Repository", value: task.repo, theirs: true },
-        ].map((row, i) => (
-          <div key={row.name}>
-            {i > 0 && <Separator />}
-            <div className="flex justify-between gap-4 py-2.5">
-              <dt className="text-muted-foreground">{row.name}</dt>
-              <dd data-ds-content={row.theirs ? "" : undefined} className="min-w-0 text-right break-words">
-                {row.value}
-              </dd>
-            </div>
-          </div>
-        ))}
-      </dl>
-        {/* What this screen does not have yet (a note to the agent, bringing the branch up to date, a pull request) is on the screen it will replace. */}
-        <a href={`#/tasks/${task.id}`} data-testid="full-screen" className="mt-2 inline-flex min-h-(--control-small) items-center text-sm text-primary underline-offset-4 hover:underline">
-          Open the task's full screen
-        </a>
-      </section>
+    </>
+  );
+}
 
-      {/* Reject takes something away, so it asks first: an alert dialog whose first button, with the focus, changes nothing. */}
+/** Reject takes something away, so it asks first: an alert dialog whose first button, with the focus, changes nothing. Drawn once by the task's screen. */
+export function RejectDialog({ d }: { d: Decision }) {
+  const id = useId();
+  const { rejecting, setRejecting, branch, setBranch, left, reject } = d;
+  return (
+    <>
       <AlertDialog open={rejecting} onOpenChange={setRejecting}>
         <AlertDialogContent data-testid="reject">
           <AlertDialogHeader>

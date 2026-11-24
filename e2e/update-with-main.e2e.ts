@@ -61,10 +61,9 @@ test("a ready task whose branch is behind main says so and offers Bring up to da
   const { taskId } = (await started.json()) as { taskId: number };
   await page.goto(`${botbench.base}/#/tasks/${taskId}`);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./, { timeout: 60_000 });
+  // A branch that holds everything on main has nothing unverified about main: the card is not drawn.
   const section = page.getByTestId("main-update");
-  await expect(section.getByRole("heading", { name: "Main" })).toBeVisible();
-  await expect(section.getByTestId("main-behind")).toHaveText("This branch holds everything on main.");
-  await expect(section.getByRole("button")).toHaveCount(0);
+  await expect(section).toHaveCount(0);
 
   // Main moves on in the owner's repository.
   write(repo, "README.md", "# Sample\n\nMain moved on.\n");
@@ -77,10 +76,7 @@ test("a ready task whose branch is behind main says so and offers Bring up to da
   const button = section.getByRole("button", { name: "Bring up to date with main" });
   await expect(button).toBeVisible();
   // Not the screen's primary action: Accept is.
-  await expect(button).not.toHaveClass(/ds-button--primary/);
-  // It sits just above the decision.
-  const [mainBox, decisionBox] = await Promise.all([section.boundingBox(), page.getByRole("button", { name: "Accept" }).boundingBox()]);
-  expect(mainBox!.y).toBeLessThan(decisionBox!.y);
+  expect(await button.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
   await everySize(page, "update-with-main-behind");
 
   await section.getByRole("button", { name: "Bring up to date with main" }).click();
@@ -88,9 +84,9 @@ test("a ready task whose branch is behind main says so and offers Bring up to da
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
   await expect(section.getByTestId("main-behind")).toHaveText("This branch holds everything on main.");
   await expect(section.getByRole("button")).toHaveCount(0);
-  await expect(page.getByTestId("checks-result")).toHaveText("Checks passed: 1 of 1 check passed.");
+  await expect(page.getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
   // The task's changes are its own, measured from the main it merged, as a pull request shows them: main's README change is not among them.
-  await expect(page.getByTestId("changed-files").locator("code")).toHaveText(["hello.txt"]);
+  await expect(page.getByTestId("changed-files").locator("[data-slot=collapsible-trigger] code")).toHaveText(["hello.txt"]);
   await everySize(page, "update-with-main-done");
 
   // The branch holds main as a merge commit on top of the task's work; the owner's checkout is as it was.

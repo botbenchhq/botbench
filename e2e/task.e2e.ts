@@ -271,7 +271,7 @@ test("an address that names no screen says so in words, and a long one stays ins
 test("a task address that names no task says so in words", async ({ page, botbench }) => {
   await signIn(page, botbench);
   await page.goto(`${botbench.base}/#/tasks/4242`);
-  await expect(page.getByRole("alert")).toHaveText("ErrorThere is no task 4242.");
+  await expect(page.getByRole("alert")).toHaveText("There is no task 4242.");
   await expect(page.getByTestId("changed-files")).toHaveCount(0);
   await expect(page.getByRole("button")).toHaveCount(0);
 });
@@ -295,7 +295,8 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await expect(page.getByRole("log")).toHaveCount(0);
     await expect(page.getByTestId("changed-files")).toHaveCount(0);
     await expect(page.getByTestId("branch")).toHaveCount(0);
-    await expect(page.getByRole("button")).toHaveCount(0);
+    // Nothing was left and nothing can be resumed: no Resume, no Discard, only the way to the task's details.
+    await expect(page.getByRole("button")).toHaveText(["Details"]);
     await checkDesign(page, "task, failed");
 
     await openWork(page);

@@ -109,7 +109,7 @@ async function moveMidBuild(t: TestContext, from: "claude-code" | "codex", to: "
   assert.deepEqual([done.handoffs[0]!.from, done.handoffs[0]!.to, done.handoffs[0]!.reason, done.handoffs[0]!.fromAttemptId], [from, to, "owner", fromAttempt]);
   assert.notEqual(done.attemptId, fromAttempt);
   // One transcript, both agents: the task screen shows the session each hand-off left and the one the task names now
-  // (web/src/screens/task.tsx, `shownAttempts`), read from the same routes it reads them from.
+  // (web/src/screens2/task/task-screen.tsx, `shownAttempts`), read from the same routes it reads them from.
   const shown = [...done.handoffs.map((h) => h.fromAttemptId!), done.attemptId!];
   assert.deepEqual(shown, [fromAttempt, done.attemptId]);
   const [before, after] = (await Promise.all(shown.map((id) => getJson<{ events: { type: string; payload: Record<string, unknown> }[] }>(live, `/api/attempts/${id}/events`)))) as [{ events: { type: string; payload: Record<string, unknown> }[] }, { events: { type: string; payload: Record<string, unknown> }[] }];

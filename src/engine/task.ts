@@ -110,7 +110,25 @@ export interface Task {
 
 
 /** How the builder's last turn ended, for a task the owner resumes, when the agent is told about it: no file changed, or it went silent. */
-type Before = "changed nothing" | "silent" | null;
+type Before = "changed nothing" | "silent" | "owner" | null;
+
+/** The reason a task is Stopped with when the owner stopped its agent at work (`stop`). Its Resume tells the agent so. */
+export const OWNER_STOPPED = "You stopped it. What its agent wrote up to then is committed to the task's branch and kept in the task's copy of the project.";
+
+/**
+ * What Botbench says to the agent when the owner resumes a task they stopped themselves. Botbench's words, and they say so.
+ */
+export const OWNER_STOPPED_PROMPT =
+  "[From Botbench, not from the owner] The owner stopped your work on this task before it finished. The files in this folder are as you left them, and anything you were running then was stopped. Carry on with the task from where you left off, and finish it.";
+
+/** What comes between Botbench's own words and the owner's note in the first message of a task resumed with a note. */
+export const RESUME_NOTE_LEAD = "[From Botbench] The owner resumed this task with a note. It is the owner's own instruction for the work from here, and comes first where it differs from what was asked before:";
+
+/** A prompt of Botbench's that carries the owner's note sent with Resume: sent as one message, and the note marked delivered with it. */
+interface NotedPrompt {
+  message: string;
+  note: TaskNote;
+}
 
 /** A reviewer the run names and this Botbench cannot start: its review fails, saying so. */
 function unknownReviewer(agent: string): Driver {
@@ -385,6 +403,24 @@ export function resumeBlocker(db: DatabaseSync, task: Task): string | null {
   return null;
 }
 
+/**
+ * Why a note cannot go with a task's Resume, in words for the owner; null when it can. A note is read by an agent, so
+ * it goes only with a Resume that starts the task's agent on its work: not one that runs the checks or the setup
+ * again, and not one that takes up a round already started by another note.
+ */
+export function resumeNoteBlocker(db: DatabaseSync, task: Task): string | null {
+  const stage = stageOf(db, task);
+  if (stage === "checks") return "Resume runs this task's checks again and starts no agent, so there is nobody to read a note. Resume it without one.";
+  if (stage !== "turn") return "Resume runs this task's setup again before any agent starts, so a note cannot go with it. Resume it without one.";
+  if (openNoteRound(db, task.id) !== null) return "This task was stopped while its agent worked on an earlier note of yours, so Resume takes that note up again. Resume it without a new one.";
+  // Stopped after its rounds of fixes for a failing check had ended: Resume hands it on to its review, and starts no agent (`carryOnNow`).
+  if (refineRoundOf(db, task.id) === null && endedCheckFix(db, task.id) !== null) return "Resume hands this task on to its review and starts no agent, so there is nobody to read a note. Resume it without one.";
+  return null;
+}
+
+/** Whether a note can go with a task's Resume: the task can be resumed, and its Resume starts its agent (`resumeNoteBlocker`). */
+export const resumeTakesNote = (db: DatabaseSync, task: Task): boolean => resumeNote(db, task) !== null && resumeNoteBlocker(db, task) === null;
+
 /** For a stopped task that can be resumed: what Resume will do, in words for the owner. Null for every other task. */
 export function resumeNote(db: DatabaseSync, task: Task): string | null {
   if ((task.status !== "interrupted" && !changedNothing(task)) || resumeBlocker(db, task) !== null) return null;
@@ -512,9 +548,21 @@ export interface Tasks {
   stopRun(runId: number): Promise<void>;
   /**
    * The owner's Resume of a stopped task: it goes back to the station it stopped at at once, and is taken up again in
-   * its turn, from where it was. Throws a TaskError (404, 409) for a task that does not exist or cannot be resumed.
+   * its turn, from where it was. `note`: the owner's words for the agent, sent with Botbench's own as the first message
+   * of the resumed work and kept as a task note is (engine/notes.ts); it grants nothing. Throws a TaskError (404, 409)
+   * for a task that does not exist or cannot be resumed, or whose Resume starts no agent to read a note, and (400) for a
+   * note that is empty or too long; nothing changes then.
    */
-  resume(id: number): Task;
+  resume(id: number, note?: string): Task;
+  /**
+   * The owner's Stop on one task whose agent is at work: the agent's turn is stopped through its driver, what it wrote
+   * is committed to the task's branch and kept in its copy, and the task is Stopped (`interrupted`), in any mode, for
+   * the owner to resume or discard. Resolves once the turn was asked to stop. Throws a TaskError for a task that does
+   * not exist (404), and one whose agent is not at work now (409).
+   */
+  stop(id: number): Promise<Task>;
+  /** Whether a task's agent is at work now, so that the owner's Stop can stop it. */
+  canStop(id: number): boolean;
   /**
    * The owner's note to a task that is building (engine/notes.ts): stored as the one waiting for its builder, replacing
    * one that waits already, and sent as the builder's next message once its current turn ends normally. To a task that
@@ -1539,7 +1587,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * the turn waits for the owner, the task is parked: its approvals stay pending and it stays at `building` for the
    * next start to find; stopped at any other point of the turn, it is left at `building` for the next start to take up.
    */
-  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string | TaskNote, resumed: "answer" | "restart" | "owner" | "limit" | "note" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
+  const drive = async (task: Task, session: DriverSession, admission: Admission, prompt: string | TaskNote | NotedPrompt, resumed: "answer" | "restart" | "owner" | "limit" | "note" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     // A turn starts: a note may reach this builder again, as after its build's checks and review, on a round of fixes.
     finishing.delete(task.id);
     try {
@@ -1557,7 +1605,7 @@ export function createTasks(options: TasksOptions): Tasks {
    * does the task go on to be committed and checked. A turn that ends any other way leaves a waiting note unsent, marked
    * not delivered with the reason.
    */
-  const driveTurns = async (task: Task, session: DriverSession, admission: Admission, prompt: string | TaskNote, resumed: "answer" | "restart" | "owner" | "limit" | "note" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
+  const driveTurns = async (task: Task, session: DriverSession, admission: Admission, prompt: string | TaskNote | NotedPrompt, resumed: "answer" | "restart" | "owner" | "limit" | "note" | null, stopped?: AbortSignal, fromSession = resumed === "answer", note?: string): Promise<void> => {
     const id = task.id;
     current = session;
     admission.bind(session.attemptId);
@@ -1652,10 +1700,10 @@ export function createTasks(options: TasksOptions): Tasks {
      * nothing for one it refuses. So the note is marked delivered only once the session took it, and the record and the
      * mark are stored together or not at all. One the session refused stays waiting, and is settled when the turn ends.
      */
-    const sendNote = (note: TaskNote): Promise<TurnEndReason> =>
+    const sendNote = (note: TaskNote, message = note.text): Promise<TurnEndReason> =>
       transaction(db, () => {
         const before = Number(db.prepare("SELECT coalesce(max(id), 0) AS id FROM events WHERE attempt_id = ?").get(session.attemptId)!.id);
-        const turn = startTurn(note.text);
+        const turn = startTurn(message);
         const took = db.prepare("SELECT 1 FROM events WHERE attempt_id = ? AND id > ? AND type = 'user_prompt' LIMIT 1").get(session.attemptId, before) !== undefined;
         if (took) deliverNoteIn(db, note.id, session.attemptId);
         return turn;
@@ -1670,7 +1718,14 @@ export function createTasks(options: TasksOptions): Tasks {
       else {
         let last: TurnEndReason;
         if (typeof prompt === "string") last = await startTurn(prompt);
-        else {
+        else if ("message" in prompt) {
+          // Botbench's own words with the owner's note sent with Resume after them, as one message; the note is marked
+          // delivered with the session's record of it, so it is never sent again as a message of its own.
+          const turn = sendNote(prompt.note, prompt.message);
+          options.onTaskChange(getTask(db, id)!);
+          last = await turn;
+          if (waitingNote(db, id)?.id === prompt.note.id && last === "completed") last = "error";
+        } else {
           // The owner's note is this round's own prompt, marked delivered with the session's record of it (`sendNote`):
           // the one that waits now, which is a later one when the owner replaced it while the builder was starting.
           const note = noteRound?.state === "waiting" ? noteRound : prompt;
@@ -1682,7 +1737,8 @@ export function createTasks(options: TasksOptions): Tasks {
         }
         ownReply = reply;
         // The owner's note, as the next message of this session (`sendNote`); one sent meanwhile waits for this turn.
-        while (last === "completed" && goesOn()) {
+        // After the owner's Stop no further message is sent: a reply that ended as the stop arrived is the last.
+        while (last === "completed" && goesOn() && !stops.has(id)) {
           const next = waitingNote(db, id);
           if (next === null) break;
           const turn = sendNote(next);
@@ -1737,6 +1793,7 @@ export function createTasks(options: TasksOptions): Tasks {
     // The owner's move to another agent, asked for during this turn: made now that the turn is over (`handOffNow`).
     const asked = moving.get(id);
     moving.delete(id);
+    const ownerStopped = stops.delete(id);
     const name = agentName(builderOf(task).name);
 
     // Resolving the conflicts of a merge with main: nothing is committed as for a build. Botbench stopping leaves it for
@@ -1758,6 +1815,10 @@ export function createTasks(options: TasksOptions): Tasks {
       if (noteRound !== null) insertNoteRound(db, { taskId: id, noteId: noteRound.id, afterReviews: taskReviews(db, id).length, attemptId: session.attemptId, outcome: "stopped", changed: false, reply, problem: "The run was cancelled while Claude Code worked on your note.", fromCommit: noteRound.roundFrom ?? task.headCommit!, headCommit: null, startedAt: noteRound.sentAt });
       await finish(task, "cancelled", CANCELLED);
     }
+    // The owner's Stop on this task (`stop`): Stopped, in any mode, with its work committed. A turn that finished before
+    // the stop reached it is a finished task like any other.
+    // Also while Botbench is stopping: the owner's stop stands, and no restart takes the task up again.
+    else if (ownerStopped && end !== "completed") await finish(task, "interrupted", OWNER_STOPPED);
     // The owner moved the task to another agent while this turn ran: however it ended, the other agent takes it over.
     // Botbench stopping meanwhile leaves it to the next start, with the agent it had (the move was not made).
     else if (asked !== undefined && !closed) await handOffNow(task, asked.to, asked.model, "owner", session.attemptId, stopped);
@@ -1790,6 +1851,9 @@ export function createTasks(options: TasksOptions): Tasks {
     else if (fromSession && !sessionStarted) await finish(task, "interrupted", `${name} could not carry on where this task stopped${detail === null ? "." : `: ${detail}`} The work done up to then is committed.`);
     else await finish(task, "failed", `${name} ended with an error${detail === null ? "." : `: ${detail}`}`);
   };
+
+  /** The tasks the owner pressed Stop on while their builder's turn ran: each is Stopped once that turn has ended. */
+  const stops = new Set<number>();
 
   /** The moves the owner asked for while a builder's turn ran, by task: each is made once that turn has ended. */
   const moving = new Map<number, { to: string; model: string | null }>();
@@ -2085,7 +2149,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(task.id, "building", "this task was being taken up again");
       return finish(task, "interrupted", `${agentName(builderOf(task).name)} could not be started again for this task: ${words(err)} The work done up to then is committed.`);
     }
-    if (handoff !== null) return drive(task, session, admission, await handoffPromptFor(task, handoff), by, stop.signal, false);
+    if (handoff !== null) return drive(task, session, admission, withResumeNote(task, by, await handoffPromptFor(task, handoff)), by, stop.signal, false);
     // A round of fixes is sent the review again, with word that it was stopped; the first build is told to carry on.
     const onRefine = refineRoundOf(db, task.id) !== null;
     const reviewer = onRefine ? reviewAssignment(db, task.id)?.agent ?? null : null;
@@ -2098,10 +2162,21 @@ export function createTasks(options: TasksOptions): Tasks {
       : by === "limit" ? LIMIT_PROMPT
       : before === "changed nothing" ? CHANGED_NOTHING_PROMPT
       : before === "silent" ? silentPrompt(durationWords(silenceLimit))
+      : before === "owner" ? OWNER_STOPPED_PROMPT
       : CONTINUE_PROMPT;
     // The same session is told what Botbench refused since (a draft over the cap per run); the other prompts say it themselves.
     const prompt = reviewer === null && checkFix === null && cursor !== null ? `${sent}${await peerSection(task, false)}` : sent;
-    await drive(task, session, admission, prompt, by, stop.signal, cursor !== null);
+    await drive(task, session, admission, withResumeNote(task, by, prompt), by, stop.signal, cursor !== null);
+  };
+
+  /**
+   * The first message of a task the owner resumed with a note: Botbench's own prompt, then the note, as one message.
+   * The note is the one that waits since the Resume stored it. Without one, and for any other way a task is taken up,
+   * the prompt alone: a note left waiting by a restart in between is sent as the next message, as any waiting note is.
+   */
+  const withResumeNote = (task: Task, by: "restart" | "owner" | "limit" | "note", prompt: string): string | NotedPrompt => {
+    const note = by === "owner" ? waitingNote(db, task.id) : null;
+    return note === null || note.forRound ? prompt : { note, message: `${prompt}\n\n${RESUME_NOTE_LEAD}\n\n${note.text}` };
   };
 
   /**
@@ -2131,7 +2206,7 @@ export function createTasks(options: TasksOptions): Tasks {
       if (closed) return leave(task.id, "building", "this task's round for the owner's note was being started");
       return noteRounded(task, note, null, "error", "", `${builder} could not be started again for your note: ${words(err)}`, stop.signal);
     }
-    const prompt: string | TaskNote = note.state === "waiting" ? note : by === "limit" ? LIMIT_PROMPT : before === "silent" ? silentPrompt(durationWords(silenceLimit)) : CONTINUE_PROMPT;
+    const prompt: string | TaskNote = note.state === "waiting" ? note : by === "limit" ? LIMIT_PROMPT : before === "silent" ? silentPrompt(durationWords(silenceLimit)) : before === "owner" ? OWNER_STOPPED_PROMPT : CONTINUE_PROMPT;
     await drive(task, session, admission, prompt, by === "note" ? "note" : by, stop.signal, true);
   };
 
@@ -2343,22 +2418,30 @@ export function createTasks(options: TasksOptions): Tasks {
     return task;
   };
 
-  const resume = (id: number): Task => {
+  const resume = (id: number, note?: string): Task => {
     if (closed) throw new TaskError(503, "Botbench is shutting down.");
     const task = getTask(db, id);
     if (!task) throw new TaskError(404, "No such task.");
     const again = changedNothing(task);
     // Read before the reason is cleared: the agent is told why it was stopped.
-    const before: Before = again ? "changed nothing" : stoppedForSilence(task) ? "silent" : null;
+    const before: Before = again ? "changed nothing" : stoppedForSilence(task) ? "silent" : task.reason === OWNER_STOPPED ? "owner" : null;
     if (task.status !== "interrupted" && !again) throw new TaskError(409, `Only a stopped task, or one whose builder changed no file, can be resumed. This task ${STANDS[task.status]}.`);
     const blocker = resumeBlocker(db, task);
     if (blocker !== null) throw new TaskError(409, blocker);
+    if (note !== undefined) {
+      const problem = noteProblem(note);
+      if (problem !== null) throw new TaskError(400, problem);
+      const cannot = resumeNoteBlocker(db, task);
+      if (cannot !== null) throw new TaskError(409, cannot);
+    }
     const to = stageOf(db, task) === "checks" ? "verifying" : "building";
     const { resumed, run } = transaction(db, () => {
       // Resumed by the owner, it is taken up again once more after a restart, as a task they had just started.
       db.prepare("UPDATE tasks SET restarts = 0, reason = NULL WHERE id = ?").run(id);
       // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
-      const moved = moveTaskIn(db, id, to, { note: "resumed by the owner" });
+      const moved = moveTaskIn(db, id, to, { note: note === undefined ? "resumed by the owner" : "resumed by the owner, with a note" });
+      // The owner's words, stored as the note that waits for the task's agent, in the same write as the Resume.
+      if (note !== undefined) queueNoteIn(db, id, note);
       const of = plannedRunOf(db, moved);
       // Its run is at work again until the task reaches an end.
       if (of === null || (of.status !== "done" && of.status !== "awaiting_decision")) return { resumed: moved, run: null };
@@ -2461,7 +2544,40 @@ export function createTasks(options: TasksOptions): Tasks {
   };
 
   /** Whether a task's builder is at work on it now, in a turn whose end a hand-off can be made from. */
-  const atWorkNow = (task: Task): boolean => active?.taskId === task.id && current !== null && current.attemptId === task.attemptId && !finishing.has(task.id) && !moving.has(task.id);
+  const atWorkNow = (task: Task): boolean => active?.taskId === task.id && current !== null && current.attemptId === task.attemptId && !finishing.has(task.id) && !moving.has(task.id) && !stops.has(task.id);
+
+  /** Whether a task's agent is resolving the conflicts of a merge with main: that turn ends in a merge or an undone one, never in a stopped task. */
+  const resolvingConflicts = (id: number): boolean => {
+    const open = openBranchUpdate(db, id);
+    return open !== null && open.mergeCommit === null && open.conflicts.length > 0;
+  };
+
+  const canStop = (id: number): boolean => {
+    const task = getTask(db, id);
+    return task !== null && task.status === "building" && !closed && atWorkNow(task) && !resolvingConflicts(id);
+  };
+
+  const stop = async (id: number): Promise<Task> => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = getTask(db, id);
+    if (!task) throw new TaskError(404, "No such task.");
+    if (task.status !== "building") throw new TaskError(409, `Only a task whose agent is working can be stopped. ${task.status === "verifying" ? "Botbench is running this task's checks, and they end by themselves" : task.status === "reviewing" ? "This task is being reviewed, and its agent is not at work" : `This task ${STANDS[task.status]}`}.`);
+    if (stops.has(id)) throw new TaskError(409, "This task is already being stopped.");
+    if (moving.has(id)) throw new TaskError(409, `This task is being moved to ${agentName(moving.get(id)!.to)}, so it was not stopped. Stop it once that agent is working.`);
+    if (!atWorkNow(task)) throw new TaskError(409, `${agentName(builderNow(task).agent)} is not at work on this task right now (it is being set up, its work is being committed, or it waits across a restart), so there is nothing to stop yet.`);
+    if (resolvingConflicts(id)) throw new TaskError(409, `${agentName(builderNow(task).agent)} is resolving this task's conflicts with main, so it was not stopped: that ends by itself, with the merge made or undone, and the task is ready for review again.`);
+    const session = current!;
+    // In the task's history, which only ever grows, before anything is stopped; a stop that cannot be recorded is not made.
+    // voice: not on screen. A note in the stored history of the task or run, in the plan's own terms; no screen reads it.
+    move(id, "building", { note: `stopped by the owner, during attempt ${task.attemptId}` });
+    stops.add(id);
+    // The turn ends as stopped, and its end leaves the task Stopped (`driveTurns`). One that cannot be asked to stop is closed.
+    await session.interruptTurn().catch((err: unknown) => {
+      report(`Asking the agent of task ${id} to stop`)(err);
+      return session.close();
+    });
+    return getTask(db, id)!;
+  };
 
   const moveOffer = (id: number): { agents: string[]; now: boolean } => {
     const task = getTask(db, id);
@@ -2654,5 +2770,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, waitingFor, handOff, moveOffer, updateWithMain, mainStatus, runChecksAgain, reconsider, idle, close };
+  return { start, startGiven, builderProblem, buildRun, stopRun, resume, stop, canStop, sendNote, waitingFor, handOff, moveOffer, updateWithMain, mainStatus, runChecksAgain, reconsider, idle, close };
 }

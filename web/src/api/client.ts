@@ -551,6 +551,10 @@ export interface TaskDetail extends TaskSummary {
   handoffs: Handoff[];
   /** The agents the task can be moved to now; empty unless its builder is at work on it. */
   moveTo: string[];
+  /** Whether the owner's Stop can stop the task now: its agent is at work on it. */
+  canStop: boolean;
+  /** Whether a note can go with the task's Resume: the Resume starts its agent, which reads it first. */
+  resumeTakesNote: boolean;
   /** Every round of fixes, in order; round n follows review n. */
   refinements: Refinement[];
   /** The run's cap on rounds of fixes. */
@@ -668,7 +672,10 @@ export const rejectTask = (id: number, branch: "keep" | "discard", removeLeftove
 /** Remove the copy and branch of a task that failed, was stopped or was cancelled. `removeFiles` is the list of files not on the branch, as the owner saw and confirmed it. */
 export const discardTask = (id: number, removeFiles: readonly string[]): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/discard`, { removeFiles }, 60_000);
 /** Take up a stopped task again. Refused (409, with the reason) for a task in any other state. */
-export const resumeTask = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/resume`, {}, 30_000);
+/** `note`: the owner's words for the agent, sent with Resume; only for a task that says its Resume takes one (`resumeTakesNote`). */
+export const resumeTask = (id: number, note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/resume`, note === null ? {} : { note }, 30_000);
+/** The owner's Stop on one task whose agent is at work (`canStop`): its work is kept, and the task can be resumed. */
+export const stopTask = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/stop`, {}, 60_000);
 /** A note as the server stored it. */
 export interface TaskNote {
   id: number;

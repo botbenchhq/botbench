@@ -56,20 +56,23 @@ async function readyTask(page: import("@playwright/test").Page, botbench: Botben
 
 const described = async (page: import("@playwright/test").Page, botbench: Botbench, id: number): Promise<Described> => (await (await page.request.get(`${botbench.base}/api/tasks/${id}`)).json()) as Described;
 
+/** Which of a row's buttons are filled: only the view's one main action is. */
+const filled = (row: import("@playwright/test").Locator): Promise<boolean[]> => row.getByRole("button").evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).backgroundColor !== "rgba(0, 0, 0, 0)"));
+
 test("a copy that differs from its commit, then checks that are about an older commit, take Accept away and say why; Run checks again checks the commit the branch holds, and the task is then accepted on it", async ({ page, botbench, repo }) => {
   test.setTimeout(180_000);
   await signIn(page, botbench);
   const taskId = await readyTask(page, botbench, repo);
   const first = await described(page, botbench, taskId);
   const owner = checkoutState(repo);
-  const decide = page.getByRole("region", { name: "Your decision" });
-  const actions = decide.locator(".ds-review-decision__actions");
+  // At a phone's width the decision's buttons stay at the foot of the window; the evidence is the verification card's.
+  const decide = page.getByTestId("verification");
+  const actions = page.getByTestId("foot-actions");
 
-  // Current: the server's sentence names the commit, and Accept is the one primary action.
-  await expect(decide.locator(".ds-review-decision__source")).toHaveText(["Checks", "Review", "Evidence"]);
+  // Current: the server's sentence names the commit, and Accept is the one filled button.
   await expect(decide.getByTestId("evidence-words")).toHaveText(`Evidence is current: the checks passed on commit ${first.headCommit.slice(0, 7)}, the commit Accept keeps.`);
-  await expect(actions.getByRole("button")).toHaveText(["Accept", "Reject"]);
-  await expect(actions.getByRole("button", { name: "Accept" })).toHaveClass(/ds-button--primary/);
+  await expect(actions.getByRole("button")).toHaveText(["Reject", "Accept"]);
+  expect(await filled(actions)).toEqual([false, true]);
   await checkDesign(page, "task, evidence current");
 
   // A file appears in the task's copy that is not in the commit and that git does not ignore: the copy differs, the
@@ -90,25 +93,26 @@ test("a copy that differs from its commit, then checks that are about an older c
   await expect(decide.getByTestId("evidence-words")).toHaveText(`The checks are out of date: they ran on commit ${first.headCommit.slice(0, 7)}, and the branch is now at commit ${later.slice(0, 7)}. Run checks again to check the commit you would accept.`);
   await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Its checks are out of date, so it cannot be accepted until they are run again; you can still reject it.");
   // No Accept, in any wording: Run checks again and Reject are what there is.
-  await expect(actions.getByRole("button")).toHaveText(["Run checks again", "Reject"]);
+  await expect(actions.getByRole("button")).toHaveText(["Reject", "Run checks again"]);
   await expect(page.getByRole("button", { name: /^Accept/ })).toHaveCount(0);
-  await expect(actions.getByRole("button", { name: "Run checks again" })).not.toHaveClass(/ds-button--primary/);
+  expect(await filled(actions)).toEqual([false, false]);
   await checkDesign(page, "task, evidence out of date");
   if (SHOTS) await tallShot(page, path.join(SHOTS, "evidence-out-of-date.png"));
 
   await actions.getByRole("button", { name: "Run checks again" }).click();
   await expect(decide.getByTestId("evidence-words")).toHaveText(`Evidence is current: the checks passed on commit ${later.slice(0, 7)}, the commit Accept keeps.`, { timeout: 60_000 });
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\. Botbench committed the work/);
-  await expect(actions.getByRole("button")).toHaveText(["Accept", "Reject"]);
-  await expect(page.getByTestId("checks-result")).toHaveText("Checks passed: 1 of 1 check passed.");
+  await expect(actions.getByRole("button")).toHaveText(["Reject", "Accept"]);
+  await expect(page.getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
   expect((await described(page, botbench, taskId)).evidenceState).toMatchObject({ state: "current", checkedCommit: later, headCommit: later });
   await checkDesign(page, "task, evidence current again");
 
   await actions.getByRole("button", { name: "Accept" }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Accepted\. /);
-  await expect(decide.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted");
+  await expect(page.getByTestId("task-state")).toHaveText("Accepted");
   // The evidence line was about a decision still to make: it goes with the buttons.
-  await expect(decide.locator(".ds-review-decision__source")).toHaveText(["Checks", "Review"]);
+  await expect(decide.getByTestId("evidence-words")).toHaveCount(0);
+  await expect(actions).toHaveCount(0);
   const accepted = await described(page, botbench, taskId);
   expect(accepted.decision).toMatchObject({ checks: "passed", checksCommit: later, headCommit: later });
   expect(git(repo, "rev-parse", accepted.branch).trim()).toBe(later);
@@ -124,23 +128,25 @@ test.describe("a repository with no checks", () => {
     test.setTimeout(180_000);
     await signIn(page, botbench);
     const taskId = await readyTask(page, botbench, repo);
-    const decide = page.getByRole("region", { name: "Your decision" });
-    const actions = decide.locator(".ds-review-decision__actions");
-    await expect(decide.getByTestId("decision-checks")).toHaveText("None are set up for this repository.");
+    const decide = page.getByTestId("verification");
+    const actions = page.getByTestId("foot-actions");
+    await expect(decide.getByTestId("verification-heading")).toHaveText("No checks are set up for this repository");
     await expect(decide.getByTestId("evidence-words")).toHaveText("No checks are set up for this repository, so nothing verified this work. You can accept it without verification.");
-    await expect(actions.getByRole("button")).toHaveText(["Accept without verification", "Reject"]);
+    await expect(actions.getByRole("button")).toHaveText(["Reject", "Accept without verification"]);
     // Never plain Accept, and never the look of the screen's main action.
     await expect(page.getByRole("button", { name: "Accept", exact: true })).toHaveCount(0);
-    await expect(actions.getByRole("button", { name: "Accept without verification" })).not.toHaveClass(/ds-button--primary/);
-    await expect(actions.locator("[data-ds-critical]")).toHaveCount(2);
+    expect(await filled(actions)).toEqual([false, false]);
     await checkDesign(page, "task, no checks, ready for review");
     if (SHOTS) await tallShot(page, path.join(SHOTS, "evidence-no-checks.png"));
 
     await actions.getByRole("button", { name: "Accept without verification" }).click();
     await expect(page.getByTestId("task-status")).toHaveText(/^Accepted without verification: no checks ran on it\. /);
-    const badge = decide.locator(".ds-review-decision__result .ds-badge").first();
-    await expect(badge).toHaveText("Accepted without verification");
-    await expect(badge).not.toHaveClass(/ds-badge--success/);
+    // Said as that in the decision's pane, and not drawn as a success.
+    await page.getByRole("button", { name: "The decision" }).click();
+    const badge = page.getByTestId("decision-result").getByText("Accepted without verification", { exact: true });
+    await expect(badge).toBeVisible();
+    expect(await badge.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+    await page.keyboard.press("Escape");
     await checkDesign(page, "task, accepted without verification");
     const accepted = await described(page, botbench, taskId);
     expect(accepted.decision).toMatchObject({ checks: "none", checksCommit: null });

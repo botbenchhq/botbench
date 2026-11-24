@@ -95,6 +95,8 @@ test.describe("at 1280×800, with a mouse", () => {
     await rows(page).nth(2).click();
     await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+    // A task's screen is rebuilt (ADR 0012) and has the navigation at its left, not the column: Work leads back to it.
+    await page.goBack();
     await rows(page).nth(1).click();
     await expect(page).toHaveTitle(`Run ${seeded.planned.id} \u2013 Botbench`);
     await expect(page.getByRole("heading", { level: 1, name: `Run ${seeded.planned.id}` })).toBeFocused();
@@ -182,16 +184,17 @@ test.describe("at 1280×800, with a mouse", () => {
     await question.getByRole("button", { name: "Discard changes" }).click();
     await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
     await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
-    await rows(page).nth(1).click();
+    await page.evaluate((id) => (window.location.hash = `#/runs/${id}`), seeded.planned.id);
     await expect(page.getByRole("list", { name: "Plan" })).toContainText("Write the exporter");
     // With nothing typed, leaving asks nothing.
     await page.locator('[data-edit="0"]').click();
     await rows(page).nth(2).click();
     await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
     await expect(question).toHaveCount(0);
+    await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
 
     // Cancel with typed words, then Discard changes: the row is back, with focus on its Edit button.
-    await rows(page).nth(1).click();
+    await page.evaluate((id) => (window.location.hash = `#/runs/${id}`), seeded.planned.id);
     await page.locator('[data-edit="0"]').click();
     await title.fill("Write the importer");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -263,32 +266,32 @@ test.describe("at 1280×800", () => {
     await expect(rows(page)).toHaveCount(ALL);
     await expect(count(page)).toHaveText(`1 run and ${ALL - 1} tasks`);
 
-    // Search, scroll the column, then open a row: only the screen beside the column changes.
+    // Search, scroll the column, then open a task: its screen is rebuilt (ADR 0012) and takes the window, with its own
+    // navigation, which names the task under Open. Back in the column, the search is as it was left.
     await search(page).fill("module");
     await expect(rows(page)).toHaveCount(FILLERS);
     const scroller = column(page);
     await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-    const scrolled = await scroller.evaluate((el) => el.scrollTop);
-    expect(scrolled, "the column scrolls inside itself").toBeGreaterThan(0);
-    await scroller.evaluate((el) => ((el as HTMLElement & { kept?: boolean }).kept = true));
+    expect(await scroller.evaluate((el) => el.scrollTop), "the column scrolls inside itself").toBeGreaterThan(0);
     const last = rows(page).last();
     const lastHref = (await last.getAttribute("href"))!;
     await last.click();
     await expect(page).toHaveURL(new RegExp(`${escapeRegExp(lastHref)}$`));
     await expect(page.getByRole("heading", { level: 1, name: /Tidy module number/ })).toBeVisible();
-    await expect(last).toHaveAttribute("aria-current", "true");
-    await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(1);
-    expect(await scroller.evaluate((el) => (el as HTMLElement & { kept?: boolean }).kept), "the column is the same element: it was not drawn again").toBe(true);
-    expect(await scroller.evaluate((el) => el.scrollTop)).toBe(scrolled);
-    await expect(search(page)).toHaveValue("module");
+    await expect(column(page)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /Tidy module number/ })).toHaveAttribute("aria-current", "page");
     await checkDesign(page, "task, wide, opened from the column");
+    await page.goBack();
+    await expect(search(page)).toHaveValue("module");
 
-    // Another row: the run opens beside the column, and the mark moves to it.
+    // A run opens beside the column, which is the same element (it was not drawn again), and is marked in it.
+    await column(page).evaluate((el) => ((el as HTMLElement & { kept?: boolean }).kept = true));
     await search(page).fill("billing");
     await rows(page).first().click();
     await expect(page.getByRole("heading", { level: 1, name: `Run ${seeded.planned.id}` })).toBeVisible();
     await expect(rows(page).first()).toHaveAttribute("aria-current", "true");
     await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(1);
+    expect(await column(page).evaluate((el) => (el as HTMLElement & { kept?: boolean }).kept), "the column is the same element: it was not drawn again").toBe(true);
     await checkDesign(page, "run, wide, opened from the column");
 
     // Work has the column too; Settings does not, and the search is still there after it.
@@ -384,7 +387,8 @@ test.describe("at 390×844", () => {
     await expect(page.getByTestId("work-column")).toHaveCount(0);
     await checkDesign(page, "task, phone, no column");
 
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    // The rebuilt task screen's navigation is the bar at the foot.
+    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     await expect(page.getByTestId("settings-sections")).toHaveCount(0);
     await expect(page.getByTestId("settings-panes")).toHaveCount(0);

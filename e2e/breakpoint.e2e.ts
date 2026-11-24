@@ -83,16 +83,21 @@ for (const appearance of ["light", "dark"] as const) {
     // A task that is ready for review: its title is its h1, and a note typed in its box and not sent stays.
     await page.goto(`${botbench.base}/#/tasks/${seeded.taskId}`);
     await expect(h1(page)).toHaveText(TITLE);
+    // The note box is the other way on from the decision, in the decision's pane; under 1024px that pane is a sheet.
+    await page.getByRole("button", { name: "Send Claude Code a note instead" }).click();
     const note = page.getByTestId("task-note").getByLabel("Your note");
     const typed = "Also keep the old timeout as a fallback";
     await note.fill(typed);
-    await across(page, async () => {
+    await across(page, async (width) => {
       await expect(h1(page)).toHaveCount(1);
       await expect(h1(page)).toHaveText(TITLE);
+      if (width < 1024) await page.getByRole("button", { name: "More" }).click();
       await expect(note).toHaveValue(typed);
+      if (width < 1024) await page.keyboard.press("Escape");
       await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
     });
     await page.setViewportSize(PHONE);
+    await expect(page.locator("[data-shell]")).toHaveAttribute("data-shell", "one");
     await checkDesign(page, `task, ready for review, ${appearance}, at a phone's width after a wide one`);
     await page.setViewportSize(WIDE);
 

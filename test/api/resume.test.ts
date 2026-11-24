@@ -117,3 +117,31 @@ test("Resume of a task stopped during its checks runs the checks again from the 
   const shown = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
   assert.equal(shown.status, "awaiting_decision");
 });
+
+test("a note sent with Resume is checked before anything is resumed: not a string, too long, or for a task whose Resume starts no agent, each refused with a plain reason; the task says a note cannot go with its Resume", async (t) => {
+  const api = await start(t);
+  const task = await stoppedInChecks(api);
+  const read = await call(api, "GET", `/api/tasks/${task.id}`);
+  assert.deepEqual([read.body.resumeTakesNote, read.body.canStop], [false, false]);
+  assert.equal((await call(api, "POST", `/api/tasks/${task.id}/resume`, { note: 7 })).status, 400);
+  const long = await call(api, "POST", `/api/tasks/${task.id}/resume`, { note: "x".repeat(4001) });
+  assert.deepEqual([long.status, long.body.error], [400, "The note is too long: 4000 characters at most."]);
+  const nobody = await call(api, "POST", `/api/tasks/${task.id}/resume`, { note: "Use the other file." });
+  assert.deepEqual([nobody.status, nobody.body.error], [409, "Resume runs this task's checks again and starts no agent, so there is nobody to read a note. Resume it without one."]);
+  assert.equal(getTask(api.server.db, task.id)!.status, "interrupted");
+  assert.equal(api.server.db.prepare("SELECT count(*) AS n FROM task_notes WHERE task_id = ?").get(task.id)!.n, 0);
+  // A blank note is no note: the box was sent as it stood.
+  assert.equal((await call(api, "POST", `/api/tasks/${task.id}/resume`, { note: "  " })).status, 200);
+});
+
+test("Stop is refused without a session, for a task that does not exist, and for a task whose agent is not at work, each with a plain reason; nothing changes", async (t) => {
+  const api = await start(t);
+  const task = await stoppedInChecks(api);
+  const res = await fetch(`${api.base}/api/tasks/${task.id}/stop`, { method: "POST", headers: JSON_TYPE, body: "{}" });
+  assert.equal(res.status, 401);
+  await res.arrayBuffer();
+  assert.equal((await call(api, "POST", "/api/tasks/9999/stop", {})).status, 404);
+  const refused = await call(api, "POST", `/api/tasks/${task.id}/stop`, {});
+  assert.deepEqual([refused.status, refused.body.error], [409, "Only a task whose agent is working can be stopped. This task is stopped."]);
+  assert.equal(getTask(api.server.db, task.id)!.status, "interrupted");
+});

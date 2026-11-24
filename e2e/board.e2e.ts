@@ -265,11 +265,13 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     await expect(page.getByTestId("task-repo")).toBeHidden();
     const details = await openDetails(page);
     await expect(details.getByTestId("task-repo")).toHaveText(repo);
-    await expect(details.getByTestId("branch")).toHaveText(task.branch);
-    await expect(page.getByTestId("branch")).toHaveCount(1);
-    const discard = page.getByRole("button", { name: "Discard" });
+    await expect(page.getByTestId("branch").first()).toHaveText(task.branch);
+    // What is kept, and Discard, are in the task's pane: a sheet at a phone's width, opened from the foot. Discard is quiet, never filled.
+    const open = page.getByRole("button", { name: "What is kept" });
+    await open.click();
+    const discard = page.getByRole("button", { name: "Discard…" });
     await expect(discard).toBeVisible();
-    await expect(discard).not.toHaveClass(/ds-button--primary/);
+    expect(await discard.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
     await checkDesign(page, "task, failed, with its copy and branch");
     await shot(page, "u16-task-discard.png");
 
@@ -285,8 +287,10 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
 
     await discard.click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Discard" }).click();
+    await expect(page.getByTestId("what-happened")).toContainText("What it left was discarded.");
     await expect(page.getByTestId("discarded")).toHaveText("Discarded. Nothing of this task is left: its copy of the project and its branch are gone, with the work on them. Nothing was merged or pushed.");
-    await expect(page.getByRole("button", { name: "Discard" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Discard…" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await expect(page.getByTestId("branch")).toHaveCount(0);
     await expect(page.getByTestId("task-status")).toHaveText(/^Failed\. /);
     await checkDesign(page, "task, failed, discarded");

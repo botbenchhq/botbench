@@ -10,7 +10,6 @@ import { BoardScreen } from "../screens/board.tsx";
 import { RunScreen } from "../screens/run.tsx";
 import { SettingsScreen } from "../screens/settings.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
-import { TaskScreen } from "../screens/task.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
 import { OpenChat, TurnScreen } from "../screens/turn.tsx";
 import { isRebuilt, rebuilt } from "../screens2/routes.tsx";
@@ -89,11 +88,9 @@ function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
   if (route.screen === "work") return <BoardScreen onSignedOut={onSignedOut} />;
   if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
-  // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   // A screen rebuilt on shadcn/ui (ADR 0012), when there is one for this address: screens2/routes.tsx is the one switch.
   const next = rebuilt(route, onSignedOut);
-  if (next !== null) return next;
-  if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
+  if (next !== null || route.screen === "task") return next;
   if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   return <NotFound key={route.what} what={route.what} />;

@@ -302,7 +302,66 @@ export const primaries = async (page: Page): Promise<(string | null)[]> => {
  * gradient or blur, no shadow except on a dialog, a toast or a menu, and no corner off its radius scale; its typefaces are the theme's; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
  * screen has its data, and again with each dialog open: an open dialog is a view of its own.
  */
+/**
+ * Everything the browser refuses or complains of from now on, as lines: a violation of the content security policy
+ * (the page's own event, and Chrome's console line for one), any console error, any failed request, any page error.
+ * Call before the first page is opened.
+ */
+export async function watchRefused(page: Page): Promise<string[]> {
+  const refused: string[] = [];
+  await page.exposeFunction("botbenchRefused", (line: string) => void refused.push(line));
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", (event) => void (window as unknown as { botbenchRefused(line: string): void }).botbenchRefused(`policy: ${event.violatedDirective} refused ${event.blockedURI} (${event.sourceFile ?? "inline"}:${event.lineNumber})`));
+  });
+  page.on("console", (message) => {
+    // Before signing in, the client asks whether it has a session and is told it has none: Chrome prints that 401.
+    if (message.type() === "error" && message.location().url.endsWith("/api/session") && /status of 401/.test(message.text())) return;
+    if (message.type() === "error" || /content security policy/i.test(message.text())) refused.push(`console ${message.type()}: ${message.text()} (${message.location().url})`);
+  });
+  page.on("pageerror", (error) => refused.push(`page error: ${error.message}`));
+  page.on("requestfailed", (request) => {
+    // The live-updates request is ended by the page itself when a screen goes: that is not a refusal.
+    if (request.failure()?.errorText !== "net::ERR_ABORTED") refused.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
+  });
+  return refused;
+}
+
+/**
+ * What stands in for the design checks on a screen rebuilt on shadcn/ui (ADR 0012), which is not drawn with the design
+ * system's classes: nothing scrolls sideways, no text is under 12px, and no control is under `floor` px high (40 with a
+ * mouse, 44 under a finger; a small control counts by its own height, 32). The parts of the old screens a rebuilt one
+ * still draws (.ds- components, which the design checks covered where they came from) are left out.
+ */
+export async function checkLayout(page: Page, floor: number, screen: string): Promise<void> {
+  const found = await page.evaluate(async (least) => {
+    // An overlay that is still opening is drawn smaller than it is: wait for what moves, at most half a second.
+    await Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 500))]);
+    const low: string[] = [];
+    const old = (el: Element): boolean => el.closest("[class*='ds-']") !== null;
+    for (const el of document.querySelectorAll("button, input, textarea, [role=radio], [role=tab], a[href]")) {
+      const box = el.getBoundingClientRect();
+      // Not drawn, a link inside a sentence, or the hidden input a drawn radio keeps for a form.
+      if (box.height === 0 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true" || old(el)) continue;
+      // A control drawn smaller carries its pointer target on a pseudo-element.
+      const target = getComputedStyle(el, "::after");
+      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
+      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
+    }
+    const small = [...document.querySelectorAll("body *")].filter((el) => !old(el) && el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
+    const sideways = document.documentElement.scrollWidth - document.documentElement.clientWidth;
+    // What reaches past the window, to say which element it is.
+    const wide = sideways <= 0 ? [] : [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > document.documentElement.clientWidth + 1).slice(0, 4).map((el) => `${el.tagName.toLowerCase()}${el.getAttribute("data-testid") ? `[${el.getAttribute("data-testid")}]` : ""}.${String(el.className).slice(0, 60)}`);
+    return { low, small, sideways, wide };
+  }, floor);
+  expect(found, screen).toEqual({ low: [], small: [], sideways: 0, wide: [] });
+}
+
 export async function checkDesign(page: Page, screen: string): Promise<void> {
+  // A screen rebuilt on shadcn/ui is not drawn in the design system's vocabulary: its own checks stand in (ADR 0012).
+  if ((await page.evaluate(() => document.documentElement.getAttribute("data-ui"))) === "next") {
+    const finger = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches);
+    return checkLayout(page, finger ? 44 : 32, screen);
+  }
   // The script's text is evaluated, not added as a script element, which Botbench's content security policy would refuse.
   await page.evaluate(CHECK_DOM);
   // The app's class prefix, as web/design-system.config.json has it: the rule that a view's controls use the system needs it on a rendered page.
