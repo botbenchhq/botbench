@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title description">
+  <title id="title">Botbench — Put your coding agents to work. Together.</title>
+  <desc id="description">The two-tone Shared Seam Botbench logo, followed by the product promise and description.</desc>
+  <metadata id="render-instructions"><![CDATA[
+    Source of the lockup below: assets/svg/botbench-lockup-two-tone-light.svg
+    Git blob: e02d1db7191f456f522f1284887764018df3197e
+    Its paths, fills, wordmark text and type attributes are copied unchanged.
+    Brand rule: DESIGN.md and PR #230 (387555d9ea1203db2d94b710721a3af48dbe434e).
+    This is marketing artwork. No recorded product screenshot is edited.
+
+    Rebuild from the repository root with Inkscape 1.4 and Liberation Sans installed:
+    inkscape docs/media/social-preview.svg --export-area-page --export-type=png --export-width=1280 --export-height=640 --export-png-color-mode=RGB_8 --export-filename=docs/media/social-preview.png
+
+    No application package or runtime dependency is required. Inkscape resolves
+    the canonical lockup's platform-font stack; font substitution may change
+    wordmark metrics on another OS.
+  ]]></metadata>
+  <rect width="1280" height="640" fill="#F4F4F5"/>
+  <g id="brand-lockup" transform="translate(465 164) scale(2)">
+    <g transform="translate(-6 -6) scale(2)">
+    <path d="M13 4H6A2 2 0 0 0 4 6V17A2 2 0 0 0 6 19H8V9H13Z" fill="#1C1C1E"/>
+    <path d="M11 20H18A2 2 0 0 0 20 18V7A2 2 0 0 0 18 5H16V15H11Z" fill="#03748F"/>
+  </g>
+  <text x="46" y="26" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="600" letter-spacing="-0.7" fill="#1C1C1E">Botbench</text>
+  </g>
+  <g font-family="Liberation Sans, Arial, Helvetica, sans-serif" text-anchor="middle">
+    <text id="tagline" x="640" y="344" font-size="48" font-weight="700" letter-spacing="-1.0" fill="#1C1C1E">Put your coding agents to work. Together.</text>
+    <text id="subtitle" x="640" y="405" font-size="30" font-weight="400" letter-spacing="-0.4" fill="#3F3F46">One workbench for your agents. One coordination layer for your team.</text>
+    <text id="footer" x="640" y="477" font-size="24" font-weight="400" fill="#71717A">Local-first · Bring your agents · Open source</text>
+  </g>
+</svg>
