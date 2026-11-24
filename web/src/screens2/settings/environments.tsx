@@ -75,8 +75,9 @@ function Repositories({ onSignedOut }: { onSignedOut: () => void }) {
                   {r.path}
                 </code>
               </div>
-              <dl className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
-                <div className="flex min-w-0 flex-col gap-1.5">
+              {/* Where the commands run, then the commands in two columns of their own: a third of the card each cut a long command into a dozen short lines. */}
+              <dl className="grid gap-4 md:grid-cols-2">
+                <div className="flex min-w-0 flex-col gap-1.5 md:col-span-2">
                   <dt className="text-meta font-semibold text-muted-foreground">Commands run</dt>
                   <dd className="flex flex-col gap-1">
                     <span data-testid="execution-kind" className="text-sm font-semibold">

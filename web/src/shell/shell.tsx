@@ -331,12 +331,19 @@ export function NextShell({ open, bar, aside, current, side, showing, cardsShown
               </div>
             )}
             <div className={cn("min-w-0 flex-1", twoPanes && has && "grid grid-cols-[minmax(0,1fr)_19.5rem] min-[1440px]:grid-cols-[minmax(0,1fr)_21.25rem]")}>
-              <div className="flex min-h-svh min-w-0 flex-col">
-                <div className="flex min-h-14 items-center gap-3 border-b px-4 md:px-6 lg:border-b-0 min-[1440px]:px-8">
+              {/* On a phone the page reaches under the status bar and the home indicator (index.html, viewport-fit=cover): the column keeps clear of the first, the bar at the foot of the second. */}
+              <div className={cn("flex min-h-svh min-w-0 flex-col", !twoPanes && "pt-[env(safe-area-inset-top)]")}>
+                <div data-testid="top-bar" className="flex min-h-14 items-center gap-3 border-b px-4 md:px-6 lg:border-b-0 min-[1440px]:px-8">
                   {!twoPanes && (
                     <Button variant="ghost" size="icon" className="size-(--control) max-md:hidden" aria-label="Screens menu" onClick={() => setMenu(true)}>
                       <Menu aria-hidden="true" />
                     </Button>
+                  )}
+                  {/* Where the navigation's pane, which carries the mark, is not in view, the bar carries it: the way Home, at a finger's size, never squeezed by a long name beside it, and level with the first line when a screen's own line wraps to two. */}
+                  {!twoPanes && (
+                    <a href="#/" data-testid="bar-mark" aria-label="Botbench" className="mt-1.5 -mr-2 -ml-3 flex size-11 shrink-0 items-center justify-center self-start rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:-ml-2">
+                      <Mark size={20} />
+                    </a>
                   )}
                   {/* The screen's own line keeps the room that is left, so what it sets at its right end stays beside what waits, at the bar's right. */}
                   <div className="flex min-w-0 flex-1 items-center gap-3">{bar}</div>
@@ -350,11 +357,15 @@ export function NextShell({ open, bar, aside, current, side, showing, cardsShown
                 )}
                 <div className="flex flex-1 flex-col">{children}</div>
                 {!twoPanes && (foot !== undefined || has) && (
-                  <div data-testid="foot" className="sticky bottom-0 z-10 border-t bg-pane px-4 py-3 max-md:bottom-14 md:px-6">
+                  <div data-testid="foot" className="sticky bottom-0 z-10 border-t bg-pane px-4 py-3 max-md:bottom-[calc(3.5rem+env(safe-area-inset-bottom))] md:px-6">
                     <div className="mx-auto flex max-w-[47.5rem] flex-col gap-2">{foot ?? <InspectorButton>{asideLabel}</InspectorButton>}</div>
                   </div>
                 )}
-                {!tablet && <div className="sticky bottom-0 z-10 border-t bg-sidebar">{screens("bar")}</div>}
+                {!tablet && (
+                  <div data-testid="bottom-bar" className="sticky bottom-0 z-10 border-t bg-sidebar pb-[env(safe-area-inset-bottom)]">
+                    {screens("bar")}
+                  </div>
+                )}
               </div>
               {twoPanes && has && aside}
             </div>
