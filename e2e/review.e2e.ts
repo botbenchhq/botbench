@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The milestone "Two vendors on one job", yes or no, in the real client at a phone's size: a real Botbench process, a real
@@ -62,8 +62,7 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   await closeContext(page);
   await messageBox(page).fill("Plan exactly one task: create hello.txt holding the single word hi. Do not run any command; the README is all there is to read.");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const runId = await openRunId(page);
   expect(((await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { reviewer: unknown }).reviewer).toEqual({ agent: "codex", model: "gpt-6-luna" });
 
   // Claude Code plans; the owner approves one task.

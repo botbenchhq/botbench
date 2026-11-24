@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, git, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, openFromSettings, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
+import { RUN_TASK_STATE, SHOTS, checkDesign, checkRebuilt, expect, openFromSettings, openRunId, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Decisions in the real client, at a phone's size: a real Botbench process, real temporary repositories, and the
@@ -193,8 +193,7 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
   test.setTimeout(600_000);
   await signIn(page, botbench);
   await startRunIn(page, repos.run, "Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
-  await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const runId = await openRunId(page);
   let version = -1;
   await expect(async () => {
     for (const approval of ((await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] }).approvals) {
@@ -222,22 +221,24 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
     await expect(row.getByRole("button", { name: /^Accept without verification task \d+$/ })).not.toHaveClass(/ds-button--primary/);
     await expect(row.getByRole("button", { name: /^Reject/ })).toBeVisible();
   }
-  await checkDesign(page, "run, ready for review");
+  await checkRebuilt(page, "run, ready for review");
   await shot(page, "u14-run-ready.png");
 
   await rows.nth(0).getByRole("button", { name: /^Accept without verification/ }).click();
-  await expect(rows.nth(0).locator(".ds-badge")).toHaveText("Accepted");
+  // No check ran on it, so the row says the accept as what it was, and does not draw it as a success.
+  await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText("Accepted without verification");
+  await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveAttribute("data-tone", "neutral");
   await expect(rows.nth(0).getByTestId("merge-command")).toHaveValue(`git merge ${branches[0]}`);
   await expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./);
 
   await rows.nth(1).getByRole("button", { name: /^Reject/ }).click();
   const asking = page.getByRole("alertdialog");
   await expect(asking.getByLabel("Keep the branch")).toBeChecked();
-  await checkDesign(page, "run, reject a task");
+  await checkRebuilt(page, "run, reject a task");
   await asking.getByRole("button", { name: "Reject" }).click();
-  await expect(rows.nth(1).locator(".ds-badge")).toHaveText("Rejected");
+  await expect(rows.nth(1).locator(RUN_TASK_STATE)).toHaveText("Rejected");
   await expect(page.getByTestId("run-status")).toHaveText(/^Done\./);
-  await checkDesign(page, "run, done");
+  await checkRebuilt(page, "run, done");
   await shot(page, "u14-run-done.png");
 
   // Both branches are kept, both copies are gone.

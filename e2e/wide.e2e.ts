@@ -6,7 +6,7 @@ import { createTask, moveTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, expect, signIn } from "./helpers.ts";
+import { checkDesign, checkLayout, checkWords, expect, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 import { escapeRegExp } from "../test/support/regexp.ts";
 
@@ -76,6 +76,8 @@ const search = (page: Page): Locator => column(page).getByLabel("Search chats an
 const count = (page: Page): Locator => column(page).getByTestId("work-column-count");
 const rows = (page: Page): Locator => column(page).locator(".ds-list__link");
 const ALL = FILLERS + 3;
+/** Work, from the navigation of whichever screen is shown: the run screen, rebuilt on shadcn/ui, has its own and no column. */
+const toWork = (page: Page): Promise<void> => page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Work", exact: true }).click();
 
 // A desktop: a mouse and a keyboard, no touch screen.
 test.describe("at 1280×800, with a mouse", () => {
@@ -97,7 +99,8 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
     await rows(page).nth(1).click();
     await expect(page).toHaveTitle(`Run ${seeded.planned.id} \u2013 Botbench`);
-    await expect(page.getByRole("heading", { level: 1, name: `Run ${seeded.planned.id}` })).toBeFocused();
+    // A run's heading is its title, the owner's own words; the tab has Botbench's name for it.
+    await expect(page.getByRole("heading", { level: 1, name: seeded.planned.title })).toBeFocused();
     await page.goto(`${botbench.base}/#/work`);
     await expect(page).toHaveTitle("Work \u2013 Botbench");
     await expect(page.getByRole("heading", { level: 1, name: "Work" })).toBeFocused();
@@ -159,7 +162,8 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(question).toContainText("Discard what you typed?");
     await expect(question).toContainText("Your changes to this task are not saved. The plan stays as it was.");
     await expect(question.getByRole("button", { name: "Keep editing" })).toBeFocused();
-    await checkDesign(page, "run, wide, the question before typed words are discarded");
+    await checkLayout(page, 32, "run, wide, the question before typed words are discarded");
+    await checkWords(page, "run, wide, the question before typed words are discarded");
     // Keep editing returns to the words as typed, with focus back where it was.
     await question.getByRole("button", { name: "Keep editing" }).click();
     await expect(question).toHaveCount(0);
@@ -172,22 +176,22 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(title).toBeFocused();
 
     // Leaving for another screen asks the same question. Kept: the run is still the screen, at its own address.
-    await rows(page).nth(2).click();
+    await toWork(page);
     await expect(question).toContainText("Discard what you typed?");
     await question.getByRole("button", { name: "Keep editing" }).click();
     await expect(page).toHaveURL(new RegExp(`#/runs/${seeded.planned.id}$`));
     await expect(title).toHaveValue("Write the importer");
     // Discarded: the owner goes where they were going, and the plan is as it was.
-    await rows(page).nth(2).click();
+    await toWork(page);
     await question.getByRole("button", { name: "Discard changes" }).click();
-    await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
-    await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
+    await expect(page).toHaveURL(/#\/work$/);
+    await expect(page).toHaveTitle("Work \u2013 Botbench");
     await rows(page).nth(1).click();
     await expect(page.getByRole("list", { name: "Plan" })).toContainText("Write the exporter");
     // With nothing typed, leaving asks nothing.
     await page.locator('[data-edit="0"]').click();
-    await rows(page).nth(2).click();
-    await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.ready.id}$`));
+    await toWork(page);
+    await expect(page).toHaveURL(/#\/work$/);
     await expect(question).toHaveCount(0);
 
     // Cancel with typed words, then Discard changes: the row is back, with focus on its Edit button.
@@ -207,7 +211,8 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(title).toHaveCount(0, { timeout: 20_000 });
     await expect(question).toHaveCount(0);
     await expect(page.getByTestId("edit-closed")).toHaveText(/The plan changed in another window, so the task you were editing was closed\. What you typed was not saved\./);
-    await checkDesign(page, "run, wide, an edit closed because the plan changed elsewhere");
+    await checkLayout(page, 32, "run, wide, an edit closed because the plan changed elsewhere");
+    await checkWords(page, "run, wide, an edit closed because the plan changed elsewhere");
 
     // A select shows the choice before Botbench has kept it, so the row says when it has.
     await page.goto(`${botbench.base}/#/settings/workbench`);
@@ -283,13 +288,15 @@ test.describe("at 1280×800", () => {
     await expect(search(page)).toHaveValue("module");
     await checkDesign(page, "task, wide, opened from the column");
 
-    // Another row: the run opens beside the column, and the mark moves to it.
+    // Another row: the run. Its screen is rebuilt on shadcn/ui, with its own navigation at the left and no column
+    // beside it; the navigation names the open run.
     await search(page).fill("billing");
     await rows(page).first().click();
-    await expect(page.getByRole("heading", { level: 1, name: `Run ${seeded.planned.id}` })).toBeVisible();
-    await expect(rows(page).first()).toHaveAttribute("aria-current", "true");
-    await expect(page.locator('.ds-list__link[aria-current="true"]')).toHaveCount(1);
-    await checkDesign(page, "run, wide, opened from the column");
+    await expect(page.getByRole("heading", { level: 1, name: seeded.planned.title })).toBeVisible();
+    await expect(column(page)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: seeded.planned.title })).toHaveAttribute("aria-current", "page");
+    await checkLayout(page, 32, "run, wide, opened from the column");
+    await checkWords(page, "run, wide, opened from the column");
 
     // Work has the column too; Settings does not, and the search is still there after it.
     await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Work", exact: true }).click();
