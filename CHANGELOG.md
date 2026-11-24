@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/botbenchhq/botbench/compare/v0.3.1...v0.3.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* the paired conversation's bar is one line, and nine small leftovers of the redesign ([#248](https://github.com/botbenchhq/botbench/issues/248)) ([62a4959](https://github.com/botbenchhq/botbench/commit/62a4959bd30742a1f32e39a38f7fd6268513381a))
+
 ## [0.3.1](https://github.com/botbenchhq/botbench/compare/v0.3.0...v0.3.1) (2026-11-24)
 
 
