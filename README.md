@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/svg/botbench-lockup-dark.svg">
-    <img src="assets/svg/botbench-lockup-light.svg" alt="Botbench" width="280">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/svg/botbench-lockup-two-tone-dark.svg">
+    <img src="assets/svg/botbench-lockup-two-tone-light.svg" alt="Botbench" width="280">
   </picture>
 </p>
 
