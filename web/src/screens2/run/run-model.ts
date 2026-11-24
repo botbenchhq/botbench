@@ -40,9 +40,8 @@ export function runControls(run: Pick<RunDetail, "status" | "modeChoices">): { s
   return { stricter: run.modeChoices.length > 0, cancel: run.status === "planning" || run.status === "awaiting_plan_approval" || run.status === "running" };
 }
 
-/** The pull requests the run's tasks have, for a run that chose them: each task's, in plan order, with a number and an address. */
-export function pullRequests(run: Pick<RunDetail, "delivery" | "tasks">): { taskId: number; title: string; view: PullRequestView & { number: number; url: string } }[] {
-  if (run.delivery !== "pull_request") return [];
+/** The pull requests the run's tasks have, in plan order: each with a number and an address, whether the run opened it on accepting or the owner did from the task. */
+export function pullRequests(run: Pick<RunDetail, "tasks">): { taskId: number; title: string; view: PullRequestView & { number: number; url: string } }[] {
   return run.tasks.flatMap((task) => (task.pullRequest.number !== null && task.pullRequest.url !== null ? [{ taskId: task.id, title: task.title, view: { ...task.pullRequest, number: task.pullRequest.number, url: task.pullRequest.url } }] : []));
 }
 

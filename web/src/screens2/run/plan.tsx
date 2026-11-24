@@ -150,7 +150,7 @@ export function PlanList({ plan, editing, locked, saving, deleted, onEdit, onAdd
               <span className="sr-only">{` You have ${UNDO_SECONDS} seconds to undo.`}</span>
               {!deleted.undoing && <span aria-hidden="true" className="text-muted-foreground tabular-nums">{` ${counted(deleted.left, "second", "seconds")} left to undo`}</span>}
             </p>
-            <Button type="button" variant="outline" size="sm" aria-busy={deleted.undoing || undefined} onClick={onUndo}>
+            <Button type="button" variant="outline" aria-busy={deleted.undoing || undefined} onClick={onUndo}>
               {deleted.undoing ? "Putting the task back" : "Undo"}
             </Button>
           </div>

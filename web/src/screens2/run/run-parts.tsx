@@ -157,7 +157,7 @@ function TaskRow({ task, first, repo, onChanged, onSignedOut }: { task: RunTask;
 /** A link that leaves Botbench for GitHub, in a new tab, and says so. */
 export function OutLink({ href, testId, children }: { href: string; testId?: string; children: ReactNode }) {
   return (
-    <a data-testid={testId} href={href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-(--control-small) items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline">
+    <a data-testid={testId} href={href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-(--control) items-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline">
       {children}
       <ExternalLink aria-hidden="true" className="size-3.5" />
       <span className="sr-only">(opens in a new tab)</span>
@@ -251,7 +251,7 @@ function StricterMode({ run, open, onOpen, onChanged, onSignedOut }: { run: Pick
  * mode, and Cancel run, while the run can be cancelled. No menu when the run has neither. Cancelling takes something
  * away, so it asks first, in an alert dialog whose first button, with the focus, changes nothing.
  */
-export function RunMenu({ run, cancelling, onCancel, onChanged, onSignedOut }: { run: RunDetail; cancelling: boolean; onCancel: () => void; onChanged: (next: RunDetail) => void; onSignedOut: () => void }) {
+export function RunMenu({ run, cancelling, busy, onCancel, onChanged, onSignedOut }: { run: RunDetail; cancelling: boolean; /** Another request of this screen is on its way: the menu waits for it, so a press is never dropped. */ busy: boolean; onCancel: () => void; onChanged: (next: RunDetail) => void; onSignedOut: () => void }) {
   const [stricter, setStricter] = useState(false);
   const [asking, setAsking] = useState(false);
   const offers = runControls(run);
@@ -259,7 +259,7 @@ export function RunMenu({ run, cancelling, onCancel, onChanged, onSignedOut }: {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="outline" size="sm" data-testid="run-menu" aria-busy={cancelling || undefined} disabled={cancelling} className="shrink-0" />}>
+        <DropdownMenuTrigger render={<Button variant="outline" size="sm" data-testid="run-menu" aria-busy={cancelling || undefined} disabled={cancelling || busy} className="shrink-0" />}>
           {cancelling ? "Cancelling" : "Run"}
           <ChevronDown aria-hidden="true" />
         </DropdownMenuTrigger>

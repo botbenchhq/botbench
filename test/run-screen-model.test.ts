@@ -41,11 +41,12 @@ test("the run's menu offers a stricter mode only where the server offers one, an
   assert.deepEqual(runControls({ status: "awaiting_decision", modeChoices: ["manual"] }), { stricter: true, cancel: false });
 });
 
-test("pull requests are listed only for a run that chose them, and only those that have a number and an address", () => {
+test("pull requests are listed for every task that has one with a number and an address, also when the owner opened it on a run that keeps its branches", () => {
   const opened = task("accepted", { id: 7, title: "Write the exporter", pullRequest: { ...NO_PR, choice: "pull_request", state: "opened", number: 12, url: "https://github.com/o/r/pull/12" } });
   const sending = task("accepted", { id: 8, pullRequest: { ...NO_PR, choice: "pull_request", state: "sending" } });
-  assert.deepEqual(pullRequests({ delivery: "pull_request", tasks: [opened, sending] }).map((row) => [row.taskId, row.title, row.view.number, row.view.url]), [[7, "Write the exporter", 12, "https://github.com/o/r/pull/12"]]);
-  assert.deepEqual(pullRequests({ delivery: "branch", tasks: [opened] }), []);
+  assert.deepEqual(pullRequests({ tasks: [opened, sending] }).map((row) => [row.taskId, row.title, row.view.number, row.view.url]), [[7, "Write the exporter", 12, "https://github.com/o/r/pull/12"]]);
+  assert.equal(pullRequests({ tasks: [opened] }).length, 1);
+  assert.deepEqual(pullRequests({ tasks: [sending] }), []);
 });
 
 test("decided tasks are the accepted and the rejected", () => {

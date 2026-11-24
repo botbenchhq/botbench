@@ -345,7 +345,9 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await page.goto(`${alice.base}/#/runs/${runA}`);
   await expect(page.getByTestId("run-task-pull-request")).toHaveText(`The branch is on origin, and Botbench opened pull request #${prNumber} into main. Nothing was merged.`);
   await judge(page, "A, the run, done with its pull request", "a-run-done", page.getByTestId("run-task-pull-request"), undefined, checkRebuilt);
-  await openWork(page);
+  // On a phone the run screen's navigation is behind its menu button; the bar's own link leads to Work.
+  await page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Work" }).click();
+  await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
   await judge(page, "A, Work", "a-work", page.getByRole("heading", { name: "Work", level: 1 }));
 
   // B's Work lists A's claim and A's pushed branch under Other workbenches; B built nothing of its own.

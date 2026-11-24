@@ -341,7 +341,7 @@ export default function RunScreen({ id, onSignedOut }: { id: number; onSignedOut
           {run.source !== null && (
             // The finished task or the chat this run was made from, with the owner's note as its message.
             <Fact name="Made from">
-              <a data-testid="run-source" href={run.source.kind === "task" ? `#/tasks/${run.source.id}` : `#/chats/${run.source.id}`} className="inline-flex min-h-(--control-small) items-center text-primary underline-offset-4 hover:underline">
+              <a data-testid="run-source" href={run.source.kind === "task" ? `#/tasks/${run.source.id}` : `#/chats/${run.source.id}`} className="inline-flex min-h-(--control) items-center text-primary underline-offset-4 hover:underline">
                 {run.source.label}
               </a>
             </Fact>
@@ -442,7 +442,7 @@ export default function RunScreen({ id, onSignedOut }: { id: number; onSignedOut
               </>
             )}
           </nav>
-          {run !== null && <RunMenu run={run} cancelling={busy === "cancel"} onCancel={() => decide("cancel")} onChanged={setRun} onSignedOut={onSignedOut} />}
+          {run !== null && <RunMenu run={run} cancelling={busy === "cancel"} busy={busy !== null} onCancel={() => decide("cancel")} onChanged={setRun} onSignedOut={onSignedOut} />}
         </>
       }
       aside={
