@@ -7,3 +7,6 @@ test-results
 playwright-report
 # Reference projects cloned into a task copy for comparison; never committed.
 .reference/
+
+# Pictures of the built screens are taken on demand (e2e/pictures.shots.ts); they show this machine, so they are not kept.
+docs/design/built/
