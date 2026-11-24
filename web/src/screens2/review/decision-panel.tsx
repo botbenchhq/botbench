@@ -217,7 +217,7 @@ export function DecisionPanel({ task, d, children }: { task: TaskDetail; d: Deci
 }
 
 /** The command that merges an accepted branch, with a button that copies it; nothing is merged by Botbench. */
-function MergeCommand({ branch }: { branch: string }) {
+export function MergeCommand({ branch }: { branch: string }) {
   const [copied, setCopied] = useState<string | null>(null);
   const command = `git merge ${branch}`;
   return (

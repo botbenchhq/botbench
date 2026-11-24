@@ -3,6 +3,7 @@ import { Check, Circle, CircleDot, Copy } from "lucide-react";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { Card } from "@/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/ui/collapsible";
 import { Separator } from "@/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
@@ -225,6 +226,8 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
   };
 
   const title = taskTitle(id, task?.prompt ?? null);
+  // The heading is cut from the task's words when they are long or of several lines.
+  const shortened = task !== null && task.prompt.trim() !== "" && title !== task.prompt.trim();
   const steps = activityLine(shown).steps;
   const who = (attempt: number): string | null => (task === null ? null : sessionAgent(task, attempt));
   const model = task === null || task.requestedModel === null ? null : modelName(models, task.requestedModel);
@@ -515,9 +518,20 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
       <main className="min-w-0 px-4 pt-4 pb-12 md:px-6 min-[1440px]:px-8">
         <div className="mx-auto flex max-w-[47.5rem] flex-col gap-6">
           <header className="flex flex-col gap-2">
-            <h1 ref={heading} tabIndex={-1} data-ds-content={task === null ? undefined : ""} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight text-balance outline-none md:text-title">
+            <h1 ref={heading} tabIndex={-1} data-ds-content={task === null ? undefined : ""} title={shortened ? task.prompt.trim() : undefined} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight text-balance outline-none md:text-title">
               {title}
             </h1>
+            {/* The heading is the task's first words: all of it is one tap under it, whatever Activity holds. */}
+            {shortened && (
+              <Collapsible>
+                <CollapsibleTrigger render={<Button variant="link" className="h-auto min-h-(--control-small) justify-start p-0 text-meta font-medium" />}>Show the whole task</CollapsibleTrigger>
+                <CollapsibleContent>
+                  <p data-testid="task-whole" data-ds-content="" className="pt-1 text-base break-words whitespace-pre-wrap text-muted-foreground">
+                    {task.prompt.trim()}
+                  </p>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
             {task !== null && (
               <>
                 <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-meta text-muted-foreground">

@@ -68,6 +68,12 @@ test("with Ask, a chat's fetch stands in the chat where it was asked with its de
   await expect(card).toHaveCount(0);
   await expect(log.locator('[data-event="text"]').last()).toContainText("Example Domain", { timeout: 30_000 });
 
+  // Each tool row's state is a whole word, in an open group of steps too: never cut to a part of it.
+  await page.evaluate(() => document.querySelectorAll("details:has(> ol)").forEach((group) => ((group as HTMLDetailsElement).open = true)));
+  const states = await log.locator(".ds-tool-call__status").evaluateAll((words) => words.map((word) => getComputedStyle(word).overflowX === "visible" || word.scrollWidth <= word.clientWidth + 1));
+  expect(states.length).toBeGreaterThan(0);
+  expect(states, "every tool row's state is shown whole").toEqual(states.map(() => true));
+
   // The next turn is denied: one plain line, and what Claude Code was told behind Technical details, closed.
   await sendChat(page, "Fetch https://example.com and tell me its title.");
   const second = page.getByTestId("approval-card");

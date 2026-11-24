@@ -276,6 +276,14 @@ test("the shell with long and many things: the mark in the top bar, Home's count
   }
   expect(new Set(edges).size, `the headings' left edges: ${edges.join(", ")}`).toBe(1);
 
+  // ---- In the rail under a finger, the workbench's link is its initial alone, and still a finger's size.
+  const rail = await device(browser, botbench, true);
+  await rail.setViewportSize({ width: 1024, height: 768 });
+  await rail.goto(`${botbench.base}/#/`);
+  const avatar = (await rail.getByTestId("shell-side").getByTestId("workbench").getByRole("link").boundingBox())!;
+  expect({ wide: avatar.width >= 44, high: avatar.height >= 44 }, "the workbench's link in the rail, under a finger").toEqual({ wide: true, high: true });
+  await rail.context().close();
+
   // ---- The open task in the rail (1024 to 1279px) is a dot: it says its title on focus and on hover, inside the window.
   await desk.setViewportSize({ width: 1024, height: 768 });
   await desk.goto(task);
@@ -365,6 +373,15 @@ peers("a paired workbench with a long name and a long message: the conversation 
           await page.goto(at);
           await ready();
           const where = `${name} at ${size.width} ${mode}`;
+          // The bar is one line at every width: where it is, then its state beside it, clear of the bar's lower edge.
+          if (name === "conversation") {
+            const bar = await page.evaluate(() => {
+              const [top, nav] = [document.querySelector("[data-testid=top-bar]")!.getBoundingClientRect(), document.querySelector("nav[aria-label='Where this is']")!];
+              const mark = document.querySelector("[data-testid=bar-mark]")?.getBoundingClientRect();
+              return { oneLine: nav.getBoundingClientRect().height < 48, clear: [...nav.children].every((part) => part.getBoundingClientRect().bottom <= top.bottom - 4), markLevel: mark === undefined || Math.abs(mark.top + mark.height / 2 - (top.top + top.height / 2)) <= 1 };
+            });
+            if (!bar.oneLine || !bar.clear || !bar.markLevel) problems.push(`${where}: the bar is not one line with its mark level: ${JSON.stringify(bar)}`);
+          }
           problems.push(...lines(where, await fit(page, { contrast: true })));
           if (!EXPLORE) await checkScreen(page, where);
           if ((size.width === 390 && mode === "dark") || (size.width === 1440 && mode === "light") || size.width === 1024 || size.width === 768) await picture(page, `stress-${name}-${size.width}-${mode}`);

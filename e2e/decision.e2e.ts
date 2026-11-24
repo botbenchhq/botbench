@@ -255,7 +255,11 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
   // No check ran on it, so the row says the accept as what it was, and does not draw it as a success.
   await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText("Accepted without verification");
   await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveAttribute("data-tone", "neutral");
-  await expect(rows.nth(0).getByTestId("merge-command")).toHaveValue(`git merge ${branches[0]}`);
+  await expect(rows.nth(0).getByTestId("merge-command")).toHaveText(`git merge ${branches[0]}`);
+  // The command is drawn whole, on as many lines as it takes inside the row, and Copy still copies it.
+  expect(await rows.nth(0).getByTestId("merge-command").evaluate((code) => code.scrollWidth <= code.clientWidth + 1 && code.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+  await rows.nth(0).getByRole("button", { name: "Copy merge command" }).click();
+  await expect(rows.nth(0).getByTestId("merge-copy-state")).not.toBeEmpty();
   await expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./);
 
   await rows.nth(1).getByRole("button", { name: /^Reject/ }).click();

@@ -1,10 +1,14 @@
+import { useId } from "react";
+import { Button } from "@/ui/button";
+import { Label } from "@/ui/label";
+import { Textarea } from "@/ui/textarea";
 import type { ModelList, StoredEvent, TaskDetail } from "../../api/client.ts";
 import { folderName } from "../../app/composer.ts";
 import { number, plural } from "../../app/format.ts";
-import { offersRun } from "../../app/run-source.ts";
+import { ABOUT, MAKE_RUN, NOTE_LABEL, offersRun } from "../../app/run-source.ts";
 import { CheckTogether } from "../../components/check-together.tsx";
 import { agentName, CHECKS_LIMITS, CommandRounds, REVIEW_LIMITS } from "../../components/evidence.tsx";
-import { MakeRunSection } from "../../components/make-run.tsx";
+import { useMakeRun } from "../../components/make-run.tsx";
 import { modelName, modelState, sessionModel } from "../../components/model-picker.tsx";
 import { PullRequestSection } from "../../components/pull-request.tsx";
 import { answeredOther, notMergedLine } from "../../components/task-status.ts";
@@ -40,6 +44,39 @@ function RefusedCommand({ command }: { command: string }) {
         </figure>
       </div>
     </details>
+  );
+}
+
+/**
+ * On a finished task's screen: Make this a run, with the note field, drawn as the note box of this screen is. The note
+ * opens the composer on Plan a run in the task's repository; nothing is stored or sent here.
+ */
+function MakeRunSection({ taskId, repo }: { taskId: number; repo: string }) {
+  const { note, setNote, problem, box, make } = useMakeRun({ kind: "task", id: taskId, repo });
+  const id = useId();
+  return (
+    <section aria-labelledby={`${id}-heading`} data-testid="make-run-section" className="flex flex-col gap-3 rounded-xl border border-edge bg-pane p-4">
+      <h2 id={`${id}-heading`} className="text-sm font-semibold">
+        {MAKE_RUN}
+      </h2>
+      <form onSubmit={(event) => (event.preventDefault(), make())} className="flex flex-col gap-3" noValidate>
+        <Label htmlFor={`${id}-note`}>{NOTE_LABEL}</Label>
+        <Textarea ref={box} id={`${id}-note`} data-testid="make-run-note" value={note} onChange={(e) => setNote(e.target.value)} aria-invalid={problem !== null || undefined} aria-describedby={problem === null ? `${id}-about` : `${id}-about ${id}-error`} />
+        {problem !== null && (
+          <p id={`${id}-error`} data-testid="make-run-problem" role="alert" className="text-meta text-destructive">
+            {problem}
+          </p>
+        )}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <p id={`${id}-about`} className="min-w-0 flex-1 basis-64 text-meta text-muted-foreground">
+            {ABOUT.task}
+          </p>
+          <Button type="submit" data-testid="make-run" variant="outline">
+            {MAKE_RUN}
+          </Button>
+        </div>
+      </form>
+    </section>
   );
 }
 

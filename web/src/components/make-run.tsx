@@ -2,19 +2,12 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ApiError, getRunSource, type RunSourceView } from "../api/client.ts";
 import { ABOUT, handOff, MAKE_RUN, makeRun, messagePreview, NOTE_LABEL, PICK_ABOUT, PICK_HEADING, type MakeRunSource } from "../app/run-source.ts";
 
-/**
- * The note field and Make this a run: the note opens the composer on Plan a run, where the owner can still change it
- * and every setting. Nothing is stored here, and nothing is sent: the composer sends, on Send. `messages`: for a chat,
- * the owner's own messages in it, any of which may be put in the note.
- */
-function MakeRunForm({ source, about, messages, chatRepo = null, onCancel }: { source: MakeRunSource; about: string; messages?: readonly { text: string; at: string }[]; chatRepo?: string | null; /** In a dialog, a view of its own, where Make this a run is the primary action. */ onCancel?: () => void }) {
+/** The note of Make this a run and what its button does, whichever screen draws the field: the note, the reason it is refused, and `make`, which opens the composer with it. */
+export function useMakeRun(source: MakeRunSource, chatRepo: string | null = null) {
   const [note, setNote] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
-  const fieldId = useId();
   const box = useRef<HTMLTextAreaElement>(null);
-  const submit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    if ((event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "cancel") return onCancel?.();
+  const make = (): void => {
     // The server checks the note again on Send; here the owner is told at once, in the same words.
     const made = makeRun(source, note, chatRepo);
     if ("refused" in made) {
@@ -24,6 +17,22 @@ function MakeRunForm({ source, about, messages, chatRepo = null, onCancel }: { s
     setProblem(null);
     handOff(made.handOff);
     window.location.hash = made.address;
+  };
+  return { note, setNote, problem, setProblem, box, make };
+}
+
+/**
+ * The note field and Make this a run: the note opens the composer on Plan a run, where the owner can still change it
+ * and every setting. Nothing is stored here, and nothing is sent: the composer sends, on Send. `messages`: for a chat,
+ * the owner's own messages in it, any of which may be put in the note.
+ */
+function MakeRunForm({ source, about, messages, chatRepo = null, onCancel }: { source: MakeRunSource; about: string; messages?: readonly { text: string; at: string }[]; chatRepo?: string | null; /** In a dialog, a view of its own, where Make this a run is the primary action. */ onCancel?: () => void }) {
+  const { note, setNote, problem, setProblem, box, make } = useMakeRun(source, chatRepo);
+  const fieldId = useId();
+  const submit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    if ((event.nativeEvent as SubmitEvent).submitter?.getAttribute("value") === "cancel") return onCancel?.();
+    make();
   };
   const described = [`${fieldId}-about`, problem === null ? null : `${fieldId}-error`].filter((id) => id !== null).join(" ");
   return (
@@ -88,16 +97,6 @@ function MakeRunForm({ source, about, messages, chatRepo = null, onCancel }: { s
         )}
       </div>
     </form>
-  );
-}
-
-/** On a finished task's screen: Make this a run, with the note field. The composer opens in the task's repository. */
-export function MakeRunSection({ taskId, repo }: { taskId: number; repo: string }) {
-  return (
-    <section aria-labelledby="make-run-heading" data-testid="make-run-section" className="ds-stack ds-gap-sm">
-      <h2 id="make-run-heading">{MAKE_RUN}</h2>
-      <MakeRunForm source={{ kind: "task", id: taskId, repo }} about={ABOUT.task} />
-    </section>
   );
 }
 

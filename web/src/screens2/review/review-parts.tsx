@@ -294,7 +294,7 @@ function Diff({ path, state }: { path: string; state: DiffState | undefined }) {
   const prose = /\.(md|txt)$/i.test(path);
   return (
     <>
-      <pre data-testid="diff" data-prose={prose || undefined} tabIndex={0} role="group" aria-label={`Changes in ${path}`} data-ds-content-label="" data-ds-content="" className="overflow-x-auto border-t bg-sunken py-2">
+      <pre data-testid="diff" data-prose={prose || undefined} tabIndex={0} role="group" aria-label={`Changes in ${path}`} data-ds-content-label="" data-ds-content="" className="overflow-x-auto border-t bg-sunken py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset">
         <code className={cn("grid", !prose && "min-w-max")}>
           {diffRows(state.diff).map((row, i) => {
             const Line = row.kind === "added" ? "ins" : row.kind === "removed" ? "del" : "span";

@@ -48,6 +48,9 @@ test("a task ready for review: the note opens Plan a run with it, and no run exi
 
   const section = page.getByTestId("make-run-section");
   await section.getByLabel("Note for the run", { exact: true }).fill("Now add a subtract function next to add.");
+  // The note's field and its button are the rebuilt screen's own, as the note box beside them.
+  await expect(section.getByTestId("make-run-note")).toHaveAttribute("data-slot", "textarea");
+  await expect(section.getByTestId("make-run")).toHaveAttribute("data-slot", "button");
   await everyLook(page, "task ready for review, Make this a run");
   await section.getByRole("button", { name: "Make this a run" }).click();
 

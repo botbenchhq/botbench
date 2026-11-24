@@ -231,7 +231,7 @@ export function ChatView({ turn, onSignedOut }: { turn: Turn; onSignedOut: () =>
             {chat.compare !== null && !running && <CompareAction turn={turn} onCompare={(to) => turn.sendChat("", [to], chat.compare!.roundId)} />}
             {/* The owner's feedback in this chat, made into a run: a note of their own, or one of their messages. Offered
                 while a reply still runs too: only the owner's words go with it, and those are stored. */}
-            <div data-testid="make-run-chat">
+            <div data-testid="make-run-chat" className="flex justify-end border-t pt-2">
               <Button variant="ghost" size="sm" aria-haspopup="dialog" onClick={() => turn.setMakingRun(true)} className={cn(TARGET, "text-muted-foreground")}>
                 {MAKE_RUN}
               </Button>

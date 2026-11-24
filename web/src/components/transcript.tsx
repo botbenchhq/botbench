@@ -189,7 +189,8 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
         <details open={open} onToggle={(e) => e.currentTarget.open !== open && set(call.id, e.currentTarget.open)} className="ds-tool-call__details">
           <summary className="ds-tool-call__summary">
             <span className="ds-tool-call__title">
-              <span className="ds-tool-call__status">{shown.word}</span>{" "}
+              {/* The word is shown whole, in a group of steps too, where the design system would cut it to its icon's width with no mark that it was cut. */}
+              <span className="ds-tool-call__status w-auto overflow-visible">{shown.word}</span>{" "}
               {verb !== null ? `${verb} ` : line.verb === null ? (
                 <>
                   <Theirs>{line.tool}</Theirs>{" "}

@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { ChevronLeft } from "lucide-react";
 import { ApiError, getPeerFriction, getPeerMessages, getPeerOverview, type Pairing, type PeerMessage, type ThreadFriction } from "../../api/client.ts";
 import { PeerChangesContext } from "../../app/approvals.tsx";
 import { arrive, tabTitle } from "../../app/arrival.ts";
@@ -79,14 +80,18 @@ export default function PeerScreen({ pairingId, contextId, onSignedOut }: { pair
       cardsShown={(card) => card.pairingId === pairingId && card.contextId === contextId}
       open={thread === null ? null : { title: waiting[0]?.title ?? title, href: threadHref(pairingId, contextId) }}
       bar={
-        <nav aria-label="Where this is" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <a href={groupHref("connections")} className="inline-flex min-h-(--control-small) items-center text-muted-foreground hover:text-foreground">
-            Connections and peers
+        // One line at every width: under 768px the way back is its arrow alone, named in full for a screen reader, and the last name is cut short before the state is.
+        <nav aria-label="Where this is" className="flex min-w-0 flex-1 items-center gap-x-3 text-sm">
+          <a href={groupHref("connections")} className="inline-flex min-h-(--control-small) shrink-0 items-center gap-1 rounded-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 max-md:min-w-(--control-small) max-md:justify-center">
+            <ChevronLeft aria-hidden="true" className="size-4 md:hidden" />
+            <span className="max-md:sr-only">Connections and peers</span>
           </a>
-          <span aria-hidden="true" className="text-muted-foreground">
+          <span aria-hidden="true" className="text-muted-foreground max-md:hidden">
             /
           </span>
-          <span className="font-semibold">Conversation</span>
+          <span data-testid="peer-bar-name" title="Conversation" className="min-w-0 truncate font-semibold">
+            Conversation
+          </span>
           {waiting.length > 0 && <StateWord tone="attention">Waits for you</StateWord>}
         </nav>
       }

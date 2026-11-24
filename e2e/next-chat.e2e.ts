@@ -182,6 +182,13 @@ test("on a phone the intents, the composer and the sentence fit one column; the 
   await expect(card).toBeInViewport();
   const order = await page.evaluate(() => document.querySelector('[data-testid="approval-card"]')!.getBoundingClientRect().bottom <= document.querySelector('[data-testid="composer"]')!.getBoundingClientRect().top);
   expect(order, "the decision stands above the message box").toBe(true);
+  // Make this a run closes the transcript, under a line of its own at its right end: it is not the head of the card under it.
+  const makeRun = await page.evaluate(() => {
+    const [row, card] = [document.querySelector('[data-testid="make-run-chat"]')!, document.querySelector('[data-testid="approval-card"]')!.getBoundingClientRect()];
+    const button = row.querySelector("button")!.getBoundingClientRect();
+    return { ruled: parseFloat(getComputedStyle(row).borderTopWidth) >= 1, atTheRight: button.right >= row.getBoundingClientRect().right - 1, apart: card.top - button.bottom >= 16 || button.bottom <= 0 };
+  });
+  expect(makeRun, "Make this a run is the transcript's last line, apart from the approval card").toEqual({ ruled: true, atTheRight: true, apart: true });
   await checkScreen(page, "chat, a request waits, phone", { floor: 40, within: SCREEN_ONLY });
   await shot(page, "chat-approval-390-dark");
   const note = card.getByRole("button", { name: "Add a note for Claude Code" });
