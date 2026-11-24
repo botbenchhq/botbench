@@ -2,6 +2,15 @@
 
 Patterns from corrections and misses, so they do not repeat. Newest first.
 
+## 2026-11-24: the coordination PRD put three lifetimes in one lease and called advisory remote state exclusive (owner correction)
+The owner's review of the swarm coordination PRD found that one lease with a heartbeat stood for a write in progress, for work someone means to do, and for a change on a branch nobody has merged. So an API change was released when its session ended, while its branch still mattered. Refs published one per developer were presented as exclusive, though two machines can both grant before either fetches. A "no conflict" answer risked skipping the CLI's own permission prompt. And the completion test promised to hold every overlapping write while also allowing writes on failure and on paths no hook sees. Rules going forward:
+- Give each kind of record its own lifetime: a write, an intent, a change on a branch. Never let unrelated activity renew one.
+- A record shared between machines only advises, unless a shared arbiter makes taking it atomic (as the issue-claim lock does).
+- A coordination hook never sends a permission decision of "allow", and sends nothing at all on a failure, so the CLI's own permissions decide.
+- State a guarantee with its conditions, and count what it did not cover (uncovered changes, fail-open events) next to what it did.
+- A benchmark's primary outcome is the requested work done correctly. Conflict counts and latency are diagnostics.
+- An observation can be certain while its attribution is not: say "unattributed change", not "a human".
+
 ## 2026-11-23: a rename across the repository broke every test that replays a recording, and one test waited without end
 The move to botbenchhq/botbench (#213) replaced the old address in the tests too. The sessions recorded from the real `gh` still name jon-lange/botbench, as they must, so replayed calls no longer matched: 21 tests of the fast suite failed, and one of them waited for a poll to be "checked" that had failed, under mocked timers, so `npm test` never ended. Three more tests had been failing since the 0.2.0 release: they wrote the installed version as "0.1.0" while installing this checkout's own files. Caught by running the suite on `main` with a time limit for each test. Rules going forward:
 - A rename is not applied to `test/recordings/` nor to what replays it: a test that replays a recording names the repository the recording was captured from, with a comment where the name is set. A live test names the repository as it is today.

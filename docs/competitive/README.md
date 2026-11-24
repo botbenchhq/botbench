@@ -32,6 +32,7 @@ Local clones are kept read-only in a `reference/` folder beside the Botbench che
 
 | Project | File | Licence | Role for Botbench |
 |---|---|---|---|
+| Cork | [cork.md](projects/cork.md) | MIT, except the engine in `free/` (FSL-1.1-MIT, never read for reuse) | Direct competitor on live coordination: hooks, a local coordinator, MCP, no interface |
 | OpenAgents | [openagents.md](projects/openagents.md) | Apache 2.0 | Direct competitor: shared workspace hub for people and agents |
 | Tutti | [tutti.md](projects/tutti.md) | Apache 2.0; the multi-user product is closed | Closest to the combined concept; best solo task and claim model |
 | Paperclip | [paperclip.md](projects/paperclip.md) | MIT | Coordination reference: checkout, dependencies, budgets |
