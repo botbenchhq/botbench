@@ -336,8 +336,8 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
             {/*
               The title is the column that takes what is left, and it keeps at least 45% of the table from 42rem up. The
               others are fixed and give way for it: under 56rem the kind is said under the title and the state has the
-              room of two lines; the agent has a column from 69rem and the repository from 85rem, where the title still
-              has its share beside them (the screen is 72rem at its widest today, so the repository waits for a wider one).
+              room of two lines; the agent has a column from 69rem. The repository would leave the title less than its
+              share at any width the screen has, so it is on the line under the title.
             */}
             <Table data-testid="work-table" className="table-fixed text-sm">
               <TableHeader>
@@ -348,7 +348,6 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                   <TableHead className="px-2 text-meta font-semibold text-muted-foreground">Title</TableHead>
                   <TableHead className="w-24 px-2 text-meta font-semibold text-muted-foreground @max-4xl:hidden">Kind</TableHead>
                   <TableHead className="w-28 px-2 text-meta font-semibold text-muted-foreground @max-[69rem]:hidden">Agent</TableHead>
-                  <TableHead className="w-36 px-2 text-meta font-semibold text-muted-foreground @max-[85rem]:hidden">Repository</TableHead>
                   <TableHead className="w-32 px-2 text-right text-meta font-semibold text-muted-foreground @max-lg:hidden">Last change</TableHead>
                   <TableHead className="w-14 px-2">
                     <span className="sr-only">More</span>
@@ -360,6 +359,7 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                   const { icon: Icon, tone, strong } = look(item);
                   const word = stateWord(item);
                   const facts = rowFacts(item);
+                  const repo = item.kind === "chat" ? null : repoWord(item);
                   return (
                     <TableRow key={`${item.kind} ${item.id}`} data-testid="work-row">
                       <TableCell className="px-4 py-1 whitespace-normal">
@@ -376,12 +376,13 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                             {item.title}
                           </span>
                           {/* Where the screen is narrow the columns that do not fit are one line under the title. */}
-                          <span data-ds-content="" className="truncate text-meta text-muted-foreground @2xl:hidden">
-                            {[word, ...(kindWord(item) === word ? [] : [kindWord(item)]), changed(item.updatedAt, now)].join(" \u00b7 ")}
+                          <span data-ds-content="" title={repo ?? undefined} className="truncate text-meta text-muted-foreground @2xl:hidden">
+                            {[word, ...(kindWord(item) === word ? [] : [kindWord(item)]), ...(repo === null ? [] : [repo]), changed(item.updatedAt, now)].join(" \u00b7 ")}
                           </span>
-                          {/* Between the phone's width and 56rem the kind has no column: it is said here. */}
-                          <span data-testid="work-kind-line" className="truncate text-meta text-muted-foreground @max-2xl:hidden @4xl:hidden">
-                            {kindWord(item)}
+                          {/* The repository has no column at any width: it is said here, after the kind where the kind has no column either (under 56rem). */}
+                          <span data-testid="work-kind-line" data-ds-content="" title={repo ?? undefined} className="truncate text-meta text-muted-foreground @max-2xl:hidden">
+                            <span className="@4xl:hidden">{repo === null ? kindWord(item) : `${kindWord(item)} \u00b7 `}</span>
+                            {repo}
                           </span>
                           {facts !== null && (
                             <span data-testid="work-facts" title={facts} className="truncate text-meta text-muted-foreground">
@@ -393,9 +394,6 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                       <TableCell className="truncate px-2 py-1 text-muted-foreground @max-4xl:hidden">{kindWord(item)}</TableCell>
                       <TableCell title={agentWord(item)} className="truncate px-2 py-1 text-muted-foreground @max-[69rem]:hidden">
                         {agentWord(item)}
-                      </TableCell>
-                      <TableCell data-ds-content="" title={repoWord(item)} className="truncate px-2 py-1 text-muted-foreground @max-[85rem]:hidden">
-                        {repoWord(item)}
                       </TableCell>
                       <TableCell title={changed(item.updatedAt, now)} className="truncate px-2 py-1 text-right text-muted-foreground tabular-nums @max-lg:hidden">
                         <time dateTime={item.updatedAt}>{changedShort(item.updatedAt, now)}</time>

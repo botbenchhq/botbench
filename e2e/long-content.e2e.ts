@@ -79,7 +79,9 @@ test.describe("with a mouse", () => {
       // Under 56rem of screen (the table is its card's border narrower) the kind has no column.
       const narrow = table.width + 2 < 896;
       await expect(page.getByRole("columnheader", { name: "Kind" })).toHaveCount(narrow ? 0 : 1);
-      await expect(row.getByTestId("work-kind-line")).toBeVisible({ visible: narrow });
+      // The repository is under the title at every width, after the kind where the kind has no column, cut short and whole on hover.
+      await expect(row.getByTestId("work-kind-line")).toHaveAttribute("title", LONG_REPO);
+      expect(await row.getByTestId("work-kind-line").innerText()).toMatch(narrow ? new RegExp(`^Task \\d+ · ${LONG_REPO}$`) : new RegExp(`^${LONG_REPO}$`));
       await expect(page.getByRole("columnheader", { name: "Agent" })).toHaveCount(table.width + 2 >= 1104 ? 1 : 0);
       await expect(page.getByRole("columnheader", { name: "Repository" })).toHaveCount(0);
       const states = await page.getByTestId("work-state").evaluateAll((els) => els.map((el) => ({ word: el.textContent, cut: el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().width < 2 })));
