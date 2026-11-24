@@ -42,7 +42,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(stateOf("Migrate the invoices table")).toHaveText("Failed");
     await expect(stateOf("Generate the changelog from the release tags")).toHaveText("Failed");
     const plan = rows(page).filter({ hasText: "Plan the billing export" });
-    await expect(plan.getByRole("cell")).toContainText(["Plan ready for review", "Plan the billing export", `Run ${seeded.ids.plan}`, "Claude Code", "billing-api"]);
+    await expect(plan.getByRole("cell")).toContainText(["Plan ready for review", "Plan the billing export", `Run ${seeded.ids.plan}`, "Claude Code"]);
     await expect(plan.getByRole("link", { name: "Plan the billing export" })).toHaveAttribute("href", `#/runs/${seeded.ids.plan}`);
 
     // Each filter says how many rows it would show, as the server counts them.

@@ -3,7 +3,7 @@ import test from "node:test";
 import { bannedIn } from "../e2e/voice.ts";
 import type { Home, HomeItem, WorkItem } from "../web/src/api/client.ts";
 import { acceptedLine, countedNames, endedLine, facts, failedLine, headline, hrefOf, lasted, need, ORDER_LINE, progressLine, subline, summarized, triesAgain, waitLine } from "../web/src/screens2/home/home-model.ts";
-import { aboutLine, agentWord, changed, kindWord, noneLine, olderLine, shownLine, STATES, stateWord } from "../web/src/screens2/work/work-model.ts";
+import { aboutLine, agentWord, changed, changedShort, kindWord, noneLine, olderLine, shownLine, STATES, stateWord } from "../web/src/screens2/work/work-model.ts";
 
 // What Home and Work say in words, decided without a browser, from what /api/home and /api/work send. Where each item
 // stands, why and in what order is the server's (test/api/home.test.ts): nothing here decides it.
@@ -87,6 +87,8 @@ test("Work says a row's state in the product's own words, and a wait by what it 
   assert.deepEqual([kindWord({ kind: "task", id: 22 }), kindWord({ kind: "run", id: 9 }), kindWord({ kind: "chat", id: 31 })], ["Task 22", "Run 9", "Chat"]);
   assert.deepEqual([agentWord({ agents: ["codex"] }), agentWord({ agents: ["codex", "grok", "claude-code"] }), agentWord({ agents: [] })], ["Codex", "3 agents", "None"]);
   assert.deepEqual([changed("2026-11-23T10:12:00.000Z", NOW, UTC), changed("2026-11-23T10:00:00.000Z", NOW, UTC), changed("2026-11-21T17:40:00.000Z", NOW, UTC)], ["Now", "12 minutes ago", "21 November at 17:40"]);
+  // The column's own short form of the same: the title keeps the room.
+  assert.deepEqual([changedShort("2026-11-23T10:12:00.000Z", NOW, UTC), changedShort("2026-11-23T10:00:00.000Z", NOW, UTC), changedShort("2026-11-23T07:00:00.000Z", NOW, UTC), changedShort("2026-11-21T17:40:00.000Z", NOW, UTC)], ["Now", "12 min ago", "3 h ago", "21 November"]);
   assert.equal(aboutLine(63, false), "Every task, run and chat on this workbench. 63 in all, newest change first.");
   assert.equal(shownLine(14, 63), "14 of 63 shown");
   assert.equal(olderLine({ count: 49, oldest: "2026-11-03T08:05:00.000Z" }, UTC), "49 more, back to 3 November at 08:05");

@@ -105,6 +105,9 @@ export const counted = (count: number, one: string, many: string, where: Where =
 /** A time of day: "14:30", or "2:30 PM" where the reader's region uses a twelve-hour clock; always "14:30" in the server's form. */
 export const clock = (at: Instant, where: Clocked = {}): string => clockOf(at, where, false);
 
+/** A day without its year or its clock: "24 November". */
+export const day = (at: Instant, where: Clocked = {}): string => dayOf(at, where, false);
+
 /** A day and its clock, without the year: "24 November at 08:05"; with `weekday`, "Tuesday 24 November at 08:05". */
 export const dayAndClock = (at: Instant, where: Clocked & { weekday?: boolean } = {}): string => `${dayOf(at, where, where.weekday === true)} at ${clock(at, where)}`;
 
