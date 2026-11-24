@@ -903,6 +903,10 @@ export const getWorkbench = async (): Promise<WorkbenchSetting> => (await reques
 export interface RepositoryExecution {
   path: string;
   execution: { kind: "host" } | { kind: "container"; image: string };
+  /** The commands Botbench runs in each new copy before its builder starts, as the settings file gives them. */
+  setup: string[];
+  /** The commands Botbench runs on the committed work, the checks that need the real machine last. */
+  checks: string[];
 }
 export const getRepositoryExecutions = async (): Promise<RepositoryExecution[]> => (await request<{ repositories: RepositoryExecution[] }>("GET", "/api/settings", undefined, 30_000)).repositories;
 export const setWorkbench = async (name: string): Promise<WorkbenchSetting> => (await request<{ workbench: WorkbenchSetting }>("PUT", "/api/settings", { workbench: name }, 30_000)).workbench;

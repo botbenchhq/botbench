@@ -3,7 +3,8 @@ import path from "node:path";
 import { captureNote, memoryFolder } from "../src/engine/memory.ts";
 import { openStore } from "../src/store/db.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, expect, signIn, test } from "./helpers.ts";
+import { expect, signIn, test } from "./helpers.ts";
+import { checkNext, openSettingsGroup } from "./settings-helpers.ts";
 
 // Settings → Memory in the real client at a phone's size, against a real Botbench process. No model turn is started:
 // the two notes are saved before it starts, through the store's own capture (src/engine/memory.ts), as an owner's
@@ -18,20 +19,20 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
   const botbench = await startBotbench({ home });
   try {
     await signIn(page, botbench);
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    await openSettingsGroup(page, "identity");
     const memory = page.getByTestId("memory-settings");
     await expect(memory.getByRole("heading", { name: "Memory" })).toBeVisible();
     const rows = memory.getByTestId("memory-notes").getByRole("listitem");
     await expect(rows).toHaveCount(2);
     await expect(rows.first()).toContainText("in this repository always run the linter before committing");
     await memory.scrollIntoViewIfNeeded();
-    await checkDesign(page, "settings, memory");
+    await checkNext(page, "settings, memory");
 
     // An edit, saved.
     await memory.getByRole("button", { name: "Edit note 2: the staging database is read-only" }).click();
     const input = memory.getByTestId("memory-note-text");
     await expect(input).toBeFocused();
-    await checkDesign(page, "settings, memory, editing a note");
+    await checkNext(page, "settings, memory, editing a note");
     await input.fill("the staging database is read-only on weekdays");
     await memory.getByRole("button", { name: "Save note" }).click();
     await expect(rows.nth(1)).toContainText("the staging database is read-only on weekdays");
@@ -52,7 +53,7 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     await expect(memory.getByText("The note now: run npm run lint before committing")).toBeVisible();
     await expect(input).toHaveValue("never mind the linter");
     expect(fs.readFileSync(file, "utf8")).toBe(before);
-    await checkDesign(page, "settings, memory, an edit refused as stale");
+    await checkNext(page, "settings, memory, an edit refused as stale");
     await memory.getByRole("button", { name: "Cancel" }).click();
     await expect(rows.first()).toContainText("run npm run lint before committing");
 
@@ -61,7 +62,7 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     const dialog = page.getByTestId(`memory-forget-${first.id}`);
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText("Botbench removes it from memory and keeps no copy there. Agents are no longer given it. Chats and runs that already had it keep their words.");
-    await checkDesign(page, "settings, memory, forget this note?");
+    await checkNext(page, "settings, memory, forget this note?");
     // While the request is held, the pressed button says Forgetting and still names its note, is busy, stays enabled and keeps the focus the closing dialog gave back to it.
     let release = (): void => {};
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -75,7 +76,7 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     await expect(forgetting).toBeEnabled();
     await expect(forgetting).toBeFocused();
     await expect(memory.getByRole("button", { name: /^Forget note 2: / })).toBeDisabled();
-    await checkDesign(page, "settings, memory, forgetting a note");
+    await checkNext(page, "settings, memory, forgetting a note");
     release();
     await expect(rows).toHaveCount(1);
     await page.unroute(/\/api\/memory\/\d+$/);
@@ -88,7 +89,7 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
     await expect(memory.getByText("No notes yet")).toBeVisible();
     // No note is left to take the focus: the section's heading has it.
     await expect(memory.getByRole("heading", { name: "Memory" })).toBeFocused();
-    await checkDesign(page, "settings, memory, no notes");
+    await checkNext(page, "settings, memory, no notes");
   } finally {
     await botbench.stop();
     fs.rmSync(home, { recursive: true, force: true });

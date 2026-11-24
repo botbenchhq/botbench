@@ -7,6 +7,7 @@ import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { openStore } from "../src/store/db.ts";
 import { chatReplayDriver } from "../test/support/replay-chat.ts";
 import { checkDesign, expect, messageBox, nav, tempShot, test } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench } from "./botbench.ts";
 
 // The first run of an installation, in the real client at a phone's size. No model turn. A fresh data folder, on a
@@ -49,12 +50,11 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
     // The agent's line leads to Settings, opened at its Agents section.
     await lines.getByRole("link", { name: "Settings → Agents" }).click();
     await expect(page).toHaveURL(/#\/settings\/agents$/);
-    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeAttached();
-    const agents = page.getByRole("heading", { name: "Agents", level: 2 });
+    const agents = page.getByRole("heading", { name: "Agents and models", level: 1 });
     await expect(agents).toBeInViewport();
     await expect(agents).toBeFocused();
     await expect(page.getByTestId("agent-claude-code").getByTestId("agent-state")).toHaveText("Not installed");
-    await checkDesign(page, "settings, at Agents");
+    await checkNext(page, "settings, at Agents");
 
     // One chat stored, by the chat itself, while Botbench runs.
     const db = openStore(botbench.home);
@@ -77,7 +77,11 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
       await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");
       await expect(lines).toHaveCount(0);
     };
-    await goneAfter(() => nav(page).getByRole("link", { name: "Chat", exact: true }).click());
+    // From Settings, whose navigation a phone keeps behind its menu button.
+    await goneAfter(async () => {
+      await page.getByRole("button", { name: "Screens menu" }).click();
+      await page.getByRole("dialog").getByRole("link", { name: "Chat", exact: true }).click();
+    });
     await checkDesign(page, "chat, after the first run");
     await goneAfter(() => page.reload());
 

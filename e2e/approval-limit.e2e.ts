@@ -7,6 +7,7 @@ import { createTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
 import { checkDesign, checkLayout, checkWords, choose, chooseRepository, contextSheet, expect, openComposer, openFromSettings, openRow, signIn } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // A run's approval time limit in the real client: chosen in the composer's Add context sheet for a run, and shown on
@@ -90,18 +91,17 @@ for (const [size, viewport] of Object.entries(SIZES)) {
       });
 
       test(`Permissions names an approval nobody answered in time, and a request denied again, in plain words (${size}, ${scheme})`, async ({ page, botbench }) => {
-        // Opened from Settings at a phone's width, then widened, as e2e/trust.e2e.ts does: from 1024px Settings is two
-        // panes and its list of links is not shown.
+        // Opened from Settings at a phone's width, through its list of groups, then widened, as e2e/trust.e2e.ts does.
         await page.setViewportSize(SIZES.phone);
         await signIn(page, botbench);
         await openFromSettings(page, "Permissions");
         await page.setViewportSize(viewport);
-        await expect(page.getByRole("heading", { name: "Permissions", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Permissions and autonomy", level: 1 })).toBeVisible();
         const expired = page.getByText("Denied by Botbench: nobody answered in time", { exact: true });
         const repeated = page.getByText("Denied without asking: you denied it before in this task", { exact: true });
         await expect(expired).toBeVisible();
         await expect(repeated).toBeVisible();
-        await checkDesign(page, `permissions with the new rules, ${size}, ${scheme}`);
+        await checkNext(page, `permissions with the new rules, ${size}, ${scheme}`);
         await fits(page, `permissions with the new rules, ${size}, ${scheme}`, [expired, repeated]);
       });
 

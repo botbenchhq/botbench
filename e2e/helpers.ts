@@ -46,23 +46,41 @@ export async function askBeforeEveryCommand(page: Page, botbench: Botbench): Pro
   expect(res.status(), await res.text()).toBe(200);
 }
 
+/**
+ * Follow one link of the navigation. A screen rebuilt on shadcn/ui (ADR 0012) keeps its navigation behind the menu
+ * button at a phone's width: there the menu is opened first, as a person would.
+ */
+async function throughNav(page: Page, name: string): Promise<void> {
+  const menu = page.getByRole("button", { name: "Screens menu" });
+  if (await menu.isVisible()) {
+    await menu.click();
+    await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
+  } else await nav(page).getByRole("link", { name, exact: true }).click();
+}
+
 export async function openComposer(page: Page): Promise<void> {
-  await nav(page).getByRole("link", { name: "Chat", exact: true }).click();
+  await throughNav(page, "Chat");
   await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
   await expect(messageBox(page)).toBeVisible();
 }
 
 /** Work, the list of runs and of tasks started on their own, from the navigation. */
 export async function openWork(page: Page): Promise<void> {
-  await nav(page).getByRole("link", { name: "Work", exact: true }).click();
+  await throughNav(page, "Work");
   await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
 }
 
-/** Permissions or Usage, reached from Settings (the header's gear), as the client offers them. */
+/**
+ * Permissions and autonomy or Usage and limits, two of the six groups of Settings, reached as a person reaches them:
+ * the Settings link, then the group, from the list of groups at a phone's width and from the settings navigation from 1024px.
+ */
 export async function openFromSettings(page: Page, screen: "Permissions" | "Usage"): Promise<void> {
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await page.getByTestId("settings-links").getByRole("link", { name: new RegExp(`^${screen}`) }).click();
-  await expect(page.getByRole("heading", { name: screen, level: 1 })).toBeVisible();
+  const name = screen === "Permissions" ? "Permissions and autonomy" : "Usage and limits";
+  await page.getByRole("link", { name: "Settings", exact: true }).first().click();
+  await expect(page.getByTestId("settings")).toBeVisible();
+  const from = (await page.getByTestId("settings-groups").count()) > 0 ? page.getByTestId("settings-groups") : page.getByTestId("settings-nav");
+  await from.getByRole("link", { name: new RegExp(`^${name}`) }).click();
+  await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
 }
 
 /**

@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, initRepo, worktreeCount } from "../test/support/repo.ts";
 import { askBeforeEveryCommand, checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
+import { checkNext, GROUPS, type Group } from "./settings-helpers.ts";
 
 // The runs board, Settings and the appearance choice in the real client, at a phone's size: a real Botbench process,
 // real temporary repositories, and, for the tests marked LIVE, the owner's Claude Code on its cheapest model. A run's
@@ -22,6 +23,12 @@ async function openSettings(page: Page): Promise<void> {
   // Settings is the header's action, on every signed-in screen: the tab bar keeps to the app's main destinations.
   await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+}
+
+/** One of the six groups of Settings, from its list of groups, as a phone shows them. */
+async function openGroup(page: Page, group: Group): Promise<void> {
+  await page.getByTestId("settings-groups").getByRole("link", { name: new RegExp(`^${GROUPS[group]}`) }).click();
+  await expect(page.getByRole("heading", { name: GROUPS[group], level: 1 })).toBeVisible();
 }
 
 /** Sign in where Claude Code cannot be used: the Chat screen then says why instead of offering a prompt. */
@@ -72,10 +79,11 @@ test("with Claude Code signed out, the empty board says why and links to Setting
     await shot(page, "u16-board-signed-out.png");
     await state.getByRole("link", { name: "Open settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+    await openGroup(page, "agents");
     const agent = page.getByTestId("agent-claude-code");
     await expect(agent.getByTestId("agent-state")).toHaveText("Signed out");
     await expect(agent).toContainText("Claude Code is signed out. Run `claude auth login` in a terminal.");
-    await checkDesign(page, "settings, Claude Code signed out");
+    await checkNext(page, "settings, Claude Code signed out");
   } finally {
     const { leftover } = await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
@@ -87,13 +95,14 @@ test("with Claude Code signed out, the empty board says why and links to Setting
 test("Settings lists each agent Botbench has, as the real probe reports it, and no other", async ({ page, botbench }) => {
   await signIn(page, botbench);
   await openSettings(page);
+  await openGroup(page, "agents");
   const probe = (await (await page.request.get(`${botbench.base}/api/driver`)).json()) as { version: string; signedIn: boolean; billing: string };
   expect(probe.signedIn, "this machine's Claude Code is signed in").toBe(true);
   // The agents the server really registers, as it lists them: one row each, and no other.
   const listed = ((await (await page.request.get(`${botbench.base}/api/agents`)).json()) as { agents: { agent: string; version: string | null; problem: string | null }[] }).agents;
   expect(listed.map((found) => found.agent), "Claude Code, the agent that builds, is listed").toContain("claude-code");
-  const agents = page.getByRole("group", { name: "Agents" });
-  await expect(agents.locator(".ds-settings-row")).toHaveCount(listed.length);
+  const agents = page.getByTestId("agents");
+  await expect(agents.locator("[data-testid^=agent-]:not([data-testid=agent-state])")).toHaveCount(listed.length);
   for (const found of listed) await expect(agents.getByTestId(`agent-${found.agent}`)).toHaveCount(1);
   const agent = page.getByTestId("agent-claude-code");
   await expect(agent.getByTestId("agent-state")).toHaveText("Available");
@@ -109,12 +118,11 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   // Grok and Antigravity, each with the state its own probe reports.
   for (const key of ["grok", "antigravity"]) await expect(page.getByTestId(`agent-${key}`).getByTestId("agent-state")).toHaveText(/^(Available|Signed out|Not installed|Unsupported version|Unavailable)$/);
   await expect(page.getByText("Gemini CLI")).toHaveCount(0);
-  // Settings is no tab: the tab bar keeps its two destinations. Its first rows lead to Permissions and Usage.
-  await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Chat", "Work"]);
-  await expect(page.locator('.ds-tab-bar__item[aria-current="page"]')).toHaveCount(0);
-  await expect(page.getByTestId("settings-links").getByRole("link")).toHaveText([/^Permissions/, /^Usage/]);
-  expect(await page.getByTestId("settings-links").locator("svg use").evaluateAll((uses) => uses.map((use) => use.getAttribute("href")!.split("#")[1])), "each row ends with a chevron").toEqual(["ds-icon-chevron-right", "ds-icon-chevron-right"]);
-  await checkDesign(page, "settings");
+  await checkNext(page, "settings, agents and models");
+  // Settings itself is the list of its six groups, each a row that opens it.
+  await page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByTestId("settings-groups").getByRole("link")).toHaveText(Object.values(GROUPS).map((name) => new RegExp(`^${name}`)));
+  await checkNext(page, "settings");
   await shot(page, "u16-settings.png");
 });
 
@@ -135,18 +143,25 @@ test("Appearance: Light changes the page, its browser bar and its logo (which fo
   // After a change of mode: the mark is in the text colour again, and it is no longer the dark mode's.
   const followsText = async () => (await markFill()) === (await nameColour()) && (await markFill()) !== darkFill;
 
+  // Appearance is under Workbench identity. The screens rebuilt on shadcn/ui draw the approved theme's canvas (styles/theme.css).
+  const LIGHT_CANVAS = "rgb(245, 246, 247)";
   await openSettings(page);
-  const mode = page.getByLabel("Mode");
+  await openGroup(page, "identity");
+  const mode = page.getByLabel("Appearance");
   await expect(mode).toHaveValue("dark");
   await mode.selectOption("light");
   await expect(root).toHaveAttribute("data-theme", "light");
   await expect(bar).toHaveCount(1);
   await expect(bar).toHaveAttribute("content", THEME_COLOR.light);
-  await expect.poll(followsText, { message: "the mark is drawn in the light mode's text colour, not the dark mode's" }).toBe(true);
-  expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(token("surface", "light"));
+  expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(LIGHT_CANVAS);
   expect(await root.evaluate((el) => getComputedStyle(el).colorScheme)).toBe("light");
   expect(await pageMode(page)).toBe("light");
-  await checkDesign(page, "settings, light");
+  await checkNext(page, "settings, light");
+  // The header's mark is on the screens that still have the old header: there it follows the text colour to light.
+  await page.goto(`${botbench.base}/#/turn`);
+  await expect.poll(followsText, { message: "the mark is drawn in the light mode's text colour, not the dark mode's" }).toBe(true);
+  await page.goto(`${botbench.base}/#/settings/identity`);
+  await expect(page.getByLabel("Appearance")).toHaveValue("light");
   await shot(page, "u16-settings-light.png");
 
   // Remembered on this device: after a reload the page is light before the client's script has run. The script is held
@@ -163,32 +178,34 @@ test("Appearance: Light changes the page, its browser bar and its logo (which fo
   await expect(page.locator("#root")).toBeEmpty();
   expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor), "the first paint is light").toBe(token("surface", "light"));
   release();
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workbench identity", level: 1 })).toBeVisible();
   await page.unrouteAll({ behavior: "wait" });
-  await expect(page.getByLabel("Mode")).toHaveValue("light");
+  await expect(page.getByLabel("Appearance")).toHaveValue("light");
 
   // Match device follows the device's own setting, and its changes while the page is open.
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.getByLabel("Mode").selectOption("auto");
+  await page.getByLabel("Appearance").selectOption("auto");
   await expect(root).toHaveAttribute("data-theme", "auto");
   await expect(bar).toHaveAttribute("content", THEME_COLOR.dark);
-  await expect.poll(markFill, { message: "the mark follows the device back to dark" }).toBe(darkFill);
   expect(await pageMode(page)).toBe("dark");
   await page.emulateMedia({ colorScheme: "light" });
   await expect(bar).toHaveAttribute("content", THEME_COLOR.light);
-  await expect.poll(followsText, { message: "the mark follows the device to light" }).toBe(true);
+  await expect.poll(() => page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor), { message: "the page follows the device to light" }).toBe(LIGHT_CANVAS);
   expect(await pageMode(page)).toBe("light");
-  await checkDesign(page, "settings, match device, light");
+  await checkNext(page, "settings, match device, light");
 
   // Dark again: said on the root, and remembered too.
-  await page.getByLabel("Mode").selectOption("dark");
+  await page.getByLabel("Appearance").selectOption("dark");
   await expect(bar).toHaveAttribute("content", THEME_COLOR.dark);
   await expect(root).toHaveAttribute("data-theme", "dark");
   await page.reload();
-  await expect(page.getByLabel("Mode")).toHaveValue("dark");
+  await expect(page.getByLabel("Appearance")).toHaveValue("dark");
   await expect(root).toHaveAttribute("data-theme", "dark");
   expect(await root.evaluate((el) => getComputedStyle(el).colorScheme)).toBe("dark");
-  await checkDesign(page, "settings, dark");
+  await checkNext(page, "settings, dark");
+  // And the mark is back in the dark mode's text colour, where the old header still is.
+  await page.goto(`${botbench.base}/#/turn`);
+  await expect.poll(markFill, { message: "the mark is dark again" }).toBe(darkFill);
 });
 
 test("LIVE: the board puts runs in their groups and moves them live, without a reload, and the selector switches the group shown", async ({ page, botbench }) => {
@@ -319,13 +336,15 @@ test("in light mode, sign-in and Settings are drawn in the light colours", async
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.getByLabel("Login token")).toBeVisible();
-  await checkDesign(page, "sign-in, light");
+  await checkNext(page, "sign-in, light");
+  expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(245, 246, 247)");
   await shot(page, "u16-light-sign-in.png");
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await openSettings(page);
-  await checkDesign(page, "settings, light");
+  await checkNext(page, "settings, light");
+  expect(await page.locator("body").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(245, 246, 247)");
   await shot(page, "u16-light-settings.png");
 });
 

@@ -6,6 +6,7 @@ import { watchAbout } from "../web/src/app/watch-words.ts";
 import { capturedIssue, loadWatchCapture, WATCH_ADDRESS } from "../test/support/replay-watch.ts";
 import { git, initRepo } from "../test/support/repo.ts";
 import { checkDesign, closeContext, contextSheet, expect, signIn } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // An issue proposed on Work by the issue watch (issue #73), in the real client at a phone's size, with no model turn. A
@@ -86,10 +87,10 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   // Settings shows the watch, with the label's warning in plain words.
   // Right after the restart the first look may still be under way, before it has found the repository the remote names:
   // the page is read again until it has.
-  await page.goto(`${botbench.base}/#/settings`);
+  await page.goto(`${botbench.base}/#/settings/environments`);
   await expect(async () => {
     await page.reload();
     await expect(page.getByTestId("watch")).toContainText(watchAbout({ label, intervalMinutes: 10, repository: "github.com/jon-lange/botbench" }), { timeout: 2_000 });
   }).toPass({ timeout: 15_000 });
-  await checkDesign(page, "Settings, with a watched repository");
+  await checkNext(page, "Settings, with a watched repository");
 });

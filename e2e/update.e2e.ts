@@ -3,7 +3,8 @@ import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { commitAndTag, bumpVersion, notesFor, smallRepo, startReleaseServer, type ReleaseServer } from "../test/support/releases.ts";
 import { git } from "../test/support/repo.ts";
-import { checkDesign, expect, pageMode, signIn, tempShot } from "./helpers.ts";
+import { expect, pageMode, signIn, tempShot } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Settings' Version row (issue #116) in the real client, at a phone's size and at a desktop's, light and dark: a real
@@ -46,25 +47,26 @@ async function inMode(page: Page, mode: "light" | "dark"): Promise<void> {
   await expect.poll(() => pageMode(page)).toBe(mode);
 }
 
-for (const size of [{ name: "phone", width: 390, height: 844, address: "#/settings" }, { name: "desktop", width: 1280, height: 900, address: "#/settings/workbench" }] as const) {
+for (const size of [{ name: "phone", width: 390, height: 844, address: "#/settings/identity" }, { name: "desktop", width: 1280, height: 900, address: "#/settings/workbench" }] as const) {
   test(`Settings shows the version, the release to update to with its notes, and when to update (${size.name})`, async ({ page, botbench, install }) => {
     await page.setViewportSize({ width: size.width, height: size.height });
     await signIn(page, botbench);
     await page.goto(`${botbench.base}/${size.address}`);
     const group = page.getByTestId("update-settings");
-    await expect(group.getByRole("heading", { name: "Version" })).toBeVisible();
+    // The desktop's address is the one Settings had before its groups: it opens Workbench identity, where the version now is.
+    await expect(page).toHaveURL(/#\/settings\/identity$/);
     const row = group.getByTestId("version-row");
-    await expect(row.locator(".ds-settings-row__label")).toHaveText("Botbench 0.1.0");
-    await expect(row.locator(".ds-settings-row__description")).toHaveText("Update available: 0.2.0 — update Botbench from Settings");
+    await expect(row.getByRole("heading")).toHaveText("Botbench 0.1.0");
+    await expect(row.getByTestId("version-about")).toHaveText("Update available: 0.2.0 — update Botbench from Settings");
     // The notes are the repository's words: shown as text, marked as such.
     await expect(row.locator("[data-ds-content]")).toHaveText("update Botbench from Settings");
     await expect(row.getByRole("button", { name: "Update now" })).toBeVisible();
-    await expect(group.getByLabel("Updates")).toHaveValue("tap");
+    await expect(group.getByLabel("Updates", { exact: true })).toHaveValue("tap");
     for (const mode of ["light", "dark"] as const) {
       await inMode(page, mode);
       await group.scrollIntoViewIfNeeded();
       await expect(row.getByRole("button", { name: "Update now" })).toBeVisible();
-      await checkDesign(page, `Settings, Version with an update available (${size.name}, ${mode})`);
+      await checkNext(page, `Settings, Version with an update available (${size.name}, ${mode})`);
       await tempShot(page, `update-${size.name}-${mode}`);
     }
 
@@ -74,19 +76,19 @@ for (const size of [{ name: "phone", width: 390, height: 844, address: "#/settin
     fs.writeFileSync(path.join(install, "README.md"), "a change of the owner's\n");
     const failed = group.getByTestId("update-failed");
     const refusal = "has changes that are not committed, so it was not updated. Commit or remove them, then update again.";
-    await group.getByLabel("Updates").selectOption("auto");
+    await group.getByLabel("Updates", { exact: true }).selectOption("auto");
     await page.reload();
-    await expect(group.getByLabel("Updates")).toHaveValue("auto");
+    await expect(group.getByLabel("Updates", { exact: true })).toHaveValue("auto");
     await expect(failed).toContainText(refusal);
-    await group.getByLabel("Updates").selectOption("tap");
-    await expect(group.getByLabel("Updates")).toHaveValue("tap");
+    await group.getByLabel("Updates", { exact: true }).selectOption("tap");
+    await expect(group.getByLabel("Updates", { exact: true })).toHaveValue("tap");
     await page.reload();
     await row.getByRole("button", { name: "Update now" }).click();
     await expect(failed).toContainText(refusal);
     // Offered again once it has answered, and drawn at rest (not in the pressed button's fade).
     await expect(row.getByRole("button", { name: "Update now" })).toBeEnabled();
     await page.mouse.move(0, 0);
-    await checkDesign(page, `Settings, Version after a refused update (${size.name}, dark)`);
+    await checkNext(page, `Settings, Version after a refused update (${size.name}, dark)`);
     await tempShot(page, `update-${size.name}-refused`);
     expect(git(install, "rev-parse", "HEAD").trim()).toBe(before);
   });

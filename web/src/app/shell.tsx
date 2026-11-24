@@ -4,16 +4,11 @@ import { arrive, mayLeave, noteNavigation, tabTitle } from "./arrival.ts";
 import { parseRoute, type Route } from "./route.ts";
 import { ApprovalsProvider } from "./approvals.tsx";
 import { PeerCardsProvider } from "./peer-cards.tsx";
-import { ThreadScreen } from "../screens/thread.tsx";
-import { Alert, Frame, Page } from "../components/header.tsx";
+import { Frame, Page } from "../components/header.tsx";
 import { BoardScreen } from "../screens/board.tsx";
-import { SettingsScreen } from "../screens/settings.tsx";
-import { SignInScreen } from "../screens/sign-in.tsx";
 import { TaskScreen } from "../screens/task.tsx";
-import { TrustScreen } from "../screens/trust.tsx";
 import { OpenChat, TurnScreen } from "../screens/turn.tsx";
-import { isRebuilt, rebuilt } from "../screens2/routes.tsx";
-import { UsageScreen } from "../screens/usage.tsx";
+import { isRebuilt, rebuilt, sessionState, signInScreen } from "../screens2/routes.tsx";
 import { WorkColumn } from "../components/work-column.tsx";
 import { useWide } from "./wide.ts";
 
@@ -78,25 +73,18 @@ function NotFound({ what }: { what: string }) {
   );
 }
 
-function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
-  // From 1024px Permissions and Usage are sections of the two-pane Settings, at their own addresses.
-  if (wide && (route.screen === "trust" || route.screen === "usage")) return <SettingsScreen section={route.screen === "trust" ? "permissions" : "usage"} onSignedOut={onSignedOut} />;
+function screenFor(route: Route, onSignedOut: () => void) {
   if (route.screen === "turn") return <TurnScreen key={`${route.start ?? ""} ${route.proposal ?? ""} ${route.from === undefined ? "" : `${route.from.kind}-${route.from.id}`}`} start={route.start} proposal={route.proposal ?? null} from={route.from ?? null} onSignedOut={onSignedOut} />;
   if (route.screen === "redirect") return <Redirect to={route.to} />;
-  if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
-  if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
   if (route.screen === "work") return <BoardScreen onSignedOut={onSignedOut} />;
-  if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
   // A screen rebuilt on shadcn/ui (ADR 0012), when there is one for this address: screens2/routes.tsx is the one switch.
   const next = rebuilt(route, onSignedOut);
   if (next !== null) return next;
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
-  if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
-  // A run is always a rebuilt screen (screens2/routes.tsx), returned above.
-  if (route.screen === "run") return null;
-  return <NotFound key={route.what} what={route.what} />;
+  // A run, Settings and a conversation with the paired workbench are always rebuilt screens (screens2/routes.tsx), returned above.
+  return route.screen === "none" ? <NotFound key={route.what} what={route.what} /> : null;
 }
 
 /** The row of the column of chats and work that the open screen shows, as WorkColumn keys it. */
@@ -113,9 +101,8 @@ const openRow = (route: Route): string | null => (route.screen === "task" ? `tas
 function Beside({ route, wide, onSignedOut, children }: { route: Route; wide: boolean; onSignedOut: () => void; children: ReactNode }) {
   // Kept here, so the search is still there after a visit to Settings, which has no column.
   const [query, setQuery] = useState("");
-  const settings = route.screen === "settings" || route.screen === "trust" || route.screen === "usage";
-  // A rebuilt screen has its own navigation at the left, and no column beside it.
-  const split = wide && !settings && !isRebuilt(route);
+  // A rebuilt screen (Settings among them) has its own navigation at the left, and no column beside it.
+  const split = wide && !isRebuilt(route);
   // The screen keeps its place in the tree at every width: crossing 1024px only adds or removes the column and the
   // panel's classes, so the screen is not drawn anew and keeps what the owner typed (a note, a message, an open dialog).
   // Below 1024px, and on Settings, the two wrappers are `display: contents`: the screen is laid out as if drawn alone.
@@ -169,25 +156,12 @@ export function Shell() {
       <ApprovalsProvider onSignedOut={onSignedOut}>
         <PeerCardsProvider onSignedOut={onSignedOut}>
           <Beside route={route} wide={wide} onSignedOut={onSignedOut}>
-            {screenFor(route, onSignedOut, wide)}
+            {screenFor(route, onSignedOut)}
           </Beside>
         </PeerCardsProvider>
       </ApprovalsProvider>
     );
   }
-  if (session === "signed-out") return <SignInScreen notice={notice} onSignedIn={onSignedIn} />;
-  return (
-    <main className="ds-sign-in p-lg">
-      <p className="ds-sign-in__product">Botbench</p>
-      {session === "checking" ? (
-        <p role="status" className="ds-spinner">
-          Checking your session.
-        </p>
-      ) : (
-        <Alert tone="warning" role="status">
-          Cannot reach Botbench. Trying again every two seconds.
-        </Alert>
-      )}
-    </main>
-  );
+  if (session === "signed-out") return signInScreen(notice, onSignedIn);
+  return sessionState(session === "unreachable");
 }
