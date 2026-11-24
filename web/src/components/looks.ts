@@ -17,6 +17,8 @@ export const LOOKS = {
   done: { tone: "success", icon: "check" },
   accepted: { tone: "success", icon: "thumbs-up" },
   rejected: { tone: "neutral", icon: "x" },
+  // Not in the set: a task accepted without verification, as no checks ran on it. Accepted, and not a success of any check: drawn neutral.
+  acceptedUnverified: { tone: "neutral", icon: "thumbs-up" },
   // Not in the set (a run's planning and a task's resuming are work, drawn as Working is). A run that ended with no task ever ready for review: nothing was built to decide on. Drawn as an end that is not a success.
   nothingToReview: { tone: "neutral", icon: "circle-slash" },
   // Not in the set, and no tone of the set says "where this came from": a run or task that read a GitHub issue, which

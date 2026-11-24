@@ -14,8 +14,9 @@ import type { DriverEvent, TurnEndReason } from "../drivers/events.ts";
 import { now, transaction } from "../store/db.ts";
 import { confinementProblem, type Confinement } from "../confinement.ts";
 import { workbenchName } from "../workbench.ts";
-import { abortMerge, commitsBehind, commitsDiff, commitWork, concludeMerge, copyHead, createWorktree, describeCommits, describeWork, mainBranchOf, mergeIntoTask, mergeUnderWay, removeWorktree, sharedGitDir, sourceHead, type MainBranch, type Worktree } from "../worktrees.ts";
+import { abortMerge, commitsBehind, commitsDiff, commitWork, concludeMerge, copyDifferences, copyHead, createWorktree, describeCommits, describeWork, mainBranchOf, mergeIntoTask, mergeUnderWay, removeWorktree, sharedGitDir, sourceHead, type MainBranch, type Worktree } from "../worktrees.ts";
 import { runMachineCheck, type MachineCheck } from "./machine-checks.ts";
+import { endCheckRerunIn, evidenceState, openCheckRerun, shortCommit, startCheckRerunIn, type CheckRerun } from "./evidence.ts";
 import { conflictPrompt, endBranchUpdateIn, openBranchUpdate, setMergeCommitIn, setUpdateAttempt, setUpdateConflicts, startBranchUpdateIn, updateWithMainOf, type BranchUpdate, type BranchUpdateOutcome } from "./branch-update.ts";
 import { CHANGED_NOTHING_PROMPT, closeLeftCommands, CONTINUE_PROMPT, RESTART_STOPPED, RESUME_PROMPT, resumeProblem, silentPrompt, stopSurvivor } from "./recover.ts";
 import { askEveryCommand, autoAccept, modeRefusals, reviewOutcome, runModeOf, unaskedQuestions, type RunMode } from "./modes.ts";
@@ -63,8 +64,8 @@ const MOVES: Record<TaskStatus, readonly TaskStatus[]> = {
   reviewing: ["building", "awaiting_decision", "failed", "cancelled"],
   // To itself: a fully autonomous run that could not accept the task records why it waits for the owner. To building:
   // the owner's note starts a round in the builder's session (engine/note-rounds.ts), or the owner's "Bring up to
-  // date with main" (engine/branch-update.ts).
-  awaiting_decision: ["awaiting_decision", "accepted", "rejected", "building"],
+  // date with main" (engine/branch-update.ts). To verifying: the owner's "Run checks again" (engine/evidence.ts).
+  awaiting_decision: ["awaiting_decision", "accepted", "rejected", "building", "verifying"],
   accepted: [],
   rejected: [],
   interrupted: ["building", "verifying"],
@@ -548,6 +549,16 @@ export interface Tasks {
   updateWithMain(id: number): Promise<Task>;
   /** How far a task's branch is behind main, for its screen; a problem in words when it cannot be read; null with no committed work. */
   mainStatus(id: number): Promise<{ branch: string; behind: number } | { problem: string } | null>;
+  /**
+   * The owner's "Run checks again" on a task that is ready for review whose checks are not about the commit its branch
+   * holds (engine/evidence.ts): the repository's configured checks, and nothing else, run again in the task's copy, in
+   * the sandbox and with the limits every check of the task runs with, as a new round of evidence that names the commit
+   * it ran on. No agent is started, whatever they find; the task is then ready for review again. It takes the task and
+   * nothing more: there is no way to name a command. Resolves once the task has moved to its checks. Throws a TaskError
+   * for a task that does not exist (404), and one that is not ready for review, is being decided, has evidence that is
+   * current, a copy that differs from its commit, or no checks to run (409), saying why.
+   */
+  runChecksAgain(id: number): Promise<Task>;
   /** Resolves when nothing is being built or recovered. */
   idle(): Promise<void>;
   /**
@@ -830,6 +841,9 @@ export function createTasks(options: TasksOptions): Tasks {
     const round = nextRound(db, task.id, kind);
     // The whole list is known before its first command runs, so a count shown meanwhile is out of all of it.
     if (commands.length > 0) startCommandList(db, task.id, kind, round, commands.length);
+    // What a round of checks is about: the commit the copy is at as the round begins, read from the copy itself, and
+    // only when no file there differs from it. Otherwise it is not known, and the round's results name no commit.
+    const commit = kind === "check" && commands.length > 0 ? await checkedCommit(task) : null;
     let failed: CommandRun | null = null;
     // Where the commands run: on this Mac, or in the task's container. One that cannot be had runs none of them, and each says why.
     let container: TaskContainer | null = given ?? null;
@@ -839,7 +853,7 @@ export function createTasks(options: TasksOptions): Tasks {
       } catch (err) {
         for (const [i, command] of commands.entries()) {
           const run = notRun(command, `Botbench did not run this command. ${words(err)}`);
-          insertEvidence(db, task.id, kind, i + 1, run, round);
+          insertEvidence(db, task.id, kind, i + 1, run, round, null, commit);
           failed ??= run;
           if (kind === "setup") break;
         }
@@ -851,7 +865,7 @@ export function createTasks(options: TasksOptions): Tasks {
     let unrunnable: CommandRun | null = null;
     for (const [i, command] of commands.entries()) {
       if (signal?.aborted || closed) return { stopped: true, failed, notRun: unrunnable };
-      const track = { db, taskId: task.id, kind, round, position: i + 1 };
+      const track = { db, taskId: task.id, kind, round, position: i + 1, commit };
       const result =
         "machine" in command
           ? await runMachineCheck({ check: command, task: { repo: task.repo, baseCommit: task.baseCommit, headCommit: getTask(db, task.id)?.headCommit ?? task.headCommit, worktreePath: task.worktreePath! }, confinement: confinement(task), container, outsideText: runOutside(db, task.runId).text, unconfinable: confinementProblem(), track, ...(signal ? { signal } : {}) })
@@ -869,6 +883,20 @@ export function createTasks(options: TasksOptions): Tasks {
       }
     }
     return { stopped: false, failed, notRun: unrunnable };
+  };
+  /**
+   * The commit a round of checks beginning now in a task's copy is about: the one the copy is at, when it holds no
+   * tracked file that differs from it and no file that is neither tracked nor ignored. Null when it holds one, or
+   * cannot be read: results that name no commit are never taken as current (engine/evidence.ts).
+   */
+  const checkedCommit = async (task: Task): Promise<string | null> => {
+    try {
+      const copy = await copyDifferences(task.worktreePath!);
+      return copy.changed.length === 0 && copy.untracked.length === 0 ? copy.commit : null;
+    } catch (err) {
+      report(`Reading the commit task ${task.id}'s checks run on`)(err);
+      return null;
+    }
   };
   /** A task's checks as one list: the repository's checks, then its machine checks (engine/machine-checks.ts). */
   const checksOf = (task: Pick<Task, "repo">): (StationCommand | MachineCheck)[] => {
@@ -909,6 +937,9 @@ export function createTasks(options: TasksOptions): Tasks {
    * Botbench stopping, the task is left for the next start, which runs them again from the start.
    */
   const check = async (task: Task, checks: readonly (StationCommand | MachineCheck)[], stopped?: AbortSignal): Promise<void> => {
+    // The owner's "Run checks again": the checks, and then back to the owner. No builder and no reviewer is started.
+    const rerun = openCheckRerun(db, task.id);
+    if (rerun !== null) return checkAgain(task, rerun, checks, stopped);
     if (checks.length === 0) return review(task, "verifying", { checks: "none" }, stopped);
     const ran = await runList(task, "check", checks, stopped);
     if (ran.stopped) {
@@ -925,6 +956,40 @@ export function createTasks(options: TasksOptions): Tasks {
       if (used > 0) return review(task, "verifying", { checks: "failed", note: `a check still failed after ${used} of ${checkFixCap} rounds of fixes for a failing check; the rounds ran out` }, stopped);
     }
     await review(task, "verifying", { checks: ran.failed === null && ran.notRun === null ? "passed" : "failed" }, stopped);
+  };
+
+  /**
+   * The checks of the owner's "Run checks again" (engine/evidence.ts), on a task at `verifying` with that re-run open:
+   * the repository's checks run as a new round of evidence, and the task goes back to the owner, ready for review, with
+   * what they found, in the same write that ends the re-run. A check that fails is not sent to the builder, and nothing
+   * is reviewed again: the owner asked for the checks. Stopped before they finished (a cancel, the checks taken out of
+   * the settings meanwhile), the task goes back as it was and the unfinished round counts for nothing; Botbench
+   * stopping leaves it for the next start, which runs them again from the start.
+   */
+  const checkAgain = async (task: Task, rerun: CheckRerun, checks: readonly (StationCommand | MachineCheck)[], stopped?: AbortSignal): Promise<void> => {
+    const back = (outcome: "passed" | "failed" | "stopped", note: string): void => {
+      const moved = transaction(db, () => {
+        if (getTask(db, task.id)?.status !== "verifying") return null;
+        // The mark changes while the re-run is still open, and only then (the store's `tasks_checks_once`).
+        const at = moveTaskIn(db, task.id, "awaiting_decision", { ...(outcome === "stopped" ? {} : { checks: outcome }), note });
+        endCheckRerunIn(db, rerun.id, outcome);
+        return at;
+      });
+      // The task moved on meanwhile (its run was cancelled): the re-run still ends.
+      if (moved === null) endCheckRerunIn(db, rerun.id, "stopped");
+      options.onTaskChange(moved ?? getTask(db, task.id)!);
+    };
+    // voice: not on screen. Notes in the stored history of the task, in the plan's own terms; no screen reads them.
+    if (checks.length === 0) return back("stopped", "the owner asked for the checks to be run again, and the repository has none set up now; nothing was run");
+    // Nothing ran, so nothing is recorded as a result of the checks.
+    if (!fs.statSync(task.worktreePath!, { throwIfNoEntry: false })?.isDirectory()) return back("stopped", "the owner asked for the checks to be run again, and the task's copy is no longer there; nothing was run");
+    const ran = await runList(task, "check", checks, stopped);
+    if (ran.stopped) {
+      if (closed) return leave(task.id, "verifying", "the checks of this task ran again");
+      return back("stopped", "the checks the owner asked to be run again were stopped before they finished");
+    }
+    const found = ran.failed === null && ran.notRun === null ? "passed" : "failed";
+    back(found, `the checks ran again as the owner asked, on the branch at ${rerun.headCommit}: ${found}`);
   };
 
   /**
@@ -2453,6 +2518,53 @@ export function createTasks(options: TasksOptions): Tasks {
     return started;
   };
 
+  const runChecksAgain = async (id: number): Promise<Task> => {
+    if (closed) throw new TaskError(503, "Botbench is shutting down.");
+    const task = getTask(db, id);
+    if (!task) throw new TaskError(404, "No such task.");
+    if (task.status !== "awaiting_decision") throw new TaskError(409, `The checks are run again only on a task that is ready for review. This task ${STANDS[task.status]}.`);
+    // Loaded here: decision.ts builds on this module, which must not need it before both are loaded.
+    const { beingDecided } = await import("./decision.ts");
+    const deciding = (): void => {
+      // A decision at work on the task may be removing its copy: nothing is run in it meanwhile.
+      if (beingDecided(id)) throw new TaskError(409, "This task is being decided, so its checks were not run again.");
+    };
+    deciding();
+    let state: Awaited<ReturnType<typeof evidenceState>>;
+    try {
+      state = await evidenceState(db, task, { checksSetUp: checksOf(task).length > 0 });
+    } catch (err) {
+      throw new TaskError(409, `The task's copy or its branch could not be read, so its checks were not run again: ${words(err)}`);
+    }
+    if (state.state === "current") throw new TaskError(409, `The checks already ran on commit ${shortCommit(state.headCommit!)}, the commit this task's branch holds, so there is nothing to run again.`);
+    // A copy that differs from its commit, no checks at all (then or now), a copy or a branch that is gone: the state's
+    // own words say what is so and what to do. What runs is only what the repository's settings list as its checks, as
+    // they are now: the request names no command.
+    if (state.state !== "stale" || !state.canRunAgain) throw new TaskError(409, state.words);
+    const started = transaction(db, () => {
+      deciding();
+      if (getTask(db, id)?.status !== "awaiting_decision" || openCheckRerun(db, id) !== null) return null;
+      startCheckRerunIn(db, { taskId: id, fromCommit: state.checkedCommit, headCommit: state.headCommit! });
+      // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+      return moveTaskIn(db, id, "verifying", { note: `the owner asked for the checks to be run again: the branch is at ${state.headCommit}, and the results before were for ${state.checkedCommit ?? "a commit that was not recorded"}` });
+    });
+    if (started === null) throw new TaskError(409, `This task is no longer ready for review, so its checks were not run again: it ${STANDS[getTask(db, id)?.status ?? "cancelled"]}.`);
+    options.onTaskChange(started);
+    chain = chain
+      .then(async () => {
+        const at = getTask(db, id);
+        const rerun = openCheckRerun(db, id);
+        if (rerun === null) return;
+        // It moved on while it waited its turn (its run was cancelled), or Botbench is stopping: the next start takes it up.
+        if (at?.status !== "verifying") return endCheckRerunIn(db, rerun.id, "stopped");
+        if (closed) return;
+        await atWork(at, (stop) => check(at, checksOf(at), stop.signal));
+      })
+      .then(() => settle(getTask(db, id)?.runId ?? null))
+      .catch(report(`Running the checks of task ${id} again`));
+    return started;
+  };
+
   const mainStatus = async (id: number): Promise<{ branch: string; behind: number } | { problem: string } | null> => {
     const task = getTask(db, id);
     if (task === null || task.headCommit === null || task.worktreePath === null) return null;
@@ -2488,6 +2600,14 @@ export function createTasks(options: TasksOptions): Tasks {
     for (const row of db.prepare("SELECT id FROM tasks WHERE run_id = ? AND status IN ('building', 'verifying') ORDER BY id").all(runId)) {
       const task = getTask(db, Number(row.id))!;
       if (active?.taskId === task.id) continue;
+      // Waiting for its turn on the owner's "Run checks again": it was ready for review, and is again.
+      const rerun = task.status === "verifying" ? openCheckRerun(db, task.id) : null;
+      if (rerun !== null) {
+        // voice: not on screen. A note in the stored history of the task, in the plan's own terms; no screen reads it.
+        const back = moveFrom(task.id, "verifying", "awaiting_decision", { note: "the run was cancelled before the checks the owner asked for ran again" });
+        endCheckRerunIn(db, rerun.id, "stopped");
+        if (back !== null) continue;
+      }
       if (task.status === "verifying") moveFrom(task.id, "verifying", "cancelled", { reason: "The run was cancelled before this task's checks ran again. The work is committed to its branch." });
       else if (task.worktreePath === null) moveFrom(task.id, "building", "cancelled", { reason: CANCELLED });
       else await finish(task, "cancelled", CANCELLED);
@@ -2534,5 +2654,5 @@ export function createTasks(options: TasksOptions): Tasks {
     return done;
   };
 
-  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, waitingFor, handOff, moveOffer, updateWithMain, mainStatus, reconsider, idle, close };
+  return { start, startGiven, builderProblem, buildRun, stopRun, resume, sendNote, waitingFor, handOff, moveOffer, updateWithMain, mainStatus, runChecksAgain, reconsider, idle, close };
 }

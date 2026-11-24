@@ -146,7 +146,7 @@ export async function runMachineCheck(o: {
   const { check, track } = o;
   const needs = needsWords(check.machine.needs);
   const record = (run: CommandRun): CommandRun => {
-    insertEvidence(track.db, track.taskId, track.kind, track.position, run, track.round, needs);
+    insertEvidence(track.db, track.taskId, track.kind, track.position, run, track.round, needs, track.commit ?? null);
     return run;
   };
   if (o.container !== null) return record(unstarted(check.command, check.limitMs, "not_run", "Botbench did not run this machine check: this repository's commands run in a container, which has no Chrome and cannot start a sandbox. Run it yourself on this Mac."));

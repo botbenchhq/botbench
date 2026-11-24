@@ -8,6 +8,7 @@ import { approvePlan, createRun, storePlan } from "../../src/engine/run.ts";
 import { createTask, moveTask, type Task } from "../../src/engine/task.ts";
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
+import { storeChecks } from "../support/checks.ts";
 import { botbenchBranches, checkoutState, initRepo, tempDir, worktreeCount, write } from "../support/repo.ts";
 
 // The decision routes over real HTTP, against a real Botbench server, a real temporary repository and real SQLite. No
@@ -54,6 +55,8 @@ async function ready(api: Api, task: Task, run = `run-${task.runId}`, file = "he
   write(worktree.path, file, "hi\n");
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
+  // Its checks failed on that commit, stored as the engine stores them: the owner may still accept it.
+  storeChecks(api.server.db, task.id, committed.commit, "failed");
   moveTask(api.server.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: "failed" });
   return worktree.path;
 }
@@ -161,22 +164,30 @@ test("deciding a task that is not ready for review is refused with 409 and a pla
   assert.equal((await call(api, "POST", "/api/tasks/999/accept", {})).status, 404);
 });
 
-test("files the checks left are listed on the task, and Accept is refused without the owner's confirmation of them and made with it", async (t) => {
+test("files the checks left are listed on the task; Accept is refused while they are there, whatever is confirmed, and Reject is made once the owner confirms them", async (t) => {
   const api = await start(t);
   const task = createTask(api.server.db, { repo: api.repo, prompt: "create hello.txt" });
   const dir = await ready(api, task);
   write(dir, "coverage/report.txt", "left by a check\n");
-  assert.deepEqual((await call(api, "GET", `/api/tasks/${task.id}`)).body.leftovers, ["coverage/report.txt"]);
+  const shown = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
+  assert.deepEqual(shown.leftovers, ["coverage/report.txt"]);
+  assert.deepEqual([(shown.evidenceState as Body).state, (shown.evidenceState as Body).files], ["differs", [{ path: "coverage/report.txt", change: "untracked" }]]);
 
-  const refused = await call(api, "POST", `/api/tasks/${task.id}/accept`, {});
-  assert.equal(refused.status, 409);
-  assert.match(String(refused.body.error), /left by the checks/);
-  assert.deepEqual(refused.body.leftovers, ["coverage/report.txt"]);
+  for (const body of [{}, { removeLeftovers: ["coverage/report.txt"] }]) {
+    const refused = await call(api, "POST", `/api/tasks/${task.id}/accept`, body);
+    assert.equal(refused.status, 409);
+    assert.match(String(refused.body.error), /^The task's copy has 1 file that differs from commit [0-9a-f]{7}: coverage\/report\.txt \(not on the branch\)\./);
+    assert.deepEqual((refused.body.evidenceState as Body).files, [{ path: "coverage/report.txt", change: "untracked" }]);
+  }
   assert.equal(fs.existsSync(path.join(dir, "coverage/report.txt")), true);
 
-  const accepted = await call(api, "POST", `/api/tasks/${task.id}/accept`, { removeLeftovers: ["coverage/report.txt"] });
-  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
-  assert.deepEqual((accepted.body.decision as Body).leftovers, ["coverage/report.txt"]);
+  const unconfirmed = await call(api, "POST", `/api/tasks/${task.id}/reject`, { branch: "keep" });
+  assert.equal(unconfirmed.status, 409);
+  assert.match(String(unconfirmed.body.error), /left by the checks/);
+  assert.deepEqual(unconfirmed.body.leftovers, ["coverage/report.txt"]);
+  const rejected = await call(api, "POST", `/api/tasks/${task.id}/reject`, { branch: "keep", removeLeftovers: ["coverage/report.txt"] });
+  assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+  assert.deepEqual((rejected.body.decision as Body).leftovers, ["coverage/report.txt"]);
   assert.equal(fs.existsSync(dir), false);
 });
 
@@ -194,7 +205,8 @@ test("a run's screen lists each task's decision, and the run is done once the la
   db.prepare("UPDATE runs SET status = 'awaiting_decision' WHERE id = ?").run(planned.id);
 
   const read = async (): Promise<Body> => (await call(api, "GET", `/api/runs/${planned.id}`)).body;
-  assert.deepEqual(((await read()).tasks as Body[]).map((task) => [task.status, task.decision, task.leftovers]), [["awaiting_decision", null, []], ["awaiting_decision", null, []]]);
+  // Each row carries the state of its task's evidence, as the task's own screen does.
+  assert.deepEqual(((await read()).tasks as Body[]).map((task) => [task.status, task.decision, task.leftovers, (task.evidenceState as Body).state, (task.evidenceState as Body).checks]), [["awaiting_decision", null, [], "current", "failed"], ["awaiting_decision", null, [], "current", "failed"]]);
 
   assert.equal((await call(api, "POST", `/api/tasks/${tasks[0]!.id}/accept`, {})).status, 200);
   let run = await read();

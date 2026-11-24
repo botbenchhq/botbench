@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { actionLog, createBroker } from "../../src/approvals/broker.ts";
-import { acceptByMode, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains } from "../../src/engine/decision.ts";
+import { acceptByMode, decideTask, discardTask, EvidenceError, LeftoversError, taskDecision, taskLeftovers, taskRemains } from "../../src/engine/decision.ts";
 import type { PlanTask } from "../../src/engine/roles.ts";
 import { approvePlan, createRun, createRuns, getRun, storePlan } from "../../src/engine/run.ts";
 import type { StationCommand } from "../../src/engine/stations.ts";
@@ -15,6 +15,7 @@ import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { buildReplayDriver, type BuildTurn } from "../support/replay-build.ts";
 import { botbenchBranches, checkoutState, git, initRepo, ownerCommit, tempDir, worktreeCount, write } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
+import { storeChecks } from "../support/checks.ts";
 
 // Decisions (unit 14): the owner closes a task that is ready for review by accepting or rejecting it. Everything here is
 // real: a temporary git repository, git itself, and SQLite. Tasks are put at Ready for review either by Botbench's own
@@ -52,6 +53,8 @@ async function readyTask(s: Store, o: { name?: string; checks?: "passed" | "fail
   write(worktree.path, `${o.name ?? "hello"}.txt`, "hi\n");
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
+  // What its checks found is stored as the engine stores it, on the commit they ran on.
+  if (o.checks === "passed" || o.checks === "failed") storeChecks(s.db, task.id, committed.commit, o.checks);
   return moveTask(s.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: o.checks ?? "none" });
 }
 
@@ -75,7 +78,7 @@ test("Accept keeps the branch at Botbench's commit, removes the clean worktree, 
   const task = await readyTask(s);
   const before = checkoutState(s.repo);
 
-  const { task: decided } = await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  const { task: decided } = await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   assert.equal(decided.status, "accepted");
   assert.equal(getTask(s.db, task.id)!.status, "accepted");
   assert.deepEqual(botbenchBranches(s.repo), [task.branch]);
@@ -85,7 +88,7 @@ test("Accept keeps the branch at Botbench's commit, removes the clean worktree, 
   assert.deepEqual(checkoutState(s.repo), before, "nothing was merged into or changed in the owner's checkout");
 
   const decision = taskDecision(s.db, task.id)!;
-  assert.deepEqual({ ...decision, id: 0, decidedAt: "" }, { id: 0, taskId: task.id, decision: "accept", branch: "kept", branchName: task.branch, headCommit: task.headCommit, leftovers: [], note: null, decidedBy: "owner", reasons: null, decidedAt: "" });
+  assert.deepEqual({ ...decision, id: 0, decidedAt: "" }, { id: 0, taskId: task.id, decision: "accept", branch: "kept", branchName: task.branch, headCommit: task.headCommit, leftovers: [], note: null, decidedBy: "owner", reasons: null, checks: "none", checksCommit: null, decidedAt: "" });
   assert.ok(Date.parse(decision.decidedAt) > 0);
   const events = s.db.prepare("SELECT status FROM task_events WHERE task_id = ? ORDER BY id").all(task.id).map((row) => String(row.status));
   assert.equal(events.at(-1), "accepted");
@@ -153,7 +156,7 @@ test("deciding a task that is not ready for review is refused with a plain reaso
   await refused(decideTask(s.db, { taskId: 999, decision: "accept" }), 404, /no such task/i);
 
   const task = await readyTask(s);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   // Decided once: a second decision of either kind is refused, and the first stands.
   await refused(decideTask(s.db, { taskId: task.id, decision: "accept" }), 409, /already accepted/i);
   await refused(decideTask(s.db, { taskId: task.id, decision: "reject", branch: "discard" }), 409, /already accepted/i);
@@ -178,7 +181,7 @@ test("a decision that does not say what it is is refused before anything is touc
 test("two decisions sent at once for one task: one is made, the other is refused", async (t) => {
   const s = store(t);
   const task = await readyTask(s);
-  const outcomes = await Promise.allSettled([decideTask(s.db, { taskId: task.id, decision: "accept" }), decideTask(s.db, { taskId: task.id, decision: "reject", branch: "discard" })]);
+  const outcomes = await Promise.allSettled([decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true }), decideTask(s.db, { taskId: task.id, decision: "reject", branch: "discard" })]);
   assert.deepEqual(outcomes.map((o) => o.status).sort(), ["fulfilled", "rejected"]);
   const lost = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
   assert.ok(lost.reason instanceof TaskError && lost.reason.status === 409, String(lost.reason));
@@ -189,7 +192,7 @@ test("two decisions sent at once for one task: one is made, the other is refused
 test("decisions are append-only, a decision needs a task that is ready for review, and a task is decided only with its decision", async (t) => {
   const s = store(t);
   const task = await readyTask(s);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   assert.throws(() => s.db.prepare("UPDATE decisions SET decision = 'reject'").run(), /append-only/);
   assert.throws(() => s.db.prepare("DELETE FROM decisions").run(), /append-only/);
   const other = createTask(s.db, { repo: s.repo, prompt: "queued" });
@@ -259,7 +262,7 @@ test("AE3, and a run is done only when every task is decided: tasks whose checks
   assert.equal(worktreeCount(e.repo), 1);
 });
 
-test("files a check left in the worktree after Botbench committed are listed and never deleted unasked; ignored files do not count; once confirmed, they go with the worktree and the decision names them", { skip: NO_SANDBOX }, async (t) => {
+test("files a check left in the worktree after Botbench committed are listed and never deleted unasked; ignored files do not count; they stop an Accept whatever is confirmed, and a Reject removes them only once confirmed, and names them", { skip: NO_SANDBOX }, async (t) => {
   const leaves = "echo report > check-report.txt; echo changed >> README.md; mkdir -p node_modules && echo cached > node_modules/cache.txt";
   const e = await line(t, ["done"], [{ command: leaves, limitMs: 10_000 }], { "README.md": "# Sample\n", ".gitignore": "node_modules/\n" });
   const started = await e.tasks.start(e.repo, "create hello.txt");
@@ -272,8 +275,15 @@ test("files a check left in the worktree after Botbench committed are listed and
   // Listed before deciding: the untracked file and the changed tracked file, not the ignored one.
   assert.deepEqual(await taskLeftovers(task), ["README.md", "check-report.txt"]);
 
-  // Refused with no confirmation, and with a confirmation of only some of them.
-  for (const attempt of [{ decision: "accept" }, { decision: "accept", removeLeftovers: ["check-report.txt"] }, { decision: "reject", branch: "keep" }]) {
+  // An Accept is refused while the copy differs from the commit, with no confirmation, some of them, or all of them
+  // (engine/evidence.ts; test/engine/evidence.test.ts): what the checks left is no longer removed to let an accept through.
+  for (const removeLeftovers of [undefined, ["check-report.txt"], ["README.md", "check-report.txt"]]) {
+    const err = await refused(decideTask(e.db, { taskId: task.id, decision: "accept", ...(removeLeftovers === undefined ? {} : { removeLeftovers }) }), 409, /The task's copy has 2 files that differ from commit/);
+    assert.ok(err instanceof EvidenceError);
+    assert.deepEqual(err.evidence.files, [{ path: "README.md", change: "changed" }, { path: "check-report.txt", change: "untracked" }]);
+  }
+  // A Reject is refused with no confirmation, and with a confirmation of only some of them.
+  for (const attempt of [{ decision: "reject", branch: "keep" }, { decision: "reject", branch: "keep", removeLeftovers: ["check-report.txt"] }]) {
     const err = await refused(decideTask(e.db, { taskId: task.id, ...attempt }), 409, /left by the checks/);
     assert.ok(err instanceof LeftoversError);
     assert.deepEqual(err.leftovers, ["README.md", "check-report.txt"]);
@@ -281,11 +291,11 @@ test("files a check left in the worktree after Botbench committed are listed and
   assert.equal(statusOf(e.db, task.id), "awaiting_decision");
   assert.equal(fs.existsSync(path.join(task.worktreePath!, "check-report.txt")), true, "nothing was deleted unasked");
 
-  await decideTask(e.db, { taskId: task.id, decision: "accept", removeLeftovers: ["README.md", "check-report.txt"] });
-  assert.equal(statusOf(e.db, task.id), "accepted");
+  await decideTask(e.db, { taskId: task.id, decision: "reject", branch: "keep", removeLeftovers: ["README.md", "check-report.txt"] });
+  assert.equal(statusOf(e.db, task.id), "rejected");
   assert.equal(fs.existsSync(task.worktreePath!), false);
   assert.deepEqual(taskDecision(e.db, task.id)!.leftovers, ["README.md", "check-report.txt"]);
-  assert.match(actionLog(e.db, task.id).find((entry) => entry.rule === "owner_accepted")!.detail!, /check-report\.txt/);
+  assert.match(actionLog(e.db, task.id).find((entry) => entry.rule === "owner_rejected")!.detail!, /check-report\.txt/);
   // What the checks left is not on the branch.
   assert.throws(() => git(e.repo, "show", `${task.branch}:check-report.txt`));
   assert.equal(git(e.repo, "show", `${task.branch}:README.md`), "# Sample\n");
@@ -296,18 +306,18 @@ test("a worktree holding only ignored files is clean: Accept removes it without 
   const task = await readyTask(s);
   write(task.worktreePath!, "node_modules/pkg/index.js", "module.exports = 1;\n");
   assert.deepEqual(await taskLeftovers(task), []);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   assert.equal(fs.existsSync(task.worktreePath!), false);
   assert.deepEqual(taskDecision(s.db, task.id)!.leftovers, []);
 });
 
-test("a file that appears after the owner confirmed the list is not deleted: the decision is refused and lists the files again", async (t) => {
+test("a file that appears after the owner confirmed the list is not deleted: the reject is refused and lists the files again", async (t) => {
   const s = store(t);
   const task = await readyTask(s);
   write(task.worktreePath!, "seen.txt", "the owner saw this one\n");
   assert.deepEqual(await taskLeftovers(task), ["seen.txt"]);
   write(task.worktreePath!, "new.txt", "written after the dialog was opened\n");
-  const err = await refused(decideTask(s.db, { taskId: task.id, decision: "accept", removeLeftovers: ["seen.txt"] }), 409, /left by the checks/);
+  const err = await refused(decideTask(s.db, { taskId: task.id, decision: "reject", branch: "keep", removeLeftovers: ["seen.txt"] }), 409, /left by the checks/);
   assert.deepEqual((err as LeftoversError).leftovers, ["new.txt", "seen.txt"]);
   assert.equal(fs.existsSync(path.join(task.worktreePath!, "new.txt")), true);
   assert.equal(statusOf(s.db, task.id), "awaiting_decision");
@@ -381,7 +391,7 @@ test("a run with one task decided and the other failed is done once the decided 
   moveTask(s.db, tasks[0]!.id, "awaiting_decision", { headCommit: committed.commit, checks: "none" });
   moveTask(s.db, tasks[1]!.id, "failed", { reason: "it broke" });
   assert.deepEqual(transaction(s.db, () => settleRunIn(s.db, planned.id)), { id: planned.id, status: "awaiting_decision" }, "one task is ready for review");
-  const decided = await decideTask(s.db, { taskId: tasks[0]!.id, decision: "accept" });
+  const decided = await decideTask(s.db, { taskId: tasks[0]!.id, decision: "accept", withoutVerification: true });
   assert.deepEqual(decided.run, { id: planned.id, status: "done" });
 });
 
@@ -480,7 +490,7 @@ test("Discard is refused, with nothing removed, for a task that can still be dec
   await refused(discardTask(s.db, { taskId: queued.id }), 409, /only a task that failed, was stopped, was cancelled or drafted a message/i);
   await refused(discardTask(s.db, { taskId: 999 }), 404, /no such task/i);
   const decided = await readyTask(s, { name: "two" });
-  await decideTask(s.db, { taskId: decided.id, decision: "accept" });
+  await decideTask(s.db, { taskId: decided.id, decision: "accept", withoutVerification: true });
   await refused(discardTask(s.db, { taskId: decided.id }), 409, /accepted/i);
   // Never started: no copy and no branch were ever made.
   const never = moveTask(s.db, createTask(s.db, { repo: s.repo, prompt: "fails early" }).id, "failed", { reason: "it broke" });

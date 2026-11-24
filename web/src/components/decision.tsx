@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { acceptTask, ApiError, rejectTask, type TaskDecision, type TaskDetail } from "../api/client.ts";
+import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
+import { acceptTask, ApiError, rejectTask, runChecksAgain, type EvidenceState, type TaskDecision, type TaskDetail } from "../api/client.ts";
 import { Alert } from "./header.tsx";
 import { ConfirmAction } from "./confirm.tsx";
 import { ChecksFinding, latestRound, REVIEW_LINE } from "./evidence.tsx";
@@ -101,17 +102,70 @@ export function Leftovers({ files }: { files: readonly string[] }) {
 
 const LEFT_BEHIND = "These files were left by the checks and are not on the branch:";
 
+/** The files of a copy that differs from its commit, each with what differs, as the server lists them. */
+function DifferingFiles({ files }: { files: EvidenceState["files"] }) {
+  return (
+    <ul data-testid="evidence-files" className="ds-list ds-list--dense">
+      {files.map((file) => (
+        <li key={file.path} className="ds-list__row">
+          <div className="ds-list__content">
+            <span className="ds-list__body">
+              <code data-ds-content="" className="ds-list__primary">
+                {file.path}
+              </code>
+              <span className="ds-list__secondary">{file.change === "changed" ? "Changed since the commit" : "Not on the branch"}</span>
+            </span>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The words for the no-checks accept, one place: it is never called plain Accept. */
+const ACCEPT_UNVERIFIED = "Accept without verification";
+
 /**
- * Accept and Reject, for a task that is ready for review. Accept keeps the branch and removes the task's copy; when the
- * checks left files in the copy it asks first, naming them. Reject always asks, and asks whether to keep the branch.
+ * The state of a task's evidence, in the server's own words (`EvidenceState.words`): whether its checks are about the
+ * commit Accept would keep, the files of a copy that differs from it, what git ignores there, and, apart, the commit
+ * the review read. Nothing here is worked out by the client. `evidence` null: the server could not read it, and says why.
+ */
+export function EvidenceLines({ evidence, problem }: { evidence: EvidenceState | null; problem: string | null }) {
+  if (evidence === null) return problem === null ? null : <span data-testid="evidence-problem">{problem}</span>;
+  return (
+    <>
+      <span data-testid="evidence-words" data-evidence={evidence.state}>
+        {evidence.words}
+      </span>
+      {evidence.ignoredWords !== null && (
+        <span data-testid="evidence-ignored" data-ds-content="" className="ds-review-decision__caveat">
+          {evidence.ignoredWords}
+        </span>
+      )}
+      {evidence.review !== null && !evidence.review.current && (
+        <span data-testid="evidence-review" className="ds-review-decision__caveat">
+          {evidence.review.words}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * Accept and Reject, for a task that is ready for review. Which Accept there is comes from the server's state of the
+ * task's evidence (`evidence`), never from the client: plain Accept while the checks are about the commit it keeps;
+ * "Accept without verification", not drawn as the primary action, when no checks ran; and none at all while the checks
+ * are out of date (Run checks again is offered in its place) or the task's copy differs from the commit. Accept keeps
+ * the branch and removes the task's copy. Reject always asks, asks whether to keep the branch, and lists the files it
+ * would remove with the copy.
  * `primary` is for the task's own screen, inside its review decision: Accept is the view's one primary action, both
  * buttons are marked critical, and a short note may go with either, stored on the decision and shown in Activity.
  * Otherwise this is a row of a list, whose buttons are plain and where `name` finishes each button's accessible name.
  * While a decision is sent the pressed button is busy and keeps focus, and the other is disabled. `onSending` is told
  * true as it is pressed and false if it fails, and the pressed button stays busy until the screen shows the result in its place.
  */
-export function DecisionControls({ taskId, leftovers, primary, name, onDecided, onSending, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; primary: boolean; name?: string; onDecided: () => void; onSending?: (sending: boolean) => void; onSignedOut: () => void }) {
-  const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
+export function DecisionControls({ taskId, leftovers, evidence, evidenceProblem = null, primary, name, onDecided, onSending, onSignedOut }: { taskId: number; leftovers: readonly string[] | null; evidence: EvidenceState | null; evidenceProblem?: string | null; primary: boolean; name?: string; onDecided: () => void; onSending?: (sending: boolean) => void; onSignedOut: () => void }) {
+  const [busy, setBusy] = useState<"accept" | "reject" | "checks" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [branch, setBranch] = useState<"keep" | "discard">("keep");
   const [note, setNote] = useState("");
@@ -125,9 +179,10 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
     setProblem(null);
     // Told before it is sent: a refresh from elsewhere may show the decision before this request answers.
     onSending?.(true);
-    // The owner confirmed exactly the files this screen showed; the server refuses, and lists them again, if they changed since.
+    // For a reject, the owner confirmed exactly the files this screen showed; the server refuses, and lists them again, if
+    // they changed since. An accept says only whether it is made without verification; the server decides if it may be.
     const given = note.trim() === "" ? null : note.trim();
-    const sent = what === "accept" ? acceptTask(taskId, left, given) : rejectTask(taskId, branch, left, given);
+    const sent = what === "accept" ? acceptTask(taskId, unverified, given) : rejectTask(taskId, branch, left, given);
     sent.then(
       () => onDecided(),
       (err: unknown) => {
@@ -141,9 +196,42 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
     );
   };
 
-  const acceptLabel = busy === "accept" ? "Accepting" : "Accept";
+  // Run checks again stays busy until the server's next word on the evidence arrives: the task at its checks (this
+  // goes with the buttons), or, when they were quick, ready for review again with a state read anew.
+  const asking = useRef(false);
+  useEffect(() => {
+    if (!asking.current) setBusy((now) => (now === "checks" ? null : now));
+  }, [evidence]);
+
+  const again = (): void => {
+    if (busy !== null) return;
+    setBusy("checks");
+    setProblem(null);
+    asking.current = true;
+    runChecksAgain(taskId).then(
+      () => {
+        asking.current = false;
+        onDecided();
+      },
+      (err: unknown) => {
+        asking.current = false;
+        setBusy(null);
+        if (err instanceof ApiError && err.status === 401) return onSignedOut();
+        setProblem(`The checks were not started. ${err instanceof ApiError ? err.message : "Botbench could not be reached."}`);
+        onDecided();
+      },
+    );
+  };
+
+  // Which Accept, from the server's state alone.
+  const offered = evidence?.state === "current" ? "accept" : evidence?.state === "none" ? "unverified" : null;
+  const unverified = offered === "unverified";
+  const acceptLabel = busy === "accept" ? "Accepting" : unverified ? ACCEPT_UNVERIFIED : "Accept";
   const rejectLabel = busy === "reject" ? "Rejecting" : "Reject";
   const opener = name === undefined ? undefined : { small: false, name: `${acceptLabel} ${name}` };
+  // On a row of a list the state is said here; on the task's own screen the decision's evidence line says it.
+  // When the server could not read the evidence, its reason for there being no Accept is said instead.
+  const why = primary || offered === "accept" ? null : evidence === null ? evidenceProblem : evidence.words;
   return (
     <div className="ds-stack ds-gap-sm">
       {primary && (
@@ -162,19 +250,20 @@ export function DecisionControls({ taskId, leftovers, primary, name, onDecided, 
           {problem}
         </Alert>
       )}
+      {why !== null && <p data-testid="evidence-words">{why}</p>}
       <div className={primary ? "ds-review-decision__actions" : "ds-cluster"}>
-        {left.length === 0 ? (
-          <button type="button" aria-busy={busy === "accept" || undefined} disabled={busy === "reject"} data-ds-critical={primary ? "" : undefined} aria-label={opener?.name} onClick={() => send("accept")} className={primary ? "ds-button ds-button--primary" : "ds-button"}>
+        {offered !== null && (
+          // Without verification it is not the view's primary action, and is not drawn as one.
+          <button type="button" data-testid="accept" aria-busy={busy === "accept" || undefined} disabled={busy === "reject"} data-ds-critical={primary ? "" : undefined} aria-label={opener?.name} onClick={() => send("accept")} className={primary && !unverified ? "ds-button ds-button--primary" : "ds-button"}>
             {acceptLabel}
           </button>
-        ) : (
-          <ConfirmAction label={acceptLabel} {...(opener ? { opener } : {})} primary={primary} critical={primary} title="Accept this task?" confirmLabel="Accept and remove them" cancelLabel="Keep the copy" disabled={busy === "reject"} busy={busy === "accept"} losing testId="accept-leftovers" onConfirm={() => send("accept")}>
-            <p>{LEFT_BEHIND}</p>
-            <Leftovers files={left} />
-            <p>Accepting keeps the branch and removes the task's copy of the project, and these files with it. Copy out any you want to keep first.</p>
-          </ConfirmAction>
         )}
-        <ConfirmAction label={rejectLabel} {...(name === undefined ? {} : { opener: { small: false, name: `${rejectLabel} ${name}` } })} critical={primary} title="Reject this task?" confirmLabel="Reject" cancelLabel="Cancel" disabled={busy === "accept"} busy={busy === "reject"} losing testId="reject" onConfirm={() => send("reject")}>
+        {evidence?.state === "stale" && evidence.canRunAgain && (
+          <BusyButton data-testid="run-checks-again" busy={busy === "checks"} busyLabel="Starting the checks" disabled={busy === "reject"} {...(name === undefined ? {} : { "aria-label": `${busy === "checks" ? "Starting the checks" : "Run checks again"} for ${name}` })} onClick={again}>
+            Run checks again
+          </BusyButton>
+        )}
+        <ConfirmAction label={rejectLabel} {...(name === undefined ? {} : { opener: { small: false, name: `${rejectLabel} ${name}` } })} critical={primary} title="Reject this task?" confirmLabel="Reject" cancelLabel="Cancel" disabled={busy === "accept" || busy === "checks"} busy={busy === "reject"} losing testId="reject" onConfirm={() => send("reject")}>
           <fieldset className="ds-radio__group">
             <legend className="ds-radio__legend">What becomes of the branch?</legend>
             <div className="ds-radio">
@@ -246,15 +335,28 @@ export function ReviewDecision({ task, onDecided, onSignedOut, children }: { tas
             {task.reviewer !== null && task.reviewLine !== null && <span className="ds-review-decision__caveat">{REVIEW_LINE}</span>}
           </dd>
         </div>
+        {/* While it waits for the decision: whether that evidence is about the commit Accept would keep, as the server says it. */}
+        {decision === null && (task.evidenceState !== null || task.evidenceProblem !== null) && (
+          <div className="ds-review-decision__line">
+            <dt className="ds-review-decision__source">Evidence</dt>
+            <dd data-testid="decision-evidence" className="ds-review-decision__finding">
+              <EvidenceLines evidence={task.evidenceState} problem={task.evidenceProblem} />
+            </dd>
+          </div>
+        )}
       </dl>
+      {decision === null && task.evidenceState?.state === "differs" && <DifferingFiles files={task.evidenceState.files} />}
       {decision === null ? (
         <>
           {children}
-          <DecisionControls taskId={task.id} leftovers={task.leftovers} primary onDecided={onDecided} onSending={(sending) => (sent.current = sending)} onSignedOut={onSignedOut} />
+          <DecisionControls taskId={task.id} leftovers={task.leftovers} evidence={task.evidenceState} primary onDecided={onDecided} onSending={(sending) => (sent.current = sending)} onSignedOut={onSignedOut} />
         </>
       ) : (
         <div className="ds-review-decision__result">
-          <StatusBadge look={decision.decision === "accept" ? LOOKS.accepted : LOOKS.rejected}>{decision.decision === "accept" ? (byMode ? "Accepted without you" : "Accepted") : "Rejected"}</StatusBadge>
+          {/* An accept made without verification is said as that, and is not drawn as a success. */}
+          <StatusBadge look={decision.decision === "accept" ? (decision.checks === "none" ? LOOKS.acceptedUnverified : LOOKS.accepted) : LOOKS.rejected}>
+            {decision.decision === "accept" ? (byMode ? "Accepted without you" : decision.checks === "none" ? "Accepted without verification" : "Accepted") : "Rejected"}
+          </StatusBadge>
           {/* The result lines its items up at the start, each as wide as its content; these take the section's width, so a
               long branch, path or merge command wraps or scrolls inside its own field and never widens the page. */}
           <div className="ds-stack ds-gap-sm">

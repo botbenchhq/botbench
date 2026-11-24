@@ -10,6 +10,7 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
 import { checkDesign, expect, SHOTS, signIn, tallShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
+import { storeChecks } from "../test/support/checks.ts";
 
 // Refused commands on the task screen (#198), with no model turn. Before Botbench starts, the task of a fully
 // autonomous run is given its builder's requests through Botbench's real permission broker, as the CLI's hook would put
@@ -52,6 +53,8 @@ const test = base.extend<{ dir: string; seeded: { home: string; taskId: number }
     if (!committed.committed) throw new Error("nothing was committed");
     const verdict = autoAccept({ checks: "passed", review: "none", refusals: modeRefusals(db, task.id) });
     if (verdict.accept) throw new Error("the mode accepted a task whose builder was refused sudo");
+    // Its checks passed on that commit, stored as the engine stores them (test/support/checks.ts).
+    storeChecks(db, task.id, committed.commit);
     moveTask(db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: "passed", reason: verdict.why });
     db.close();
     await use({ home, taskId: task.id });

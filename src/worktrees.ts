@@ -401,6 +401,46 @@ export async function leftoverFiles(dir: string): Promise<string[]> {
   return out.split("\0").filter((entry) => entry.length > 3).map((entry) => entry.slice(3));
 }
 
+/** A task's copy beside the commit it is at: what differs from that commit, and what git ignores there. */
+export interface CopyDifferences {
+  /** The commit the copy is at. */
+  commit: string;
+  /** Tracked files that are changed, deleted, added or in conflict in the copy, compared with the commit, and any the index is told not to compare. */
+  changed: string[];
+  /** Files in the copy that are not tracked and that git does not ignore. */
+  untracked: string[];
+  /** What git ignores in the copy, a folder of only ignored files as one entry ending in "/". Never work: it goes with the copy. */
+  ignored: string[];
+}
+
+/**
+ * A task's copy compared with the commit it is at, read with `git status`. `taskWorktree` first refuses a copy that is
+ * not on its Botbench task branch, or whose git folder is not the repository's own entry for it. Paths are relative to
+ * the copy, in git's order.
+ */
+export async function copyDifferences(dir: string): Promise<CopyDifferences> {
+  const top = path.resolve(dir);
+  await taskWorktree(top);
+  const head = async (): Promise<string> => (await git(top, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], GIT_CHECK_LIMIT_MS)).trim();
+  const entries = (out: string): string[] => out.split("\0").filter((entry) => entry.length > 3);
+  const commit = await head();
+  const plain = entries(await git(top, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"]));
+  // Asked for apart, so that an ignored folder is one entry and not every file in it (node_modules).
+  const withIgnored = entries(await git(top, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=traditional", "--no-renames"]));
+  // A tracked file the index is told not to look at (`git update-index --assume-unchanged` or `--skip-worktree`) is
+  // left out of `git status` whatever it holds: it cannot be shown to be as committed, so it counts as changed.
+  const unseen = (await git(top, ["ls-files", "-v", "-z"])).split("\0").filter((entry) => entry.length > 2 && /^[a-zS]$/.test(entry[0]!)).map((entry) => entry.slice(2));
+  // Read once more: a commit made between the readings above would make them about different commits.
+  const after = await head();
+  if (after !== commit) throw new Error(`The copy at ${top} moved from commit ${commit} to ${after} while Botbench was reading it. Try again.`);
+  return {
+    commit,
+    changed: [...new Set([...plain.filter((entry) => !entry.startsWith("?? ")).map((entry) => entry.slice(3)), ...unseen])],
+    untracked: plain.filter((entry) => entry.startsWith("?? ")).map((entry) => entry.slice(3)),
+    ignored: withIgnored.filter((entry) => entry.startsWith("!! ")).map((entry) => entry.slice(3)),
+  };
+}
+
 /**
  * Remove a task's worktree. Refused while it has uncommitted changes, so work is never lost, unless `removeLeftovers`
  * says the owner saw them and agreed they may go. Ignored files go with the folder either way. The branch, and so the

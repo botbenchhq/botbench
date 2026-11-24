@@ -6,7 +6,7 @@ import type { Evidence } from "../web/src/api/client.ts";
 // What an earlier time a task's list of commands ran is called on its screen. Run 3 of the self-review labelled the
 // checks before each round of fixes "Checks before Botbench restarted", though nothing had restarted.
 
-const row = (round: number, position: number, outcome: Evidence["outcome"], kind: Evidence["kind"] = "check"): Evidence => ({ id: round * 10 + position, kind, round, position, command: `c${position}`, outcome, exitCode: outcome === "failed" ? 1 : 0, signal: null, output: "", truncated: false, limitMs: 1000, startedAt: "", endedAt: "", durationMs: 1, needs: null });
+const row = (round: number, position: number, outcome: Evidence["outcome"], kind: Evidence["kind"] = "check"): Evidence => ({ id: round * 10 + position, kind, round, position, command: `c${position}`, outcome, exitCode: outcome === "failed" ? 1 : 0, signal: null, output: "", truncated: false, limitMs: 1000, startedAt: "", endedAt: "", durationMs: 1, needs: null, commit: null });
 const lists = (rounds: number[], total = 2) => rounds.map((round) => ({ kind: "check" as const, round, total }));
 
 test("earlier rounds of checks are named by the build or round of fixes they checked, and a round a restart cut short says so", () => {
@@ -23,4 +23,15 @@ test("earlier rounds of checks are named by the build or round of fixes they che
   // Setup commands run again only when a restart cut them short.
   const setup = [row(1, 1, "stopped", "setup"), row(2, 1, "passed", "setup")];
   assert.equal(roundLabel(setup, [{ kind: "setup", round: 1, total: 1 }], 1, "setup"), "Setup commands stopped before they finished");
+});
+
+test("a round of checks the owner had run again is named as that, and is not counted as a round of fixes", () => {
+  const rows = [row(1, 1, "passed"), row(1, 2, "passed"), row(2, 1, "passed"), row(2, 2, "passed"), row(3, 1, "passed"), row(3, 2, "passed"), row(4, 1, "passed"), row(4, 2, "passed")];
+  const all = lists([1, 2, 3, 4]);
+  assert.equal(roundLabel(rows, all, 2, "check", [2]), "Checks you had run again");
+  // A round of fixes after it is still the first round of fixes.
+  assert.equal(roundLabel(rows, all, 3, "check", [2]), "Checks after round 1 of fixes");
+  assert.equal(roundLabel(rows, all, 1, "check", [2]), "Checks of the first build");
+  // With no re-run named, the rounds read as before.
+  assert.equal(roundLabel(rows, all, 2, "check"), "Checks after round 1 of fixes");
 });

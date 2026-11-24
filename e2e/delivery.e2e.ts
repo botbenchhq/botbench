@@ -42,7 +42,7 @@ const test = base.extend<{ dir: string; seeded: { home: string; taskId: number }
     const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
     if (!committed.committed) throw new Error("nothing was committed");
     moveTask(db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: "none" });
-    await decideTask(db, { taskId: task.id, decision: "accept" });
+    await decideTask(db, { taskId: task.id, decision: "accept", withoutVerification: true });
     const deliveries = createDeliveries({ db, config: { repositories: {} } as unknown as Config, github: replayGitHub().github, onTaskChange: () => {} });
     deliveries.deliver(task.id, { by: "owner" });
     await deliveries.close();

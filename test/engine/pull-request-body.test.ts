@@ -13,6 +13,7 @@ import { getTask, moveTask, type Task } from "../../src/engine/task.ts";
 import { now, openStore } from "../../src/store/db.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { initRepo, tempDir, write } from "../support/repo.ts";
+import { storeChecks } from "../support/checks.ts";
 
 // The Review section of a pull request's body, read from a real store: a real SQLite database, a real temporary
 // repository and copy, and the decision made by the real decideTask and acceptByMode. The reviews and rounds of fixes
@@ -58,6 +59,7 @@ async function rig(t: T, o: { reviewer: boolean; mode?: "manual" | "full"; promp
   let round = 0;
   const checked = (): void => {
     moveTask(db, task.id, "verifying", { headCommit: head });
+    storeChecks(db, task.id, head);
     moveTask(db, task.id, o.reviewer ? "reviewing" : "awaiting_decision", { checks: "passed" });
   };
   checked();

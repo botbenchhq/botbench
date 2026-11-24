@@ -7,7 +7,7 @@ import { getRun, listRuns, planTasks, RunError, runTasks, runWaitingOnApproval, 
 import { modeChanges, stricterModes } from "../engine/modes.ts";
 import { BodyError, builderChoice, json, modelChoice, readJsonBody, type RouteContext } from "./router.ts";
 import { restartLine, resumeNote } from "../engine/task.ts";
-import { decisionOf, leftoversOf, waitingForOf } from "./tasks.ts";
+import { checkRerunsOf, decisionOf, evidenceStateOf, leftoversOf, waitingForOf } from "./tasks.ts";
 import { deliveryOf } from "../engine/delivery.ts";
 import { issueHostsFor, runIssue } from "../engine/intake.ts";
 import { repositoryHosts } from "../config.ts";
@@ -76,6 +76,9 @@ async function detail(ctx: RouteContext, run: Run): Promise<Record<string, unkno
       decision: decisionOf(db, task.id),
       pullRequest: deliveryOf(db, task),
       leftovers: await leftoversOf(task),
+      // For a task that is ready for review: the state of its evidence, as on its own screen (engine/evidence.ts).
+      ...(await evidenceStateOf(ctx, task)),
+      ...checkRerunsOf(db, task),
       resumeNote: resumeNote(db, task),
       // Taken up again by Botbench after a restart, and waiting behind another task's work: as on the task's own screen.
       restartLine: restartLine(db, task),

@@ -172,7 +172,7 @@ test("fully autonomous: building starts without the owner approving the plan, an
     assert.ok(!fs.existsSync(task.worktreePath!), "the copy is removed, as the owner's Accept removes it");
     const accepted = actionLog(e.db, task.id).filter((entry) => entry.rule === "mode_accepted");
     assert.equal(accepted.length, 1);
-    assert.match(accepted[0]!.detail!, /^Accepted without you, .* Kept the branch .* Nothing was merged or pushed\.$/);
+    assert.match(accepted[0]!.detail!, /^Accepted without you, .* Kept the branch .* Nothing was merged or pushed\. Its checks passed on commit [0-9a-f]{7}, the commit accepted\.$/);
   }
   assert.equal(getRun(e.db, run.id)!.status, "done");
   assert.equal(listApprovals(e.db).length, 0);

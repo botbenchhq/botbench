@@ -9,6 +9,7 @@ import { createTask, moveTask, type Task, type TaskStatus } from "../../src/engi
 import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { initRepo, tempDir, write } from "../support/repo.ts";
+import { storeChecks } from "../support/checks.ts";
 
 // The note route over real HTTP, against a real Botbench server, a real temporary repository and real SQLite. No driver
 // is started: a task is put at each state the way the engine stores it, with Botbench's own worktree and commit
@@ -67,6 +68,7 @@ async function ready(api: Api): Promise<Task> {
   write(task.worktreePath!, "hello.txt", "hi\n");
   const committed = await commitWork({ path: task.worktreePath!, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
+  storeChecks(api.server.db, task.id, committed.commit);
   return moveTask(api.server.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: "passed" });
 }
 

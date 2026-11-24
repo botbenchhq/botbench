@@ -14,6 +14,7 @@ import { commitWork, createWorktree, pushTaskBranch, remoteBranchCommit } from "
 import { workbenchName } from "../../src/workbench.ts";
 import { replayGitHub, type Replay } from "../support/replay-github.ts";
 import { git, initRepo, ownerCommit, tempDir, write } from "../support/repo.ts";
+import { storeChecks } from "../support/checks.ts";
 
 // Delivery against a real git and no network. The remote is a real bare repository on disk (`git init --bare`), and
 // every push is a real push into it. The repository's remote is written as a GitHub address, as an owner's is, and the
@@ -75,6 +76,8 @@ async function readyTask(s: Store, o: { delivery?: Delivery; title?: string; mod
   write(worktree.path, "hello.txt", "hi\n");
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
+  // Checks that passed are stored as the engine stores them, on the commit they ran on.
+  if (o.checks === "passed") storeChecks(s.db, task.id, committed.commit);
   return moveTask(s.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: o.checks ?? "none" });
 }
 
@@ -111,7 +114,7 @@ test("a run that chose pull requests: accepting a task pushes only its branch, a
   const d = deliveries(t, s, replay);
   const task = await readyTask(s, { delivery: "pull_request", title: "Add a greeting file" });
 
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   await d.idle();
 
   assert.deepEqual(stepsOf(s.db, task.id), ["requested", "pushed", "opened"]);
@@ -136,8 +139,8 @@ test("a run that keeps the branch, and a task on its own, send nothing when acce
   const d = deliveries(t, s, replay);
   const kept = await readyTask(s, { delivery: "branch" });
   const alone = await readyTask(s);
-  await decideTask(s.db, { taskId: kept.id, decision: "accept" });
-  await decideTask(s.db, { taskId: alone.id, decision: "accept" });
+  await decideTask(s.db, { taskId: kept.id, decision: "accept", withoutVerification: true });
+  await decideTask(s.db, { taskId: alone.id, decision: "accept", withoutVerification: true });
   await d.idle();
   assert.deepEqual([stepsOf(s.db, kept.id), stepsOf(s.db, alone.id)], [[], []]);
   assert.deepEqual(remoteRefs(s.bare), []);
@@ -151,7 +154,7 @@ test("the owner's own Open a pull request on a kept branch: refused unless it na
   const d = deliveries(t, s, replay);
   const task = await readyTask(s);
   await refused(() => d.deliver(task.id, { by: "owner" }), 409, /not accepted/);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   const target = await d.target(getTask(s.db, task.id)!);
   assert.deepEqual(target, { remote: "origin", address: ADDRESS, repository: "github.com/jon-lange/botbench-delivery-fixture", branch: task.branch, base: null });
   await refused(() => d.deliver(task.id, { by: "owner", expect: { remote: "upstream", branch: task.branch } }), 409, /not the one you were shown/);
@@ -171,7 +174,7 @@ test("no remote: refused before anything is sent, in plain words, the task stays
   const replay = replayGitHub();
   const d = deliveries(t, s, replay);
   const task = await readyTask(s, { delivery: "pull_request" });
-  const { task: accepted } = await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  const { task: accepted } = await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   assert.equal(accepted.status, "accepted", "the decision stands whatever the delivery does");
   await d.idle();
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
@@ -191,7 +194,7 @@ test("refusals before anything is sent: the branch moved since it was accepted, 
   const s = store(t);
   const replay = replayGitHub();
   const moved = await readyTask(s, { delivery: "branch" });
-  await decideTask(s.db, { taskId: moved.id, decision: "accept" });
+  await decideTask(s.db, { taskId: moved.id, decision: "accept", withoutVerification: true });
   // Somebody adds a commit to the kept branch after the decision.
   const other = path.join(s.dir, "other-copy");
   git(s.repo, "worktree", "add", "--quiet", other, moved.branch!);
@@ -203,21 +206,21 @@ test("refusals before anything is sent: the branch moved since it was accepted, 
   assert.match(deliveryOf(s.db, getTask(s.db, moved.id)!).problem!, /has moved since the task was accepted.*Nothing was sent/);
 
   const asBase = await readyTask(s, { delivery: "branch" });
-  await decideTask(s.db, { taskId: asBase.id, decision: "accept" });
+  await decideTask(s.db, { taskId: asBase.id, decision: "accept", withoutVerification: true });
   const based = deliveries(t, s, replay, { baseBranch: asBase.branch });
   based.deliver(asBase.id, { by: "owner" });
   await based.idle();
   assert.match(deliveryOf(s.db, getTask(s.db, asBase.id)!).problem!, /is the repository's base branch, which Botbench never pushes to/);
 
   const signedOut = await readyTask(s, { delivery: "branch" });
-  await decideTask(s.db, { taskId: signedOut.id, decision: "accept" });
+  await decideTask(s.db, { taskId: signedOut.id, decision: "accept", withoutVerification: true });
   const out = deliveries(t, s, replayGitHub({ signedOut: true }));
   out.deliver(signedOut.id, { by: "owner" });
   await out.idle();
   assert.match(deliveryOf(s.db, getTask(s.db, signedOut.id)!).problem!, /not signed in to github.com.*gh auth login/);
 
   const local = await readyTask(s, { delivery: "branch" });
-  await decideTask(s.db, { taskId: local.id, decision: "accept" });
+  await decideTask(s.db, { taskId: local.id, decision: "accept", withoutVerification: true });
   git(s.repo, "remote", "set-url", "origin", s.bare);
   d.deliver(local.id, { by: "owner" });
   await d.idle();
@@ -225,7 +228,7 @@ test("refusals before anything is sent: the branch moved since it was accepted, 
 
   // A remote that pushes somewhere other than where it fetches from: what would be overwritten cannot be checked.
   const split = await readyTask(s, { delivery: "branch" });
-  await decideTask(s.db, { taskId: split.id, decision: "accept" });
+  await decideTask(s.db, { taskId: split.id, decision: "accept", withoutVerification: true });
   git(s.repo, "remote", "set-url", "origin", ADDRESS);
   git(s.repo, "remote", "set-url", "--push", "origin", path.join(s.dir, "elsewhere.git"));
   d.deliver(split.id, { by: "owner" });
@@ -254,7 +257,7 @@ test("never by force: a remote branch of the same name with other commits is ref
   const before = remoteRefs(s.bare);
   const replay = replayGitHub();
   const d = deliveries(t, s, replay);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   await d.idle();
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
   assert.equal(view.state, "failed");
@@ -267,7 +270,7 @@ test("never by force: a remote branch of the same name with other commits is ref
   const refuse = path.join(s.bare, "hooks", "pre-receive");
   fs.writeFileSync(refuse, "#!/bin/sh\necho 'protected by the remote' >&2\nexit 1\n", { mode: 0o755 });
   const second = await readyTask(s, { delivery: "pull_request" });
-  await decideTask(s.db, { taskId: second.id, decision: "accept" });
+  await decideTask(s.db, { taskId: second.id, decision: "accept", withoutVerification: true });
   await d.idle();
   const refusedView = deliveryOf(s.db, getTask(s.db, second.id)!);
   assert.equal(refusedView.state, "failed");
@@ -281,7 +284,7 @@ test("credentials written into a remote's address never reach the ledger, Activi
   const task = await readyTask(s, { delivery: "pull_request" });
   git(s.repo, "remote", "set-url", "origin", `https://jon:${secret}@example.invalid/not-a-repository.git`);
   const d = deliveries(t, s, replayGitHub());
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   await d.idle();
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
   assert.match(view.problem!, /https:\/\/\*\*\*@example\.invalid/);
@@ -294,7 +297,7 @@ test("credentials written into a remote's address never reach the ledger, Activi
   const missing = `https://jon:${secret}@github.com/jon-lange/gone.git`;
   git(s.repo, "remote", "set-url", "origin", missing);
   git(s.repo, "config", `url.${path.join(s.dir, "not-there.git")}.insteadOf`, missing);
-  await decideTask(s.db, { taskId: second.id, decision: "accept" });
+  await decideTask(s.db, { taskId: second.id, decision: "accept", withoutVerification: true });
   await d.idle();
   assert.equal(deliveryOf(s.db, getTask(s.db, second.id)!).state, "failed");
 
@@ -308,7 +311,7 @@ test("a restart between the push and the pull request: the next start takes it u
   // The first Botbench pushes, then stops while it asks GitHub for the branch's pull request.
   const first = replayGitHub({ hold: true });
   createDeliveries({ db: s.db, config: configFor(s), github: first.github, onTaskChange: () => {} });
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   for (let i = 0; i < 200 && first.lookups() === 0; i++) await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(stepsOf(s.db, task.id), ["requested", "pushed"]);
   assert.equal(remoteUpdates(s.bare, task.branch!), 1);
@@ -333,7 +336,7 @@ test("a pull request already there for the branch is taken as the task's, and no
   const replay = replayGitHub({ existing: true });
   const d = deliveries(t, s, replay);
   const task = await readyTask(s, { delivery: "pull_request" });
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   await d.idle();
   assert.equal(replay.opened.length, 0);
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
@@ -345,7 +348,7 @@ test("the pull request fails (GitHub refuses, no network): recorded in words wit
   const replay = replayGitHub({ failOpen: { times: 1, words: "The gh tool said: error connecting to api.github.com" } });
   const d = deliveries(t, s, replay);
   const task = await readyTask(s, { delivery: "pull_request" });
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   await d.idle();
   const view = deliveryOf(s.db, getTask(s.db, task.id)!);
   assert.equal(view.state, "failed");
@@ -367,7 +370,7 @@ test("the ledger is append-only, only for accepted tasks, holds one pull request
     s.db.prepare("INSERT INTO deliveries (task_id, step, url, number, adopted, created_at) VALUES (?, ?, 'https://github.com/o/r/pull/1', 1, 0, 't')").run(task.id, step);
   };
   assert.throws(() => insert("opened"), /only an accepted task is delivered/);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   insert("opened");
   assert.throws(() => insert("opened"), /at most one pull request/);
   assert.throws(() => s.db.prepare("UPDATE deliveries SET url = 'x'").run(), /append-only/);
@@ -401,14 +404,14 @@ test("a restart after the acceptance was recorded and before the delivery began:
   const s = store(t);
   const task = await readyTask(s, { delivery: "pull_request" });
   // No Botbench is listening: the decision is recorded and nothing else happens, as if it stopped right then.
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   assert.deepEqual(stepsOf(s.db, task.id), []);
   const replay = replayGitHub();
   await deliveries(t, s, replay).idle();
   assert.deepEqual(stepsOf(s.db, task.id), ["requested", "pushed", "opened"]);
   // A run that keeps its branches is never taken up this way.
   const kept = await readyTask(s, { delivery: "branch" });
-  await decideTask(s.db, { taskId: kept.id, decision: "accept" });
+  await decideTask(s.db, { taskId: kept.id, decision: "accept", withoutVerification: true });
   await deliveries(t, s, replayGitHub()).idle();
   assert.deepEqual(stepsOf(s.db, kept.id), []);
 });
@@ -418,7 +421,7 @@ test("the owner's confirmation names the address it showed: a remote whose addre
   const replay = replayGitHub();
   const d = deliveries(t, s, replay);
   const task = await readyTask(s);
-  await decideTask(s.db, { taskId: task.id, decision: "accept" });
+  await decideTask(s.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   d.deliver(task.id, { by: "owner", expect: { remote: "origin", branch: task.branch, address: "https://github.com/jon-lange/other.git" } });
   await d.idle();
   assert.match(deliveryOf(s.db, getTask(s.db, task.id)!).problem!, /not the one you were shown/);

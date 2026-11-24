@@ -314,6 +314,13 @@ export interface TaskDecision {
   decidedBy: "owner" | "mode";
   /** Why the mode accepted it, in words; null for the owner's own decision. */
   reasons: string | null;
+  /**
+   * For an accept: what its checks had found on the commit accepted, or "none" for an accept without verification.
+   * Null for a reject, and for a decision from before this was recorded.
+   */
+  checks: ChecksMark | null;
+  /** The commit those checks ran on, which is the commit accepted; null when `checks` is "none" or null. */
+  checksCommit: string | null;
   decidedAt: string;
 }
 /** How much a run does without the owner, chosen when it is started. */
@@ -355,6 +362,32 @@ export interface PullRequestTarget {
 /** What a task's checks found: all passed, at least one failed or ran out of time, or the repository has none. */
 export type ChecksMark = "passed" | "failed" | "none";
 
+/**
+ * The state of a task's evidence, computed by the server for a task that is ready for review (src/engine/evidence.ts):
+ * whether its checks are about the commit Accept would keep. The client shows it and never works it out.
+ */
+export interface EvidenceState {
+  /** "current": the checks ran on that commit. "stale": on another, or not known. "differs": the task's copy holds files that are not in the commit. "none": no checks ran. */
+  state: "current" | "stale" | "differs" | "none";
+  checks: ChecksMark;
+  /** The commit the latest finished checks ran on; null when there is none or it is not known. */
+  checkedCommit: string | null;
+  /** The commit the task's branch holds, which Accept would keep. */
+  headCommit: string | null;
+  /** For "differs": the files in the copy that are changed, or not on the branch and not ignored. */
+  files: { path: string; change: "changed" | "untracked" }[];
+  /** What git ignores in the copy, which goes with it; `ignoredWords` is the sentence about it. */
+  ignored: string[];
+  ignoredMore: number;
+  ignoredWords: string | null;
+  /** What is so and what to do, in the server's words. */
+  words: string;
+  /** Whether Run checks again has something to run on. */
+  canRunAgain: boolean;
+  /** The latest review, the commit it read and whether that is the branch's: a model's opinion, reported apart. */
+  review: { agent: string; commit: string | null; current: boolean; words: string } | null;
+}
+
 /** One command Botbench ran on a task, as stored: a setup command before its builder started, or a check after. */
 export interface Evidence {
   id: number;
@@ -369,6 +402,8 @@ export interface Evidence {
   outcome: "passed" | "failed" | "timed_out" | "stopped" | "skipped" | "not_run";
   /** For a machine check: what it was allowed beyond a check ("chrome", "nested-sandbox", comma-separated); null otherwise. */
   needs: string | null;
+  /** For a check: the commit its round ran on; null when Botbench has no record of it. */
+  commit: string | null;
   exitCode: number | null;
   signal: string | null;
   /** What it printed, its end when it was long. */
@@ -524,6 +559,13 @@ export interface TaskDetail extends TaskSummary {
   reviewLine: string | null;
   /** For a task that is ready for review: the files the checks left in its copy that are not on its branch. Null otherwise, or when they cannot be read. */
   leftovers: string[] | null;
+  /** For a task that is ready for review: the state of its evidence, from the server. Null otherwise, or when it cannot be read (`evidenceProblem` says why). */
+  evidenceState: EvidenceState | null;
+  evidenceProblem: string | null;
+  /** The owner had the checks run again, and they are running now. */
+  checkingAgain: boolean;
+  /** The rounds of checks the owner had run again (Run checks again), for naming an earlier round. */
+  rerunRounds: number[];
   /** For a task that failed, was stopped or was cancelled: what it left, which Discard removes. Null otherwise, or when it cannot be read. */
   remains: TaskRemains | null;
   remainsProblem: string | null;
@@ -615,7 +657,10 @@ export const startTask = (repo: string, prompt: string, model: string | null | u
 export const listTasks = async (): Promise<TaskSummary[]> => (await request<{ tasks: TaskSummary[] }>("GET", "/api/tasks")).tasks;
 export const getTask = (id: number): Promise<TaskDetail> => request("GET", `/api/tasks/${id}`);
 /** Accept a task that is ready for review. `removeLeftovers` is the list of files its checks left, as the owner saw and confirmed them. */
-export const acceptTask = (id: number, removeLeftovers: readonly string[], note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { removeLeftovers, note }, 60_000);
+/** Accept a task. `withoutVerification` is the owner's "Accept without verification", for work no check ran on: the server takes such work no other way. */
+export const acceptTask = (id: number, withoutVerification: boolean, note: string | null = null): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/accept`, { note, ...(withoutVerification ? { withoutVerification: true } : {}) }, 60_000);
+/** Have the repository's checks run again on a task that is ready for review whose checks are out of date. The request names the task and nothing else. */
+export const runChecksAgain = (id: number): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/run-checks-again`, {}, 30_000);
 /** Push an accepted task's branch and open its pull request (or try again), naming the remote and branch the owner confirmed. */
 export const openPullRequest = (id: number, to: { remote: string; branch: string; address: string }): Promise<TaskDetail> => request("POST", `/api/tasks/${id}/pull-request`, { remote: to.remote, branch: to.branch, address: to.address }, 30_000);
 /** Reject a task that is ready for review, keeping or deleting its branch. */
@@ -764,6 +809,12 @@ export interface RunTask {
   decision: TaskDecision | null;
   pullRequest: PullRequestView;
   leftovers: string[] | null;
+  /** For a task that is ready for review: the state of its evidence, from the server, as on its own screen. */
+  evidenceState: EvidenceState | null;
+  evidenceProblem: string | null;
+  /** The owner had the checks run again, and they are running now; and the rounds of checks that were such re-runs. */
+  checkingAgain: boolean;
+  rerunRounds: number[];
   /** For a stopped task Resume can take up again: what Resume will do, in words. Null when it cannot be resumed. */
   resumeNote: string | null;
   /** Taken up again by Botbench itself after a restart: the plain line that says so, with the time. */

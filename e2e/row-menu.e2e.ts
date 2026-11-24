@@ -64,7 +64,7 @@ const test = base.extend<{ seeded: Seeded; botbench: Botbench }>({
     moveTask(db, failed.task.id, "failed", { reason: "it broke", headCommit: failed.commit });
     const delivered = await built(db, home, repo, "create hello.txt");
     moveTask(db, delivered.task.id, "awaiting_decision", { headCommit: delivered.commit, checks: "none" });
-    await decideTask(db, { taskId: delivered.task.id, decision: "accept" });
+    await decideTask(db, { taskId: delivered.task.id, decision: "accept", withoutVerification: true });
     const deliveries = createDeliveries({ db, config: { repositories: {} } as unknown as Config, github: replayGitHub().github, onTaskChange: () => {} });
     deliveries.deliver(delivered.task.id, { by: "owner" });
     await deliveries.close();

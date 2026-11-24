@@ -17,7 +17,8 @@ import { checkFixView } from "../engine/check-fix.ts";
 import { checkRepository, getTask, listTasks, restartLine, resumeNote, TaskError, waitingBehind, words, type Task } from "../engine/task.ts";
 import { noteRoundLine, openNoteRound } from "../engine/note-rounds.ts";
 import { firstLine } from "../shorten.ts";
-import { beingDecided, decideTask, discardTask, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
+import { beingDecided, decideTask, discardTask, EvidenceError, LeftoversError, taskDecision, taskLeftovers, taskRemains, type TaskRemains } from "../engine/decision.ts";
+import { evidenceState, openCheckRerun, rerunRounds, taskCheckReruns, type EvidenceState } from "../engine/evidence.ts";
 import { deliveryOf } from "../engine/delivery.ts";
 import { runsMadeFrom } from "../engine/run-source.ts";
 import { MAX_NOTE, replacedOne, undeliveredNote, waitingNote } from "../engine/notes.ts";
@@ -168,8 +169,10 @@ export function reviewOf(db: DatabaseSync, taskId: number): Record<string, unkno
 export function decisionOf(db: DatabaseSync, taskId: number): Record<string, unknown> | null {
   const found = taskDecision(db, taskId);
   if (found === null) return null;
-  const { decision, branch, branchName, leftovers, note, decidedBy, reasons, decidedAt } = found;
-  return { decision, branch, branchName, leftovers, note, decidedBy, reasons, decidedAt };
+  const { decision, branch, branchName, headCommit, leftovers, note, decidedBy, reasons, checks, checksCommit, decidedAt } = found;
+  // `checks`: for an accept, what its checks had found on the commit accepted, or "none" for one made without
+  // verification; null for a reject and for a decision from before this was recorded.
+  return { decision, branch, branchName, headCommit, leftovers, note, decidedBy, reasons, checks, checksCommit, decidedAt };
 }
 
 /**
@@ -178,6 +181,34 @@ export function decisionOf(db: DatabaseSync, taskId: number): Record<string, unk
  */
 export async function leftoversOf(task: Task): Promise<string[] | null> {
   return taskLeftovers(task).catch(() => null);
+}
+
+/**
+ * For a task that is ready for review: the state of its evidence (engine/evidence.ts), computed here from what is
+ * stored and from its copy and its branch as they are now, so that no client works it out: whether its checks are about
+ * the commit Accept would keep ("current"), about another ("stale"), whether its copy differs from that commit
+ * ("differs"), or no checks ran ("none"), with the commits, the files and the sentence that says so. Null for any other
+ * task. When it cannot be read it is null too, with why in `evidenceProblem`, and an accept is refused.
+ */
+export async function evidenceStateOf(ctx: Pick<RouteContext, "db" | "config">, task: Task): Promise<{ evidenceState: EvidenceState | null; evidenceProblem: string | null }> {
+  if (task.status !== "awaiting_decision") return { evidenceState: null, evidenceProblem: null };
+  try {
+    // Whether a re-run would have anything to run: the checks the settings file lists for the repository now.
+    const settings = repositorySettings(ctx.config, task.repo);
+    const checksSetUp = (settings.checks ?? []).length + (settings.machineChecks ?? []).length > 0;
+    return { evidenceState: await evidenceState(ctx.db, task, { checksSetUp }), evidenceProblem: null };
+  } catch (err) {
+    return { evidenceState: null, evidenceProblem: `The task's evidence cannot be read, so it cannot be accepted now: ${words(err)}` };
+  }
+}
+
+/** Each time the owner had the task's checks run again, oldest first, the rounds of checks those were, and whether one is under way now. */
+export function checkRerunsOf(db: DatabaseSync, task: Task): { checkReruns: Record<string, unknown>[]; rerunRounds: number[]; checkingAgain: boolean } {
+  return {
+    rerunRounds: rerunRounds(db, task.id),
+    checkReruns: taskCheckReruns(db, task.id).map(({ id, requestedBy, fromCommit, headCommit, outcome, startedAt, endedAt }) => ({ id, requestedBy, fromCommit, headCommit, outcome, startedAt, endedAt })),
+    checkingAgain: task.status === "verifying" && openCheckRerun(db, task.id) !== null,
+  };
 }
 
 /**
@@ -296,7 +327,7 @@ async function detail(ctx: RouteContext, task: Task): Promise<Record<string, unk
     // only those that could build it in its run's mode (engine/handoff.ts, `handoffProblem`).
     moveTo: offer.now ? offer.agents : [], ...(await markedFiles(ctx, task, left.remains)), evidence: taskEvidence(db, task.id), commandLists: commandLists(db, task.id), ...checkFixesOf(db, task),
     // Every request refused without asking during the task, in full, oldest first, whatever became of the task.
-    refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task),
+    refused: modeRefusals(db, task.id).map((refusal) => refusal.command), ...reviewOf(db, task.id), leftovers: await leftoversOf(task), ...(await evidenceStateOf(ctx, task)), ...checkRerunsOf(db, task), ...left, pullRequestTarget: await pullRequestTarget(ctx, task),
     mainUpdate: await mainUpdateOf(ctx, task) };
 }
 
@@ -380,6 +411,7 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
   const note = /^\/api\/tasks\/([1-9]\d{0,14})\/notes$/.exec(pathname);
   const move = /^\/api\/tasks\/([1-9]\d{0,14})\/move$/.exec(pathname);
   const upToDate = /^\/api\/tasks\/([1-9]\d{0,14})\/update-with-main$/.exec(pathname);
+  const checksAgain = /^\/api\/tasks\/([1-9]\d{0,14})\/run-checks-again$/.exec(pathname);
   try {
     if (method === "POST" && pathname === "/api/tasks") {
       await startTask(req, res, ctx);
@@ -412,7 +444,8 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
     } else if (method === "POST" && decision) {
       const body = await readJsonBody(req);
       if (!isObject(body)) throw new TaskError(400, "expected a JSON object");
-      const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note });
+      // `withoutVerification`: the owner's "Accept without verification", for work no check ran on; read only for an accept.
+      const decided = await decideTask(ctx.db, { taskId: Number(decision[1]), decision: decision[2], branch: body.branch, removeLeftovers: body.removeLeftovers, note: body.note, ...(decision[2] === "accept" ? { withoutVerification: body.withoutVerification } : {}) });
       ctx.stream.announceTask(decided.task);
       if (decided.run !== null) {
         ctx.stream.announceRun(decided.run);
@@ -448,11 +481,18 @@ export async function taskRoutes(req: http.IncomingMessage, res: http.ServerResp
       const id = Number(upToDate[1]);
       if (beingDecided(id)) throw new TaskError(409, "This task is being decided or discarded, so it cannot be brought up to date.");
       json(res, 200, await detail(ctx, await ctx.tasks.updateWithMain(id)));
+    } else if (method === "POST" && checksAgain) {
+      // The owner's "Run checks again" (engine/evidence.ts). The body is never read: the request names a task and
+      // nothing else, and what runs is the repository's configured checks.
+      const id = Number(checksAgain[1]);
+      if (beingDecided(id)) throw new TaskError(409, "This task is being decided, so its checks were not run again.");
+      json(res, 200, await detail(ctx, await ctx.tasks.runChecksAgain(id)));
     } else {
       return false;
     }
   } catch (err) {
     if (err instanceof LeftoversError) json(res, err.status, { error: err.message, leftovers: err.leftovers });
+    else if (err instanceof EvidenceError) json(res, err.status, { error: err.message, evidenceState: err.evidence });
     else if (err instanceof BodyError || err instanceof TaskError || err instanceof RunError) json(res, err.status, { error: err.message });
     else throw err;
   }
