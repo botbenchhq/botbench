@@ -481,7 +481,7 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
       open={task === null ? null : { title, href: `#/tasks/${id}` }}
       asideLabel={view === "review" ? "Decision" : view === "recovery" ? "Recovery" : "Details"}
       bar={
-        <nav aria-label="Where this is" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <nav aria-label="Where this is" className="flex min-w-0 flex-1 items-center gap-x-3 text-sm">
           <a href="#/work" className="inline-flex min-h-(--control-small) items-center text-muted-foreground hover:text-foreground">
             Work
           </a>
@@ -496,7 +496,7 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
                 {`Task ${id} · `}
                 <span data-ds-content="">{taskName(task).slice(`Task ${id} · `.length)}</span>
               </span>
-              <Badge data-testid="task-state" variant="outline" className={stateTone(task)}>
+              <Badge data-testid="task-state" variant="outline" className={cn("shrink-0", stateTone(task))}>
                 {statusWord(task)}
               </Badge>
             </>
@@ -524,9 +524,9 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
                   <span>{agentName(task.builder)}</span>
                   {/* A branch that is gone is not named: discarded with what a stopped task left, or deleted by a Reject. */}
                   {task.branch !== null && task.remains?.discardedAt == null && task.decision?.branch !== "deleted" && (
-                    <span className="inline-flex flex-wrap items-center gap-x-1.5">
-                      {"Branch "}
-                      <code data-testid="branch" data-ds-content="" className="break-all text-foreground">
+                    <span className="inline-flex max-w-full min-w-0 items-center gap-x-1.5">
+                      <span className="shrink-0">Branch</span>
+                      <code data-testid="branch" data-ds-content="" className="min-w-0 break-all text-foreground">
                         {task.branch}
                       </code>
                       <CopyBranch branch={task.branch} />
@@ -590,7 +590,7 @@ function CopyBranch({ branch }: { branch: string }) {
   const [copied, setCopied] = useState<string | null>(null);
   return (
     <>
-      <Button variant="ghost" size="icon" className="size-(--control-small) text-muted-foreground" aria-label="Copy branch name" onClick={() => void copyWords(branch).then(setCopied)}>
+      <Button variant="ghost" size="icon" className="size-(--control-small) shrink-0 text-muted-foreground" aria-label="Copy branch name" onClick={() => void copyWords(branch).then(setCopied)}>
         <Copy aria-hidden="true" />
       </Button>
       <span data-testid="branch-copy-state" role="status">
