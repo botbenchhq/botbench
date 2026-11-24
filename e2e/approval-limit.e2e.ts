@@ -6,7 +6,7 @@ import { createRun, storePlan } from "../src/engine/run.ts";
 import { createTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, chooseRepository, contextSheet, expect, openComposer, openFromSettings, openRow, signIn } from "./helpers.ts";
+import { checkDesign, checkLayout, checkWords, choose, chooseRepository, contextSheet, expect, openComposer, openFromSettings, openRow, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // A run's approval time limit in the real client: chosen in the composer's Add context sheet for a run, and shown on
@@ -74,14 +74,18 @@ for (const [size, viewport] of Object.entries(SIZES)) {
         await page.goto(`${botbench.base}/#/runs/${seeded.limited}`);
         const limit = page.getByTestId("run-approval-limit");
         await expect(limit).toHaveText("15 minutes. A request nobody answers within 15 minutes is denied.");
-        await expect(page.locator(".ds-key-value__label", { hasText: /^Approval time limit$/ })).toBeVisible();
-        await checkDesign(page, `run with an approval time limit, ${size}, ${scheme}`);
+        await expect(page.getByTestId("run-facts").getByText("Approval time limit", { exact: true })).toBeVisible();
+        // The run screen is a rebuilt one: its words and its layout are checked in place of the old design checks.
+        const floor = viewport.width < 1024 ? 44 : 32;
+        await checkLayout(page, floor, `run with an approval time limit, ${size}, ${scheme}`);
+        await checkWords(page, `run with an approval time limit, ${size}, ${scheme}`);
         await fits(page, `run with an approval time limit, ${size}, ${scheme}`, [limit]);
 
         await page.goto(`${botbench.base}/#/runs/${seeded.free}`);
         await expect(page.getByTestId("run-mode")).toBeVisible();
         await expect(limit).toHaveText("Off. Requests wait for your answer, however long that takes.");
-        await checkDesign(page, `run with no approval time limit, ${size}, ${scheme}`);
+        await checkLayout(page, floor, `run with no approval time limit, ${size}, ${scheme}`);
+        await checkWords(page, `run with no approval time limit, ${size}, ${scheme}`);
         await fits(page, `run with no approval time limit, ${size}, ${scheme}`, [limit]);
       });
 

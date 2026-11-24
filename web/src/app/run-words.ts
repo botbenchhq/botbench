@@ -17,7 +17,7 @@ export const MODE_SENTENCE: Record<RunMode, string> = {
   full: "Fully autonomous: Botbench builds without asking you, refuses what would need you, and accepts work whose every check passed and that its reviewer, if any, said looks right and named what it checked. The rest waits for you.",
 };
 
-/** What the run screen says over its choice of a stricter mode (components/mode-change.tsx). */
+/** What the run screen says over its choice of a stricter mode (screens2/run/run-parts.tsx). */
 export const STRICTER_HINT = "You can make the mode stricter while the run works, never looser. A request already waiting for you stays, and a command already running finishes; the new mode applies from the agent's next request, also while it is still working. The safety rules are the same in every mode.";
 
 /** "a", "a and b", "a, b and c". */

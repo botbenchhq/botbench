@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
+import { RUN_TASK_STATE, SHOTS, askCancelRun, checkDesign, checkRebuilt, expect, offersCancelRun, openRunId, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Building a run in the real client, at a phone's size, against a real Botbench process whose settings give the
@@ -55,8 +55,7 @@ async function shot(page: Page, name: string): Promise<void> {
 /** Start a run on the run screen, decline what its planner asks, and set its plan to `tasks` as the owner can over the API. */
 async function plannedRun(page: Page, botbench: Botbench, repo: string, tasks: { title: string; criteria: string[] }[]): Promise<number> {
   await startRunIn(page, repo, "Plan exactly two tasks: create one.txt, and create two.txt. Do not run any command; the README is all there is to read.");
-  await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const runId = await openRunId(page);
   let version = -1;
   await expect(async () => {
     for (const approval of ((await (await page.request.get(`${botbench.base}/api/approvals?status=pending`)).json()) as { approvals: { id: number }[] }).approvals) {
@@ -94,7 +93,7 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
       (window as unknown as { seen: string[][] }).seen = seen;
       const look = (): void => {
         document.querySelectorAll('[data-testid="run-tasks"] > li').forEach((row, i) => {
-          const word = row.querySelector(".ds-badge")?.textContent ?? "";
+          const word = row.querySelector('[data-testid="run-task-state"]')?.textContent ?? "";
           if (seen[i] && word !== "" && seen[i]!.at(-1) !== word) seen[i]!.push(word);
         });
       };
@@ -107,16 +106,16 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
     await expect(rows).toHaveCount(2);
     await expect(page.getByTestId("run-status")).toHaveText(/^(Working|Needs input)\. /);
     // The first is built while the second waits its turn.
-    await expect(rows.nth(0).locator(".ds-badge")).toHaveText(/^(Working|Needs input)$/, { timeout: 60_000 });
-    await expect(rows.nth(1).locator(".ds-badge")).toHaveText("Queued");
-    await expect(page.getByRole("button", { name: "Cancel run" })).toBeVisible();
-    await checkDesign(page, "run, building");
+    await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText(/^(Working|Needs input)$/, { timeout: 60_000 });
+    await expect(rows.nth(1).locator(RUN_TASK_STATE)).toHaveText("Queued");
+    expect(await offersCancelRun(page), "the run's menu offers Cancel run").toBe(true);
+    await checkRebuilt(page, "run, building");
     await shot(page, "u12-run-building.png");
     // The task being built is one tap away, with its transcript live.
-    await expect(rows.nth(0).getByRole("link")).toHaveAttribute("href", /#\/tasks\/\d+$/);
+    await expect(rows.nth(0).getByRole("link").first()).toHaveAttribute("href", /#\/tasks\/\d+$/);
 
-    await expect(rows.nth(1).locator(".ds-badge")).toHaveText("Ready for review", { timeout: 240_000 });
-    await expect(rows.nth(0).locator(".ds-badge")).toHaveText("Ready for review");
+    await expect(rows.nth(1).locator(RUN_TASK_STATE)).toHaveText("Ready for review", { timeout: 240_000 });
+    await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText("Ready for review");
     await expect(page.getByTestId("run-status")).toHaveText(/^Ready for review\./);
     await stopDeclining();
     const seen = await page.evaluate(() => (window as unknown as { seen: string[][] }).seen);
@@ -137,11 +136,11 @@ test("LIVE: approve a plan and watch both tasks go Queued, Working, Ready for re
       await check.locator(".ds-check-list__toggle").click();
       await expect(check.locator(".ds-check-list__log")).toHaveText(/preparing the copy/);
     }
-    await expect(page.getByRole("button", { name: "Cancel run" })).toHaveCount(0);
-    await checkDesign(page, "run, built, setup output open");
+    expect(await offersCancelRun(page), "a run whose tasks are all built can no longer be cancelled").toBe(false);
+    await checkRebuilt(page, "run, built, setup output open");
 
     // A built task's own screen shows the same evidence.
-    await rows.nth(0).getByRole("link").click();
+    await rows.nth(0).getByRole("link").first().click();
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
     await expect(page.getByRole("heading", { name: "Setup" })).toBeVisible();
     await expect(page.locator(".ds-check-list__item .ds-check-list__result")).toHaveText("Passed");
@@ -164,24 +163,23 @@ test("LIVE (planner only): cancel a run while it builds: the dialog says what is
     ]);
     await page.getByRole("button", { name: "Approve 2 tasks" }).click();
     const rows = page.getByTestId("run-tasks").locator(":scope > li");
-    await expect(rows.nth(0).locator(".ds-badge")).toHaveText("Working");
+    await expect(rows.nth(0).locator(RUN_TASK_STATE)).toHaveText("Working");
     await expect(rows.nth(0)).toContainText("Preparing a separate copy of the project");
-    await checkDesign(page, "run, setting up");
+    await checkRebuilt(page, "run, setting up");
 
-    await page.getByRole("button", { name: "Cancel run" }).click();
-    const dialog = page.getByRole("alertdialog");
+    const dialog = await askCancelRun(page);
     await expect(dialog).toContainText("Cancel this run?");
     await expect(dialog).toContainText("Tasks that have finished keep their branches");
-    await checkDesign(page, "run, cancel while building");
+    await checkRebuilt(page, "run, cancel while building");
     await dialog.getByRole("button", { name: "Cancel run" }).click();
     await expect(page.getByTestId("run-status")).toHaveText(/^Cancelled\./);
-    for (const row of await rows.all()) await expect(row.locator(".ds-badge")).toHaveText("Cancelled", { timeout: 15_000 });
+    for (const row of await rows.all()) await expect(row.locator(RUN_TASK_STATE)).toHaveText("Cancelled", { timeout: 15_000 });
     await expect(rows.nth(0).locator(".ds-check-list__result")).toHaveText(/^Stopped/);
-    await expect(page.getByRole("button", { name: "Cancel run" })).toHaveCount(0);
-    await checkDesign(page, "run, cancelled while building");
+    await expect(page.getByTestId("run-menu")).toHaveCount(0);
+    await checkRebuilt(page, "run, cancelled while building");
     const attempts = (await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { tasks: { attemptId: number | null }[] };
     expect(attempts.tasks.map((task) => task.attemptId)).toEqual([null, null]);
-    await rows.nth(1).getByRole("link").click();
+    await rows.nth(1).getByRole("link").first().click();
     await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\./);
     await checkDesign(page, "task cancelled before it started");
   }

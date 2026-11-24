@@ -77,7 +77,7 @@ for (const mode of ["dark", "light"] as const) {
     await screen(page, botbench, { hash: "#/work", name: "Work", ready: heading("Work"), mode });
     await screen(page, botbench, { hash: `#/tasks/${seeded.task}`, name: "task, ready for review", ready: (p) => p.getByTestId("task-status"), mode });
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
-    await screen(page, botbench, { hash: `#/runs/${seeded.run}`, name: "run, its plan waiting", ready: heading(`Run ${seeded.run}`), mode });
+    // The run screen is rebuilt on shadcn/ui (ADR 0012) and is not drawn with the design system's classes: its checks, in dark and in light, are e2e/run.e2e.ts's.
     await screen(page, botbench, { hash: "#/settings", name: "Settings, Agents", ready: (p) => p.getByRole("region", { name: "Agents" }), mode });
     await screen(page, botbench, { hash: "#/settings/appearance", name: "Settings, Appearance", ready: (p) => p.getByTestId("settings-section").getByRole("group", { name: "Appearance" }), mode });
     await screen(page, botbench, { hash: "#/settings/notifications", name: "Settings, Notifications", ready: (p) => p.getByTestId("notifications"), mode });
