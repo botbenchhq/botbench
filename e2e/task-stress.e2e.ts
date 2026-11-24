@@ -219,8 +219,14 @@ test("a task with long content in each state it can end in keeps inside the scre
       expect.soft(await page.getByRole("navigation", { name: "Where this is" }).evaluate((nav) => nav.getBoundingClientRect().height), `task, ${name}, ${size.width}: the bar is one line`).toBeLessThan(48);
       // The copy button stands beside the branch, however many lines the branch takes.
       if ((await page.getByTestId("branch").count()) > 0) {
-        const [branch, copy] = [(await page.getByTestId("branch").boundingBox())!, (await page.getByRole("button", { name: "Copy branch name" }).boundingBox())!];
-        expect.soft(copy.y + copy.height / 2 > branch.y && copy.y + copy.height / 2 < branch.y + branch.height && copy.x >= branch.x + branch.width - 1, `task, ${name}, ${size.width}: the copy button is beside the branch`).toBe(true);
+        // Both boxes are read in one look at the page: read one after the other, a header that moves between the two (the task's sentence arriving) gave boxes from two layouts.
+        const beside = await page.getByTestId("branch").evaluate((code) => {
+          const branch = code.getBoundingClientRect();
+          const copy = code.parentElement!.querySelector("button")!.getBoundingClientRect();
+          const middle = copy.top + copy.height / 2;
+          return { inItsLines: middle > branch.top && middle < branch.bottom, rightOfIt: copy.left >= branch.right - 1, insideTheScreen: copy.right <= window.innerWidth };
+        });
+        expect.soft(beside, `task, ${name}, ${size.width}: the copy button is beside the branch`).toEqual({ inItsLines: true, rightOfIt: true, insideTheScreen: true });
       }
       if ((await page.getByTestId("verification").count()) > 0) {
         // A check's mark is at the start of its command's first line, and every changed file's whole path can be read.
