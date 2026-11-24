@@ -4,7 +4,7 @@ Two people, each with their own Botbench, can pair their workbenches and send ea
 
 ## What you need
 
-- Two Botbench installations, here called alice and bob, each already working (the README's [Quickstart](../README.md#quickstart)). Each has its own name in Settings → This workbench → Workbench.
+- Two Botbench installations, here called alice and bob, each already working (the README's [Quickstart](../README.md#quickstart)). Each has its own name in Settings → Workbench identity → Workbench name.
 - One repository both of you have a copy of, with the same remote: a GitHub repository, or for a try on one Mac, a bare repository on disk that both copies use as `origin`.
 - A network path between the two Botbench processes: the same Mac (loopback, the only setup this version has been tested on), or an address on a private network you both use (RFC 1918, RFC 4193, or 100.64.0.0/10 as overlay networks use). Botbench refuses to start with a public address.
 
@@ -18,15 +18,15 @@ In each installation's settings file (`botbench.local.json` in the checkout, or 
 { "peers": { "listen": { "address": "127.0.0.1", "port": 4790 } } }
 ```
 
-On one Mac, give bob another port, such as 4791. Start each Botbench again. Settings → Paired workbench then shows Invite and Paste an invite; without the setting it says "Pairing is off" and how to switch it on.
+On one Mac, give bob another port, such as 4791. Start each Botbench again. Settings → Connections and peers → Paired workbench then shows Invite and Paste an invite; without the setting it says "Pairing is off" and how to switch it on.
 
 ## 2. Invite (alice)
 
-In Settings → Paired workbench, choose the repository and press **Make an invite**. Botbench shows a one-line invite starting `botbench-invite-1.`, "It works once, until 14:32.", Withdraw, and this workbench's fingerprint (five groups of four characters). Press Copy and pass the line to bob yourself, in a message you trust. It is shown only this once.
+In Settings → Connections and peers → Paired workbench, choose the repository and press **Make an invite**. Botbench shows a one-line invite starting `botbench-invite-1.`, "It works once, until 14:32.", Withdraw, and this workbench's fingerprint (five groups of four characters). Press Copy and pass the line to bob yourself, in a message you trust. It is shown only this once.
 
 ## 3. Paste and check (bob)
 
-In Settings → Paired workbench, paste the line into Invite, choose your copy of the repository and press **Check the invite**. Botbench shows the inviter's name (alice), alice's fingerprint and the repository. Ask alice to read out the fingerprint her screen shows; if it is the same, press **Confirm**. Bob's screen then reads "Waiting for alice to confirm".
+In Settings → Connections and peers → Paired workbench, paste the line into Invite, choose your copy of the repository and press **Check the invite**. Botbench shows the inviter's name (alice), alice's fingerprint and the repository. Ask alice to read out the fingerprint her screen shows; if it is the same, press **Confirm**. Bob's screen then reads "Waiting for alice to confirm".
 
 ## 4. Compare fingerprints and confirm (alice)
 
@@ -35,8 +35,8 @@ Alice's screen now shows "bob asks to pair", with bob's fingerprint and her own.
 ## 5. Ask and answer
 
 - Alice writes in "A new question for bob" and presses **Send**. Under the button: "Your question: Sending to bob's workbench." and then, once bob's Botbench has stored it, the conversation shows it as Delivered.
-- Bob's header says "1 message with the paired workbench waits for you." On Work, under Needs you, a card reads "alice asks a question about …" with the **Outside text** badge and the question as plain text. Bob chooses **Answer it yourself**, writes the answer and presses Send; or **Give it to Claude Code**, which starts a Manual task in his copy, marked as having read outside text; or **Dismiss**.
-- Alice gets a card "bob answered your question about …", and the conversation (Open the conversation, or Settings → Paired workbench → Conversations) shows both messages, each marked as hers or bob's, with its state.
+- Bob's header says "1 message with the paired workbench waits for you. Open it." On Home, under Needs you, a card reads "alice asks a question about …" with the **Outside text** badge and the question as plain text. Bob chooses **Answer it yourself**, writes the answer and presses Send; or **Give it to Claude Code**, which starts a Manual task in his copy, marked as having read outside text; or **Dismiss**.
+- Alice gets a card "bob answered your question about …", and the conversation (Open the conversation, or Settings → Connections and peers → Paired workbench → Conversations) shows both messages, each marked as hers or bob's, with its state.
 
 When a task's Claude Code drafts a question to the other workbench, its card "Send this to bob?" shows the exact text and waits for Send, Edit or Don't send. The task itself ends as "Drafted a message" when it changed no file.
 
