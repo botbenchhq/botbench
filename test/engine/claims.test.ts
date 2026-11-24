@@ -22,6 +22,7 @@ import { parsePrList, type GitHub } from "../../src/github.ts";
 import { ISSUE_ADDRESS, ISSUE_NUMBER, replayIssues } from "../support/replay-issue.ts";
 import { PEERS_ADDRESS, replayPeers } from "../support/replay-peers.ts";
 import { git, initRepo, tempDir, write } from "../support/repo.ts";
+import { storeChecks } from "../support/checks.ts";
 
 // Claiming an issue (Peers P3) with real git, real SQLite and a real bare repository as the shared remote, reached
 // through the GitHub address each clone names (`url.<bare>.insteadOf`), as in test/engine/workbench-branches.test.ts.
@@ -486,8 +487,8 @@ test("two workbenches on one issue and one real remote: the one that does not ho
   assert.deepEqual(steps(alice.db, aliceWork.run.id), ["claiming", "claimed"], "the lock was free again, so alice holds it");
 
   // Both accept. Bob reads the lock again before its push and gives way; alice opens the one pull request.
-  await decideTask(bob.db, { taskId: bobWork.task.id, decision: "accept" });
-  await decideTask(alice.db, { taskId: aliceWork.task.id, decision: "accept" });
+  await decideTask(bob.db, { taskId: bobWork.task.id, decision: "accept", withoutVerification: true });
+  await decideTask(alice.db, { taskId: aliceWork.task.id, decision: "accept", withoutVerification: true });
   await Promise.all([bobDeliveries.idle(), aliceDeliveries.idle()]);
   await Promise.all([bobClaims.idle(), aliceClaims.idle()]);
   assert.equal(aliceGh.opened.length + bobGh.opened.length, 1, `at most one pull request for the issue: ${JSON.stringify(deliverySteps(alice.db, aliceWork.task.id).map((s) => s.detail))}`);
@@ -691,7 +692,8 @@ async function readyRun(b: Bench, claims: Claims, workbench: string, prompt: str
   write(worktree.path, `${workbench}.txt`, `${workbench}'s fix\n`);
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
-  // A fully autonomous run accepts only a task whose checks passed (the store refuses it otherwise).
+  // A fully autonomous run accepts only a task whose checks passed on its commit (the store refuses it otherwise).
+  if (o.mode === "full") storeChecks(b.db, task.id, committed.commit);
   return { run, task: moveTask(b.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: o.mode === "full" ? "passed" : "none" }) };
 }
 
@@ -725,7 +727,7 @@ async function takenOverScenario(t: T): Promise<{ remote: { dir: string; bare: s
   // C claims issue 4 and builds; its owner accepts; its Botbench stops before the delivery starts (no deliveries running).
   const cWork = await readyRun(c, claimsOf(c, replayGitHub().github, C_CLAIMED), "exp-c", "Issue #4: isEmail rejects plus addresses");
   assert.deepEqual(steps(c.db, cWork.run.id), ["claiming", "claimed"]);
-  await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+  await decideTask(c.db, { taskId: cWork.task.id, decision: "accept", withoutVerification: true });
   assert.deepEqual(deliverySteps(c.db, cWork.task.id), [], "stopped before anything was sent");
 
   // An hour later B is offered the take-over, confirms it, builds and opens its pull request.
@@ -737,7 +739,7 @@ async function takenOverScenario(t: T): Promise<{ remote: { dir: string; bare: s
   t.after(() => bDeliveries.close());
   const bWork = await readyRun(b, bClaims, "exp-b", "Issue #4: isEmail rejects plus addresses", { takeOver: taken });
   assert.match(claimSteps(b.db, bWork.run.id).at(-1)!.detail, /You took over exp-c's claim from 11:16:03 UTC on 2026-11-23/);
-  await decideTask(b.db, { taskId: bWork.task.id, decision: "accept" });
+  await decideTask(b.db, { taskId: bWork.task.id, decision: "accept", withoutVerification: true });
   await bDeliveries.idle();
   const opened = deliverySteps(b.db, bWork.task.id).find((s) => s.step === "opened");
   assert.ok(opened, `B opened its pull request: ${JSON.stringify(deliverySteps(b.db, bWork.task.id))}`);
@@ -801,7 +803,7 @@ test("issue #188: every path that delivers reads the claim again first, so a tak
     const bDeliveries = createDeliveries({ db: b.db, config: b.config, github: bGh.github, onTaskChange: () => {}, claims: bClaims });
     const takeOver = async (): Promise<void> => {
       const bWork = await readyRun(b, bClaims, "exp-b", "Issue #4", { takeOver: takeOverGiven([cClaim], { issue: 4, own: new Set(["exp-b"]), now: B_TOOK_OVER.getTime() }) });
-      await decideTask(b.db, { taskId: bWork.task.id, decision: "accept" });
+      await decideTask(b.db, { taskId: bWork.task.id, decision: "accept", withoutVerification: true });
       await bDeliveries.idle();
       await bDeliveries.close();
       assert.equal(bGh.opened.length, 1, `${path}: B opened its pull request`);
@@ -810,7 +812,7 @@ test("issue #188: every path that delivers reads the claim again first, so a tak
     if (path === "owner accept" || path === "fully autonomous accept") {
       await takeOver();
       const cDeliveries = createDeliveries({ db: c.db, config: c.config, github: cGh.github, onTaskChange: (task) => cClaims.runChanged({ id: task.runId! }), claims: cClaims });
-      if (path === "owner accept") await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+      if (path === "owner accept") await decideTask(c.db, { taskId: cWork.task.id, decision: "accept", withoutVerification: true });
       else await acceptByMode(c.db, cWork.task.id, "Checks passed and the review found nothing.");
       await cDeliveries.idle();
       // Try again after it: refused the same way.
@@ -822,13 +824,13 @@ test("issue #188: every path that delivers reads the claim again first, so a tak
         if (when === "pull_request") await takeOver();
         return cClaims.beforeSend(runId, when, branch);
       } } });
-      await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+      await decideTask(c.db, { taskId: cWork.task.id, decision: "accept", withoutVerification: true });
       await held.idle();
       await held.close();
       assert.ok(remoteBranches(remote.bare).has(cWork.task.branch!), `C had pushed its branch while it held the issue: ${JSON.stringify(deliverySteps(c.db, cWork.task.id))}`);
     } else {
       // Accepted, then C's Botbench stopped with the delivery asked (or pushed); B took over meanwhile; C starts again.
-      await decideTask(c.db, { taskId: cWork.task.id, decision: "accept" });
+      await decideTask(c.db, { taskId: cWork.task.id, decision: "accept", withoutVerification: true });
       c.db.prepare("INSERT INTO deliveries (task_id, step, requested_by, remote, branch, created_at) VALUES (?, 'requested', 'run', 'origin', ?, ?)").run(cWork.task.id, cWork.task.branch, now());
       if (path === "pushed before a restart") {
         git(c.repo, "push", "--quiet", "origin", `${cWork.task.branch}:refs/heads/${cWork.task.branch}`);
@@ -873,7 +875,7 @@ test("a claim deleted or changed on the remote stops the delivery; a remote that
     }
     // Wired as the server wires it: a failed delivery may release the run's claim.
     const deliveries = createDeliveries({ db: alice.db, config: alice.config, github: gh.github, onTaskChange: (task) => claims.runChanged({ id: task.runId! }), claims });
-    await decideTask(alice.db, { taskId: work.task.id, decision: "accept" });
+    await decideTask(alice.db, { taskId: work.task.id, decision: "accept", withoutVerification: true });
     await deliveries.idle();
     await claims.idle();
     assert.equal(gh.opened.length, 0, what);

@@ -1,5 +1,5 @@
 import { LOOKS, type Look } from "./looks.ts";
-import type { FileChange, ModelList, PullRequestView, TaskDecision, TaskStatus, TaskSummary } from "../api/client.ts";
+import type { FileChange, ModelList, PullRequestView, TaskDecision, TaskDetail, TaskStatus, TaskSummary } from "../api/client.ts";
 import { firstLine } from "../../../src/shorten.ts";
 import { clock, counted, dayAndClock, plural, sameDay, type Where } from "../app/format.ts";
 
@@ -64,7 +64,7 @@ const STATUS_LOOK: Record<TaskStatus, Look> = {
 export const statusLook = (task: Pick<TaskSummary, "status" | "waitingOnApproval" | "resuming"> & Partial<Pick<TaskSummary, "waitingFor">>): Look => (waiting(task) ? LOOKS.needsInput : resuming(task) ? LOOKS.working : behind(task) ? LOOKS.queued : STATUS_LOOK[task.status]);
 
 /** A task's station as a sentence that says only what is so. */
-export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt" | "waitingFor" | "waitingNote" | "onNoteRound" | "noteRoundLine">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date(), where: Where = {}): string {
+export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "baseCommit" | "headCommit" | "attemptId" | "waitingOnApproval" | "parked" | "resuming" | "ofPlan" | "decision"> & Partial<Pick<TaskSummary, "retryAt" | "waitingFor" | "waitingNote" | "onNoteRound" | "noteRoundLine">> & Partial<Pick<TaskDetail, "evidenceState" | "checkingAgain">> & { pullRequest: Pick<PullRequestView, "state" | "number"> }, now = new Date(), where: Where = {}): string {
   // Why the task needs the owner: a fully autonomous run that did not accept it, or, in any mode, a protected file it changed.
   const why = task.status === "awaiting_decision" && task.reason !== null ? ` ${task.reason}` : "";
   if (waiting(task)) {
@@ -85,17 +85,23 @@ export function statusSentence(task: Pick<TaskSummary, "status" | "reason" | "ba
       if (task.attemptId === null) return "Working. Botbench is preparing a separate copy of the project for Claude Code.";
       return task.onNoteRound === true ? "Working. Claude Code is working on your note in the task's copy of the project." : "Working. Claude Code is working in a separate copy of the project.";
     case "verifying":
+      // The owner's Run checks again: nothing new was committed by Botbench; the checks run on what the branch holds now.
+      if (task.checkingAgain === true) return "Checking. Botbench is running this repository's checks again, on the commit the task's branch holds now.";
       return "Checking. Botbench committed the work to the task's branch and is running this repository's checks on it.";
     case "reviewing":
       return "In review. Botbench committed the work and ran the checks; the run's reviewer is reading the changes. You can decide once its review is in.";
     case "awaiting_decision":
       // Back after a note that changed nothing: that line says what is so, in place of the sentence about the commit.
       if (task.noteRoundLine != null) return `Ready for review. ${task.noteRoundLine}${why}`;
+      // From the server's state of its evidence (src/engine/evidence.ts): while it cannot be accepted, the sentence does not say to accept it.
+      if (task.evidenceState?.state === "stale") return `Ready for review. Its checks are out of date, so it cannot be accepted ${task.evidenceState.canRunAgain ? "until they are run again" : "as it is"}; you can still reject it.${why}`;
+      if (task.evidenceState?.state === "differs") return `Ready for review. Its copy holds files that are not in the commit on its branch, so it cannot be accepted as it is; you can still reject it.${why}`;
       return task.headCommit === task.baseCommit
         ? `Ready for review. No file was changed, so nothing was committed.${why}`
         : `Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.${why}`;
     case "accepted": {
-      const accepted = task.decision?.decidedBy === "mode" ? "Accepted without you, as its run is fully autonomous." : "Accepted.";
+      // An accept made with no checks behind it is said as that, wherever the task's state is said.
+      const accepted = task.decision?.decidedBy === "mode" ? "Accepted without you, as its run is fully autonomous." : task.decision?.checks === "none" ? "Accepted without verification: no checks ran on it." : "Accepted.";
       // Once the pull request is open, that is what became of the work, not only that the branch was kept.
       if (task.pullRequest.state === "opened" && task.pullRequest.number !== null) return `${accepted} Pull request #${task.pullRequest.number} opened.`;
       return `${accepted} Botbench kept the branch and removed the task's copy of the project.`;

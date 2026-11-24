@@ -474,7 +474,7 @@ test("a rejection without a note, and an accept with one, commit no learning", a
   const s = store(t);
   await decideTask(s.db, { taskId: (await plannedTask(s, "First")).id, decision: "reject", branch: "keep" });
   await decideTask(s.db, { taskId: (await plannedTask(s, "Second")).id, decision: "reject", branch: "discard", note: "   " });
-  await decideTask(s.db, { taskId: (await plannedTask(s, "Third")).id, decision: "accept", note: "Good" });
+  await decideTask(s.db, { taskId: (await plannedTask(s, "Third")).id, decision: "accept", note: "Good", withoutVerification: true });
   assert.deepEqual(lessonBranches(s.repo), []);
   assert.equal(fs.existsSync(path.join(s.repo, "docs")), false);
   assert.equal(git(s.repo, "status", "--porcelain", "--untracked-files=all"), "");

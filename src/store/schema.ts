@@ -2714,4 +2714,67 @@ INSERT INTO push_sent (subject, subject_id, title, sent_at) SELECT subject, subj
 DROP TABLE push_sent_before_approvals;
 `,
   },
+  {
+    // Evidence tied to the commit it is about (engine/evidence.ts).
+    // `evidence.head_commit`: the commit the task's copy was at, with no file differing from it, when the round this
+    // result belongs to began. NULL means not known: every row from before this migration, a setup command, and a round
+    // that began in a copy that held other files. A result with no commit is never taken as current.
+    // `check_reruns`: one row per time the owner had the repository's checks run again on a task that was ready for
+    // review ("Run checks again"): the commit the results before it were for (NULL when not known), the commit the
+    // branch held when it was asked, and how it ended. Written open, ended once, never deleted.
+    // What a task's checks found may also change while such a re-run is open: the earlier rounds of evidence stay as
+    // they were, and each change of the mark is an event of the task.
+    // `decisions.checks` and `decisions.checks_commit`: what stood behind an accept when it was made. 'passed' or
+    // 'failed' with the commit the checks ran on, which is the commit accepted; 'none' for an accept without
+    // verification, which names no commit. NULL for a reject, and for every decision from before this migration (not
+    // recorded, and never read as verified). The mode's accept is written only as checked and passed on its commit.
+    name: "evidence tied to its commit",
+    sql: `
+ALTER TABLE evidence ADD COLUMN head_commit TEXT;
+
+CREATE TABLE check_reruns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks (id),
+  requested_by TEXT NOT NULL CHECK (requested_by IN ('owner')),
+  from_commit TEXT,
+  head_commit TEXT NOT NULL,
+  outcome TEXT CHECK (outcome IS NULL OR outcome IN ('passed', 'failed', 'stopped')),
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  CHECK ((outcome IS NULL) = (ended_at IS NULL))
+);
+CREATE INDEX check_reruns_task ON check_reruns (task_id, id);
+CREATE UNIQUE INDEX check_reruns_one_open ON check_reruns (task_id) WHERE ended_at IS NULL;
+CREATE TRIGGER check_reruns_ready_only BEFORE INSERT ON check_reruns
+WHEN NEW.ended_at IS NOT NULL OR (SELECT status FROM tasks WHERE id = NEW.task_id) IS NOT 'awaiting_decision'
+BEGIN SELECT RAISE(ABORT, 'checks are run again only on a task that is ready for review, and a re-run is first written open'); END;
+CREATE TRIGGER check_reruns_fixed BEFORE UPDATE OF id, task_id, requested_by, from_commit, head_commit, started_at ON check_reruns
+BEGIN SELECT RAISE(ABORT, 'a re-run of the checks keeps what it was started with'); END;
+CREATE TRIGGER check_reruns_ended_once BEFORE UPDATE ON check_reruns WHEN OLD.ended_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'a re-run of the checks that ended is kept as it ended'); END;
+CREATE TRIGGER check_reruns_no_delete BEFORE DELETE ON check_reruns
+BEGIN SELECT RAISE(ABORT, 're-runs of the checks are never deleted'); END;
+
+DROP TRIGGER tasks_checks_once;
+CREATE TRIGGER tasks_checks_once BEFORE UPDATE OF checks ON tasks WHEN OLD.checks IS NOT NULL AND NEW.checks IS NOT OLD.checks
+  AND NOT EXISTS (SELECT 1 FROM refinements WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_fixes WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM note_rounds WHERE task_id = NEW.id AND changed = 1 AND head_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM branch_updates WHERE task_id = NEW.id AND merge_commit = NEW.head_commit)
+  AND NOT EXISTS (SELECT 1 FROM check_reruns WHERE task_id = NEW.id AND ended_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'what the checks found is recorded once for each version of the work, and again only when the owner has them run again'); END;
+
+ALTER TABLE decisions ADD COLUMN checks TEXT CHECK (checks IS NULL OR checks IN ('passed', 'failed', 'none'));
+ALTER TABLE decisions ADD COLUMN checks_commit TEXT;
+CREATE TRIGGER decisions_checks_on_accepted_commit BEFORE INSERT ON decisions
+WHEN (NEW.checks IS NOT NULL AND NEW.decision <> 'accept')
+  OR (NEW.checks IN ('passed', 'failed') AND (NEW.checks_commit IS NULL OR NEW.checks_commit IS NOT NEW.head_commit))
+  OR (NEW.checks IS NOT 'passed' AND NEW.checks IS NOT 'failed' AND NEW.checks_commit IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'an accept recorded as checked names the commit its checks ran on, which is the commit accepted; one without verification names none'); END;
+DROP TRIGGER decisions_by_mode_only_full;
+CREATE TRIGGER decisions_by_mode_only_full BEFORE INSERT ON decisions
+WHEN NEW.decided_by = 'mode' AND ((SELECT r.mode FROM tasks t JOIN runs r ON r.id = t.run_id WHERE t.id = NEW.task_id) IS NOT 'full' OR (SELECT checks FROM tasks WHERE id = NEW.task_id) IS NOT 'passed' OR NEW.checks IS NOT 'passed')
+BEGIN SELECT RAISE(ABORT, 'only a fully autonomous run decides without the owner, and only on a task whose checks passed on the commit it accepts'); END;
+`,
+  },
 ];

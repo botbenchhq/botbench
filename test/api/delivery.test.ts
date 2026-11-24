@@ -93,7 +93,7 @@ test("a run's delivery is one of two choices, refused before anything exists oth
 
   // Accepted over HTTP: the run's choice delivers it, and the task and the run's row say so.
   await ready(api, task!);
-  assert.equal((await call(api, "POST", `/api/tasks/${task!.id}/accept`, {})).status, 200);
+  assert.equal((await call(api, "POST", `/api/tasks/${task!.id}/accept`, { withoutVerification: true })).status, 200);
   await waitFor(async () => ((await call(api, "GET", `/api/tasks/${task!.id}`)).body.pullRequest as Body).state === "opened");
   const detail = (await call(api, "GET", `/api/tasks/${task!.id}`)).body;
   const pr = detail.pullRequest as Body;
@@ -112,7 +112,7 @@ test("Open a pull request on an accepted task that kept its branch: needs a sess
   const before = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
   assert.equal(before.pullRequestTarget, null, "not offered before the task is accepted");
   assert.equal((await call(api, "POST", `/api/tasks/${task.id}/pull-request`, { remote: "origin", branch: before.branch })).status, 409);
-  await decideTask(api.server.db, { taskId: task.id, decision: "accept" });
+  await decideTask(api.server.db, { taskId: task.id, decision: "accept", withoutVerification: true });
 
   const shown = (await call(api, "GET", `/api/tasks/${task.id}`)).body;
   assert.deepEqual(shown.pullRequestTarget, { remote: "origin", address: ADDRESS, repository: "github.com/jon-lange/botbench-delivery-fixture", branch: shown.branch, base: null });

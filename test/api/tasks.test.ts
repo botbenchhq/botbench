@@ -212,6 +212,15 @@ test("a committed task is described with its changed files, each marked as the p
     filesProblem: null,
     checks: null,
     evidence: [],
+    // The state of its evidence, from the server: the file left uncommitted in the copy keeps it from being accepted.
+    evidenceState: {
+      state: "differs", checks: "none", checkedCommit: null, headCommit: committed.commit, files: [{ path: "later.txt", change: "untracked" }], ignored: [], ignoredMore: 0, ignoredWords: null, canRunAgain: false, review: null,
+      words: `The task's copy has 1 file that differs from commit ${committed.commit.slice(0, 7)}: later.txt (not on the branch). The checks do not vouch for it, and Accept keeps only what is committed. Look at it in the task's copy: commit what should stay and run the checks again, or remove what should not, or send a note about it to the agent that built the task.`,
+    },
+    evidenceProblem: null,
+    checkReruns: [],
+    rerunRounds: [],
+    checkingAgain: false,
     commandLists: [],
     checkFixes: [],
     checkFixLine: null,

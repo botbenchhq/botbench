@@ -11,6 +11,7 @@ import { startServer, type BotbenchServer } from "../../src/server.ts";
 import { commitWork, createWorktree } from "../../src/worktrees.ts";
 import { git, initRepo, tempDir, write } from "../support/repo.ts";
 import { NO_SANDBOX } from "../support/confined.ts";
+import { storeChecks } from "../support/checks.ts";
 
 // The runs board (unit 16) over real HTTP, against a real Botbench server, real temporary repositories and real SQLite.
 // No driver is started. Each state is reached the way the other API tests reach it: runs are created and planned by the
@@ -108,6 +109,7 @@ async function ready(api: Api, task: Task, repo: string): Promise<void> {
   write(worktree.path, `task-${task.id}.txt`, "hi\n");
   const committed = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
   assert.ok(committed.committed);
+  storeChecks(api.server.db, task.id, committed.commit);
   moveTask(api.server.db, task.id, "awaiting_decision", { headCommit: committed.commit, checks: "passed" });
 }
 

@@ -103,7 +103,7 @@ function storePlanTask(b: Bench): Task {
 async function deliver(t: T, b: Bench, task: Task): Promise<void> {
   const d = createDeliveries({ db: b.db, config: configFor(b), github: replayGitHub().github, onTaskChange: () => {} });
   t.after(() => d.close());
-  await decideTask(b.db, { taskId: task.id, decision: "accept" });
+  await decideTask(b.db, { taskId: task.id, decision: "accept", withoutVerification: true });
   await d.idle();
 }
 
@@ -175,7 +175,7 @@ test("a branch under another workbench's name is never decided on, delivered or 
   const strange = await committedTask(alice, { workbench: "bob", delivery: true });
   assert.match(strange.branch!, /^botbench\/bob\//);
   await refused(() => decideTask(alice.db, { taskId: strange.id, decision: "reject", branch: "discard" }), /another workbench \(bob\)/);
-  await refused(() => decideTask(alice.db, { taskId: strange.id, decision: "accept" }), /another workbench \(bob\)/);
+  await refused(() => decideTask(alice.db, { taskId: strange.id, decision: "accept", withoutVerification: true }), /another workbench \(bob\)/);
   assert.equal(git(alice.repo, "rev-parse", strange.branch!).trim(), strange.headCommit, "the branch is still there, where it was");
   assert.equal(getTask(alice.db, strange.id)!.status, "awaiting_decision");
 

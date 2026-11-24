@@ -586,9 +586,9 @@ export function RunScreen({ id, onSignedOut }: { id: number; onSignedOut: () => 
                         {task.restartLine !== null && <p data-testid="run-task-restart">{task.restartLine}</p>}
                         <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "setup")} what={{ one: "setup command", many: "setup commands" }} />
                         {task.checks !== null && <ChecksResult checks={task.checks} rows={latestRound(task.evidence.filter((row) => row.kind === "check"))} />}
-                        <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst />
+                        <CommandRounds lists={task.commandLists} rows={task.evidence.filter((row) => row.kind === "check")} what={{ one: "check", many: "checks" }} failedFirst again={task.rerunRounds} />
                         {task.resumeNote !== null && <ResumeControl taskId={task.id} note={task.resumeNote} name={`task ${task.id}`} primary={false} onResumed={load} onSignedOut={onSignedOut} />}
-                        {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
+                        {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} evidence={task.evidenceState} evidenceProblem={task.evidenceProblem} primary={false} name={`task ${task.id}`} onDecided={load} onSignedOut={onSignedOut} />}
                         {task.decision !== null && <DecisionOutcome decision={task.decision} repo={run.repo} merge={offersMerge(task)} compact />}
                         {task.pullRequest.state !== "none" && (
                           <p data-testid="run-task-pull-request" data-ds-content="">

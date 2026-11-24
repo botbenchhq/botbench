@@ -54,6 +54,25 @@ test("an accepted task with no pull request open still says the branch was kept"
   assert.equal(statusSentence(accepted("mode", { state: "none", number: null })), "Accepted without you, as its run is fully autonomous. Botbench kept the branch and removed the task's copy of the project.");
 });
 
+test("a task that is ready for review says whether it can be accepted from the server's state of its evidence, and an accept without verification is said as that", () => {
+  const ready = { ...accepted("owner", { state: "none", number: null }), status: "awaiting_decision" as const, decision: null };
+  const state = (s: "current" | "stale" | "differs" | "none", canRunAgain = true) => ({ state: s, canRunAgain }) as NonNullable<Parameters<typeof statusSentence>[0]["evidenceState"]>;
+  const usual = "Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.";
+  assert.equal(statusSentence({ ...ready, evidenceState: state("current") }), usual);
+  assert.equal(statusSentence({ ...ready, evidenceState: state("none") }), usual);
+  // With no state from the server (a list that does not carry one), nothing is claimed either way.
+  assert.equal(statusSentence(ready), usual);
+  assert.equal(statusSentence({ ...ready, evidenceState: state("stale") }), "Ready for review. Its checks are out of date, so it cannot be accepted until they are run again; you can still reject it.");
+  // Where they cannot be run again (the copy is gone, the checks were taken out of the settings), it does not say to.
+  assert.equal(statusSentence({ ...ready, evidenceState: state("stale", false) }), "Ready for review. Its checks are out of date, so it cannot be accepted as it is; you can still reject it.");
+  assert.equal(statusSentence({ ...ready, evidenceState: state("differs"), reason: "It needs your review: A check failed." }), "Ready for review. Its copy holds files that are not in the commit on its branch, so it cannot be accepted as it is; you can still reject it. It needs your review: A check failed.");
+  assert.equal(statusSentence({ ...ready, status: "verifying", checkingAgain: true }), "Checking. Botbench is running this repository's checks again, on the commit the task's branch holds now.");
+  assert.equal(statusSentence({ ...ready, status: "verifying" }), "Checking. Botbench committed the work to the task's branch and is running this repository's checks on it.");
+  const unverified = { ...accepted("owner", { state: "none", number: null }), decision: { decidedBy: "owner", checks: "none" } as TaskSummary["decision"] };
+  assert.equal(statusSentence(unverified), "Accepted without verification: no checks ran on it. Botbench kept the branch and removed the task's copy of the project.");
+  for (const said of [statusSentence({ ...ready, evidenceState: state("stale") }), statusSentence({ ...ready, evidenceState: state("differs") }), statusSentence(unverified)]) assert.deepEqual(bannedIn(said), []);
+});
+
 test("the merge command is offered for a run that keeps branches, not for one that opens pull requests", () => {
   assert.equal(offersMerge({ pullRequest: { choice: "branch" } }), true);
   assert.equal(offersMerge({ pullRequest: { choice: "pull_request" } }), false);

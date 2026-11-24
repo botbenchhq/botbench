@@ -106,9 +106,11 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   await expect((await openCanDo(page)).getByTestId("can-do-text")).toHaveText(
     "Claude Code may read and change files inside this task's copy of the project without asking. A shell command kept inside this copy runs without asking, apart from those the safety rules always ask you about; with Ask before every command on in Settings, every one waits for your answer first, unless you chose Always allow for it (see Permissions). Botbench sends you anything else it wants to do as well. The separate copy (a git worktree) keeps changes apart from your own files. A command you allow runs in Claude Code's sandbox: it cannot read your sign-ins, your keys or the rest of your home folder (apart from this repository's git data and your git settings), can change files only in this copy and a temporary folder, and reaches the internet only at hosts allowed for this repository in Botbench's settings file.",
   );
-  // The screen's one primary action is Accept, beside Reject; nothing claims to merge, push, approve or stop.
-  await expect(page.locator(".ds-button--primary")).toHaveText(["Accept"]);
-  await expect(page.getByRole("button", { name: /accept|reject/i })).toHaveText(["Accept", "Reject"]);
+  // This repository has no checks set up, so the accept there is says so, and is not drawn as the screen's primary
+  // action; nothing claims to merge, push, approve or stop.
+  await expect(page.getByTestId("evidence-words")).toHaveText("No checks are set up for this repository, so nothing verified this work. You can accept it without verification.");
+  await expect(page.locator(".ds-button--primary")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /accept|reject/i })).toHaveText(["Accept without verification", "Reject"]);
   await expect(page.getByRole("button", { name: /merge|push|approve|stop/i })).toHaveCount(0);
 
   await checkDesign(page, "task, finished with a diff open");

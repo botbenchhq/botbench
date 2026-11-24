@@ -107,8 +107,9 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   expect(attempt.events.map((event) => event.type)).toContain("usage");
 
   // The owner decides.
-  await page.getByRole("button", { name: "Accept" }).click();
-  await expect(page.getByTestId("task-status")).toHaveText(/^Accepted\. /);
+  // This repository has no checks set up: the review is a model's opinion, not a check, so the accept is one without verification.
+  await page.getByRole("button", { name: "Accept without verification" }).click();
+  await expect(page.getByTestId("task-status")).toHaveText(/^Accepted without verification: no checks ran on it\. /);
   const decided = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { decision: { decidedAt: string } };
   expect(task.review.endedAt < decided.decision.decidedAt, "the review was in before the decision").toBe(true);
   await checkDesign(page, "task, accepted, with Codex's review");

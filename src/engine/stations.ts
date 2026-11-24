@@ -123,7 +123,7 @@ export async function runCommand(o: { command: string; cwd: string; limitMs: num
   );
   // Its evidence and the end of its row are one write: a start after a kill finds either both or neither.
   transaction(track.db, () => {
-    insertEvidence(track.db, track.taskId, track.kind, track.position, result, track.round, track.needs ?? null);
+    insertEvidence(track.db, track.taskId, track.kind, track.position, result, track.round, track.needs ?? null, track.commit ?? null);
     track.db.prepare("UPDATE command_processes SET pgid = NULL, ended_at = ? WHERE id = ?").run(now(), row);
   });
   return result;
@@ -138,6 +138,8 @@ export interface Tracked {
   position: number;
   /** For a machine check: what it was allowed beyond a check, stored with its evidence. */
   needs?: string;
+  /** For a check: the commit its round began on (engine/evidence.ts), stored with its evidence; null or left out when not known. */
+  commit?: string | null;
 }
 
 /** How one setup or check command is started: the program and its arguments, and its environment. */
@@ -301,6 +303,11 @@ export interface Evidence extends Omit<CommandRun, "command"> {
   command: string;
   /** For a machine check: what it was allowed beyond a check ("chrome", "nested-sandbox"); null otherwise. */
   needs: string | null;
+  /**
+   * The commit the task's copy was at, with no file differing from it, when this result's round began; null when that
+   * is not known (a result from before commits were recorded, a setup command, a copy that held other files).
+   */
+  commit: string | null;
 }
 
 const int = (v: unknown): number | null => (typeof v === "number" ? v : null);
@@ -324,13 +331,14 @@ export function taskEvidence(db: DatabaseSync, taskId: number): Evidence[] {
     endedAt: String(row.ended_at),
     durationMs: Number(row.duration_ms),
     needs: typeof row.needs === "string" ? row.needs : null,
+    commit: typeof row.head_commit === "string" ? row.head_commit : null,
   }));
 }
 
-/** Store one command's result on a task. */
-export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceKind, position: number, run: CommandRun, round = 1, needs: string | null = null): void {
-  db.prepare("INSERT INTO evidence (task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms, needs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-    taskId, kind, round, position, run.command, run.outcome, run.exitCode, run.signal, run.output, run.truncated ? 1 : 0, run.limitMs, run.startedAt, run.endedAt, run.durationMs, needs,
+/** Store one command's result on a task. `commit`: for a check, the commit its round began on; null when not known. */
+export function insertEvidence(db: DatabaseSync, taskId: number, kind: EvidenceKind, position: number, run: CommandRun, round = 1, needs: string | null = null, commit: string | null = null): void {
+  db.prepare("INSERT INTO evidence (task_id, kind, round, position, command, outcome, exit_code, signal, output, output_truncated, limit_ms, started_at, ended_at, duration_ms, needs, head_commit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    taskId, kind, round, position, run.command, run.outcome, run.exitCode, run.signal, run.output, run.truncated ? 1 : 0, run.limitMs, run.startedAt, run.endedAt, run.durationMs, needs, commit,
   );
 }
 

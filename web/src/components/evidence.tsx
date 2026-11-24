@@ -156,7 +156,7 @@ export const latestRound = (rows: readonly Evidence[]): Evidence[] => {
  * A list of commands as it was last run, and before it, folded away, each earlier time it was run, named by what it
  * checked or why it ran again (`roundLabel`): what an earlier one did stays on record.
  */
-export function CommandRounds({ rows, lists, what, failedFirst = false, testId }: { rows: readonly Evidence[]; lists: readonly CommandList[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string }) {
+export function CommandRounds({ rows, lists, what, failedFirst = false, testId, again = [] }: { rows: readonly Evidence[]; lists: readonly CommandList[]; what: { one: string; many: string }; failedFirst?: boolean; testId?: string; again?: readonly number[] }) {
   const latest = latestRound(rows);
   const kind = rows[0]?.kind;
   const totalOf = (round: number | undefined): number | undefined => lists.find((list) => list.kind === kind && list.round === round)?.total;
@@ -166,7 +166,7 @@ export function CommandRounds({ rows, lists, what, failedFirst = false, testId }
       <CommandEvidence rows={latest} what={what} failedFirst={failedFirst} total={totalOf(latest[0]?.round)} {...(testId === undefined ? {} : { testId })} />
       {earlier.map((round) => (
         <details key={round} className="ds-disclosure">
-          <summary className="ds-disclosure__summary">{kind === undefined ? what.many : roundLabel(rows, lists, round, kind)}</summary>
+          <summary className="ds-disclosure__summary">{kind === undefined ? what.many : roundLabel(rows, lists, round, kind, again)}</summary>
           <div className="ds-disclosure__content">
             <CommandEvidence rows={rows.filter((row) => row.round === round)} what={what} total={totalOf(round)} />
           </div>
