@@ -19,6 +19,8 @@ Two slower suites exist. Run them once, at the end of your change, not while you
 
 - `npm run e2e` drives the real app in a browser (Playwright; `npx playwright install` the first time).
 - `npm run test:live` runs the real CLIs and needs them installed and signed in on your machine.
+- `npm run media` retakes every product picture and clip in `docs/images/` and `docs/media/` from the real client (`e2e/media.shots.ts`): no model turn, about three minutes, and it needs `ffmpeg` and `python3`.
+  Run it after a change to a screen the README shows, read each picture before committing, and copy them to the website with its `tools/copy-media.mjs`.
 
 ## The rules a contribution follows
 
