@@ -103,7 +103,7 @@ async function few(dir: string): Promise<Seeded> {
   const later = await s.ready("Add a function that adds two numbers");
   const limited = await s.limited("Tidy the changelog", tomorrowAfternoon().toISOString());
   const accepted = await s.accepted("Fix the login timeout");
-  const second = await s.accepted("Bump the copyright year");
+  const second = await s.accepted("Bump the copyright year in every file header, the licence notice and the footer of the documentation site");
   const rejected = await s.rejected("Rename the config loader");
   const cancelled = await s.cancelled("Tidy module number 9");
   const failed = await s.failed("Generate the changelog from the release tags");

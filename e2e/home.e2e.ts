@@ -58,7 +58,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(waiting.getByRole("listitem")).toHaveText([/^Tidy the changelogWaiting on usage limit · Claude Code · tries again on \w+ \w+ at \d{1,2}:30(\u00a0PM)?$/]);
     const completed = page.getByTestId("completed");
     await expect(completed.getByRole("heading")).toHaveText("Completed 2");
-    await expect(completed.getByRole("listitem")).toContainText(["Bump the copyright yearAccepted", "Fix the login timeoutAccepted"]);
+    await expect(completed.getByRole("listitem")).toContainText(["Bump the copyright year", "Fix the login timeoutAccepted"]);
     // What ended any other way is not on Home and is never hidden: each kind is one quiet link to it in Work.
     await expect(completed.getByRole("link", { name: "1 rejected and 1 cancelled are in Work" })).toHaveAttribute("href", "#/work?state=ended");
     await expect(completed.getByRole("link", { name: "1 failure with nothing to resume is in Work" })).toHaveAttribute("href", "#/work?state=failed");
@@ -159,6 +159,9 @@ test.describe("at 390×844, on a phone", () => {
     const target = await plan.evaluate((link) => parseFloat(getComputedStyle(link, "::after").height));
     expect(target).toBeGreaterThanOrEqual(44);
     expect(Math.abs(target - (await row.boundingBox())!.height)).toBeLessThan(2);
+    // A long title is cut short inside its card; it never widens the card past the screen.
+    const done = (await page.getByTestId("completed").boundingBox())!;
+    expect(done.x + done.width, "Completed ends inside the screen").toBeLessThanOrEqual(390);
     await checkScreen(page, "Home, 390", { floor: 44 });
     await checkWords(page, "Home, phone");
     await shot(page, "home-390-dark");

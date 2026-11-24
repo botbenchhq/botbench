@@ -422,7 +422,7 @@ export default function HomeScreen({ onSignedOut }: { onSignedOut: () => void })
                     {peerProblem}
                   </p>
                 )}
-                <div className={cn("mt-8 grid items-start gap-x-8 gap-y-8 @2xl:grid-cols-2", lower && "@5xl:grid-cols-3")}>
+                <div className={cn("mt-8 grid grid-cols-[minmax(0,1fr)] items-start gap-x-8 gap-y-8 @2xl:grid-cols-2", lower && "@5xl:grid-cols-3")}>
                   {(home.inProgress.total > 0 || home.waiting.total > 0) && (
                     <div className={cn("flex flex-col gap-8", lower && "@5xl:contents")}>
                       {home.inProgress.total > 0 && <InProgress group={home.inProgress} now={now} />}
