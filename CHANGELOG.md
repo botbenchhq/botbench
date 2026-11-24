@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1](https://github.com/botbenchhq/botbench/compare/v0.3.0...v0.3.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* long branches, paths, commands and file names stay readable and inside the task and run screens ([#243](https://github.com/botbenchhq/botbench/issues/243)) ([b5c932f](https://github.com/botbenchhq/botbench/commit/b5c932f110bd517a2597495e47efe79678261b91))
+* long titles and names stay readable on Home, Work and New chat or task ([#242](https://github.com/botbenchhq/botbench/issues/242)) ([6f859e0](https://github.com/botbenchhq/botbench/commit/6f859e07f3f110e4c9de2c70ba5de1197467d294))
+* on a phone, Home's lists stay inside the screen and long titles are cut short ([#240](https://github.com/botbenchhq/botbench/issues/240)) ([ff02c33](https://github.com/botbenchhq/botbench/commit/ff02c33ad152ddfe113236e87ee10449b793ea6f))
+* the mark is in the top bar under 1024px, and the shell and Settings hold long and many things ([#246](https://github.com/botbenchhq/botbench/issues/246)) ([79ebcb7](https://github.com/botbenchhq/botbench/commit/79ebcb742c51d3fba60a6ebd528bd8966bff3fbe))
+* Work's title keeps at least 45% of the table, and Home's rows give the title the row on a phone ([#244](https://github.com/botbenchhq/botbench/issues/244)) ([18a8f18](https://github.com/botbenchhq/botbench/commit/18a8f189805b7a9a30753dad04434a282ab6e217))
+
 ## [0.3.0](https://github.com/botbenchhq/botbench/compare/v0.2.0...v0.3.0) (2026-11-24)
 
 
