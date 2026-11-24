@@ -145,12 +145,11 @@ The interface is built from the owner's shared design system, vendored at `web/v
 - `npm test` runs the system's static scan and fails on a finding. `npm run e2e` runs its rendered check on every screen and open dialog.
 
 ## Tokens
-Use only the values above. No arbitrary spacing, radii, or colors. The block is generated from the design system; a value changes there, never here. Typefaces: the platform's own (system-ui, and ui-monospace for code), as the theme sets them; Botbench loads no font of its own.
+Use only the values above. No arbitrary spacing, radii, or colors. The block is generated from the design system; a value changes there, never here. Typefaces are the theme's to set: today the platform's own (system-ui, and ui-monospace for code).
 
 ## Never
 - Purple, indigo, or violet gradients (background or text)
 - Gradient text
-- Inter or Roboto as brand type, or any font set by Botbench itself (the theme's platform typeface is the one choice)
 - Emoji as icons
 - Identical feature cards (especially three-up)
 - Glassmorphism or frosted panels
