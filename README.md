@@ -10,10 +10,10 @@
 <p align="center">One workbench for your agents. One coordination layer for your team.</p>
 
 <p align="center">
-  <a href="docs/media/botbench-demo.mp4"><img src="docs/media/botbench-demo-thumbnail.png" alt="A still from the demo video: a task ready for review, with its four changed files, its branch botbench/maya/run-1/task-1, and Your decision: 1 of 1 check passed, Codex found nothing to fix, Accept and Reject" width="100%"></a>
+  <a href="docs/media/botbench-demo.mp4"><img src="docs/media/botbench-demo-thumbnail.png" alt="A still from the demo video: a task ready for review, with 1 of 1 check passed, Codex's review, the one changed file, its branch botbench/studio-mac/run-7/task-7, and Your decision: Reject and Accept" width="100%"></a>
 </p>
 
-<p align="center"><sub><a href="docs/media/botbench-demo.mp4">Watch the 35-second demo (MP4)</a>: a real run on a small demo shop, recorded at 1440×900; the minute of work in the middle plays five times faster.</sub></p>
+<p align="center"><sub><a href="docs/media/botbench-demo.mp4">Watch the 25-second demo (MP4)</a>: a plan is approved, Claude Code fixes a bug, the repository's check and Codex's review come back, and the task is accepted. Recorded at 1440×900, at its real speed; the agents' parts are replayed from recorded sessions.</sub></p>
 
 **Delegate.** Hand a task, or a run of several, to Claude Code or Codex. Each works in its own copy of your repository, on its own branch, under the mode you choose.
 
@@ -92,16 +92,16 @@ It needs Chrome, and Claude Code installed and signed in, since it drives the re
 
 ## What it looks like
 
-Real screens from two Botbench installations on one Mac, named maya and theo, working on a small demo shop (a cart API, its checkout page and their tests). Nothing on them was edited.
+Real screens from a Botbench installation named studio-mac, working on a small billing repository, and from a second one on the same Mac, office-mac, paired with it. The agents' work on them is replayed from recorded Claude Code and Codex sessions; the check is the repository's own and really ran. Nothing on them was edited. The hand-over recording is older: it was made before the 0.3.0 redesign, on a small demo shop.
 
-<img src="docs/images/hero-workbench.png" alt="Botbench on a desktop and a phone. Desktop: a task's transcript, Claude Code's commands, Edited 4 files, ran 1 command, and its summary of the change to the cart API, its test, the checkout page and its test. Phone: Work, Needs you (2): two items Ready for review, one with Checks passed" width="100%">
+<picture><source media="(prefers-color-scheme: light)" srcset="docs/images/hero-workbench-light.png"><img src="docs/images/hero-workbench.png" alt="Botbench on a desktop and a phone. Desktop: Home, 3 things need you: a failed task that can be resumed and two results to review; one task waits on a usage limit and two are completed. Phone: a task ready for review, 1 of 1 check passed, with Reject and Accept" width="100%"></picture>
 
-*Claude Code's work on a task, on the Mac, and what waits for you, on the phone.*
+*What needs you, on the Mac, and a task ready for review, on the phone.*
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/ready-for-review-proof.png" alt="A task's evidence: Checks passed, 1 of 1, npm test Passed; Codex's review, Verdict: looks right, and the four things it says it checked"></td>
-    <td width="50%"><img src="docs/images/permissions-check.png" alt="Settings, Permissions, Check a command: git push origin main in acme-shop asks you in Manual and Semi-autonomous, and is refused in Fully autonomous, each with its rule, git-push; below, the Activity log"></td>
+    <td width="50%"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/ready-for-review-proof-light.png"><img src="docs/images/ready-for-review-proof.png" alt="A task ready for review: 1 of 1 check passed, python3 -B -m unittest -q Passed; Codex's review, Codex found nothing to fix, and the two things it says it checked; the one changed line of calc.py; Your decision, with Reject and Accept"></picture></td>
+    <td width="50%"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/permissions-check-light.png"><img src="docs/images/permissions-check.png" alt="Settings, Permissions and autonomy, Check a command: git push origin main in billing-api asks you in Manual and Semi-autonomous, and is refused in Fully autonomous, each with its rule, git-push; below, Activity"></picture></td>
   </tr>
   <tr>
     <td><b>Proof.</b> The repository's own check passed, and Codex, another vendor's agent, reviewed Claude Code's change and said what it checked. Botbench shows its review as a model's opinion, not a check.</td>
@@ -109,7 +109,7 @@ Real screens from two Botbench installations on one Mac, named maya and theo, wo
   </tr>
   <tr>
     <td><img src="docs/media/move-to-codex.gif" alt="A recording: on a task Claude Code is building, Move to Codex is pressed; the button reads Moving to Codex, then the transcript shows Claude Code: Stopped and Botbench's note handing the task to Codex"></td>
-    <td><img src="docs/images/paired-question.png" alt="maya's Work screen: under Needs you, a card titled theo asks a question about acme-shop-remote, with the Outside text badge, theo's question as plain text (Is the cart API still sending totalCents? My checkout change reads it, and I want to match what you are building.), the fingerprint of the workbench that signed it, and Answer it yourself, Give it to Claude Code and Dismiss; below it maya's run, Ready for review"></td>
+    <td><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/paired-question-light.png"><img src="docs/images/paired-question.png" alt="studio-mac's Home: under Needs you, a result to review and a card titled office-mac asks a question about billing-api, with the Outside text badge, office-mac's question as plain text (Is the billing API still sending amounts in cents? My invoice change reads them, and I want to match what you are building.), the fingerprint of the workbench that signed it, and Answer it yourself, Give it to Claude Code and Dismiss"></picture></td>
   </tr>
   <tr>
     <td><b>Hand over.</b> Move a task that is being built from Claude Code to Codex: the work so far is committed, and Codex carries on in the same copy and branch.</td>

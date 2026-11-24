@@ -37,7 +37,7 @@ export interface Seeded {
 const pause = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 3));
 
 /** The engine's own steps, for a store nothing else has open. */
-function seeder(db: DatabaseSync, home: string, repo: string) {
+export function seeder(db: DatabaseSync, home: string, repo: string) {
   const made = async (prompt: string): Promise<Task> => {
     await pause();
     return createTask(db, { repo, prompt });

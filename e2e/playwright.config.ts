@@ -34,5 +34,8 @@ export default defineConfig({
     // The pictures of every screen kept in docs/design/built/final (pictures.shots.ts): taken only when BOTBENCH_SHOTS
     // names the folder, skipped otherwise. Each picture sets its own size.
     { name: "pictures", testMatch: "pictures.shots.ts", use: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, hasTouch: false } },
+    // The pictures and clips of the README and the website (media.shots.ts, `npm run media`): taken only when
+    // BOTBENCH_MEDIA names the folder, skipped otherwise. Each picture sets its own size.
+    { name: "media", testMatch: "media.shots.ts", use: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, hasTouch: false } },
   ],
 });
