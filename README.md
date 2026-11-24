@@ -55,7 +55,7 @@ Start a task, or a run of several, from a browser on the Mac or on your phone. E
 
 Two developers work on one GitHub repository, each with their own Mac, their own Botbench and their own agents, and neither gives the other access to their machine. What Botbench does about that today:
 
-- **Branches never clash.** Each workbench puts its name in its branches (`botbench/<workbench>/run-N/task-M`). Change the name in Settings → Workbench.
+- **Branches never clash.** Each workbench puts its name in its branches (`botbench/<workbench>/run-N/task-M`). Change the name in Settings → Workbench identity.
 - **You see each other's work.** The Work screen shows, read only, the other workbenches' open pull requests and pushed branches on the same remote, read with your own `gh` and `git`.
 - **You are warned before you overlap.** The warning appears under the message box when another workbench already has a pull request open for the issue you attached, or has started on it, and under Your decision when another workbench's open pull request changes the same files as your task, so the two may conflict when both are merged.
 - **You can ask each other directly, once paired.** One owner makes an invite in Settings → Paired workbench, the other pastes it, you compare fingerprints, and both confirm. Then either of you, or your agent with your Send, can ask the other workbench a question about the repository you share, and the other owner answers it, gives it to their Claude Code, or dismisses it. Every message that leaves is one you approved, and every message that arrives is a card for its owner and runs nothing. [Pair two workbenches](docs/pairing.md) walks through it.
@@ -159,7 +159,7 @@ Login token (shown this once, kept in /Users/you/.botbench/login-token): …
 
 The token is printed only on the first start. Later, read it with `cat ~/.botbench/login-token`. To use another port or data folder for one start, set `BOTBENCH_PORT` and `BOTBENCH_HOME`, for example `BOTBENCH_PORT=4781 BOTBENCH_HOME=/tmp/botbench-trial npm start`.
 
-**3. Sign in.** Open http://127.0.0.1:4780 in a browser on the Mac, paste the token and choose Sign in. You arrive on Chat. On a fresh installation it reads "Tap + to choose a repository, or just ask a question." and "Claude Code is signed in." If it says "Connect an agent in Settings → Agents." instead, run `claude auth login` in a terminal. Settings (the gear, top right) → Agents shows each agent's state.
+**3. Sign in.** Open http://127.0.0.1:4780 in a browser on the Mac, paste the token and choose Sign in. You arrive on Home, which reads "No work yet" on a fresh installation. Open Chat: it reads "Tap + to choose a repository, or just ask a question." and "Claude Code is signed in." If it says "Connect an agent in Settings → Agents." instead, run `claude auth login` in a terminal. Settings → Agents and models shows each agent's state.
 
 **4. Make a practice repository**, in a second terminal:
 
@@ -171,7 +171,7 @@ git add README.md && git commit -m "Start"
 pwd
 ```
 
-**5. Start a task.** In Botbench, on Chat, press + (Add context) under the message box and choose Repository, then Another folder…. Paste the path `pwd` printed into Folder path; when it reads "Usable git repository.", close the sheet with the X. What to do is already One task. The box now reads "Describe the task"; write:
+**5. Start a task.** In Botbench, on Chat, press Add context under the message box and choose Repository, then Another folder…. Paste the path `pwd` printed into Folder path; when it reads "Usable git repository.", close the sheet with the X. What to do changes to Start one task by itself, and the box now reads "Describe the task"; write:
 
 ```
 Add a file hello.txt that says hello, then run ls to show that it is there.
@@ -181,7 +181,7 @@ Any model will do; the chip under the box shows the one in use, and a small one 
 
 **6. Watch it work.** Within a minute the transcript shows Claude Code writing the file and running `ls`. Neither asks you: both stay inside the task's copy. A card appears only for an action that reaches outside the copy; if you see one, read it and choose Allow or Decline.
 
-**7. Review and accept.** The task reads Ready for review, with "No checks are set up for this repository", `hello.txt` under Changed files, and its branch, such as `botbench/your-mac/run-1/task-1`. The middle part is your workbench's name, made from the Mac's name at first start; Settings → Workbench shows it. This repository has no checks, so the button reads Accept without verification, and Botbench records the accept as that. Choose it. Botbench keeps the branch and removes the task's copy.
+**7. Review and accept.** The task reads Ready for review, with "No checks are set up for this repository", `hello.txt` under "1 file changed", and its branch, such as `botbench/your-mac/run-1/task-1`. The middle part is your workbench's name, made from the Mac's name at first start; Settings → Workbench identity shows it. This repository has no checks, so the button reads Accept without verification, and Botbench records the accept as that. Choose it. Botbench keeps the branch and removes the task's copy.
 
 **8. See the branch** in the practice repository, using the name `git branch` lists:
 
@@ -194,7 +194,7 @@ The branch holds one commit by Botbench that adds `hello.txt`. Your own branch i
 
 **Clean up:** Ctrl+C in the first terminal, then `rm -rf ~/botbench-try`. Botbench keeps its database and login token in `~/.botbench`; delete that folder only if you want to start again from nothing.
 
-From here, try Work → New run on a real repository (or, in Add context, What to do → Plan a run): Claude Code proposes a plan first, and you can add checks and a reviewer.
+From here, try Work → New run on a real repository (or, on New chat or task, choose Plan a run): Claude Code proposes a plan first, and you can add checks and a reviewer.
 
 ## What works today
 
