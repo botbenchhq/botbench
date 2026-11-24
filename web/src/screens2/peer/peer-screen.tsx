@@ -93,8 +93,8 @@ export default function PeerScreen({ pairingId, contextId, onSignedOut }: { pair
       aside={
         pairing !== null &&
         name !== null && (
-          <aside aria-label="About this pairing" data-testid="peer-aside" className="border-t bg-pane px-4 py-6 md:px-6 xl:min-h-svh xl:border-t-0 xl:border-l">
-            <div className="mx-auto flex max-w-[47.5rem] flex-col gap-6 xl:sticky xl:top-6">
+          <aside aria-label="About this pairing" data-testid="peer-aside" className="bg-pane px-4 py-6 md:px-6 lg:min-h-svh lg:border-l">
+            <div className="mx-auto flex max-w-[47.5rem] flex-col gap-6 lg:sticky lg:top-6">
               {inForce && (
                 <section className="flex flex-col gap-3">
                   <h2 className="text-base font-semibold">What is permitted</h2>

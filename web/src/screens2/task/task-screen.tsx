@@ -520,9 +520,10 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
             </h1>
             {task !== null && (
               <>
-                <p className="flex flex-wrap gap-x-4 gap-y-1 text-meta text-muted-foreground">
+                <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-meta text-muted-foreground">
                   <span>{agentName(task.builder)}</span>
-                  {task.branch !== null && task.remains?.discardedAt == null && (
+                  {/* A branch that is gone is not named: discarded with what a stopped task left, or deleted by a Reject. */}
+                  {task.branch !== null && task.remains?.discardedAt == null && task.decision?.branch !== "deleted" && (
                     <span className="inline-flex flex-wrap items-center gap-x-1.5">
                       {"Branch "}
                       <code data-testid="branch" data-ds-content="" className="break-all text-foreground">

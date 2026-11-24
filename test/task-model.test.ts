@@ -45,6 +45,28 @@ test("once nothing is running, a step with no result did not finish: it is folde
   assert.deepEqual([folded.steps[1]!.state, folded.steps[1]!.note], ["unfinished", "No result was recorded for it."]);
 });
 
+test("a command the sandbox kept from the network is told as a step that did not end well, with what it was kept from: its group stands open and does not count it as run", () => {
+  const events = [
+    call("a", "Bash", { command: "curl https://example.com" }),
+    stored({ type: "tool_result", id: "a", output: "curl: (6) Could not resolve host", isError: false, confined: { hosts: ["example.com:443"], files: false } }),
+    call("b", "Bash", { command: "ls" }),
+    result("b"),
+    stored({ type: "turn_ended", reason: "completed", detail: null }),
+  ];
+  const parts = narrative(events, readStory(events, false));
+  const folded = parts[0] as Extract<(typeof parts)[number], { kind: "steps" }>;
+  assert.equal(folded.open, true);
+  assert.equal(folded.summary, "Ran 1 command");
+  assert.deepEqual([folded.steps[0]!.state, folded.steps[0]!.confined], ["failed", true]);
+  assert.equal(folded.steps[0]!.note, "Kept from the network. Its output says a connection to example.com:443 was not allowed. The agent's commands reach only the hosts allowed for this repository in Botbench's settings file, and none when no host is.");
+  assert.deepEqual([folded.steps[1]!.state, folded.steps[1]!.confined, folded.steps[1]!.note], ["done", false, null]);
+  // Kept from a file, on a command that itself returned an error: the same telling, with the file's sentence.
+  const file = [call("c", "Bash", { command: "cat ~/.ssh/id_ed25519" }), stored({ type: "tool_result", id: "c", output: "Operation not permitted", isError: true, confined: { hosts: [], files: true } }), stored({ type: "turn_ended", reason: "completed", detail: null })];
+  const kept = (narrative(file, readStory(file, false))[0] as typeof folded).steps[0]!;
+  assert.deepEqual([kept.state, kept.confined], ["failed", true]);
+  assert.match(kept.note!, /^Kept from a file\. Its output says it was not allowed to open a file\./);
+});
+
 test("the files touched so far are the ones the agent's own edits that returned changed, named from the task's copy down; a failed edit and a shell command are not in it", () => {
   const events = [
     call("a", "Write", { file_path: "/w/run-1/task-7/test/readme.test.js", content: "x" }),

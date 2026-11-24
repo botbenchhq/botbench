@@ -5,8 +5,8 @@ import { LOGIN_TOKEN_FILE } from "../src/api/auth.ts";
 import { peerDraftTurn } from "../test/support/replay-peer-draft.ts";
 import { sharedRepository, until, workbench, type Workbench } from "../test/support/two-workbenches.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, checkScreen, checkWords, expect, SHOTS, tallShot } from "./helpers.ts";
-import { choice, choose, shot, signInTo } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, checkWords, expect, pictures, SHOTS, tallShot } from "./helpers.ts";
+import { choice, choose, signInTo } from "./settings-helpers.ts";
 
 // Two Botbench installations on this Mac pair and talk through their screens (Peers P5, ADR 0004 decision 13): two real
 // processes with their own data folders, owner ports and listeners for paired workbenches on 127.0.0.1 at ports the
@@ -31,23 +31,12 @@ async function shots(page: Page, name: string, at: string): Promise<void> {
   await page.goto(at);
 }
 
-/**
- * Pictures of a screen rebuilt on shadcn/ui, for docs/design/built: 1440×900 in dark and in light, and 390×844 in
- * dark, kept under SHOTS when it is set. `ready` is what the screen shows once it has read its data.
- */
+/** Pictures of a screen at the five sizes of docs/design/built/final (helpers.ts, `pictures`), then the phone's size again. */
 async function built(page: Page, name: string, at: string, ready: () => Promise<void>): Promise<void> {
   if (!SHOTS) return;
-  const open = async (width: number, height: number, mode: "dark" | "light"): Promise<void> => {
-    await page.setViewportSize({ width, height });
-    await page.evaluate((m) => window.localStorage.setItem("botbench.appearance", m), mode);
-    await page.goto(at);
-    await page.reload();
-    await ready();
-    await shot(page, `${name}-${width}-${mode}`);
-  };
-  await open(1440, 900, "dark");
-  await open(1440, 900, "light");
-  await open(390, 844, "dark");
+  await pictures(page, name, at, ready);
+  await page.setViewportSize(PHONE);
+  await page.goto(at);
   await ready();
 }
 
@@ -214,8 +203,15 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(thread.getByTestId("thread-state").nth(1)).toHaveText("Answer · Received");
   await expect(thread.getByTestId("thread-message").nth(1).getByTestId("outside-text-mark")).toHaveText("Outside text");
   await expect(a.getByLabel("Ask bob more")).toBeVisible();
-  await expect(a.getByTestId("thread-friction")).toContainText("1 card answered by you.");
   await checkScreen(a, "A conversation with the paired workbench");
+  // What the messages cost is in the screen's pane, which is a sheet at a phone's width, opened from the foot.
+  await a.getByRole("button", { name: "Details" }).click();
+  const about = a.getByRole("dialog", { name: "Details" });
+  await expect(about.getByTestId("thread-friction")).toContainText("1 card answered by you.");
+  await expect(about.getByRole("heading", { name: "What pairing never gives" })).toBeVisible();
+  await checkScreen(a, "A conversation with the paired workbench, its pane as a sheet");
+  await a.keyboard.press("Escape");
+  await expect(about).toHaveCount(0);
 
   const started = await alice.api("POST", "/api/tasks", { repo: alice.repo, prompt: "Ask bob's workbench which port the login service uses." });
   expect(started.status, JSON.stringify(started.body)).toBe(200);

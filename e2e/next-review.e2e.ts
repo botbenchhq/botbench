@@ -187,6 +187,10 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("task-state")).toHaveText("Accepted");
     await expect(decision.getByRole("heading")).toBeFocused();
     await expect(decision.getByTestId("decided-branch")).toHaveText(seeded.current.branch);
+    // The branch is the owner's to merge: the command is there to copy, as it is on a run's task row.
+    await expect(decision.getByTestId("merge-command")).toHaveText(`git merge ${seeded.current.branch}`);
+    await expect(decision.getByRole("button", { name: "Copy merge command" })).toBeVisible();
+    await expect(page.getByTestId("branch")).toHaveText(seeded.current.branch);
     const stored = (await (await page.request.get(`${botbench.base}/api/tasks/${seeded.current.id}`)).json()) as { status: string; decision: { decision: string; note: string; checks: string; checksCommit: string } };
     expect(stored).toMatchObject({ status: "accepted", decision: { decision: "accept", note: "Reads right", checks: "passed", checksCommit: seeded.current.commit } });
     expect(git(seeded.repo, "rev-parse", seeded.current.branch).trim()).toBe(seeded.current.commit);
@@ -218,6 +222,29 @@ test.describe("at 1440×900, with a mouse", () => {
     await actions(page).filter({ hasText: "Run checks again" }).click();
     await expect(words).toHaveText(`Evidence is current: the checks passed on commit ${short(seeded.outOfDate.commit)}, the commit Accept keeps.`, { timeout: 60_000 });
     await expect(actions(page)).toHaveText(["Reject", "Accept"]);
+    expect(refused).toEqual([]);
+  });
+
+  test("Reject with Delete the branch deletes it, and the screen stops naming a branch that is gone", async ({ page, botbench, seeded, refused }) => {
+    await signIn(page, botbench);
+    await open(page, botbench, seeded.outOfDate.id);
+    const branch = (await page.getByTestId("branch").textContent())!;
+    expect(git(seeded.repo, "rev-parse", branch).trim()).toBe(seeded.outOfDate.commit);
+    await actions(page).filter({ hasText: "Reject" }).click();
+    const dialog = page.getByRole("alertdialog", { name: "Reject this task?" });
+    await dialog.getByRole("radio", { name: "Delete the branch" }).click();
+    await dialog.getByRole("button", { name: "Reject" }).click();
+    const decision = page.getByTestId("decision");
+    await expect(decision.getByTestId("decision-result")).toContainText("Rejected");
+    await expect(decision.getByTestId("decision-result")).toContainText("The branch and the task's copy of the project are gone.");
+    await expect(page.getByTestId("task-state")).toHaveText("Rejected");
+    // Nowhere on the screen is the deleted branch named, offered to copy, or given a merge command.
+    await expect(page.getByTestId("branch")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Copy branch name" })).toHaveCount(0);
+    await expect(page.getByTestId("merge-command")).toHaveCount(0);
+    await expect(page.locator("main, aside").getByText(branch)).toHaveCount(0);
+    expect(git(seeded.repo, "branch", "--list", branch).trim()).toBe("");
+    await checkWords(page, "review, rebuilt, rejected and the branch deleted");
     expect(refused).toEqual([]);
   });
 });
