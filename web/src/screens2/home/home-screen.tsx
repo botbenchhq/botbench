@@ -103,7 +103,7 @@ function NeedRow({ item, now }: { item: HomeItem; now: number }) {
       <Icon aria-hidden="true" className={cn("size-4 shrink-0", item.cause === "approval" ? "text-attention" : "text-muted-foreground")} />
       <div className="min-w-0 flex-1">
         <Title>{item.title}</Title>
-        <p className="truncate text-meta text-muted-foreground">
+        <p title={`${n.label} \u00b7 ${n.words}${n.code === null ? "" : ` ${n.code}`} \u00b7 ${facts(item)}`} className="truncate text-meta text-muted-foreground">
           <span className="font-semibold text-foreground">{n.label}</span>
           {" · "}
           {n.words}
@@ -158,7 +158,7 @@ function Row({ item, icon: Icon, tone, line, end, whole = false }: { item: HomeI
         <a href={hrefOf(item)} className="block rounded-sm after:absolute after:inset-0">
           <Title className="font-medium">{item.title}</Title>
         </a>
-        <p data-ds-content="" className={cn("text-meta text-muted-foreground", !whole && "truncate")}>
+        <p data-ds-content="" title={!whole && typeof line === "string" ? line : undefined} className={cn("text-meta text-muted-foreground", !whole && "truncate")}>
           {line}
         </p>
       </div>

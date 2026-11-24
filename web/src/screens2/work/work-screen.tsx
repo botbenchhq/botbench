@@ -69,7 +69,7 @@ function Choice<T extends string>({ name, choices, counts, value, onChange }: { 
           type="button"
           aria-pressed={choice.value === value}
           onClick={() => onChange(choice.value)}
-          className={cn("flex h-(--control) shrink-0 items-center gap-2 rounded-md px-3 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50", choice.value === value && "bg-background font-semibold text-foreground")}
+          className={cn("flex h-(--control) shrink-0 items-center gap-2 rounded-md px-3 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset", choice.value === value && "bg-background font-semibold text-foreground")}
         >
           {choice.label}
           {counts !== null && <span className="text-meta font-normal text-muted-foreground tabular-nums">{counts[choice.value]}</span>}
@@ -286,7 +286,7 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
             Work
           </h1>
           {page !== null && (
-            <p data-testid="work-about" className="min-w-0 flex-1 text-meta text-muted-foreground">
+            <p data-testid="work-about" className="min-w-0 flex-1 text-meta text-muted-foreground @max-2xl:order-last @max-2xl:basis-full">
               {aboutLine(page.all, hiddenView)}
             </p>
           )}
@@ -375,15 +375,17 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                             {[word, ...(kindWord(item) === word ? [] : [kindWord(item)]), changed(item.updatedAt, now)].join(" \u00b7 ")}
                           </span>
                           {facts !== null && (
-                            <span data-testid="work-facts" className="truncate text-meta text-muted-foreground">
+                            <span data-testid="work-facts" title={facts} className="truncate text-meta text-muted-foreground">
                               {facts}
                             </span>
                           )}
                         </a>
                       </TableCell>
                       <TableCell className="truncate px-2 py-1 text-muted-foreground @max-2xl:hidden">{kindWord(item)}</TableCell>
-                      <TableCell className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">{agentWord(item)}</TableCell>
-                      <TableCell data-ds-content="" className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">
+                      <TableCell title={agentWord(item)} className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">
+                        {agentWord(item)}
+                      </TableCell>
+                      <TableCell data-ds-content="" title={repoWord(item)} className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">
                         {repoWord(item)}
                       </TableCell>
                       <TableCell className="truncate px-2 py-1 text-right text-muted-foreground tabular-nums @max-lg:hidden">

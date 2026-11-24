@@ -197,7 +197,7 @@ export function ChatView({ turn, onSignedOut }: { turn: Turn; onSignedOut: () =>
       }
     >
       <main data-testid="screen" className="flex h-[calc(100svh-3.5rem-1px)] min-h-0 min-w-0 flex-col max-md:h-[calc(100svh-7rem-2px)]">
-        <div ref={follow.scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto outline-none">
+        <div ref={follow.scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset">
           <div ref={follow.setLog} className={cn("mx-auto flex w-full min-w-0 flex-col gap-4 px-4 py-6 md:px-8", round === null ? "max-w-3xl" : "max-w-6xl")}>
             <header className="flex flex-col gap-1">
               <h1 ref={heading} tabIndex={-1} data-ds-content="" className="line-clamp-3 text-[1.5rem] leading-[1.875rem] font-bold tracking-tight text-balance outline-none">
