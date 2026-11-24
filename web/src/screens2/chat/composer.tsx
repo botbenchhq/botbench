@@ -55,7 +55,7 @@ export function Composer({ turn, large = false, tight = false, chips, children }
   const mode = turn.run ? modeLine(turn.started) : null;
   return (
     <div className="flex flex-col gap-2">
-      <form data-testid="composer" onSubmit={turn.submit} aria-busy={showStop || undefined} noValidate className={cn("flex flex-col rounded-xl border border-edge/60 bg-card focus-within:border-ring", large ? "gap-3 p-4" : "gap-1 p-2")}>
+      <form data-testid="composer" onSubmit={turn.submit} aria-busy={showStop || undefined} noValidate className={cn("flex flex-col rounded-xl border border-edge/60 bg-card focus-within:border-ring has-[textarea:focus-visible]:ring-3 has-[textarea:focus-visible]:ring-ring/50", large ? "gap-3 p-4" : "gap-1 p-2")}>
         {large && (
           <label htmlFor="prompt" className="text-sm font-semibold">
             {turn.label}
@@ -73,7 +73,7 @@ export function Composer({ turn, large = false, tight = false, chips, children }
           onChange={(event) => turn.setPrompt(event.target.value)}
           onKeyDown={turn.onKeyDown}
           aria-describedby={turn.boxDescribedBy}
-          className={cn("field-sizing-content w-full resize-none", tight ? "max-h-[16svh]" : "max-h-[40svh]", " bg-transparent px-2 py-2 text-base outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60", large ? "min-h-32" : "min-h-(--control)")}
+          className={cn("field-sizing-content w-full resize-none", tight ? "max-h-[16svh]" : "max-h-[40svh]", " bg-transparent py-2 text-base outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60", large ? "min-h-32 px-0" : "min-h-(--control) px-2")}
         />
         {chips !== undefined && (
           <div data-testid="composer-chips" className="flex flex-wrap gap-2">
