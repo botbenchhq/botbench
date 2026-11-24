@@ -5,7 +5,7 @@ import { issueWords } from "../web/src/app/composer.ts";
 import { watchAbout } from "../web/src/app/watch-words.ts";
 import { capturedIssue, loadWatchCapture, WATCH_ADDRESS } from "../test/support/replay-watch.ts";
 import { git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, closeContext, contextSheet, expect, signIn } from "./helpers.ts";
+import { checkDesign, closeContext, contextSheet, expect, signIn, checkWords, SHOTS } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // An issue proposed on Work by the issue watch (issue #73), in the real client at a phone's size, with no model turn. A
@@ -50,7 +50,9 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   expect(await row.locator("img, a, h1, h3, h4").count()).toBe(0);
   await expect(row.getByRole("button", { name: `Start a run from issue #${issue.number}` })).toBeVisible();
   await expect(row.getByRole("button", { name: `Dismiss issue #${issue.number}` })).toBeVisible();
-  await checkDesign(page, "Work, with an issue to start");
+  // Work is a rebuilt screen, not drawn with the design system's classes: its words are checked here, its layout in e2e/work.e2e.ts.
+  await checkWords(page, "Work, with an issue to start");
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "work-proposal.png"), fullPage: true });
 
   // Start: the composer, as a run in the issue's repository, with the From an issue row open on the issue, attached.
   await row.getByRole("button", { name: `Start a run from issue #${issue.number}` }).click();
@@ -68,7 +70,7 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   // Nothing was started: the issue is still proposed, and no run is listed.
   await page.goto(`${botbench.base}/#/work`);
   await expect(row).toHaveCount(1);
-  await expect(page.getByTestId("board-empty")).toBeVisible();
+  await expect(page.getByTestId("work-none")).toBeVisible();
 
   // Dismiss: it leaves Work, and stays gone after a reload and after Botbench starts again.
   await row.getByRole("button", { name: `Dismiss issue #${issue.number}` }).click();
@@ -80,7 +82,7 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   // The browser's session is kept across the restart, as in e2e/restart.e2e.ts.
   await page.goto(`${botbench.base}/#/work`);
   await expect(page.getByRole("heading", { name: "Work", exact: true })).toBeVisible();
-  await expect(page.getByTestId("board-empty")).toBeVisible();
+  await expect(page.getByTestId("work-none")).toBeVisible();
   await expect(row).toHaveCount(0);
 
   // Settings shows the watch, with the label's warning in plain words.

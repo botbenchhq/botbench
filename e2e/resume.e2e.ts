@@ -12,7 +12,7 @@ import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 /** After a restart the device is still signed in: its session is kept in Botbench's database, so no login is asked for. */
 async function stillSignedIn(page: Page, botbench: Botbench): Promise<void> {
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toHaveCount(0);
 }

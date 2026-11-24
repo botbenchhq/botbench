@@ -20,8 +20,9 @@ export const test = base.extend<{ botbench: Botbench }>({
   },
 });
 
+/** Sign in at Chat's address, where the tests that start something begin. Botbench's own first screen is Home (e2e/home.e2e.ts signs in there). */
 export async function signIn(page: Page, botbench: Botbench): Promise<void> {
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(messageBox(page)).toBeEnabled();
@@ -32,7 +33,7 @@ export async function signIn(page: Page, botbench: Botbench): Promise<void> {
  * steps are the one place the tests drive it, so a change to the composer changes the tests here.
  */
 
-/** The two destinations of the navigation: Chat (the home screen) and Work. */
+/** The navigation: Home, Work and Chat. */
 export const nav = (page: Page): Locator => page.getByRole("navigation", { name: "Screens" });
 
 /** The home screen, from the navigation. Its one h1, Chat, is for assistive technology only. */
@@ -52,11 +53,24 @@ export async function openComposer(page: Page): Promise<void> {
   await expect(messageBox(page)).toBeVisible();
 }
 
-/** Work, the list of runs and of tasks started on their own, from the navigation. */
+/** Work, every run, task started on its own and chat, from the navigation. Its list has been read when this returns. */
 export async function openWork(page: Page): Promise<void> {
-  await nav(page).getByRole("link", { name: "Work", exact: true }).click();
+  // On Home, at a phone's width, the navigation is behind the menu button: Work is opened by its address there.
+  const link = nav(page).getByRole("link", { name: "Work", exact: true });
+  if (await link.first().isVisible()) await link.first().click();
+  else await page.evaluate(() => (window.location.hash = "#/work"));
   await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
+  await expect(page.getByTestId("work-shown")).toBeVisible();
 }
+
+/** The rows of Work, newest change first; with `title`, those whose row holds it. */
+export const workRows = (page: Page, title?: string | RegExp): Locator => (title === undefined ? page.getByTestId("work-row") : page.getByTestId("work-row").filter({ hasText: title }));
+
+/** A Work row's state in words ("Ready for review"). At a phone's width the word is in the line under the title too, and here for assistive technology. */
+export const workState = (row: Locator): Locator => row.getByTestId("work-state");
+
+/** One choice of Work's State filter, by its name; its text ends with how many rows it would show ("Needs you1"). */
+export const workStateFilter = (page: Page, name: RegExp): Locator => page.getByRole("group", { name: "State" }).getByRole("button", { name });
 
 /** Permissions or Usage, reached from Settings (the header's gear), as the client offers them. */
 export async function openFromSettings(page: Page, screen: "Permissions" | "Usage"): Promise<void> {

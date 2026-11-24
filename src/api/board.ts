@@ -26,8 +26,8 @@ import { summary as taskSummary } from "./tasks.ts";
 
 type Group = "needs-you" | "running" | "finished" | "chats";
 const ORDER: readonly Group[] = ["needs-you", "running", "finished", "chats"];
-type Kind = "run" | "task" | "chat";
-const KINDS: readonly Kind[] = ["run", "task", "chat"];
+export type Kind = "run" | "task" | "chat";
+export const KINDS: readonly Kind[] = ["run", "task", "chat"];
 
 /** A planned run's group: it needs the owner while its plan waits for approval, its agent waits for an answer, or a task of it is ready for review. */
 function runGroup(run: Record<string, unknown>): Group {
@@ -52,7 +52,7 @@ const CANCELLABLE = new Set<Run["status"]>(["planning", "awaiting_plan_approval"
  * The task branches of each repository, read once per board. A repository git cannot read now (moved or deleted) has
  * none Botbench can point to, so no row of it offers its branch.
  */
-function branchReader(): (repo: string) => Promise<Set<string>> {
+export function branchReader(): (repo: string) => Promise<Set<string>> {
   const read = new Map<string, Promise<Set<string>>>();
   return (repo) => {
     if (!read.has(repo)) read.set(repo, taskBranches(repo).catch(() => new Set<string>()));
@@ -67,14 +67,14 @@ function openPullRequest(db: DatabaseSync, task: Task): { number: number; url: s
 }
 
 /** What a stand-alone task's More menu offers besides Open and Hide. */
-async function taskMenu(db: DatabaseSync, task: Task, branches: (repo: string) => Promise<Set<string>>): Promise<Record<string, unknown>> {
+export async function taskMenu(db: DatabaseSync, task: Task, branches: (repo: string) => Promise<Set<string>>): Promise<Record<string, unknown>> {
   const branch = task.branch !== null && (await branches(task.repo)).has(task.branch) ? task.branch : null;
   const copy = task.worktreePath !== null && fs.existsSync(task.worktreePath);
   return { branch, pullRequest: openPullRequest(db, task), discardable: ENDED_UNREVIEWED.has(task.status) && (copy || branch !== null) };
 }
 
 /** What a planned run's More menu offers besides Open and Hide: its branch and its pull request when it has exactly one. */
-async function runMenu(db: DatabaseSync, run: Run, branches: (repo: string) => Promise<Set<string>>): Promise<Record<string, unknown>> {
+export async function runMenu(db: DatabaseSync, run: Run, branches: (repo: string) => Promise<Set<string>>): Promise<Record<string, unknown>> {
   const tasks = runTasks(db, run.id);
   const have = await branches(run.repo);
   const named = tasks.flatMap((task) => (task.branch !== null && have.has(task.branch) ? [task.branch] : []));
@@ -83,7 +83,7 @@ async function runMenu(db: DatabaseSync, run: Run, branches: (repo: string) => P
 }
 
 /** The rows the owner hid, as `kind id`. */
-const hiddenRows = (db: DatabaseSync): Set<string> => new Set(db.prepare("SELECT kind, item_id FROM hidden_rows").all().map((row) => `${String(row.kind)} ${Number(row.item_id)}`));
+export const hiddenRows = (db: DatabaseSync): Set<string> => new Set(db.prepare("SELECT kind, item_id FROM hidden_rows").all().map((row) => `${String(row.kind)} ${Number(row.item_id)}`));
 
 export interface Board {
   groups: { name: Group; total: number; items: Record<string, unknown>[] }[];

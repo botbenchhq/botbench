@@ -1,6 +1,6 @@
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { SHOTS, askBeforeEveryCommand, checkDesign, expect, messageBox, openDetails, openWork, signIn, startTaskIn, test } from "./helpers.ts";
+import { SHOTS, askBeforeEveryCommand, checkDesign, expect, messageBox, openDetails, openWork, signIn, startTaskIn, test, workRows, workState } from "./helpers.ts";
 
 // An approval across a restart, in the real client at a phone's size: a real Botbench process that is stopped and
 // started again on the same data, and the owner's Claude Code on its cheapest model asking for real.
@@ -30,15 +30,16 @@ test("LIVE: a task waits on an approval, Botbench is restarted, and after a relo
 
   // Botbench stops and starts again. The device stays signed in across the restart, so the owner only reloads.
   await botbench.restart();
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   // The composer remembers the repository, so its box may read "Describe the task" rather than "Message Claude Code".
   await expect(messageBox(page)).toBeEnabled();
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
   await openWork(page);
-  await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Needs input.*Task 1 · /);
-  await tray.getByRole("link").click();
+  await expect(workState(workRows(page, "Task 1 · "))).toHaveText("Needs input");
+  // Work's own bar leads to the request, as the tray does on the other screens.
+  await page.getByRole("link", { name: "Needs input: task 1" }).click();
   await expect(page.getByTestId("task-name")).toHaveText(/^Task 1 · /);
 
   // The same card, and it says in words that it was asked before the restart and what answering does.

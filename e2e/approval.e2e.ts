@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, expect, nav, openCanDo, openDetails, openWork, primaries, signIn, startTaskIn, tallShot, test, token, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, expect, nav, openCanDo, openDetails, openWork, primaries, signIn, startTaskIn, tallShot, test, token, watchRequests, workRows, workState, checkWords } from "./helpers.ts";
 import type { Botbench } from "./botbench.ts";
 
 // Approvals in the real client, at a phone's size: a real Botbench process, a real temporary repository,
@@ -35,9 +35,9 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   const tray = page.getByTestId("approval-tray");
   await expect(tray).toBeEmpty();
   await expect(tray.getByRole("link")).toHaveCount(0);
+  // Work, a rebuilt screen, says the same in its own bar: no link to a request while none waits.
   await openWork(page);
-  await expect(tray).toBeEmpty();
-  await checkDesign(page, "work, tray with nothing waiting");
+  await expect(page.getByRole("link", { name: /^Needs input: task/ })).toHaveCount(0);
 
   await startTask(page, repo);
   await expect(tray).toBeEmpty();
@@ -70,10 +70,10 @@ test("LIVE: a task that needs the repository's script shows one pending approval
 
   // On the other screens the tray says it, and Work says which task waits.
   await openWork(page);
-  await expect(tray).toHaveText("1 approval is waiting. Open it.");
-  await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Needs input.*Task 1 · /);
+  await expect(page.getByRole("link", { name: "Needs input: task 1" })).toBeVisible();
+  await expect(workState(workRows(page, "Task 1 · "))).toHaveText("Needs input");
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
-  await checkDesign(page, "work, tray with one waiting");
+  await checkWords(page, "work, with one request waiting");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u7-tray.png") });
   await nav(page).getByRole("link", { name: "Chat" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();

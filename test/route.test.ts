@@ -35,7 +35,7 @@ test("a malformed Make this a run address opens no composer with a source: zero,
 });
 
 test("the other addresses parse as before the parser moved out of the shell", () => {
-  assert.deepEqual(parseRoute(""), { screen: "turn", start: null });
+  assert.deepEqual(parseRoute("#/turn"), { screen: "turn", start: null });
   assert.deepEqual(parseRoute("#/turn?start=run"), { screen: "turn", start: "run" });
   assert.deepEqual(parseRoute("#/turn?start=task"), { screen: "turn", start: "task" });
   assert.deepEqual(parseRoute("#/turn?start=run&proposal=4"), { screen: "turn", start: "run", proposal: 4 });
@@ -45,4 +45,14 @@ test("the other addresses parse as before the parser moved out of the shell", ()
   assert.deepEqual(parseRoute("#/settings/devices"), { screen: "settings", section: "devices" });
   assert.deepEqual(parseRoute("#/runs/new"), { screen: "redirect", to: "#/turn?start=run" });
   assert.deepEqual(parseRoute("#/runs/0"), { screen: "none", what: "/runs/0" });
+});
+
+test("Botbench opens on Home: the bare address and Home's own; Chat keeps its address, and Work takes a state from Home's links and nothing else", () => {
+  for (const at of ["", "#", "#/", "#/home"]) assert.deepEqual(parseRoute(at), { screen: "home" }, at);
+  assert.deepEqual(parseRoute("#/turn"), { screen: "turn", start: null });
+  assert.deepEqual(parseRoute("#/work"), { screen: "work", state: null });
+  for (const state of ["needs-you", "in-progress", "waiting", "completed", "failed", "ended"] as const) assert.deepEqual(parseRoute(`#/work?state=${state}`), { screen: "work", state });
+  for (const at of ["#/work?state=any", "#/work?state=finished", "#/work?state=", "#/work?state=failed&kind=run", "#/work?q=x", "#/home/", "#/Home"]) assert.equal(parseRoute(at).screen, "none", at);
+  // The sign-in address opened on a signed-in device goes to the first screen, which is Home.
+  assert.deepEqual(parseRoute("#code=abc"), { screen: "redirect", to: "#/" });
 });

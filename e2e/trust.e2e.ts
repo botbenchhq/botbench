@@ -53,7 +53,7 @@ async function cardOf(page: Page, id: number): Promise<Locator> {
 test("Permissions starts empty in words, with nothing to tap and nothing in the tray", async ({ page, botbench }) => {
   await signIn(page, botbench);
   // Permissions is a screen of its own, reached from Settings, with a link back. With nothing granted and nothing logged it says so in words.
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
   await openFromSettings(page, "Permissions");
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Check a command", "Activity"]);
   await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");

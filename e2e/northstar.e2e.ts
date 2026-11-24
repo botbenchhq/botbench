@@ -163,9 +163,9 @@ async function matchDevice(page: Page): Promise<void> {
  */
 /**
  * The design checks and screenshots of one screen at 390x844 and 1280x800, dark and light. `reopen` puts back what a
- * change of size closed (the Add context sheet does not stay open across a resize).
+ * change of size closed (the Add context sheet does not stay open across a resize). `check` is the design system's
+ * rendered check, or, for a screen rebuilt on shadcn/ui (Work), which is not drawn with its classes, the words check.
  */
-// `check` is the design check for a screen still drawn with the design system's classes; a rebuilt screen (the run) is held to `checkRebuilt`.
 async function judge(page: Page, screen: string, name: string, ready: Locator, reopen?: () => Promise<void>, check: (page: Page, screen: string) => Promise<void> = checkDesign): Promise<void> {
   for (const [size, viewport] of [["phone", PHONE], ["desktop", DESKTOP]] as const) {
     for (const mode of ["dark", "light"] as const) {
@@ -348,7 +348,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   // On a phone the run screen's navigation is behind its menu button; the bar's own link leads to Work.
   await page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Work" }).click();
   await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
-  await judge(page, "A, Work", "a-work", page.getByRole("heading", { name: "Work", level: 1 }));
+  await judge(page, "A, Work", "a-work", page.getByRole("heading", { name: "Work", level: 1 }), undefined, checkRebuilt);
 
   // B's Work lists A's claim and A's pushed branch under Other workbenches; B built nothing of its own.
   await pageB.goto(`${bob.base}/#/work`);
@@ -359,7 +359,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
     await pageB.reload();
     await expect(others).toContainText(task.branch, { timeout: 5_000 });
   }).toPass({ timeout: 180_000, intervals: [5_000] });
-  await judge(pageB, "B, Work, with A's claim and branch", "b-work", others);
+  await judge(pageB, "B, Work, with A's claim and branch", "b-work", others, undefined, checkRebuilt);
   expect(git(world.bob, "for-each-ref", "--format=%(refname:short)", "refs/heads/botbench/").trim(), "B made no task branch").toBe("");
 
   expect(foreignA).toEqual([]);

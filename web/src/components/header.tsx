@@ -8,15 +8,16 @@ import { Mark } from "../brand/mark.tsx";
 import { Icon, type IconName } from "./icon.tsx";
 
 /**
- * The destinations the navigation lists, and every one of them exists: Chat, where anything starts, and Work, the
- * runs and the tasks started on their own. Starting something new is an action, not a destination. Settings is the
+ * The destinations the navigation lists, and every one of them exists: Home, the queue of what needs the owner, Work,
+ * every run, task and chat, and Chat, where anything starts. The order is the rebuilt screens' (shell/shell.tsx). Starting something new is an action, not a destination. Settings is the
  * app header's action on every signed-in screen, and Permissions and Usage are reached from it.
  */
 const SCREENS: readonly { name: ScreenName; label: string; href: string; icon: IconName }[] = [
-  { name: "turn", label: "Chat", href: "#/turn", icon: "message" },
+  { name: "home", label: "Home", href: "#/", icon: "home" },
   { name: "work", label: "Work", href: "#/work", icon: "git-branch" },
+  { name: "turn", label: "Chat", href: "#/turn", icon: "message" },
 ];
-export type ScreenName = "turn" | "work";
+export type ScreenName = "home" | "turn" | "work";
 
 /**
  * What every signed-in screen stands in: the app header with the approvals tray, the banner when there is one, the
@@ -38,7 +39,7 @@ export function Frame({ current, banner, fill = false, back, actions, showing = 
     <div className={fill ? "ds-app-shell h-screen" : "ds-app-shell"}>
       <header className="ds-app-header ds-app-header--sticky">
         {back === undefined ? (
-          <a className="ds-app-header__name" href="#/turn">
+          <a className="ds-app-header__name" href="#/">
             {/* Decorative: the word beside it is the name. The mark takes the text colour, so it follows the mode. */}
             <Mark />
             Botbench

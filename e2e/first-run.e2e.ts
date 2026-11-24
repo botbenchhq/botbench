@@ -19,7 +19,7 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
   const withoutClaude = (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== "" && !fs.existsSync(path.join(dir, "claude"))).join(path.delimiter);
   const botbench = await startBotbench({ env: { PATH: withoutClaude } });
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
 

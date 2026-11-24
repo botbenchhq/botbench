@@ -42,8 +42,8 @@ export function ApprovalTray({ here, peerCards = 0 }: { here: boolean; peerCards
         // The card on this screen shows the request: the tray would say it again, so only a screen reader hears it, once.
         <span className="ds-visually-hidden">{plural(pending!.length, "An approval is waiting on this screen.", `${number(pending!.length)} approvals are waiting on this screen.`)}</span>
       ) : oldest === undefined && peerCards > 0 ? (
-        // No approval waits, but a card about the paired workbench's messages does: it leads Work's Needs you.
-        <a href="#/work" className="ds-pending-tray__link" data-testid="tray-peer-cards">
+        // No approval waits, but a card about the paired workbench's messages does: it is on Home, under Needs you.
+        <a href="#/" className="ds-pending-tray__link" data-testid="tray-peer-cards">
           <span className="ds-pending-tray__count">{peerCards}</span>
           {plural(peerCards, " message with the paired workbench waits for you. Open it.", " messages with the paired workbench wait for you. Open them.")}
         </a>

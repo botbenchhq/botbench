@@ -23,7 +23,7 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
   const empty = tempDir("botbench-e2e-claude-config-");
   const botbench = await startBotbench({ env: { CLAUDE_CONFIG_DIR: empty } });
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code: /);
@@ -77,7 +77,7 @@ test("Antigravity, not connected in a new data folder, shows Connect; the sheet 
     return out.split("\n").filter((line) => line.includes(`--gemini-dir ${profile}`));
   };
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
