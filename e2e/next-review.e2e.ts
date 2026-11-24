@@ -7,7 +7,7 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { storeChecks } from "../test/support/checks.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
-import { checkLayout, checkWords, expect, SCREENS, SHOTS, signIn, watchRefused } from "./helpers.ts";
+import { checkScreen, checkWords, expect, SCREENS, SHOTS, signIn, watchRefused } from "./helpers.ts";
 
 // The review of a task on its screen rebuilt on shadcn/ui and Tailwind 4 (ADR 0012), at the task's own address, in the real
 // client against a real Botbench process, which serves it with its real content security policy. No model turn: before
@@ -149,7 +149,7 @@ test.describe("at 1440×900, with a mouse", () => {
     if (SHOTS) await name.screenshot({ path: path.join(SHOTS, "mark-navigation-dark.png") });
     expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"Inter Variable"/);
     expect(await page.evaluate(() => getComputedStyle(document.querySelector("[data-testid=diff]")!).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
-    await checkLayout(page, 32, "review, 1440, dark");
+    await checkScreen(page, "review, 1440, dark", { floor: 32 });
     await checkWords(page, "review, rebuilt");
     await shot(page, "review-1440-dark");
 
@@ -173,7 +173,7 @@ test.describe("at 1440×900, with a mouse", () => {
     const dialog = page.getByRole("alertdialog", { name: "Reject this task?" });
     await expect(dialog.getByRole("radio", { name: "Keep the branch" })).toBeChecked();
     await expect(dialog.getByRole("button")).toHaveText(["Cancel", "Reject"]);
-    await checkLayout(page, 32, "review, the Reject dialog");
+    await checkScreen(page, "review, the Reject dialog", { floor: 32 });
     await checkWords(page, "review, the Reject dialog");
     await shot(page, "review-1440-dark-reject");
     await page.keyboard.press("Escape");
@@ -235,19 +235,19 @@ test.describe("at 390×844, on a phone", () => {
     await expect(page.getByRole("button", { name: "Accept", exact: true })).toHaveCount(0);
     expect(await foot.evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).backgroundColor))).toEqual(["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0)"]);
     await expect(page.locator("[data-testid=diff] [data-line=added]")).toBeVisible();
-    await checkLayout(page, 44, "review, 390");
+    await checkScreen(page, "review, 390", { floor: 44 });
     await checkWords(page, "review, rebuilt, phone");
     await shot(page, "review-390-dark");
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "review-390-dark-full.png"), fullPage: true });
 
     // The navigation is the bar at the foot, and the decision's panel opens as a sheet with the same buttons.
-    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(["Chat", "Work", "Settings"]);
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
     await expect(page.getByRole("button", { name: "Screens menu" })).toBeHidden();
     await page.getByRole("button", { name: "More" }).click();
     const sheet = page.getByRole("dialog", { name: "Decision" });
     await expect(sheet.getByTestId("accepting-will").getByRole("listitem")).toHaveCount(3);
     await expect(actions(page)).toHaveText(["Reject", "Accept without verification"]);
-    await checkLayout(page, 44, "review, 390, the decision sheet");
+    await checkScreen(page, "review, 390, the decision sheet", { floor: 44 });
     await shot(page, "review-390-dark-sheet");
 
     await actions(page).filter({ hasText: "Accept without verification" }).click();

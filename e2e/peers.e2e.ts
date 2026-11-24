@@ -8,8 +8,7 @@ import { claimBranchName, lockBranch } from "../src/engine/claim-branch.ts";
 import { commitWork, createWorktree, makeClaimCommit, pushNewBranches } from "../src/worktrees.ts";
 import { PEERS_ADDRESS } from "../test/support/replay-peers.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, checkWords, chooseRepository, closeContext, expect, messageBox, SHOTS, signIn } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, checkWords, chooseRepository, closeContext, expect, messageBox, SHOTS, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Named workbenches that see each other's work (Peers P1, P2, P3) in the real client, at a phone's size, with no model
@@ -132,7 +131,7 @@ test("Work shows another workbench's pushed branch; the composer stays free to s
   const name = page.getByLabel("Workbench name");
   await expect(name).toHaveValue("alice");
   await expect(page.getByText("New task branches carry this name, such as botbench/alice/run-1/task-1")).toBeVisible();
-  await checkNext(page, "Settings, with the workbench name");
+  await checkScreen(page, "Settings, with the workbench name");
   await name.fill("Alice/x");
   await page.getByRole("button", { name: "Save name" }).click();
   await expect(page.getByRole("alert")).toContainText("lowercase letters, digits and hyphens");

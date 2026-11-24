@@ -1,6 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Button } from "@/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/ui/dropdown-menu";
@@ -18,6 +17,7 @@ import { pullRequestWords } from "../../components/pull-request.tsx";
 import { ResumeControl } from "../../components/resume.tsx";
 import { runTaskNote, stations, type StationState } from "../../components/run-status.ts";
 import { offersMerge } from "../../components/task-status.ts";
+import { DestructiveDialog } from "../decision/decision-surface.tsx";
 import { rowState, runControls, stateTone, taskFacts, type StateTone } from "./run-model.ts";
 
 /*
@@ -275,26 +275,20 @@ export function RunMenu({ run, cancelling, busy, onCancel, onChanged, onSignedOu
         </DropdownMenuContent>
       </DropdownMenu>
       {offers.stricter && <StricterMode key={run.mode} run={run} open={stricter} onOpen={setStricter} onChanged={onChanged} onSignedOut={onSignedOut} />}
-      <AlertDialog open={asking} onOpenChange={setAsking}>
-        <AlertDialogContent data-testid="cancel-run">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-heading font-semibold">Cancel this run?</AlertDialogTitle>
-            <AlertDialogDescription>{cancelStatement(run.status, run.plan.length)}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep run</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                setAsking(false);
-                onCancel();
-              }}
-            >
-              Cancel run
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DestructiveDialog
+        open={asking}
+        onOpenChange={setAsking}
+        title="Cancel this run?"
+        keepLabel="Keep run"
+        confirmLabel="Cancel run"
+        testId="cancel-run"
+        onConfirm={() => {
+          setAsking(false);
+          onCancel();
+        }}
+      >
+        <p>{cancelStatement(run.status, run.plan.length)}</p>
+      </DestructiveDialog>
     </>
   );
 }

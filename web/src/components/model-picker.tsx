@@ -275,5 +275,3 @@ export function useModelList(onSignedOut: () => void): ModelList | null {
 /** The session's model in words that claim an answer only when a reply completed. */
 export const modelState = (session: { model: string; answered: boolean } | null, name: (id: string) => string): string =>
   session === null ? "not started yet" : session.answered ? name(session.model) : `${name(session.model)} (no reply yet)`;
-/** The same, as a line that stands alone. */
-export const modelWords = (session: { model: string; answered: boolean } | null, name: (id: string) => string): string => `Model: ${modelState(session, name)}`;

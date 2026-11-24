@@ -5,8 +5,7 @@ import { createTask, moveTask } from "../src/engine/task.ts";
 import type { DriverEvent } from "../src/drivers/events.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { expect, openFromSettings, signIn, watchRequests } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkScreen, expect, openFromSettings, signIn, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 import { dayAndClock } from "../web/src/app/format.ts";
 
@@ -37,7 +36,7 @@ test("with no replies stored, Usage says so in words", async ({ page, dir }) => 
     await open(page, botbench);
     await expect(page.getByTestId("usage-empty").getByRole("heading", { name: "No usage yet" })).toBeVisible();
     await expect(page.getByTestId("usage-week")).toHaveCount(0);
-    await checkNext(page, "usage, empty");
+    await checkScreen(page, "usage, empty");
     expect(foreign).toEqual([]);
   } finally {
     await botbench.stop();
@@ -97,7 +96,7 @@ test("with replies stored, Usage shows this week, each agent and model, and each
     // What happens at a usage limit, in the composer's own words, with the order as it is now.
     await expect(page.getByTestId("usage-limit").getByRole("heading", { level: 3 })).toHaveText(["Wait for it to reset", "Switch to the next agent"]);
     await expect(page.getByTestId("usage-limit").getByTestId("usage-order")).toHaveText(/^The list now: /);
-    await checkNext(page, "usage, with replies");
+    await checkScreen(page, "usage, with replies");
     expect(foreign).toEqual([]);
   } finally {
     await botbench.stop();

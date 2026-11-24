@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base } from "@playwright/test";
 import { startBotbench, type Botbench } from "./botbench.ts";
-import { checkDesign, expect, goTo, messageBox, openComposer, sendChat, signIn } from "./helpers.ts";
-import { checkNext, choice, choose, openSettingsGroup } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, expect, goTo, messageBox, openComposer, sendChat, signIn } from "./helpers.ts";
+import { choice, choose, openSettingsGroup } from "./settings-helpers.ts";
 
 // A chat's Claude Code asking for approval, in the real client at a phone's size, against a real Botbench process whose
 // Claude Code, in a chat only, replays real chat turns that asked to fetch https://example.com (e2e/serve-replayed-chat.ts,
@@ -32,7 +32,7 @@ test("with Ask, a chat's fetch stands in the chat where it was asked with its de
   await expect(choice(page, "Ask before every command")).toHaveAttribute("data-value", "off");
   await choose(page, "Ask before every command", "On");
   await expect(page.getByTestId("ask-every-saved")).toHaveText("Saved.");
-  await checkNext(page, "settings, web access and ask before every command");
+  await checkScreen(page, "settings, web access and ask before every command");
   await page.reload();
   await expect(choice(page, "Web access")).toHaveAttribute("data-value", "ask");
   await expect(choice(page, "Ask before every command")).toHaveAttribute("data-value", "on");

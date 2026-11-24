@@ -17,7 +17,7 @@ import { sessionAgent, sessionsLine, shownAttempts } from "../../app/handoff-wor
 import { PeerCardsContext } from "../../app/peer-cards.tsx";
 import { overlapLines } from "../../app/peers.ts";
 import { MODE_NAMES, modeSentence } from "../../app/run-words.ts";
-import { ApprovalCard } from "../../components/approval-card.tsx";
+import { ApprovalQueue } from "../decision/decision-surface.tsx";
 import { copyWords } from "../../components/decision.tsx";
 import { CommandRounds, MachineChecksNote, latestRound, reviewerWords } from "../../components/evidence.tsx";
 import { modelName, useModelList } from "../../components/model-picker.tsx";
@@ -122,7 +122,6 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
-  const [connected, setConnected] = useState(true);
   const [tab, setTab] = useState("review");
   const reads = useRef(0);
   const missing = useRef(false);
@@ -163,7 +162,6 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
     return openEventStream(0, {
       onEvent: (event) => setEvents((have) => mergeEvents(have, [event])),
       onConnection: (isConnected) => {
-        setConnected(isConnected);
         if (isConnected) load();
       },
       onSignedOut,
@@ -516,11 +514,6 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
     >
       <main className="min-w-0 px-4 pt-4 pb-12 md:px-6 min-[1440px]:px-8">
         <div className="mx-auto flex max-w-[47.5rem] flex-col gap-6">
-          {!connected && (
-            <p role="status" data-testid="stream-banner" className="rounded-lg border border-attention/50 px-3 py-2 text-meta text-attention">
-              Live updates are disconnected. Reconnecting.
-            </p>
-          )}
           <header className="flex flex-col gap-2">
             <h1 ref={heading} tabIndex={-1} data-ds-content={task === null ? undefined : ""} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight text-balance outline-none md:text-title">
               {title}
@@ -570,7 +563,7 @@ export default function TaskScreen({ id, discard = false, onSignedOut }: { id: n
             )}
           </header>
           {/* A request that waits for the owner comes first after the title: nothing else on the screen is as urgent. */}
-          {task !== null && asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="task" onSignedOut={onSignedOut} />}
+          {task !== null && <ApprovalQueue waiting={waiting} on="task" onSignedOut={onSignedOut} />}
           {task !== null && drafts.map((card) => <DraftPeerCard key={card.messageId} card={card} primary={asking === undefined && task.status === "drafted" && drafts.length === 1} onSignedOut={onSignedOut} />)}
           {task !== null && task.outsideText && <OutsideText issue={task.issue} given={task.givenMessage} what="task" />}
           {problem !== null && <Problem>{problem}</Problem>}

@@ -90,6 +90,8 @@
   /* The second bracket of the Botbench mark (web/src/brand/mark.tsx), in the old screens too. The mark's alone: no status or control. */
   --brand-cyan: light-dark(#03748f, #06b6d4);
   --overlay-shadow: light-dark(0 16px 40px rgb(26 32 40 / 0.16), 0 16px 40px rgb(0 0 0 / 0.5));
+  /* What dims the page behind a dialog or a sheet: the one scrim, in both modes. */
+  --scrim: rgb(0 0 0 / 0.55);
 
   /* A control is 40px high, 44px under a finger. */
   --control: 2.5rem;
@@ -176,6 +178,7 @@
   --text-title--line-height: 2.125rem;
 
   --shadow-overlay: var(--overlay-shadow);
+  --color-scrim: var(--scrim);
 }
 
 /*

@@ -5,8 +5,8 @@ import { LOGIN_TOKEN_FILE } from "../src/api/auth.ts";
 import { peerDraftTurn } from "../test/support/replay-peer-draft.ts";
 import { sharedRepository, until, workbench, type Workbench } from "../test/support/two-workbenches.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, checkWords, expect, SHOTS, tallShot } from "./helpers.ts";
-import { checkNext, choice, choose, shot, signInTo } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, checkWords, expect, SHOTS, tallShot } from "./helpers.ts";
+import { choice, choose, shot, signInTo } from "./settings-helpers.ts";
 
 // Two Botbench installations on this Mac pair and talk through their screens (Peers P5, ADR 0004 decision 13): two real
 // processes with their own data folders, owner ports and listeners for paired workbenches on 127.0.0.1 at ports the
@@ -87,7 +87,7 @@ test("Settings says plainly when pairing is off, with the settings-file key and 
     // The old address of this section opened Connections and peers. No control but the explanation to open.
     await expect(page).toHaveURL(/#\/settings\/connections$/);
     await expect(section.getByRole("button")).toHaveText(["More about this"]);
-    await checkNext(page, "Settings, pairing off");
+    await checkScreen(page, "Settings, pairing off");
   } finally {
     await botbench.stop();
     fs.rmSync(path.dirname(botbench.home), { recursive: true, force: true });
@@ -110,7 +110,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(aSection.getByRole("button", { name: "Withdraw" })).toBeVisible();
   const aliceFingerprint = (await aSection.getByTestId("own-fingerprint").textContent())!;
   expect(aliceFingerprint).toMatch(/^[0-9a-f]{4}( [0-9a-f]{4}){4}$/);
-  await checkNext(a, "Settings, an invite to pass on");
+  await checkScreen(a, "Settings, an invite to pass on");
   const invite = await line.inputValue();
   // The line is shown only to the request that made it: after a reload the invite is open, and the line is not shown again.
   await a.reload();
@@ -126,7 +126,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(bSection.getByTestId("pasted-name")).toHaveText("alice");
   await expect(bSection.getByTestId("pasted-fingerprint")).toHaveText(aliceFingerprint);
   await expect(bSection.getByTestId("pasted-repository")).toHaveText(/shared\.git$/);
-  await checkNext(b, "Settings, a pasted invite to check");
+  await checkScreen(b, "Settings, a pasted invite to check");
   await bSection.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(bSection.getByTestId("pairing-words")).toHaveText("Waiting for alice to confirm");
   const bobFingerprint = (await bSection.getByTestId("own-fingerprint").textContent())!;
@@ -135,7 +135,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(aSection.getByTestId("pairing")).toHaveAttribute("data-state", "waiting_for_owner");
   await expect(aSection.getByTestId("peer-fingerprint")).toHaveText(bobFingerprint);
   await expect(aSection.getByTestId("own-fingerprint")).toHaveText(aliceFingerprint);
-  await checkNext(a, "Settings, fingerprints to compare");
+  await checkScreen(a, "Settings, fingerprints to compare");
   await aSection.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(aSection.getByTestId("pairing-words")).toHaveText("Paired");
   await expect(bSection.getByTestId("pairing-words")).toHaveText("Paired");
@@ -197,7 +197,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(thread.getByTestId("thread-state").nth(0)).toHaveText("Question · Delivered");
   await expect(thread.getByTestId("thread-message").nth(0).getByTestId("outside-text-mark")).toHaveCount(0);
   await expect(a.locator("main b, main a[href^='https://example']")).toHaveCount(0);
-  await checkNext(a, "A conversation with the paired workbench, with what bob needs");
+  await checkScreen(a, "A conversation with the paired workbench, with what bob needs");
   const threadAt = a.url();
   await built(a, "peer", threadAt, () => expect(a.getByTestId("peer-card")).toBeVisible());
   // Answer it yourself opens the field, and nothing is sent until Send; Cancel puts the three choices back.
@@ -215,7 +215,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(thread.getByTestId("thread-message").nth(1).getByTestId("outside-text-mark")).toHaveText("Outside text");
   await expect(a.getByLabel("Ask bob more")).toBeVisible();
   await expect(a.getByTestId("thread-friction")).toContainText("1 card answered by you.");
-  await checkNext(a, "A conversation with the paired workbench");
+  await checkScreen(a, "A conversation with the paired workbench");
 
   const started = await alice.api("POST", "/api/tasks", { repo: alice.repo, prompt: "Ask bob's workbench which port the login service uses." });
   expect(started.status, JSON.stringify(started.body)).toBe(200);
@@ -251,13 +251,13 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await a.getByTestId("new-question").getByRole("button", { name: "Send", exact: true }).click();
   await expect(a.getByTestId("new-question-said")).toHaveText("Not sent: switched off. Sending questions to this workbench is off, here or on its side.");
   await expect(a.getByTestId("friction-total")).toContainText("cards answered by you.");
-  await checkNext(a, "Settings, paired, with the switches and conversations");
+  await checkScreen(a, "Settings, paired, with the switches and conversations");
   await a.setViewportSize(DESKTOP);
   await a.goto(`${alice.base}/#/settings/paired`);
   await expect(a.getByTestId("settings-nav").locator("[aria-current=page]")).toHaveText("Connections and peers");
   await expect(a.getByTestId("paired-workbench")).toBeVisible();
   await expect(a.getByTestId("thread-link").first()).toBeVisible();
-  await checkNext(a, "Settings, paired, at desktop size");
+  await checkScreen(a, "Settings, paired, at desktop size");
   await a.setViewportSize(PHONE);
   await built(a, "settings-connections-paired", `${alice.base}/#/settings/connections`, () => expect(a.getByTestId("friction-total")).toBeVisible());
 
@@ -267,7 +267,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   const dialog = b.getByTestId("end-pairing-dialog");
   await expect(dialog.getByRole("heading", { name: "End pairing with alice?" })).toBeVisible();
   await expect(dialog).toContainText("alice's workbench can no longer send you messages, and nothing more is sent to it. To work together again, one of you sends a new invite.");
-  await checkNext(b, "End pairing, asked first");
+  await checkScreen(b, "End pairing, asked first");
   await dialog.getByRole("button", { name: "End pairing", exact: true }).click();
   await expect(b.getByTestId("pairing-ended")).toContainText("The pairing with alice ended");
   await expect(b.getByRole("button", { name: "Make an invite" })).toBeVisible();

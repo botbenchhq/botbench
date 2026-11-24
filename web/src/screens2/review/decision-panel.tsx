@@ -3,16 +3,16 @@ import { Check, Minus } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
-import { Card } from "@/ui/card";
 import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { acceptTask, ApiError, rejectTask, runChecksAgain, type TaskDetail } from "../../api/client.ts";
+import { DecisionSurface } from "../decision/decision-surface.tsx";
 import { offered } from "./review-model.ts";
 
 /*
- * The decision on a task that is ready for review, as the routine level of the approved decision surface: a neutral
- * raised card, what accepting will do, an optional note, and the buttons. Which buttons there are is the server's to
+ * The decision on a task that is ready for review, as the routine level of the decision surface
+ * (screens2/decision/decision-surface.tsx): a neutral raised card, what accepting will do, an optional note, and the buttons. Which buttons there are is the server's to
  * say (`offered`, from its state of the evidence): Accept, as the one filled button, while the checks are about the
  * commit it keeps; "Accept without verification", outlined, when no checks ran; Run checks again, outlined, when they
  * are out of date; and Reject always, behind its confirmation. The server refuses whatever the state does not allow.
@@ -139,10 +139,7 @@ export function DecisionPanel({ task, d, children }: { task: TaskDetail; d: Deci
   const pullRequest = task.pullRequest.choice === "pull_request";
   return (
     <>
-      <Card data-testid="decision" className="gap-4 p-5">
-        <h2 ref={heading} id={`${id}-heading`} tabIndex={-1} className="text-heading font-semibold tracking-tight outline-none">
-          {decision?.decidedBy === "mode" ? "Decision" : "Your decision"}
-        </h2>
+      <DecisionSurface level="routine" title={decision?.decidedBy === "mode" ? "Decision" : "Your decision"} headingRef={heading} data-testid="decision" className="gap-4 p-5">
         {decision === null ? (
           <>
             {offer.accept !== null ? (
@@ -209,7 +206,7 @@ export function DecisionPanel({ task, d, children }: { task: TaskDetail; d: Deci
             )}
           </div>
         )}
-      </Card>
+      </DecisionSurface>
 
     </>
   );

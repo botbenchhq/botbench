@@ -334,36 +334,6 @@ export async function checkStatuses(page: Page, screen: string): Promise<void> {
 /** Whether the screen now shown is one rebuilt on shadcn/ui and Tailwind (ADR 0012): the page's root says so while it is. */
 export const isRebuilt = (page: Page): Promise<boolean> => page.evaluate(() => document.documentElement.getAttribute("data-ui") === "next");
 
-/**
- * The whole check of a rebuilt screen whose states a fast test can produce (Chat, New chat or task): the words (docs/product/voice.md); no control under 40px
- * high with a mouse, or 44px under a finger (a control drawn smaller carries its pointer target on a pseudo-element);
- * no text under 12px; nothing scrolls sideways; and no inline style element, which the content security policy refuses.
- */
-export async function checkScreen(page: Page, screen: string): Promise<void> {
-  // A dialog is measured once it has opened: while it grows into place its controls are drawn smaller than they are.
-  await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 500))]));
-  const found = await page.evaluate(() => {
-    const least = window.matchMedia("(pointer: coarse)").matches ? 44 : 40;
-    const low: string[] = [];
-    for (const el of document.querySelectorAll("button, input, textarea, [role=radio], [role=tab], a[href]")) {
-      const box = el.getBoundingClientRect();
-      // Not drawn, a link inside a sentence, an input drawn by its label (visually hidden), or the hidden input a drawn radio keeps for a form.
-      if (box.height <= 1 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true") continue;
-      // The shell's own navigation is checked where the shell is (its unit's tests); here, the screen, its pane and its dialogs.
-      if (el.closest("main, aside, [role=dialog], [role=alertdialog]") === null) continue;
-      // The old option views inside the Add context sheet are the design system's own, checked on its own screens.
-      if (el.closest('[class*="ds-"]') !== null) continue;
-      const target = getComputedStyle(el, "::after");
-      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
-      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
-    }
-    const small = [...document.querySelectorAll("body *")].filter((el) => el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
-    return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth, styleElements: document.querySelectorAll("body style").length };
-  });
-  expect(found, screen).toEqual({ low: [], small: [], sideways: 0, styleElements: 0 });
-  await checkWords(page, screen);
-}
-
 /** The primary button's look and a secondary button's, from the theme's tokens, in the default mode. */
 export const PRIMARY_LOOK = { background: token("accent"), text: token("on-accent"), border: token("accent") };
 // A secondary control rests on the theme's `fill` (design system 0.9.0), with the faint border.
@@ -392,11 +362,8 @@ export const primaries = async (page: Page): Promise<(string | null)[]> => {
  * screen has its data, and again with each dialog open: an open dialog is a view of its own.
  */
 export async function checkDesign(page: Page, screen: string): Promise<void> {
-  // A screen rebuilt on shadcn/ui is not drawn in the design system's vocabulary: its own checks stand in (ADR 0012).
-  if ((await page.evaluate(() => document.documentElement.getAttribute("data-ui"))) === "next") {
-    const finger = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches);
-    return checkLayout(page, finger ? 44 : 32, screen);
-  }
+  // A screen built on shadcn/ui is not drawn in the design system's vocabulary: its own check stands in (ADR 0012).
+  if (await isRebuilt(page)) return checkScreen(page, screen);
   // The script's text is evaluated, not added as a script element, which Botbench's content security policy would refuse.
   await page.evaluate(CHECK_DOM);
   // The app's class prefix, as web/design-system.config.json has it: the rule that a view's controls use the system needs it on a rendered page.
@@ -561,43 +528,48 @@ export async function tempShot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
-/*
- * A screen rebuilt on shadcn/ui and Tailwind (ADR 0012) is not drawn with the design system's classes, so `checkDesign`
- * does not apply to it. What stands in its place: `checkWords`, `checkLayout`, and `watchRefused` for the content
- * security policy. `checkDesign` itself runs `checkLayout` in its place when the screen it is asked about is a rebuilt one.
- */
-
-/** Nothing scrolls sideways, no control is under `floor` px high (40 with a mouse, drawn at 32 in a bar; 44 under a finger), and no text is under 12px. */
-export async function checkLayout(page: Page, floor: number, screen: string): Promise<void> {
-  // A dialog or a menu that is still growing into place is measured smaller than it is drawn: wait for it, with a limit.
-  await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 600))]));
-  const found = await page.evaluate((least) => {
-    const low: string[] = [];
-    // The parts of an old screen a rebuilt one still draws (.ds- components, which the design checks covered where they came from) are left out.
-    const old = (el: Element): boolean => el.closest("[class*='ds-']") !== null;
-    for (const el of document.querySelectorAll("button, input, textarea, summary, [role=radio], [role=tab], [role=menuitem], a[href]")) {
-      const box = el.getBoundingClientRect();
-      // Not drawn, a link inside a sentence, or the hidden input a drawn radio keeps for a form.
-      if (box.height === 0 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true" || old(el)) continue;
-      // A control drawn smaller carries its pointer target on a pseudo-element.
-      const target = getComputedStyle(el, "::after");
-      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
-      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
-    }
-    const small = [...document.querySelectorAll("body *")].filter((el) => !old(el) && el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
-    return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth };
-  }, floor);
-  expect(found, screen).toEqual({ low: [], small: [], sideways: 0 });
-}
+/** The screen itself, its pane and its dialogs, without the shell's navigation: for `within`, where a screen holds its own controls to more than the shell's. */
+export const SCREEN_ONLY = "main, aside, [role=dialog], [role=alertdialog]";
 
 /**
- * The least a rebuilt screen is held to in a journey whose states this repository's fast tests cannot produce: its
- * words (docs/product/voice.md), and nothing scrolling sideways. Where a state can be produced without a model,
- * `checkLayout` is run on it as well (e2e/run.e2e.ts).
+ * The one check of a screen built on shadcn/ui and Tailwind (ADR 0012), which is every screen: such a screen is not
+ * drawn with the design system's classes, so `checkDesign` hands it to this. Its words pass docs/product/voice.md;
+ * nothing scrolls sideways; no control is under `floor` px high (32 unless a test asks for more, and never under 44
+ * beneath a finger; a control drawn smaller carries its pointer target on a pseudo-element); no text is under 12px; and
+ * the page holds no inline style element, which the content security policy refuses. `within` limits the controls
+ * measured to those inside a matching element. `least` keeps only the words and the sideways scroll, for a state of a
+ * journey with a real model, which no fast test has measured. The content security policy as a whole is `watchRefused`'s.
  */
-export async function checkRebuilt(page: Page, screen: string): Promise<void> {
+export async function checkScreen(page: Page, screen: string, { floor = 32, within, least = false }: { floor?: number; within?: string; least?: boolean } = {}): Promise<void> {
   await checkWords(page, screen);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${screen}: no sideways scrolling`).toBe(0);
+  if (least) {
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${screen}: no sideways scrolling`).toBe(0);
+    return;
+  }
+  // A dialog or a menu that is still growing into place is measured smaller than it is drawn: wait for it, with a limit.
+  await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 600))]));
+  const found = await page.evaluate(
+    ({ floor, within }) => {
+      const least = Math.max(floor, window.matchMedia("(pointer: coarse)").matches ? 44 : 0);
+      const low: string[] = [];
+      // The parts of an old screen a rebuilt one still draws (.ds- components, which the design checks covered where they came from) are left out.
+      const old = (el: Element): boolean => el.closest("[class*='ds-']") !== null;
+      for (const el of document.querySelectorAll("button, input, select, textarea, summary, [role=radio], [role=tab], [role=menuitem], a[href]")) {
+        const box = el.getBoundingClientRect();
+        // Not drawn (or drawn only for assistive technology), a link inside a sentence, the hidden input a drawn radio keeps for a form, or a tick box, which is drawn small beside its label.
+        if (box.height <= 1 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true" || (el as HTMLInputElement).type === "checkbox" || old(el)) continue;
+        if (within !== undefined && el.closest(within) === null) continue;
+        // A control drawn smaller carries its pointer target on a pseudo-element.
+        const target = getComputedStyle(el, "::after");
+        const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
+        if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
+      }
+      const small = [...document.querySelectorAll("body *")].filter((el) => !old(el) && el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
+      return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth, styleElements: document.querySelectorAll("body style").length };
+    },
+    { floor, within },
+  );
+  expect(found, screen).toEqual({ low: [], small: [], sideways: 0, styleElements: 0 });
 }
 
 /**
@@ -614,6 +586,8 @@ export async function watchRefused(page: Page): Promise<string[]> {
   page.on("console", (message) => {
     // Before signing in, the client asks whether it has a session and is told it has none: Chrome prints that 401.
     if (message.type() === "error" && message.location().url.endsWith("/api/session") && /status of 401/.test(message.text())) return;
+    // An agent Botbench cannot run a sign-in for has no sign-in to read: its card asks, is told 404, and draws no Connect.
+    if (message.type() === "error" && /\/api\/agents\/[a-z-]+\/connect$/.test(message.location().url) && /status of 404/.test(message.text())) return;
     if (message.type() === "error" || /content security policy/i.test(message.text())) refused.push(`console ${message.type()}: ${message.text()} (${message.location().url})`);
   });
   page.on("pageerror", (error) => refused.push(`page error: ${error.message}`));

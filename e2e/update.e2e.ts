@@ -3,8 +3,7 @@ import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { commitAndTag, bumpVersion, notesFor, smallRepo, startReleaseServer, type ReleaseServer } from "../test/support/releases.ts";
 import { git } from "../test/support/repo.ts";
-import { expect, pageMode, signIn, tempShot } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkScreen, expect, pageMode, signIn, tempShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Settings' Version row (issue #116) in the real client, at a phone's size and at a desktop's, light and dark: a real
@@ -66,7 +65,7 @@ for (const size of [{ name: "phone", width: 390, height: 844, address: "#/settin
       await inMode(page, mode);
       await group.scrollIntoViewIfNeeded();
       await expect(row.getByRole("button", { name: "Update now" })).toBeVisible();
-      await checkNext(page, `Settings, Version with an update available (${size.name}, ${mode})`);
+      await checkScreen(page, `Settings, Version with an update available (${size.name}, ${mode})`);
       await tempShot(page, `update-${size.name}-${mode}`);
     }
 
@@ -88,7 +87,7 @@ for (const size of [{ name: "phone", width: 390, height: 844, address: "#/settin
     // Offered again once it has answered, and drawn at rest (not in the pressed button's fade).
     await expect(row.getByRole("button", { name: "Update now" })).toBeEnabled();
     await page.mouse.move(0, 0);
-    await checkNext(page, `Settings, Version after a refused update (${size.name}, dark)`);
+    await checkScreen(page, `Settings, Version after a refused update (${size.name}, dark)`);
     await tempShot(page, `update-${size.name}-refused`);
     expect(git(install, "rev-parse", "HEAD").trim()).toBe(before);
   });

@@ -11,7 +11,7 @@ import { claimNotice } from "../../app/peers.ts";
 import type { Turn } from "../../app/use-turn.ts";
 import { NextShell } from "../../shell/shell.tsx";
 import { ApprovalDecision } from "../decision/decision-surface.tsx";
-import { Chip, Composer, ConnectAgent, Disconnected, TARGET } from "./composer.tsx";
+import { Chip, Composer, ConnectAgent, TARGET } from "./composer.tsx";
 
 /**
  * New chat or task: what the owner came to do, chosen first and in words, beside the one composer. Four intents (ask a
@@ -68,6 +68,7 @@ export function NewWork({ turn, onSignedOut }: { turn: Turn; onSignedOut: () => 
   return (
     <NextShell
       open={null}
+      showing={turn.waitingHere.map((approval) => approval.id)}
       bar={
         <>
           <span className="shrink-0 text-sm font-semibold">New chat or task</span>
@@ -83,8 +84,7 @@ export function NewWork({ turn, onSignedOut }: { turn: Turn; onSignedOut: () => 
         </>
       }
     >
-      {!turn.connected && <Disconnected />}
-      <div data-testid="screen" className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-5 px-4 py-6 md:px-8 md:py-12">
+      <main data-testid="screen" className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-5 px-4 py-6 md:px-8 md:py-12">
         <div className="flex flex-col gap-1.5">
           <h1 ref={heading} tabIndex={-1} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight outline-none md:text-title">
             What do you want to do?
@@ -155,7 +155,7 @@ export function NewWork({ turn, onSignedOut }: { turn: Turn; onSignedOut: () => 
             <strong className="font-semibold text-foreground">{said.lead}</strong> {said.rest}
           </p>
         </Composer>
-      </div>
+      </main>
     </NextShell>
   );
 }

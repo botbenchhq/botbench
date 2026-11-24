@@ -10,6 +10,7 @@ import { agentName } from "../../app/chat.ts";
 import { counted, duration, plural } from "../../app/format.ts";
 import { CHECKS_LINE, checksSummary, commandResult, fixesWords, latestRound, REVIEW_LINE, reviewerWords, verdictWords } from "../../components/evidence.tsx";
 import { MarkdownView } from "../../components/markdown-view.tsx";
+import { reviewDiffLine } from "../../components/review-diff-words.ts";
 import { fileMarks } from "../../components/task-status.ts";
 import { diffRows } from "./review-model.ts";
 
@@ -120,6 +121,12 @@ function ReviewRounds({ reviews, refinements }: { reviews: readonly Review[]; re
                       <li key={i}>{line}</li>
                     ))}
                   </ul>
+                )}
+                {/* How much of the change the reviewer was sent: said before its words, so a review of a cut diff is read as one. */}
+                {reviewDiffLine(review) !== null && (
+                  <p data-testid="review-diff" className="text-meta text-muted-foreground">
+                    {reviewDiffLine(review)}
+                  </p>
                 )}
                 <MarkdownView text={review.text} className="flex flex-col gap-2 rounded-md bg-sunken p-3 text-meta break-words" testId="review-text" />
               </>

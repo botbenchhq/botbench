@@ -7,8 +7,6 @@
 import { agentName as agentLabel } from "./chat.ts";
 import { counted, plural } from "./format.ts";
 
-export const MOVE_HEADING = "Move to another agent";
-
 /** What a move does, said before the owner chooses it. */
 export const moveAbout = (from: string): string =>
   `${agentLabel(from)} stops now, and what it wrote is committed. The agent you choose takes the task over in a new session, in the same copy and on the same branch, with a note of the task and what was done so far. The run's mode and safety rules stay as they are.`;

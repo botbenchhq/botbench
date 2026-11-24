@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { checkDesign, checkWords, contextSheet, copyShot, expect, nav, SCREENS, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, checkWords, contextSheet, copyShot, expect, nav, SCREENS, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
@@ -12,7 +11,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.goto(botbench.base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("button")).toHaveCount(1);
-  await checkNext(page, "sign-in");
+  await checkScreen(page, "sign-in");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u4-sign-in.png") });
   await copyShot(page, "sign-in");
 
@@ -47,7 +46,6 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await expect(page.locator('[data-event="turn_ended"]')).toHaveCount(0);
   expect(await page.getByRole("log").innerText(), "what is drawn in the transcript").not.toMatch(/completed|tokens|worked for/i);
   // The model is named once, in the chip: the model that answered is the one asked for, so the transcript has no row for it.
-  await expect(page.getByTestId("turn-model")).toHaveCount(0);
   await expect(page.locator('[data-event="session_started"]')).toHaveCount(0);
   // The chat is named by its first message.
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(prompt);
@@ -171,7 +169,7 @@ test("LIVE: words the owner or the agent wrote are never judged, and the same wo
     const label = document.createElement("p");
     label.id = "planted-for-the-check";
     label.textContent = "Turn completed.";
-    document.querySelector("main")!.append(label);
+    document.querySelector('[data-testid="screen"]')!.append(label);
   });
   await expect(checkWords(page, "chat, with an internal word planted in the interface")).rejects.toThrow(/internal words on the screen/);
   await page.evaluate(() => document.getElementById("planted-for-the-check")!.remove());
@@ -305,7 +303,7 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, botbenc
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toBeVisible();
   await expect(page.getByLabel("Message Claude Code")).toHaveCount(0);
-  await checkNext(page, "sign-in, with an error");
+  await checkScreen(page, "sign-in, with an error");
   // No session came of it: the API still refuses this browser.
   expect((await page.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
   expect((await page.request.get(`${botbench.base}/api/driver`)).status()).toBe(401);

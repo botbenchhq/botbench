@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, closeContext, contextRow, contextRows as rows, contextSheet, expect, messageBox, modelChip, openContext, openRow, openWork, primaries, signIn, test, tempShot } from "./helpers.ts";
+import { checkDesign, choose, closeContext, contextRow, contextRows as rows, contextSheet, expect, messageBox, modelChip, openContext, openRow, openWork, primaries, signIn, tempShot, test } from "./helpers.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
 
 // The composer on the home screen, at a phone's size, with no model turn: a real Botbench process, real temporary

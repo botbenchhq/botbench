@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, CHECK_REPO_LIMIT_MS, checkRepo, getRepoSettings, listRepos, timedOut, type KnownRepository, type RepoCheck } from "../api/client.ts";
 import { REPO_HINT, type RepoStatus } from "../app/composer.ts";
-import { Alert } from "./header.tsx";
+import { Alert } from "./alert.tsx";
 
 const CHECK_DELAY_MS = 250;
 

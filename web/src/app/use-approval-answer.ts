@@ -6,7 +6,7 @@ import { ApprovalsContext } from "./approvals.tsx";
 export type Sending = "allow" | "decline" | "grant" | number | "own" | null;
 
 /**
- * Answering one waiting request, as its card always did (components/approval-card.tsx): Allow, Decline with the note
+ * Answering one waiting request, as its card always did (components/approval-words.ts): Allow, Decline with the note
  * typed, Always allow, and a question's answer. A request that takes the place of one just answered must be read before
  * it can be answered: until it has settled a press does nothing, so a second tap meant for the first allows nothing. The
  * request goes from the screen when the list no longer has it; a failure says what was not saved, and that nothing was allowed.

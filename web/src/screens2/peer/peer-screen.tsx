@@ -5,14 +5,13 @@ import { arrive, tabTitle } from "../../app/arrival.ts";
 import { ago, fullDate } from "../../app/format.ts";
 import { frictionWords, threadHref, threadsOf } from "../../app/paired-words.ts";
 import { PeerCardsContext } from "../../app/peer-cards.tsx";
-import { visible } from "../../components/approval-card.tsx";
+import { visible } from "../../components/approval-words.ts";
 import { NextShell } from "../../shell/shell.tsx";
 import { groupHref } from "../../app/settings-groups.ts";
 import { EndPairing, Kinds, NEVER_GIVES } from "../settings/paired.tsx";
 import { About, Note, OutsideMark, Panel, Reading, StateWord } from "../settings/parts.tsx";
 import { DraftCard, Initial, NeedsCard } from "./cards.tsx";
 import { NewQuestion } from "./new-question.tsx";
-import { PeerCardsWaiting } from "./waiting.tsx";
 
 const KIND: Record<"question" | "answer", string> = { question: "Question", answer: "Answer" };
 
@@ -76,6 +75,8 @@ export default function PeerScreen({ pairingId, contextId, onSignedOut }: { pair
 
   return (
     <NextShell
+      current="Settings"
+      cardsShown={(card) => card.pairingId === pairingId && card.contextId === contextId}
       open={thread === null ? null : { title: waiting[0]?.title ?? title, href: threadHref(pairingId, contextId) }}
       bar={
         <nav aria-label="Where this is" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -87,7 +88,6 @@ export default function PeerScreen({ pairingId, contextId, onSignedOut }: { pair
           </span>
           <span className="font-semibold">Conversation</span>
           {waiting.length > 0 && <StateWord tone="attention">Waits for you</StateWord>}
-          <PeerCardsWaiting shown={(card) => card.pairingId === pairingId && card.contextId === contextId} />
         </nav>
       }
       aside={

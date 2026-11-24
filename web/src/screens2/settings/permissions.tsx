@@ -5,7 +5,7 @@ import { cn } from "@/ui/lib/utils";
 import { ApiError, getActionLog, getAskEveryCommand, getChatWebAccess, getDefaultMode, listGrants, previewCommand, revokeGrant, setAskEveryCommand, setChatWebAccess, setDefaultMode, type LogEntry, type LogRule, type ModePreview, type RunMode, type StandingGrant, type WebAccess } from "../../api/client.ts";
 import { takesItsPlace } from "../../app/focus-after.ts";
 import { fullDate } from "../../app/format.ts";
-import { stepWord, times, visible } from "../../components/approval-card.tsx";
+import { stepWord, times, visible } from "../../components/approval-words.ts";
 import { MODES } from "../../components/mode-choice.tsx";
 import { useKnownRepositories } from "../../components/repository.tsx";
 import { About, Busy, Confirm, FieldLabel, More, Note, ON_OFF, Panel, Reading, Row, SectionHeading, Segmented, Select, Textarea } from "./parts.tsx";

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { askBeforeEveryCommand, checkDesign, chooseRepository, closeContext, expect, messageBox, MONO_FAMILY, openCanDo, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, chooseRepository, closeContext, expect, messageBox, openCanDo, openComposer, openRow, primaries, SHOTS, signIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Pre-approved commands in the real client, at a phone's size: a real Botbench process whose settings list commands
@@ -47,7 +47,7 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(list.getByRole("listitem")).toHaveText([/^npm test/, /^git status/]);
   expect(await list.evaluate((el) => [el.tagName, ...[...el.children].map((child) => child.tagName)])).toEqual(["UL", "LI", "LI"]);
   await expect(page.getByTestId("preapproved-about")).toContainText("Dangerous commands always ask");
-  expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(MONO_FAMILY);
+  expect(await list.locator("code").first().evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
   // Send is still the one primary action; the sheet has none of its own.
   await expect.poll(() => primaries(page)).toEqual(["Send"]);
   await checkDesign(page, "add context, the repository's pre-approved commands");
@@ -98,20 +98,26 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
   await expect(page.getByTestId("task-status")).toHaveText("Ready for review. Botbench committed the work to the task's branch. Accept it to keep the branch, or reject it.", { timeout: 120_000 });
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await expect(tray).toBeEmpty();
-  const resolved = page.locator('[data-event="permission_resolved"]');
+  // The review opens on its Review tab; why the command ran is in the activity, the tab beside it.
+  await page.getByRole("tab", { name: /^Activity/ }).click();
+  const activity = page.getByRole("log", { name: "Activity" });
+  const resolved = activity.getByTestId("answer");
   await expect(resolved).toHaveCount(1);
   await expect(resolved).toContainText("Allowed for this task");
-  await expect(resolved).toContainText("sh make-marker.sh");
-  await expect(resolved).toContainText("allowed without asking you");
-  // The action itself is one plain line, and what ran is one tap away, never raw arguments on the line.
-  const ran = page.locator('[data-event="tool_call"]').filter({ hasText: "sh make-marker.sh" }).first();
-  await expect(ran.locator(".ds-tool-call")).toHaveAttribute("data-state", "succeeded");
-  await expect(ran.locator(".ds-tool-call__title")).toHaveText(/^Done\s*Ran\s*sh make-marker\.sh$/);
-  await expect(ran.locator("summary").first()).not.toContainText("{");
-  await expect(page.getByRole("log")).not.toContainText("You allowed");
-  await expect(page.getByRole("log")).not.toContainText("needs your answer");
+  await expect(resolved).toContainText("allowed without asking you: you listed this command when you started the task");
+  // The action itself is a step that is over, folded under a line that counts it; what ran is one tap away, as one plain line, never raw arguments.
+  const group = activity.getByTestId("steps").filter({ hasText: /ran 1 command/i }).first();
+  await expect(group).toContainText(/\d+ steps? done/);
+  await group.getByRole("button", { name: /Show steps/ }).click();
+  const ran = group.getByRole("listitem").filter({ hasText: "sh make-marker.sh" });
+  await expect(ran).toContainText("Ran sh make-marker.sh");
+  await expect(ran).not.toContainText("{");
+  await expect(activity).not.toContainText("You allowed");
+  await expect(activity).not.toContainText("needs your answer");
+  await page.getByRole("tab", { name: "Review", exact: true }).click();
   const files = page.getByTestId("changed-files");
-  await expect(files.locator("summary").filter({ hasText: "marker.txt" })).toHaveText(/marker\.txt.*added/);
+  await expect(files.getByRole("button", { name: "marker.txt" })).toBeVisible();
+  await expect(files).toContainText(/marker\.txt\s*added/);
   const branch = (await page.getByTestId("branch").textContent())!;
   expect(git(repo, "show", `${branch}:marker.txt`).trim()).toBe("ran");
   await expect((await openCanDo(page)).getByTestId("can-do-text")).toContainText("with Ask before every command on in Settings, every one waits for your answer first, unless you listed it above or chose Always allow for it (see Permissions)");
@@ -121,8 +127,8 @@ test("LIVE: a task's Allowed commands list the repository's configured commands;
 
   // The record: no approval was ever created, and the log names the rule and the grant.
   expect(await (await page.request.get(`${botbench.base}/api/approvals`)).json()).toEqual({ approvals: [] });
-  const log = (await (await page.request.get(`${botbench.base}/api/action-log?taskId=1`)).json()) as { entries: { rule: string; grantId: number | null; command: string }[] };
-  expect(log.entries.map((e) => [e.rule, e.grantId, e.command])).toEqual([["preapproved", 2, "sh make-marker.sh"]]);
+  const recorded = (await (await page.request.get(`${botbench.base}/api/action-recorded?taskId=1`)).json()) as { entries: { rule: string; grantId: number | null; command: string }[] };
+  expect(recorded.entries.map((e) => [e.rule, e.grantId, e.command])).toEqual([["preapproved", 2, "sh make-marker.sh"]]);
 
   expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce), "all of it without a reload").toBe(true);
   expect(foreign, "requests to anything but Botbench").toEqual([]);

@@ -2,8 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, git, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { RUN_TASK_STATE, SHOTS, checkDesign, checkRebuilt, expect, openFromSettings, openRunId, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, expect, openFromSettings, openRunId, RUN_TASK_STATE, SHOTS, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Decisions in the real client, at a phone's size: a real Botbench process, real temporary repositories, and the
@@ -72,22 +71,32 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   // The task's copy, wherever under its run Botbench made it.
   const copy = fs.readdirSync(path.join(botbench.home, "worktrees")).map((run) => path.join(botbench.home, "worktrees", run, `task-${taskId}`)).find((dir) => fs.existsSync(dir))!;
   expect(task.leftovers).toEqual(["check-report.txt"]);
-  // The design system's review decision: a section titled by its heading, the checks', the review's and the evidence's
-  // line, the note, then the actions. The check left a file git does not ignore, so the copy differs from the commit:
-  // the server's sentence says so, the file is listed, and there is no Accept to press, only Reject.
-  const decide = page.getByRole("region", { name: "Your decision" });
-  await expect(decide).toHaveClass(/ds-review-decision/);
-  await expect(decide.locator(".ds-review-decision__source")).toHaveText(["Checks", "Review", "Evidence"]);
-  await expect(decide.getByTestId("decision-checks")).toHaveText(/^Checks passed /);
-  await expect(decide.getByTestId("decision-review")).toHaveText("Not reviewed: this run has no reviewer.");
-  await expect(decide.getByTestId("evidence-words")).toHaveText(/^The task's copy has 1 file that differs from commit [0-9a-f]{7}: check-report\.txt \(not on the branch\)\./);
-  await expect(decide.getByTestId("evidence-files").getByRole("listitem")).toHaveText([/check-report\.txt/]);
+  // The review of a task: the verification card holds the checks' count, the review's line and the server's sentence
+  // on the evidence. At a phone's width the decision's buttons stay at the foot of the window, and its panel (the
+  // heading, the note, the same buttons) is a sheet one tap away. The check left a file git does not ignore, so the
+  // copy differs from the commit: the server's sentence says so, the file is listed, and there is no Accept to press,
+  // only Reject.
+  const verification = page.getByTestId("verification");
+  const foot = page.getByTestId("foot");
+  const actions = page.getByTestId("foot-actions");
+  const sheet = page.getByRole("dialog", { name: "Decision" });
+  const decide = sheet.getByTestId("decision");
+  await expect(verification.getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
+  await expect(verification.getByTestId("not-reviewed")).toHaveText("Not reviewed: this run has no reviewer.");
+  await expect(verification.getByTestId("evidence-words")).toHaveText(/^The task's copy has 1 file that differs from commit [0-9a-f]{7}: check-report\.txt \(not on the branch\)\./);
+  await expect(verification.getByTestId("evidence-files").getByRole("listitem")).toHaveText([/check-report\.txt/]);
   // The ignored cache stops nothing, and is named apart.
-  await expect(decide.getByTestId("evidence-ignored")).toHaveText("Git ignores 1 entry in the task's copy: node_modules/. It is not on the branch, does not count against the evidence, and is removed with the copy.");
-  await expect(decide.getByLabel("Note (optional)")).toBeVisible();
-  const actions = decide.locator(".ds-review-decision__actions");
+  await expect(verification.getByTestId("evidence-ignored")).toHaveText("Git ignores 1 entry in the task's copy: node_modules/. It is not on the branch, does not count against the evidence, and is removed with the copy.");
   await expect(actions.getByRole("button")).toHaveText(["Reject"]);
   await expect(page.getByRole("button", { name: /^Accept/ })).toHaveCount(0);
+  await expect(page.getByTestId("foot-line")).toHaveText(/^The task's copy has 1 file that differs from commit [0-9a-f]{7}: check-report\.txt \(not on the branch\)\./);
+  await foot.getByRole("button", { name: "More" }).click();
+  await expect(decide.getByRole("heading", { name: "Your decision", level: 2 })).toBeVisible();
+  await expect(decide.getByTestId("no-accept")).toHaveText(/^The task's copy has 1 file that differs from commit [0-9a-f]{7}: check-report\.txt \(not on the branch\)\./);
+  await expect(decide.getByLabel("Note (optional)")).toBeVisible();
+  await expect(decide.getByTestId("decision-actions").getByRole("button")).toHaveText(["Reject"]);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\. Its copy holds files that are not in the commit on its branch/);
   await checkDesign(page, "task, ready for review, with a file the checks left");
   await shot(page, "u14-ready.png");
@@ -96,14 +105,21 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   // The owner looks at the file and removes it from the copy: the checks are then about exactly what the branch holds.
   fs.rmSync(path.join(copy, "check-report.txt"));
   await page.reload();
-  await expect(decide.getByTestId("evidence-words")).toHaveText(/^Evidence is current: the checks passed on commit [0-9a-f]{7}, the commit Accept keeps\.$/);
-  // Accept first, the one primary action, and Reject, plain, at the far end. Both are marked as never hidden.
-  await expect(actions.getByRole("button")).toHaveText(["Accept", "Reject"]);
-  await expect(actions.locator("[data-ds-critical]")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: "Accept" })).toHaveClass(/ds-button--primary/);
-  await expect(page.getByRole("button", { name: "Reject" })).not.toHaveClass(/ds-button--primary/);
+  await expect(verification.getByTestId("evidence-words")).toHaveText(/^Evidence is current: the checks passed on commit [0-9a-f]{7}, the commit Accept keeps\.$/);
+  // Reject, outlined, then Accept, the one filled button, both at the foot of the window, where they are never hidden.
+  await expect(actions.getByRole("button")).toHaveText(["Reject", "Accept"]);
+  await expect(actions.getByRole("button", { name: "Accept" })).toBeInViewport();
+  await expect(actions.getByRole("button", { name: "Reject" })).toBeInViewport();
+  expect(await actions.getByRole("button").evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).backgroundColor !== "rgba(0, 0, 0, 0)")), "only Accept is filled").toEqual([false, true]);
+  await expect(page.getByTestId("foot-line")).toHaveText("Accept keeps the branch. Nothing is pushed or merged.");
+  // In the decision's panel: what accepting will do, then the note, then the same buttons.
+  await foot.getByRole("button", { name: "More" }).click();
+  await expect(decide.getByTestId("accepting-will").getByRole("listitem")).toHaveText(["Keep the branch on this Mac, for you to merge yourself", "Remove the task's copy of the project", "Push or merge nothing"]);
+  await expect(decide.getByTestId("decision-actions").getByRole("button")).toHaveText(["Reject", "Accept"]);
   const field = (await decide.getByLabel("Note (optional)").boundingBox())!;
-  expect(field.y, "the note comes before the actions").toBeLessThan((await actions.boundingBox())!.y);
+  expect(field.y, "the note comes before the actions").toBeLessThan((await decide.getByTestId("decision-actions").boundingBox())!.y);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
   await checkDesign(page, "task, ready for review, evidence current");
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
 
@@ -122,28 +138,32 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   await expect(accepting).toBeFocused();
   await expect(actions.getByRole("button", { name: "Reject" })).toBeDisabled();
   release();
-  // Decided: the result takes the place of the actions and the note, and the focus moves to the section's heading.
-  await expect(page.getByTestId("task-status")).toHaveText(/^Accepted\. /);
+  // Decided: the buttons leave the foot, and the focus moves to the screen's heading (the panel's own is in its closed sheet).
+  await expect(page.getByTestId("task-status")).toHaveText("Accepted. Botbench kept the branch and removed the task's copy of the project.");
   await page.unroute(/\/api\/tasks\/\d+\/accept$/);
   await expect(page.getByRole("button", { name: /^(Accept|Reject)$/ })).toHaveCount(0);
-  await expect(decide.locator(".ds-review-decision__actions")).toHaveCount(0);
-  await expect(decide.getByLabel("Note (optional)")).toHaveCount(0);
-  await expect(decide.locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Accepted");
-  await expect(decide.getByRole("heading", { name: "Your decision" })).toBeFocused();
+  await expect(actions).toHaveCount(0);
+  await expect(page.locator("main h1")).toBeFocused();
+  await expect(page.getByTestId("task-state")).toHaveText("Accepted");
   // The evidence line was about a decision still to make: it goes with the buttons.
-  await expect(decide.locator(".ds-review-decision__source")).toHaveText(["Checks", "Review"]);
+  await expect(verification.getByTestId("evidence-words")).toHaveCount(0);
+  await expect(verification.getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
+  await expect(verification.getByTestId("not-reviewed")).toHaveText("Not reviewed: this run has no reviewer.");
   await expect(page.getByTestId("branch")).toHaveText(task.branch);
-  await expect(page.getByTestId("merge-command")).toHaveValue(`git merge ${task.branch}`);
-  await expect(page.getByTestId("decision-repo")).toHaveText(repos.checked);
-  await expect(page.getByTestId("not-merged")).toContainText("Nothing has been merged or pushed.");
-  // The copy is gone, so the screen no longer speaks of one.
-  await expect(page.getByTestId("not-merged")).not.toContainText("copy of the project without asking");
+  // In the decision's panel the result takes the place of the actions and the note: the badge, and the branch that was kept.
+  await foot.getByRole("button", { name: "The decision" }).click();
+  await expect(decide.getByRole("heading", { name: "Your decision", level: 2 })).toBeVisible();
+  await expect(decide.getByTestId("decision-actions")).toHaveCount(0);
+  await expect(decide.getByLabel("Note (optional)")).toHaveCount(0);
+  await expect(decide.getByTestId("decision-result").getByText("Accepted", { exact: true })).toBeVisible();
+  await expect(decide.getByTestId("decided-branch")).toHaveText(task.branch);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
   await checkDesign(page, "task, accepted");
   await shot(page, "u14-accepted.png");
 
-  await page.getByRole("button", { name: "Copy merge command" }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`git merge ${task.branch}`);
   await page.getByRole("button", { name: "Copy branch name" }).click();
+  await expect(page.getByTestId("branch-copy-state")).toHaveText("Copied.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(task.branch);
 
   // On disk: the branch is there, the copy is not, and the owner's checkout is as it was.
@@ -151,9 +171,9 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   expect(worktreeCount(repos.checked)).toBe(1);
   expect(botbenchBranches(repos.checked)).toEqual([task.branch]);
   expect(checkoutState(repos.checked)).toEqual(before);
-  // The owner merges by hand with the command the screen gave.
-  const [, ...args] = (await page.getByTestId("merge-command").inputValue()).split(" ");
-  git(repos.checked, "-c", "user.name=Owner", "-c", "user.email=owner@example.invalid", ...args, "--no-edit");
+  // The owner merges by hand, the branch the screen gave. (The task's screen names the branch and no longer spells the command.)
+  const given = (await page.getByTestId("branch").textContent())!;
+  git(repos.checked, "-c", "user.name=Owner", "-c", "user.email=owner@example.invalid", "merge", given, "--no-edit");
   expect(fs.readFileSync(path.join(repos.checked, "hello.txt"), "utf8").trim()).toBe("hi");
   expect(fs.existsSync(path.join(repos.checked, "check-report.txt")), "what the check left is not on the branch").toBe(false);
   expect(fs.existsSync(path.join(repos.checked, "node_modules")), "nor is the ignored cache").toBe(false);
@@ -163,20 +183,26 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   const rejectedId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   const rejected = (await (await page.request.get(`${botbench.base}/api/tasks/${rejectedId}`)).json()) as { branch: string };
   expect(botbenchBranches(repos.plain)).toEqual([rejected.branch]);
-  await page.getByRole("button", { name: "Reject" }).click();
-  const asking = page.getByRole("alertdialog");
+  await actions.getByRole("button", { name: "Reject" }).click();
+  const asking = page.getByRole("alertdialog", { name: "Reject this task?" });
   await expect(asking).toContainText("Reject this task?");
-  await expect(asking.getByLabel("Keep the branch")).toBeChecked();
+  await expect(asking.getByRole("radio", { name: "Keep the branch" })).toBeChecked();
   await checkDesign(page, "reject, keep or delete the branch");
-  await asking.getByLabel("Delete the branch").check();
+  await asking.getByRole("radio", { name: "Delete the branch" }).click();
+  await expect(asking.getByRole("radio", { name: "Delete the branch" })).toBeChecked();
   await shot(page, "u14-reject.png");
   await asking.getByRole("button", { name: "Reject" }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Rejected\. /);
   await expect(page.getByTestId("task-status")).toContainText("branch was deleted");
-  await expect(page.getByTestId("decision").locator(".ds-review-decision__result .ds-badge").first()).toHaveText("Rejected");
-  await expect(page.getByRole("heading", { name: "Your decision" })).toBeFocused();
-  await expect(page.getByTestId("branch")).toHaveCount(0);
-  await expect(page.getByTestId("merge-command")).toHaveCount(0);
+  await expect(page.getByTestId("task-state")).toHaveText("Rejected");
+  await expect(page.locator("main h1")).toBeFocused();
+  // In the decision's panel: the badge, and no branch to name, since it is gone.
+  await foot.getByRole("button", { name: "The decision" }).click();
+  await expect(decide.getByTestId("decision-result").getByText("Rejected", { exact: true })).toBeVisible();
+  await expect(decide.getByTestId("decision-result")).toContainText("The branch and the task's copy of the project are gone.");
+  await expect(decide.getByTestId("decided-branch")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
   await checkDesign(page, "task, rejected, branch deleted");
   expect(botbenchBranches(repos.plain)).toEqual([]);
   expect(worktreeCount(repos.plain)).toBe(1);
@@ -186,7 +212,7 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   const log = page.getByTestId("action-log");
   await expect(log).toContainText("You rejected");
   await expect(log).toContainText("You accepted");
-  await checkNext(page, "permissions, with decisions");
+  await checkScreen(page, "permissions, with decisions");
   expect(foreign).toEqual([]);
 });
 
@@ -222,7 +248,7 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
     await expect(row.getByRole("button", { name: /^Accept without verification task \d+$/ })).not.toHaveClass(/ds-button--primary/);
     await expect(row.getByRole("button", { name: /^Reject/ })).toBeVisible();
   }
-  await checkRebuilt(page, "run, ready for review");
+  await checkScreen(page, "run, ready for review", { least: true });
   await shot(page, "u14-run-ready.png");
 
   await rows.nth(0).getByRole("button", { name: /^Accept without verification/ }).click();
@@ -235,11 +261,11 @@ test("LIVE: on a run's screen each built task is accepted or rejected from its r
   await rows.nth(1).getByRole("button", { name: /^Reject/ }).click();
   const asking = page.getByRole("alertdialog");
   await expect(asking.getByLabel("Keep the branch")).toBeChecked();
-  await checkRebuilt(page, "run, reject a task");
+  await checkScreen(page, "run, reject a task", { least: true });
   await asking.getByRole("button", { name: "Reject" }).click();
   await expect(rows.nth(1).locator(RUN_TASK_STATE)).toHaveText("Rejected");
   await expect(page.getByTestId("run-status")).toHaveText(/^Done\./);
-  await checkRebuilt(page, "run, done");
+  await checkScreen(page, "run, done", { least: true });
   await shot(page, "u14-run-done.png");
 
   // Both branches are kept, both copies are gone.

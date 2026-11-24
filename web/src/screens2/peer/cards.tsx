@@ -3,7 +3,7 @@ import { Lock } from "lucide-react";
 import { Button } from "@/ui/button";
 import { answerPeerCard, ApiError, dismissPeerCard, dontSendPeerDraft, givePeerCard, seePeerCard, sendPeerDraft, type PeerCard } from "../../api/client.ts";
 import { PeerCardsContext } from "../../app/peer-cards.tsx";
-import { visible } from "../../components/approval-card.tsx";
+import { visible } from "../../components/approval-words.ts";
 import { MAX_MESSAGE } from "../../components/peer-card.tsx";
 import { About, Busy, FieldLabel, OutsideMark, Panel, StateWord, Textarea } from "../settings/parts.tsx";
 import { RepoChoice } from "../settings/repo-choice.tsx";

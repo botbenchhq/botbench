@@ -226,7 +226,7 @@ test("only an agent's reply and a review go through the renderer; prompts, issue
   const source = (path: string) => readFileSync(new URL(`../web/src/${path}`, import.meta.url), "utf8");
   // On the rebuilt task screen: the agent's text in its narrative, and a review's own words among the reviewer's findings.
   // The cards of a round several agents answered draw each agent's reply as the transcript does.
-  const users = ["components/transcript.tsx", "components/evidence.tsx", "screens2/task/narrative.tsx", "screens2/review/review-parts.tsx", "screens2/chat/compare.tsx"];
+  const users = ["components/transcript.tsx", "screens2/task/narrative.tsx", "screens2/review/review-parts.tsx", "screens2/chat/compare.tsx"];
   const all = ["components/outside-text.tsx", "components/other-workbenches.tsx", "components/issue-choice.tsx", "screens2/task/task-screen.tsx", "screens2/task/steer.tsx", "screens2/task/recovery.tsx", "screens2/task/legacy.tsx", "screens2/run/run-screen.tsx", "screens2/run/run-parts.tsx", "screens2/run/plan.tsx", "screens2/chat/chat-view.tsx", "screens2/chat/new-work.tsx", "screens2/chat/composer.tsx", "app/peers.ts", ...users];
   for (const path of all) assert.equal(/markdown-view/.test(source(path)), users.includes(path), path);
   const transcript = source("components/transcript.tsx");
@@ -236,9 +236,6 @@ test("only an agent's reply and a review go through the renderer; prompts, issue
   assert.match(textCase, /<MarkdownView text=\{e\.text\}/);
   const promptCase = transcript.slice(transcript.indexOf('case "user_prompt":'), transcript.indexOf('case "text":'));
   assert.match(promptCase, /<Theirs>\{e\.text\}<\/Theirs>/);
-  const evidence = source("components/evidence.tsx");
-  assert.equal(evidence.match(/<MarkdownView/g)?.length, 1);
-  assert.match(evidence, /<MarkdownView text=\{review\.text\}/);
   // The narrative draws only what the agent said with it: the owner's message there is plain text.
   const narrative = source("screens2/task/narrative.tsx");
   assert.equal(narrative.match(/<MarkdownView/g)?.length, 1);

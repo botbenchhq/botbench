@@ -63,19 +63,36 @@ test("LIVE AE4: a task building on Claude Code is moved to Codex from its screen
   // Mid-build: Claude Code wrote one.txt, and the screen offers Codex.
   const worktree = path.join(botbench.home, "worktrees");
   await expect.poll(() => fs.existsSync(worktree) && fs.readdirSync(worktree, { recursive: true }).some((f) => String(f).endsWith("one.txt")), { timeout: 300_000 }).toBe(true);
-  const move = page.getByTestId("task-move");
-  await expect(move.getByRole("heading", { name: "Move to another agent" })).toBeVisible({ timeout: 60_000 });
+  // At a phone's width the task's pane, with Steer, is a sheet opened from the foot of the window.
+  const foot = page.getByTestId("foot");
+  const pane = page.getByRole("dialog", { name: "Details" });
+  const move = pane.getByTestId("task-move");
+  await foot.getByRole("button", { name: "Details" }).click();
+  await expect(pane.getByRole("heading", { name: "Steer" })).toBeVisible({ timeout: 60_000 });
+  await expect(move.getByRole("button", { name: "Move to Codex" })).toBeVisible({ timeout: 60_000 });
   await expect(move.getByRole("button", { name: "Claude Code" })).toHaveCount(0);
   await everySize(page, "handoff-offered");
+  // The changes of size and the reloads closed the sheet.
+  await foot.getByRole("button", { name: "Details" }).click();
   await move.getByRole("button", { name: "Move to Codex" }).click();
+  await page.keyboard.press("Escape");
+  await expect(pane).toHaveCount(0);
 
   // Codex takes it over and finishes; the screen says what happened.
   await expect(page.getByTestId("handoff-line")).toHaveText(["Moved from Claude Code to Codex: you chose to move it."], { timeout: 120_000 });
   await expect(page.getByTestId("task-status")).toContainText("Ready for review", { timeout: 600_000 });
+  // Ready for review, the pane is the decision's: nothing offers a move any more.
+  await foot.getByRole("button", { name: "More" }).click();
+  await expect(page.getByRole("dialog", { name: "Decision" }).getByTestId("decision")).toBeVisible();
   await expect(page.getByTestId("task-move")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Decision" })).toHaveCount(0);
   // The model Claude Code was asked to use is not set against the model Codex answered on.
   await expect(page.getByTestId("task-model")).toHaveCount(0);
-  const transcript = page.getByRole("region", { name: "Transcript" });
+  // The activity, behind its tab once the task is ready for review, names both agents.
+  await page.getByRole("tab", { name: /^Activity/ }).click();
+  await expect(page.getByTestId("handoff-line")).toHaveText(["Moved from Claude Code to Codex: you chose to move it."]);
+  const transcript = page.getByRole("log", { name: "Activity" });
   await expect(transcript).toContainText("Claude Code");
   await expect(transcript).toContainText("Codex");
   const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { builder: string; files: { path: string }[] | null; handoffs: unknown[] };

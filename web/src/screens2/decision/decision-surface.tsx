@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
 import { ArrowUpRight, ChevronDown, ChevronRight, Lock, TriangleAlert } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Button } from "@/ui/button";
@@ -11,22 +11,23 @@ import type { Approval, PullRequestTarget } from "../../api/client.ts";
 import { counted, plural } from "../../app/format.ts";
 import { approvalLevel, queueWords, type DecisionLevel } from "../../app/new-work.ts";
 import { useApprovalAnswer } from "../../app/use-approval-answer.ts";
-import { stepWord, times, visible } from "../../components/approval-card.tsx";
+import { stepWord, times, visible } from "../../components/approval-words.ts";
 import { approvalWords, directoryWords, placeWords } from "../../components/tool-summary.ts";
 
 /*
  * The decision surface: one component for every decision the owner is asked for, louder only as the consequence grows
  * (the approved "Five levels of decision").
  *
- *   routine      a neutral raised card: a task's review (screens2/review/decision-panel.tsx draws its own today, and can adopt `DecisionSurface`).
- *   approval     the same card with a small attention signal: an agent waits on a request. `ApprovalDecision`.
+ *   routine      a neutral raised card: a task's review (screens2/review/decision-panel.tsx).
+ *   approval     the same card with a small attention signal: an agent waits on a request (`ApprovalDecision`, and
+ *                `ApprovalQueue` for a task's or a run's, one at a time), or a run's plan waits (screens2/run/plan.tsx).
  *   risk         an attention edge and tint, and the consequence spelled out before the button: something leaves this
  *                Mac. `ApprovalDecision` for a fetch or a search of the web; `PullRequestDecision` for a pull request.
  *   destructive  a dialog with an error edge and a "Cannot be undone" band, the safe button first and focused. `DestructiveDialog`.
  *   refused      no approve action: what was refused, the rule, what the agent did next, and two links. `RefusedNotice`.
  *
  * Nothing here is answered by a single key: every answer is a button that is pressed. The requests and their answers
- * are the real ones (app/use-approval-answer.ts, the same client calls as components/approval-card.tsx).
+ * are the real ones (app/use-approval-answer.ts).
  */
 
 const FRAME: Record<DecisionLevel, string> = {
@@ -63,23 +64,25 @@ export function DecisionWhat({ children, testId, ours = false }: { children: str
  * The frame every level shares: the signal, the queue position with a way to the next, the title, then the body and
  * the actions the level gives it. `position` is this request's place among those waiting, when there are several.
  */
-export function DecisionSurface({ level, signal, title, position, children, className, ...rest }: { level: DecisionLevel; signal: ReactNode; title: ReactNode; position?: { at: number; of: number; onNext: () => void } | undefined; children: ReactNode; className?: string } & Omit<React.ComponentProps<"section">, "title">) {
+export function DecisionSurface({ level, signal, title, headingRef, position, children, className, ...rest }: { level: DecisionLevel; signal?: ReactNode; title: ReactNode; headingRef?: Ref<HTMLHeadingElement>; position?: { at: number; of: number; onNext: () => void } | undefined; children: ReactNode; className?: string } & Omit<React.ComponentProps<"section">, "title">) {
   const heading = useId();
   const queue = position === undefined ? null : queueWords(position.at, position.of);
   return (
     <section aria-labelledby={heading} data-level={level} className={cn("flex min-w-0 flex-col gap-3 rounded-xl p-4 *:shrink-0 md:p-5", FRAME[level], className)} {...rest}>
-      <div className="flex items-center justify-between gap-3">
-        <Signal level={level}>{signal}</Signal>
-        {queue !== null && (
-          <div className="flex shrink-0 items-center gap-1 text-meta text-muted-foreground">
-            <span data-testid="decision-queue">{queue}</span>
-            <Button variant="ghost" size="icon" aria-label="Next request" className="size-(--control)" onClick={position!.onNext}>
-              <ChevronRight aria-hidden="true" />
-            </Button>
-          </div>
-        )}
-      </div>
-      <h2 id={heading} tabIndex={-1} className="text-heading font-semibold tracking-tight outline-none">
+      {(signal !== undefined || queue !== null) && (
+        <div className="flex items-center justify-between gap-3">
+          <Signal level={level}>{signal}</Signal>
+          {queue !== null && (
+            <div className="flex shrink-0 items-center gap-1 text-meta text-muted-foreground">
+              <span data-testid="decision-queue">{queue}</span>
+              <Button variant="ghost" size="icon" aria-label="Next request" className="size-(--control)" onClick={position!.onNext}>
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      <h2 ref={headingRef} id={heading} tabIndex={-1} className="text-heading font-semibold tracking-tight outline-none">
         {title}
       </h2>
       {children}
@@ -147,6 +150,15 @@ function Provenance({ approval, what }: { approval: Approval; what: "request" | 
  */
 export function ApprovalDecision({ approval, position, on, onSignedOut, className }: { approval: Approval; position?: { at: number; of: number; onNext: () => void }; on: "task" | "run" | "chat"; onSignedOut: () => void; className?: string }) {
   return approval.question !== null ? <QuestionDecision approval={approval} question={approval.question} position={position} on={on} onSignedOut={onSignedOut} className={className} /> : <PermissionDecision approval={approval} position={position} on={on} onSignedOut={onSignedOut} className={className} />;
+}
+
+/** The requests that wait on a task's or a run's screen, one at a time, the oldest first, with its place among them and the way to the next. */
+export function ApprovalQueue({ waiting, on, onSignedOut, className }: { waiting: readonly Approval[]; on: "task" | "run" | "chat"; onSignedOut: () => void; className?: string }) {
+  const [at, setAt] = useState(0);
+  const shown = Math.min(at, waiting.length - 1);
+  const current = waiting[shown];
+  if (current === undefined) return null;
+  return <ApprovalDecision key={current.id} approval={current} on={on} onSignedOut={onSignedOut} {...(className === undefined ? {} : { className })} {...(waiting.length > 1 ? { position: { at: shown, of: waiting.length, onNext: () => setAt((shown + 1) % waiting.length) } } : {})} />;
 }
 
 type DecisionProps = { approval: Approval; position: { at: number; of: number; onNext: () => void } | undefined; on: "task" | "run" | "chat"; onSignedOut: () => void; className: string | undefined };
@@ -435,7 +447,7 @@ export function PullRequestDecision({ target, busy, problem, onConfirm, onCancel
  * A decision that removes work for good: an alert dialog with an error edge and a band that says, in words and with a
  * mark, that it cannot be undone. The safe button comes first and holds the focus; Escape changes nothing. `what` is
  * what goes (a branch, files), as it is; `children` says what removing it means. The caller's own words and request:
- * Discard (components/discard.tsx), and Reject with "Delete the branch".
+ * Discard on a task (screens2/task/recovery.tsx) and Cancel run (screens2/run/run-parts.tsx, screens2/work).
  */
 export function DestructiveDialog({ open, onOpenChange, title, what, keepLabel, confirmLabel, onConfirm, testId, children }: { open: boolean; onOpenChange: (open: boolean) => void; title: string; what?: string; keepLabel: string; confirmLabel: string; onConfirm: () => void; testId: string; children: ReactNode }) {
   return (

@@ -3,7 +3,7 @@ import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { git, initRepo } from "../test/support/repo.ts";
 import { startBotbench, type Botbench } from "./botbench.ts";
-import { checkLayout, checkWords, expect, SHOTS, signIn, startTaskIn, watchRefused } from "./helpers.ts";
+import { checkScreen, checkWords, expect, SCREENS, SHOTS, signIn, startTaskIn, watchRefused } from "./helpers.ts";
 
 // A task's screen rebuilt on shadcn/ui and Tailwind 4 (ADR 0012) while the task works, once the owner stops it, and
 // once it has failed, in the real client against a real Botbench process whose Claude Code replays a turn recorded from
@@ -80,7 +80,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(pane.getByTestId("task-stop")).toContainText("Stops Claude Code now. What it wrote is kept in the task's copy, and you can resume it.");
     await expect(page.getByRole("button", { name: /^(Accept|Resume)/ })).toHaveCount(0);
     await expect(page.locator("[data-shell]")).toHaveAttribute("data-shell", "three");
-    await checkLayout(page, 32, "task, working, 1440");
+    await checkScreen(page, "task, working, 1440", { floor: 32 });
     await checkWords(page, "task, working");
     await shot(page, "task-working-1440-dark");
     await light(page, "task-working-1440-light");
@@ -99,7 +99,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(recovery.getByTestId("kept")).toContainText("botbench/");
     expect(git(repo, "branch", "--list", "botbench/*").trim()).not.toBe("");
     await expect(page.getByTestId("task-stop")).toHaveCount(0);
-    await checkLayout(page, 32, "task, stopped, 1440");
+    await checkScreen(page, "task, stopped, 1440", { floor: 32 });
     await checkWords(page, "task, stopped");
     await shot(page, "task-stopped-1440-dark");
 
@@ -121,7 +121,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("what-happened")).toContainText("Nothing is lost: what it left is kept, and it can be resumed from where it stopped.");
     await expect(recovery.getByTestId("resume-note")).toHaveText("Resume starts Claude Code again in the same session, in the task's copy of the project, tells it that it changed no file, and asks it to do the task now.");
     await expect(page.getByTestId("not-verified")).toContainText("No checks ran on this work, and no reviewer read it.");
-    await checkLayout(page, 32, "task, failed, 1440");
+    await checkScreen(page, "task, failed, 1440", { floor: 32 });
     await checkWords(page, "task, failed");
     await shot(page, "task-failed-1440-dark");
     await light(page, "task-failed-1440-light");
@@ -151,11 +151,11 @@ test.describe("at 390×844, on a phone", () => {
     test.setTimeout(120_000);
     await start(page, botbench);
     await expect(page.locator("[data-shell]")).toHaveAttribute("data-shell", "one");
-    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(["Chat", "Work", "Settings"]);
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
     const foot = page.getByTestId("foot");
     await expect(foot.getByRole("button")).toHaveText(["Stop", "Details"]);
     await expect(page.getByRole("complementary")).toHaveCount(0);
-    await checkLayout(page, 44, "task, working, 390");
+    await checkScreen(page, "task, working, 390", { floor: 44 });
     await checkWords(page, "task, working, phone");
     await shot(page, "task-working-390-dark");
 
@@ -164,7 +164,7 @@ test.describe("at 390×844, on a phone", () => {
     const sheet = page.getByRole("dialog", { name: "Details" });
     await expect(sheet.getByTestId("progress")).toBeVisible();
     await expect(sheet.getByTestId("task-stop")).toContainText("Stops Claude Code now.");
-    await checkLayout(page, 44, "task, working, 390, the sheet");
+    await checkScreen(page, "task, working, 390, the sheet", { floor: 44 });
     await shot(page, "task-working-390-dark-sheet");
     await page.keyboard.press("Escape");
 
@@ -172,7 +172,7 @@ test.describe("at 390×844, on a phone", () => {
     await expect(page.getByTestId("task-state")).toHaveText("Stopped", { timeout: 30_000 });
     await expect(foot.getByLabel("Note for Claude Code (optional)")).toBeVisible();
     await expect(foot.getByRole("button")).toHaveText(["Resume", "Details"]);
-    await checkLayout(page, 44, "task, stopped, 390");
+    await checkScreen(page, "task, stopped, 390", { floor: 44 });
     await checkWords(page, "task, stopped, phone");
     await shot(page, "task-stopped-390-dark");
 
@@ -180,12 +180,12 @@ test.describe("at 390×844, on a phone", () => {
     await page.setViewportSize({ width: 768, height: 1024 });
     await expect(page.getByRole("navigation", { name: "Screens" })).toHaveCount(0);
     await page.getByRole("button", { name: "Screens menu" }).click();
-    await expect(page.getByRole("dialog").getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(["Chat", "Work", "Settings"]);
+    await expect(page.getByRole("dialog").getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
     await expect(page.getByRole("dialog").getByRole("link", { name: PROMPT })).toHaveAttribute("aria-current", "page");
     await shot(page, "task-stopped-768-dark-menu");
     await page.keyboard.press("Escape");
     await expect(foot.getByRole("button")).toHaveText(["Resume", "Details"]);
-    await checkLayout(page, 44, "task, stopped, 768");
+    await checkScreen(page, "task, stopped, 768", { floor: 44 });
     await shot(page, "task-stopped-768-dark");
 
     // 1024: two panes and a rail of icons, each named; the pane is in view, and nothing stays at the foot.

@@ -12,7 +12,7 @@ import { storeChecks } from "../test/support/checks.ts";
 import type { Left } from "../test/support/leave-pending.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
-import { expect, SHOTS } from "./helpers.ts";
+import { expect, SHOTS, watchRefused } from "./helpers.ts";
 
 // What the Home and Work tests share (e2e/home.e2e.ts, e2e/work.e2e.ts). No model turn anywhere: before Botbench
 // starts, runs and tasks are put in its real store through the engine itself, in real temporary repositories, each in
@@ -143,26 +143,6 @@ async function many(dir: string): Promise<Seeded> {
   return { home, repo: fs.realpathSync(repo), approval, needs, ids: { approval: approval.taskId } };
 }
 
-/** Everything the browser refused or complained of while a test ran: a violation of the content security policy, a console error, a failed request, a page error. */
-async function recordRefused(page: Page): Promise<string[]> {
-  const refused: string[] = [];
-  await page.exposeFunction("botbenchRefused", (line: string) => void refused.push(line));
-  await page.addInitScript(() => {
-    document.addEventListener("securitypolicyviolation", (event) => void (window as unknown as { botbenchRefused(line: string): void }).botbenchRefused(`policy: ${event.violatedDirective} refused ${event.blockedURI} (${event.sourceFile ?? "inline"}:${event.lineNumber})`));
-  });
-  page.on("console", (message) => {
-    // Before signing in, the client asks whether it has a session and is told it has none: Chrome prints that 401.
-    if (message.type() === "error" && message.location().url.endsWith("/api/session") && /status of 401/.test(message.text())) return;
-    if (message.type() === "error" || /content security policy/i.test(message.text())) refused.push(`console ${message.type()}: ${message.text()} (${message.location().url})`);
-  });
-  page.on("pageerror", (error) => refused.push(`page error: ${error.message}`));
-  page.on("requestfailed", (request) => {
-    // A request the page itself ended when a screen went (live updates, a read the next one replaced) is not a refusal.
-    if (request.failure()?.errorText !== "net::ERR_ABORTED") refused.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
-  });
-  return refused;
-}
-
 export const test = base.extend<{ size: "few" | "many"; dir: string; seeded: Seeded; botbench: Botbench; refused: string[] }>({
   size: ["few", { option: true }],
   dir: async ({}, use) => {
@@ -176,7 +156,7 @@ export const test = base.extend<{ size: "few" | "many"; dir: string; seeded: See
     await use(botbench);
     expect((await botbench.stop()).leftover).toEqual([]);
   },
-  refused: async ({ page }, use) => use(await recordRefused(page)),
+  refused: async ({ page }, use) => use(await watchRefused(page)),
 });
 
 /** Sign in at the bare address, as a person opening Botbench does, and wait for the screen behind it. */
@@ -185,25 +165,6 @@ export async function signInAtHome(page: Page, botbench: Botbench): Promise<void
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByTestId("headline")).toBeVisible();
-}
-
-/** What stands in for the old design checks on a rebuilt screen: nothing scrolls sideways, no control is under `floor` px high, and no text is under 12px. */
-export async function checkLayout(page: Page, floor: number, screen: string): Promise<void> {
-  const found = await page.evaluate((least) => {
-    const low: string[] = [];
-    for (const el of document.querySelectorAll("button, input, [role=radio], [role=tab], a[href]")) {
-      const box = el.getBoundingClientRect();
-      // Not drawn, a link inside a sentence, or the hidden input a drawn radio keeps for a form.
-      if (box.height === 0 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true") continue;
-      // A control drawn smaller carries its pointer target on a pseudo-element.
-      const target = getComputedStyle(el, "::after");
-      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
-      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
-    }
-    const small = [...document.querySelectorAll("body *")].filter((el) => el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
-    return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth };
-  }, floor);
-  expect(found, screen).toEqual({ low: [], small: [], sideways: 0 });
 }
 
 /** A picture of the screen named `<name>.png` in the folder BOTBENCH_SHOTS names (docs/design/built, for the pictures kept with the code). */

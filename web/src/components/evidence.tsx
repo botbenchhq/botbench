@@ -3,10 +3,7 @@ import { counted, duration, number, plural } from "../app/format.ts";
 import type { ChecksMark, CommandList, Evidence, Refinement, Review } from "../api/client.ts";
 import { roundLabel } from "./command-rounds.ts";
 import { failureExtract } from "./failure-extract.ts";
-import { Alert } from "./header.tsx";
 import { LOOKS } from "./looks.ts";
-import { MarkdownView } from "./markdown-view.tsx";
-import { reviewDiffLine } from "./review-diff-words.ts";
 import { needsLine } from "../app/main-words.ts";
 
 /**
@@ -201,21 +198,6 @@ function checksCount(checks: "passed" | "failed", rows: readonly Evidence[]): st
   return checks === "passed" ? `${rows.length} of ${counted(rows.length, "check", "checks")} passed.` : `${notPassed} of ${counted(rows.length, "check", "checks")} did not pass.`;
 }
 
-/**
- * The checks' finding on one line, for the decision: the badge of Checks passed or Checks failed, then the count. With no
- * checks set up, or none run, it says so with no badge, so nothing reads as a pass.
- */
-export function ChecksFinding({ checks, rows }: { checks: ChecksMark | null; rows: readonly Evidence[] }) {
-  if (checks === null) return <>No checks ran on this work.</>;
-  if (checks === "none") return <>None are set up for this repository.</>;
-  return (
-    <>
-      <StatusBadge look={checks === "passed" ? LOOKS.checkPassed : LOOKS.checkFailed}>{checks === "passed" ? "Checks passed" : "Checks failed"}</StatusBadge>
-      {` ${checksCount(checks, rows)}`}
-    </>
-  );
-}
-
 /** The one short line about what checks are, shown wherever their results are. The full limits are `CHECKS_LIMITS`. */
 export const CHECKS_LINE = "The agent may have changed the code the checks run, so read their output, not only the result.";
 
@@ -241,60 +223,6 @@ export function verdictWords(review: Review): string {
   return "No verdict in the asked form";
 }
 
-/**
- * A task's review, under its checks: the verdict line and, in view under it, what the reviewer says it checked, or the
- * plain note that it did not say; the reviewer's own words are one tap away behind a disclosure. A review that did not
- * happen says why, in view. The Checked lines are the model's text, shown as text; the reply is drawn with the safe
- * markdown subset, which makes no link, image or element the text names.
- */
-export function ReviewEvidence({ review }: { review: Review }) {
-  if (review.outcome !== "reviewed") {
-    return (
-      <Alert tone="warning" testId="review-problem">
-        {review.problem ?? "There is no review."}
-      </Alert>
-    );
-  }
-  const took = duration(review.durationMs, "units");
-  return (
-    <div className="ds-stack ds-gap-sm">
-      <p data-testid="review-verdict">{verdictWords(review)}</p>
-      {review.accountNote !== null ? (
-        <p data-testid="review-no-account">{review.accountNote}</p>
-      ) : (
-        <div data-testid="review-checked" className="ds-stack ds-gap-sm">
-          <p>Checked:</p>
-          <ul className="ds-list ds-list--dense">
-            {review.checked.map((line, i) => (
-              <li key={i} className="ds-list__row">
-                <div className="ds-list__content">
-                  <span className="ds-list__body">
-                    <span data-ds-content="" className="ds-list__primary">
-                      {line}
-                    </span>
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <details data-testid="review-detail" className="ds-disclosure">
-        <summary className="ds-disclosure__summary">
-          The full review
-          <span className="ds-disclosure__meta">
-            <time dateTime={took.iso}>{took.words}</time>
-          </span>
-        </summary>
-        <div className="ds-disclosure__content ds-stack ds-gap-sm">
-          {reviewDiffLine(review) !== null && <p data-testid="review-diff">{reviewDiffLine(review)}</p>}
-          <MarkdownView text={review.text} className="ds-stack ds-gap-sm" testId="review-text" />
-        </div>
-      </details>
-    </div>
-  );
-}
-
 /** A round of fixes in a few words: what the builder did, from its reply's two headings when it used them. */
 export function fixesWords(fix: Refinement): string {
   const explained = fix.notAddressed === null ? "" : `, explained ${fix.notAddressed.length}`;
@@ -302,35 +230,3 @@ export function fixesWords(fix: Refinement): string {
   return fix.addressed === null ? "Changed the work" : `Addressed ${fix.addressed.length}${explained}`;
 }
 
-/**
- * One round of fixes, under the review it answers: what the builder did in a few words, with its own reply one tap
- * away. A round that did not finish says why, in view. The reply is the model's text, shown as text.
- */
-export function FixesEvidence({ fix }: { fix: Refinement }) {
-  if (fix.outcome !== "finished") {
-    return (
-      <Alert tone="warning" testId="fixes-problem">
-        {fix.problem ?? "This round of fixes did not finish."}
-      </Alert>
-    );
-  }
-  const took = duration(Date.parse(fix.endedAt) - Date.parse(fix.startedAt), "units");
-  return (
-    <details data-testid="fixes-detail" className="ds-disclosure">
-      <summary className="ds-disclosure__summary">
-        <span data-testid="fixes-summary">{fixesWords(fix)}</span>
-        <span className="ds-disclosure__meta">
-          <time dateTime={took.iso}>{took.words}</time>
-        </span>
-      </summary>
-      <div className="ds-disclosure__content ds-stack ds-gap-sm">
-        {fix.changed && fix.headCommit !== null && <p>{`Committed as ${fix.headCommit.slice(0, 12)}, and the checks ran again on it.`}</p>}
-        <figure className="ds-code-block">
-          <pre data-ds-content="" data-testid="fixes-text" className="ds-code-block__body">
-            <code>{fix.reply === "" ? "(No reply.)" : fix.reply}</code>
-          </pre>
-        </figure>
-      </div>
-    </details>
-  );
-}

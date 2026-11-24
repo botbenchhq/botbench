@@ -7,7 +7,6 @@ import { counted } from "../../app/format.ts";
 import { MODE_NAMES } from "../../app/run-words.ts";
 import { useWide } from "../../app/wide.ts";
 import { NextShell } from "../../shell/shell.tsx";
-import { PeerCardsWaiting } from "../peer/waiting.tsx";
 import { AGENTS, AgentsGroup } from "./agents.tsx";
 import { ConnectionsGroup } from "./connections.tsx";
 import { EnvironmentsGroup } from "./environments.tsx";
@@ -170,26 +169,6 @@ function GroupList({ onSignedOut }: { onSignedOut: () => void }) {
   );
 }
 
-/**
- * The width of the shell's whole screen area. The shell keeps a column at the right for a screen's own pane from
- * 1280px, also for a screen that has none, and Settings has none: it is drawn across that column too. Measured, not
- * assumed, so it is right whatever the shell keeps.
- */
-function useScreenWidth(): { ref: React.RefObject<HTMLDivElement | null>; width: number | undefined } {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState<number>();
-  useEffect(() => {
-    const inset = ref.current?.closest<HTMLElement>('[data-slot="sidebar-inset"]');
-    if (inset == null) return;
-    const measure = (): void => setWidth(inset.clientWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(inset);
-    return () => observer.disconnect();
-  }, []);
-  return { ref, width };
-}
-
 /** Settings. `group` is the group the address names, or null for Settings itself. */
 export default function SettingsScreen({ group, onSignedOut }: { group: SettingsGroup | null; onSignedOut: () => void }) {
   const wide = useWide();
@@ -197,7 +176,6 @@ export default function SettingsScreen({ group, onSignedOut }: { group: Settings
   const open = group ?? (wide ? "agents" : null);
   const name = open === null ? "Settings" : GROUPS.find((g) => g.group === open)!.name;
   const heading = useRef<HTMLHeadingElement>(null);
-  const screen = useScreenWidth();
   useEffect(() => {
     document.title = tabTitle(name);
     // Each group is a screen of its own: its heading takes the focus as any screen's does, so a keyboard or a screen
@@ -208,6 +186,9 @@ export default function SettingsScreen({ group, onSignedOut }: { group: Settings
   return (
     <NextShell
       open={null}
+      current="Settings"
+      // From 1024px the six groups stand in the shell's side pane, in place of the screens.
+      side={wide && <SettingsNav current={open} />}
       bar={
         <nav aria-label="Where this is" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           {open === null || wide ? (
@@ -218,28 +199,20 @@ export default function SettingsScreen({ group, onSignedOut }: { group: Settings
               Settings
             </a>
           )}
-          <PeerCardsWaiting />
         </nav>
       }
     >
-      <div ref={screen.ref} style={{ width: screen.width }} className="flex min-w-0 flex-1">
-        {wide && (
-          <div data-testid="settings-side" className="w-64 shrink-0 border-r bg-pane px-2 py-4">
-            <SettingsNav current={open} className="sticky top-4" />
-          </div>
-        )}
-        <main data-testid="settings" data-group={open ?? ""} className="min-w-0 flex-1 px-4 pt-6 pb-16 md:px-8">
-          <div className={`mx-auto flex flex-col gap-8 ${open === null ? "max-w-[47.5rem]" : WIDTH[open]}`}>
-            <header className="flex flex-col gap-2">
-              <h1 ref={heading} tabIndex={-1} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight outline-none md:text-title">
-                {name}
-              </h1>
-              <p className="text-base text-muted-foreground">{open === null ? "Each change is saved as you make it." : LEAD[open]}</p>
-            </header>
-            {open === null ? <GroupList onSignedOut={onSignedOut} /> : <Group key={open} group={open} onSignedOut={onSignedOut} />}
-          </div>
-        </main>
-      </div>
+      <main data-testid="settings" data-group={open ?? ""} className="min-w-0 flex-1 px-4 pt-6 pb-16 md:px-8">
+        <div className={`mx-auto flex flex-col gap-8 ${open === null ? "max-w-[47.5rem]" : WIDTH[open]}`}>
+          <header className="flex flex-col gap-2">
+            <h1 ref={heading} tabIndex={-1} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight outline-none md:text-title">
+              {name}
+            </h1>
+            <p className="text-base text-muted-foreground">{open === null ? "Each change is saved as you make it." : LEAD[open]}</p>
+          </header>
+          {open === null ? <GroupList onSignedOut={onSignedOut} /> : <Group key={open} group={open} onSignedOut={onSignedOut} />}
+        </div>
+      </main>
     </NextShell>
   );
 }

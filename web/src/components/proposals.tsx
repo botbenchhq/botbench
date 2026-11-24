@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { ApiError, dismissProposal, getWatch, type Proposal, type WatchStatus } from "../api/client.ts";
 import { PROPOSALS_ABOUT, proposalLine, startAddress, watchFailure } from "../app/watch-words.ts";
-import { Alert } from "./header.tsx";
+import { Alert } from "./alert.tsx";
 
 /**
  * Work's "Issues to start" (issue #73): each open issue of a watched repository that carries its label, proposed as a

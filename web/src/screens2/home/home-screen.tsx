@@ -361,7 +361,7 @@ export default function HomeScreen({ onSignedOut }: { onSignedOut: () => void })
   const empty = home !== null && home.total === 0 && home.needsYou.total === 0 && messages.length === 0;
   return (
     <NextShell open={null} current="Home" bar={<span className="text-sm font-semibold">Home</span>}>
-      <div className="@container mx-auto w-full max-w-[76rem] px-4 pt-6 pb-16 md:px-8">
+      <main className="@container mx-auto w-full max-w-[76rem] px-4 pt-6 pb-16 md:px-8">
         {failed !== null && (
           <p role="alert" className="mb-4 text-base text-destructive">
             {failed}
@@ -435,7 +435,7 @@ export default function HomeScreen({ onSignedOut }: { onSignedOut: () => void })
             )}
           </>
         )}
-      </div>
+      </main>
     </NextShell>
   );
 }

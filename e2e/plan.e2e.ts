@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { SCREENS, allowCommands, askCancelRun, checkDesign, checkRebuilt, checkWords, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, primaries, RUN_TASK_STATE, runSteps, runTaskRows, SHOTS, signIn, test, watchRequests, workRows, workState } from "./helpers.ts";
+import { allowCommands, askCancelRun, checkDesign, checkScreen, checkWords, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, primaries, RUN_TASK_STATE, runSteps, runTaskRows, SCREENS, SHOTS, signIn, test, watchRequests, workRows, workState } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -42,7 +42,8 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // the destinations…" below. Here the run is started from the Runs view, as an owner would.
   await openWork(page);
   await page.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeAttached();
+  // The Add context sheet opens over the composer on Repository, so the composer's own button is behind it.
+  await expect(page.getByRole("button", { name: "Choose a Repository", includeHidden: true })).toBeAttached();
 
   // The repository is checked as it is typed; its pre-approved commands are confirmed here, for this run.
   await chooseRepository(page, repo);
@@ -71,7 +72,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(stations.locator("[data-step=name]")).toHaveText(["Plan", "Build", "Decide"]);
   await expect(stations.nth(1)).toHaveAttribute("data-state", "not-started");
   await expect(stations.nth(2)).toHaveAttribute("data-state", "not-started");
-  await checkRebuilt(page, "run, planning");
+  await checkScreen(page, "run, planning", { least: true });
   // While the planner works there is no plan to approve, and nothing offers to.
   await expect(page.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   expect(await offersCancelRun(page), "the run's menu offers Cancel run").toBe(true);
@@ -100,7 +101,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   const made = page.getByTestId("plan-made");
   await expect(made.getByRole("button", { name: "How the plan was made" })).toHaveAttribute("aria-expanded", "false");
   await expect(made.locator('[data-event="user_prompt"]')).toBeHidden();
-  await checkRebuilt(page, "run, plan awaiting approval");
+  await checkScreen(page, "run, plan awaiting approval", { least: true });
   await copyShot(page, "run-plan-review");
   await shot(page, "u11-plan.png");
 
@@ -109,7 +110,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   const title = page.getByLabel("Task 1 title");
   await expect(title).toBeFocused();
   await expect(page.getByLabel("Task 1 acceptance criteria")).not.toHaveValue("");
-  await checkRebuilt(page, "run, one task being edited");
+  await checkScreen(page, "run, one task being edited", { least: true });
   await title.fill("");
   await page.getByRole("button", { name: "Save task" }).click();
   await expect(title).toHaveAttribute("aria-invalid", "true");
@@ -125,7 +126,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(rows).toHaveCount(2);
   await expect(approve).toHaveText("Approve 2 tasks");
   await expect(page.getByRole("status").filter({ hasText: "Task 3 deleted from the plan." })).toBeVisible();
-  await checkRebuilt(page, "run, after a delete");
+  await checkScreen(page, "run, after a delete", { least: true });
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(rows).toHaveCount(3);
   await expect(approve).toHaveText("Approve 3 tasks");
@@ -135,7 +136,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   // Cancelling asks first, and keeping the run changes nothing.
   const dialog = await askCancelRun(page);
   await expect(dialog).toContainText("Cancel this run?");
-  await checkRebuilt(page, "run, cancel dialog");
+  await checkScreen(page, "run, cancel dialog", { least: true });
   await dialog.getByRole("button", { name: "Keep run" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(approve).toHaveText("Approve 2 tasks");
@@ -151,7 +152,7 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(stations.nth(0)).toHaveAttribute("data-state", "done");
   await expect(stations.nth(1)).toHaveAttribute("data-state", /^(running|waiting)$/);
   await expect(stations.nth(1)).toHaveAttribute("aria-current", "step");
-  await checkRebuilt(page, "run, approved and building");
+  await checkScreen(page, "run, approved and building", { least: true });
 
   // Cancelled at once, so this test builds nothing: the turn that may have begun is stopped.
   await (await askCancelRun(page)).getByRole("button", { name: "Cancel run" }).click();

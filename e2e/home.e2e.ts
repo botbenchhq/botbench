@@ -1,5 +1,5 @@
-import { checkWords, expect } from "./helpers.ts";
-import { appearance, ASKING, ASKS, checkLayout, MANY, shot, signInAtHome, startTask, test } from "./home-seed.ts";
+import { checkScreen, checkWords, expect, SCREENS } from "./helpers.ts";
+import { appearance, ASKING, ASKS, MANY, shot, signInAtHome, startTask, test } from "./home-seed.ts";
 
 // Home, the queue, in the real client against a real Botbench process, which serves it with its real content security
 // policy. No model turn (e2e/home-seed.ts says how each state is reached). What is checked: Botbench opens on Home; the
@@ -21,7 +21,7 @@ test.describe("at 1440×900, with a mouse", () => {
 
     // The navigation: Home first and marked as the screen shown, with the server's count of what needs the owner.
     const nav = page.getByRole("navigation", { name: "Screens" });
-    await expect(nav.getByRole("link")).toHaveText([/^Home/, "Work", "Chat", "Settings"]);
+    await expect(nav.getByRole("link")).toHaveText(SCREENS);
     await expect(nav.getByRole("link", { name: /^Home/ })).toHaveAttribute("aria-current", "page");
     await expect(nav.getByTestId("home-count")).toHaveText("5 waiting for you");
 
@@ -65,7 +65,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByRole("main")).not.toContainText("Rename the config loader");
 
     expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"Inter Variable"/);
-    await checkLayout(page, 32, "Home, 1440, dark");
+    await checkScreen(page, "Home, 1440, dark", { floor: 32 });
     await checkWords(page, "Home");
     await shot(page, "home-1440-dark");
     await appearance(page, "light");
@@ -92,12 +92,13 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("headline")).toHaveText("5 things need you");
     const [waiting, completed] = [(await page.getByTestId("waiting").boundingBox())!, (await page.getByTestId("completed").boundingBox())!];
     expect(completed.x).toBeGreaterThan(waiting.x + waiting.width - 1);
-    await checkLayout(page, 32, "Home, 1024");
-    await page.setViewportSize({ width: 768, height: 1024 });
+    await checkScreen(page, "Home, 1024", { floor: 32 });
+    // The groups follow the width the screen really has: at 768px, with the navigation behind its menu button, there is still room for two; one column where there is not.
+    await page.setViewportSize({ width: 640, height: 1024 });
     const [one, other] = [(await page.getByTestId("waiting").boundingBox())!, (await page.getByTestId("completed").boundingBox())!];
-    expect(other.y, "at 768px the groups are one column").toBeGreaterThan(one.y + one.height - 1);
+    expect(other.y, "at 640px the groups are one column").toBeGreaterThan(one.y + one.height - 1);
     await shot(page, "home-768-dark");
-    await checkLayout(page, 32, "Home, 768");
+    await checkScreen(page, "Home, 640", { floor: 32 });
     expect(refused).toEqual([]);
   });
 
@@ -130,7 +131,7 @@ test.describe("at 1440×900, with a mouse", () => {
       // The three lower groups stand side by side at this width, as on the board.
       const tops = await Promise.all(["in-progress", "waiting", "completed"].map(async (id) => (await page.getByTestId(id).boundingBox())!.y));
       expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(2);
-      await checkLayout(page, 32, "Home, sixty");
+      await checkScreen(page, "Home, sixty", { floor: 32 });
       await checkWords(page, "Home, sixty");
       await shot(page, "home-many-1440-dark");
 
@@ -158,15 +159,14 @@ test.describe("at 390×844, on a phone", () => {
     const target = await plan.evaluate((link) => parseFloat(getComputedStyle(link, "::after").height));
     expect(target).toBeGreaterThanOrEqual(44);
     expect(Math.abs(target - (await row.boundingBox())!.height)).toBeLessThan(2);
-    await checkLayout(page, 44, "Home, 390");
+    await checkScreen(page, "Home, 390", { floor: 44 });
     await checkWords(page, "Home, phone");
     await shot(page, "home-390-dark");
     await shot(page, "home-390-dark-full", true);
 
-    await page.getByRole("button", { name: "Screens menu" }).click();
-    await expect(page.getByRole("dialog").getByRole("link", { name: /^Home/ })).toHaveAttribute("aria-current", "page");
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    // The navigation is the bar at the foot, with Home marked as the screen shown.
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: /^Home/ })).toHaveAttribute("aria-current", "page");
     // A tap anywhere on the row is a tap on its link.
     await row.click();
     await expect(page).toHaveURL(new RegExp(`#/runs/${seeded.ids.plan}$`));

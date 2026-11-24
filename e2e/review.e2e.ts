@@ -82,32 +82,37 @@ test("MILESTONE two vendors on one job: Claude Code builds a task, Codex reviews
   const taskId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
   await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
 
-  // Codex's review is on the task, under the checks, before any decision: its verdict line, its detail one tap away.
-  const section = page.getByTestId("review");
-  await expect(section.getByRole("heading", { name: "Codex's review", level: 2 })).toBeVisible();
-  // Said once, in the decision below, which is on the screen from ready for review on.
-  await expect(page.getByTestId("review-by")).toHaveText("By Codex, gpt-6-luna.");
-  await expect(page.getByTestId("decision-review")).toContainText("A model's opinion, not a check.");
-  await expect(page.getByTestId("review-problem")).toHaveCount(0);
-  await expect(page.getByTestId("review-verdict").first()).toHaveText(/^(Verdict: looks right|Verdict: concerns|No verdict in the asked form)$/);
+  // Codex's review is on the task, in the verification card under the checks, before any decision: who reviewed and
+  // what came of it, and its own words one tap away.
+  const section = page.getByTestId("verification");
+  await expect(section.getByTestId("review-by")).toHaveText(/^Codex, gpt-6-luna/);
+  await expect(section.getByTestId("review-outcome")).toHaveText(/\S/);
+  await expect(section).toContainText("A model's opinion, not a check.");
+  await expect(section.getByTestId("not-reviewed")).toHaveCount(0);
   await expect(page.getByTestId("review-text").first()).toBeHidden();
-  // Under the verdict, with no tap: what the reviewer says it checked, or the plain note that it did not say.
-  await expect(page.getByTestId("review-checked").or(page.getByTestId("review-no-account")).first()).toBeVisible();
   await checkDesign(page, "task, ready for review, with Codex's review");
   await shot(page, "review-task.png");
-  await page.getByTestId("review-detail").first().locator("summary").click();
+  await section.getByTestId("review-detail").click();
+  await expect(section.getByRole("heading", { name: "Review 1", level: 3 })).toBeVisible();
+  await expect(page.getByTestId("review-problem")).toHaveCount(0);
+  await expect(page.getByTestId("review-verdict").first()).toHaveText(/^(Verdict: looks right|Verdict: concerns|No verdict in the asked form), in /);
+  // Under the verdict: what the reviewer says it checked, or the plain note that it did not say.
+  await expect(page.getByTestId("review-checked").or(page.getByTestId("review-no-account")).first()).toBeVisible();
   await expect(page.getByTestId("review-text").first()).toBeVisible();
   await expect(page.getByTestId("review-text").first()).toContainText(/Verdict/i);
   await checkDesign(page, "task, Codex's review opened");
-  const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { decision: unknown; review: { outcome: string; agent: string; endedAt: string; attemptId: number } };
+  const task = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { decision: unknown; review: { outcome: string; agent: string; endedAt: string; attemptId: number; checked: string[] } };
   expect(task.decision).toBeNull();
   expect([task.review.agent, task.review.outcome]).toEqual(["codex", "reviewed"]);
+  // With no tap, beside the reviewer's name: what it says it checked, when it said.
+  if (task.review.checked.length > 0) await expect(section).toContainText("Codex says it checked:");
   const attempt = (await (await page.request.get(`${botbench.base}/api/attempts/${task.review.attemptId}/events`)).json()) as { events: { type: string }[] };
   expect(attempt.events.map((event) => event.type)).toContain("usage");
 
   // The owner decides.
   // This repository has no checks set up: the review is a model's opinion, not a check, so the accept is one without verification.
-  await page.getByRole("button", { name: "Accept without verification" }).click();
+  // At a phone's width the decision's buttons are at the foot of the window.
+  await page.getByTestId("foot-actions").getByRole("button", { name: "Accept without verification" }).click();
   await expect(page.getByTestId("task-status")).toHaveText(/^Accepted without verification: no checks ran on it\. /);
   const decided = (await (await page.request.get(`${botbench.base}/api/tasks/${taskId}`)).json()) as { decision: { decidedAt: string } };
   expect(task.review.endedAt < decided.decision.decidedAt, "the review was in before the decision").toBe(true);

@@ -94,7 +94,6 @@ export function useTurn({ start, proposal = null, from = null, fresh = false, on
   const [infos, setInfos] = useState<ReadonlyMap<number, AttemptInfo>>(new Map());
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Come from Make this a run on a finished task or a chat: Plan a run, the owner's note as the prompt, in the task's
   // repository (from a chat, the one it read here), with one line saying where it came from (app/run-source.ts). The
@@ -336,7 +335,6 @@ export function useTurn({ start, proposal = null, from = null, fresh = false, on
       close = openEventStream(after, {
         onEvent: (event) => setEvents((have) => mergeEvents(have, [event])),
         onConnection: (isConnected) => {
-          setConnected(isConnected);
           if (!isConnected) dropped = true;
           else if (dropped) {
             dropped = false;
@@ -617,7 +615,7 @@ export function useTurn({ start, proposal = null, from = null, fresh = false, on
 
   return {
     // The conversation.
-    conversation, shown, chat, infos, working, running, starting, stopping, connected, waitingHere, askedCount, targets,
+    conversation, shown, chat, infos, working, running, starting, stopping, waitingHere, askedCount, targets,
     jumpRef, nameOf, differs, sendChat, stop, makingRun, setMakingRun,
     // The composer.
     prompt, setPrompt, promptRef, label, submit, onKeyDown, send, showStop, stopReason, builder, builderDown, checkDriver, describedBy, boxDescribedBy, keysHint, error, chatting, run, kind, setKind, repo, setRepo, name, known,

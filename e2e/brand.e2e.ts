@@ -2,7 +2,7 @@ import { checkDesign, expect, openWork, signIn, test } from "./helpers.ts";
 
 // The brand marks in the real client, at a phone's size: a real Botbench process serving the built client. No CLI turn.
 
-test("the page names its icons and Botbench serves them before sign-in; the header shows the mark beside the name", async ({ page, botbench }) => {
+test("the page names its icons and Botbench serves them before sign-in; the navigation shows the mark beside the name", async ({ page, botbench }) => {
   await page.goto(botbench.base);
 
   // Before sign-in: the tab icon and the home-screen icon are real files of the right kind.
@@ -21,11 +21,14 @@ test("the page names its icons and Botbench serves them before sign-in; the head
   await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Botbench");
 
   await signIn(page, botbench);
-  // The header is on every screen not yet rebuilt on shadcn/ui; Work is one.
+  // The mark stands at the head of the navigation's pane, which a window has from 1024px; a phone has the bar at its foot and no room for it.
   await openWork(page);
-  const name = page.locator("header a", { hasText: "Botbench" });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const name = page.locator('[data-slot="sidebar-header"] a', { hasText: "Botbench" });
   const mark = name.locator("svg");
   await expect(mark).toBeVisible();
+  // 20px in the navigation, on every screen.
+  expect(await mark.evaluate((svg) => [svg.getBoundingClientRect().width, svg.getBoundingClientRect().height])).toEqual([20, 20]);
   // Decorative: the link's words already say the name, so the mark is hidden from assistive technology.
   await expect(mark).toHaveAttribute("aria-hidden", "true");
   await expect(page.getByRole("link", { name: "Botbench", exact: true })).toBeVisible();

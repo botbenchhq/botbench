@@ -12,7 +12,7 @@ import { clock } from "../../app/format.ts";
 import { MAKE_RUN } from "../../app/run-source.ts";
 import { useFollow, type Turn } from "../../app/use-turn.ts";
 import { useThreePanes } from "../../app/wide.ts";
-import { visible } from "../../components/approval-card.tsx";
+import { visible } from "../../components/approval-words.ts";
 import { jumpCount } from "../../components/follow.ts";
 import { MakeRunDialog } from "../../components/make-run.tsx";
 import { approvalWords } from "../../components/tool-summary.ts";
@@ -20,7 +20,7 @@ import { Transcript } from "../../components/transcript.tsx";
 import { NextShell } from "../../shell/shell.tsx";
 import { ApprovalDecision, DecisionWhat } from "../decision/decision-surface.tsx";
 import { CompareAction, CompareCards } from "./compare.tsx";
-import { Composer, Disconnected, TARGET } from "./composer.tsx";
+import { Composer, TARGET } from "./composer.tsx";
 
 /** The first line of the chat's first message, as its name on the screen and in the navigation. */
 function titleOf(turn: Turn): string {
@@ -161,6 +161,8 @@ export function ChatView({ turn, onSignedOut }: { turn: Turn; onSignedOut: () =>
 
   return (
     <NextShell
+      current="Chat"
+      showing={waitingHere.map((approval) => approval.id)}
       open={{ title, href: "#/turn" }}
       bar={
         <>
@@ -194,8 +196,7 @@ export function ChatView({ turn, onSignedOut }: { turn: Turn; onSignedOut: () =>
         )
       }
     >
-      <div data-testid="screen" className="flex h-[calc(100svh-3.5rem-1px)] min-h-0 min-w-0 flex-col">
-        {!turn.connected && <Disconnected />}
+      <main data-testid="screen" className="flex h-[calc(100svh-3.5rem-1px)] min-h-0 min-w-0 flex-col max-md:h-[calc(100svh-7rem-2px)]">
         <div ref={follow.scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto outline-none">
           <div ref={follow.setLog} className={cn("mx-auto flex w-full min-w-0 flex-col gap-4 px-4 py-6 md:px-8", round === null ? "max-w-3xl" : "max-w-6xl")}>
             <header className="flex flex-col gap-1">
@@ -260,7 +261,7 @@ export function ChatView({ turn, onSignedOut }: { turn: Turn; onSignedOut: () =>
             </SheetContent>
           </Sheet>
         )}
-      </div>
+      </main>
     </NextShell>
   );
 }

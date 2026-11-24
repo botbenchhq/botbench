@@ -22,15 +22,6 @@ export function ConnectAgent({ first = false }: { first?: boolean }) {
   );
 }
 
-/** The line across the top of the screen while live updates are down: what is on the screen may be behind. */
-export function Disconnected() {
-  return (
-    <p role="status" data-testid="stream-banner" className="border-b bg-fill px-4 py-2 text-meta md:px-8">
-      Live updates are disconnected. Reconnecting.
-    </p>
-  );
-}
-
 const LINE = "text-meta text-muted-foreground";
 
 /** A control drawn 32px high with a mouse still has a 40px pointer target (44px under a finger, where it is drawn that high). */

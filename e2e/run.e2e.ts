@@ -11,7 +11,7 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { loadGhCapture, replayGitHub } from "../test/support/replay-github.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
-import { checkLayout, checkWords, expect, filledButtons, openRunMenu, signIn, SHOTS, watchRefused } from "./helpers.ts";
+import { checkScreen, checkWords, expect, filledButtons, openRunMenu, SHOTS, signIn, watchRefused } from "./helpers.ts";
 
 // The run screen rebuilt on shadcn/ui and Tailwind 4 (ADR 0012), at a run's own address, in the real client against a
 // real Botbench process with its real content security policy. No model turn. Before Botbench starts, runs are put in
@@ -118,7 +118,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("run-delivery")).toHaveText("Its branch is kept on this Mac");
     await expect(page.getByTestId("run-approval-limit")).toHaveText("Off. Requests wait for your answer, however long that takes.");
     await expect(page.getByTestId("run-preapproved").getByRole("listitem")).toHaveText(["npm test"]);
-    await checkLayout(page, 32, "run, plan waiting, 1440, dark");
+    await checkScreen(page, "run, plan waiting, 1440, dark", { floor: 32 });
     await checkWords(page, "run, plan waiting");
     await shot(page, "run-plan-1440-dark");
 
@@ -144,7 +144,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await page.getByRole("button", { name: "Save task" }).click();
     await expect(title).toHaveAttribute("aria-invalid", "true");
     await expect(planRows(page).nth(0)).toContainText("Give the task a title.");
-    await checkLayout(page, 32, "run, a task being edited");
+    await checkScreen(page, "run, a task being edited", { floor: 32 });
     await title.fill("Write the CSV exporter <b>first</b>");
     await page.getByRole("button", { name: "Save task" }).click();
     await expect(planRows(page).nth(0).getByTestId("plan-task-text")).toContainText("Write the CSV exporter <b>first</b>");
@@ -195,7 +195,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(taskRows(page).nth(0).getByRole("link")).toHaveAttribute("href", `#/tasks/${tasks[0]!.id}`);
     // Nothing on the screen is filled as a primary action now: there is nothing to decide.
     expect(await filledButtons(page)).toEqual([]);
-    await checkLayout(page, 32, "run, building");
+    await checkScreen(page, "run, building", { floor: 32 });
     await checkWords(page, "run, building");
     await shot(page, "run-building-1440-dark");
 
@@ -205,7 +205,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(dialog).toContainText("Tasks that have finished keep their branches. The task being built is stopped, and what it did so far is committed to its branch. Tasks that have not started are not built. A cancelled run cannot be started again.");
     await expect(dialog.getByRole("button")).toHaveText(["Keep run", "Cancel run"]);
     await expect(dialog.getByRole("button", { name: "Keep run" })).toBeFocused();
-    await checkLayout(page, 32, "run, the cancel dialog");
+    await checkScreen(page, "run, the cancel dialog", { floor: 32 });
     await checkWords(page, "run, the cancel dialog");
     await shot(page, "run-cancel-1440-dark");
     await dialog.getByRole("button", { name: "Keep run" }).click();
@@ -221,7 +221,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("run-menu")).toHaveCount(0);
     await expect(steps(page)).toHaveCount(0);
     expect((await stored<{ status: string }>(page, botbench, seeded.manual)).status).toBe("cancelled");
-    await checkLayout(page, 32, "run, cancelled");
+    await checkScreen(page, "run, cancelled", { floor: 32 });
     await checkWords(page, "run, cancelled");
     await shot(page, "run-cancelled-1440-dark");
 
@@ -253,7 +253,7 @@ test.describe("at 390×844, on a phone", () => {
     expect(await foot()).toBe(844);
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page.getByLabel("Feedback for the planner")).toHaveCount(0);
-    await checkLayout(page, 44, "run, plan waiting, 390");
+    await checkScreen(page, "run, plan waiting, 390", { floor: 44 });
     await checkWords(page, "run, plan waiting, phone");
     await shot(page, "run-plan-390-dark");
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "run-plan-390-dark-full.png"), fullPage: true });
@@ -269,7 +269,7 @@ test.describe("at 390×844, on a phone", () => {
     await expect(offer.getByRole("radio", { name: "Semi-autonomous" })).toHaveAccessibleDescription(/Current mode/);
     await expect(offer.getByText("never looser")).toBeVisible();
     await expect(offer.getByRole("button", { name: "Change mode" })).toBeDisabled();
-    await checkLayout(page, 44, "run, the stricter mode, 390");
+    await checkScreen(page, "run, the stricter mode, 390", { floor: 44 });
     await checkWords(page, "run, the stricter mode");
     await shot(page, "run-stricter-390-dark");
     await offer.getByRole("radio", { name: "Manual" }).click();
@@ -290,7 +290,7 @@ test.describe("at 390×844, on a phone", () => {
     await actions.filter({ hasText: "Request changes" }).click();
     await expect(decision.getByRole("alert")).toHaveText("Changes were not requested. Say what the planner should change.");
     await feedback.fill("Split the exporter into reading and writing.");
-    await checkLayout(page, 44, "run, feedback for the planner, 390");
+    await checkScreen(page, "run, feedback for the planner, 390", { floor: 44 });
     await shot(page, "run-feedback-390-dark");
     await actions.filter({ hasText: "Request changes" }).click();
     await expect(page.getByTestId("run-status")).toHaveText(/^(Queued|Planning)\./);
@@ -300,7 +300,7 @@ test.describe("at 390×844, on a phone", () => {
     await expect(steps(page).nth(0).locator("[data-step=words]")).toHaveText("Working");
     // The planner was sent the owner's feedback, by Botbench.
     await expect(page.locator('[data-event="user_prompt"]').last()).toContainText("Split the exporter into reading and writing.", { timeout: 30_000 });
-    await checkLayout(page, 44, "run, planning again, 390");
+    await checkScreen(page, "run, planning again, 390", { floor: 44 });
     await checkWords(page, "run, planning again, phone");
     await shot(page, "run-planning-390-dark");
 
@@ -331,7 +331,7 @@ test.describe("at 390×844, on a phone, through a build", () => {
     await expect(row.getByTestId("run-task-branch")).toHaveText("Claude Code is working; open it to watch", { timeout: 30_000 });
     await expect(row).toContainText("1 of 1 setup command passed.");
     expect(await filledButtons(page)).toEqual([]);
-    await checkLayout(page, 44, "run, building, 390");
+    await checkScreen(page, "run, building, 390", { floor: 44 });
     await checkWords(page, "run, building, phone");
     await shot(page, "run-building-390-dark");
 
@@ -350,7 +350,7 @@ test.describe("at 390×844, on a phone, through a build", () => {
     expect(await filledButtons(page)).toEqual([]);
     // All its tasks are built, so the run can no longer be cancelled; a manual run has no stricter mode: no menu.
     await expect(page.getByTestId("run-menu")).toHaveCount(0);
-    await checkLayout(page, 44, "run, ready for review, 390");
+    await checkScreen(page, "run, ready for review, 390", { floor: 44 });
     await checkWords(page, "run, ready for review, phone");
     await shot(page, "run-ready-390-dark");
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "run-ready-390-dark-full.png"), fullPage: true });
@@ -362,7 +362,7 @@ test.describe("at 390×844, on a phone, through a build", () => {
     await expect(page.getByTestId("run-status")).toHaveText("Done. Every task that was built has your decision. Nothing has been merged or pushed.");
     await expect(page.getByTestId("run-state")).toHaveText("Done");
     expect((await stored<{ status: string }>(page, botbench, seeded.manual)).status).toBe("done");
-    await checkLayout(page, 44, "run, done, 390");
+    await checkScreen(page, "run, done, 390", { floor: 44 });
     await checkWords(page, "run, done, phone");
     await shot(page, "run-done-390-dark");
     expect(refused).toEqual([]);
@@ -436,7 +436,7 @@ delivered.describe("at 768×1024", () => {
     await expect(link).toHaveAttribute("href", created);
     await expect(link).toHaveAttribute("target", "_blank");
     await expect(page.getByTestId("run-menu")).toHaveCount(0);
-    await checkLayout(page, 32, "run, done, 768");
+    await checkScreen(page, "run, done, 768", { floor: 32 });
     await checkWords(page, "run, done");
     await shot(page, "run-done-768-dark");
     expect(refused).toEqual([]);

@@ -5,8 +5,7 @@ import { issueWords } from "../web/src/app/composer.ts";
 import { watchAbout } from "../web/src/app/watch-words.ts";
 import { capturedIssue, loadWatchCapture, WATCH_ADDRESS } from "../test/support/replay-watch.ts";
 import { git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, checkWords, closeContext, contextSheet, expect, SHOTS, signIn } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkDesign, checkScreen, checkWords, closeContext, contextSheet, expect, SHOTS, signIn } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // An issue proposed on Work by the issue watch (issue #73), in the real client at a phone's size, with no model turn. A
@@ -94,5 +93,5 @@ test("a proposed issue shows on Work with its title and author as plain text; St
     await page.reload();
     await expect(page.getByTestId("watch")).toContainText(watchAbout({ label, intervalMinutes: 10, repository: "github.com/jon-lange/botbench" }), { timeout: 2_000 });
   }).toPass({ timeout: 15_000 });
-  await checkNext(page, "Settings, with a watched repository");
+  await checkScreen(page, "Settings, with a watched repository");
 });

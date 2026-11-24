@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
 import { acceptTask, ApiError, rejectTask, runChecksAgain, type EvidenceState, type TaskDecision } from "../api/client.ts";
-import { Alert } from "./header.tsx";
+import { Alert } from "./alert.tsx";
 import { ConfirmAction } from "./confirm.tsx";
 import { Icon } from "./icon.tsx";
 import { number, plural } from "../app/format.ts";
@@ -100,32 +100,6 @@ const LEFT_BEHIND = "These files were left by the checks and are not on the bran
 
 /** The words for the no-checks accept, one place: it is never called plain Accept. */
 const ACCEPT_UNVERIFIED = "Accept without verification";
-
-/**
- * The state of a task's evidence, in the server's own words (`EvidenceState.words`): whether its checks are about the
- * commit Accept would keep, the files of a copy that differs from it, what git ignores there, and, apart, the commit
- * the review read. Nothing here is worked out by the client. `evidence` null: the server could not read it, and says why.
- */
-export function EvidenceLines({ evidence, problem }: { evidence: EvidenceState | null; problem: string | null }) {
-  if (evidence === null) return problem === null ? null : <span data-testid="evidence-problem">{problem}</span>;
-  return (
-    <>
-      <span data-testid="evidence-words" data-evidence={evidence.state}>
-        {evidence.words}
-      </span>
-      {evidence.ignoredWords !== null && (
-        <span data-testid="evidence-ignored" data-ds-content="" className="ds-review-decision__caveat">
-          {evidence.ignoredWords}
-        </span>
-      )}
-      {evidence.review !== null && !evidence.review.current && (
-        <span data-testid="evidence-review" className="ds-review-decision__caveat">
-          {evidence.review.words}
-        </span>
-      )}
-    </>
-  );
-}
 
 /**
  * Accept and Reject, for a task that is ready for review. Which Accept there is comes from the server's state of the

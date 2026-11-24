@@ -35,8 +35,6 @@ export type IconName =
   | "home";
 
 /** A decorative icon from the sprite. `className` is the icon class of the component it sits in. */
-export const SPRITE = sprite;
-
 export function Icon({ name, className }: { name: IconName; className: string }) {
   // The design system has no speech-bubble icon yet: this one is Lucide's message-circle (ISC, listed in NOTICE), drawn
   // with the same attributes as the sprite's symbols, so it takes the same size and colour from its class.

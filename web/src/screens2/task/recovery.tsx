@@ -1,6 +1,5 @@
 import { useId, useState } from "react";
 import { FileSearch } from "lucide-react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Button } from "@/ui/button";
 import { Card } from "@/ui/card";
 import { Label } from "@/ui/label";
@@ -10,6 +9,7 @@ import { ApiError, discardTask, resumeTask, type TaskDetail } from "../../api/cl
 import { agentName } from "../../app/chat.ts";
 import { counted, plural } from "../../app/format.ts";
 import { useInspector } from "../../shell/shell.tsx";
+import { DestructiveDialog } from "../decision/decision-surface.tsx";
 import { Problem } from "./steer.tsx";
 
 /*
@@ -204,31 +204,20 @@ export function DiscardDialog({ task, x }: { task: TaskDetail; x: Discard }) {
   if (ENDED[task.status] === undefined || remains === null || left.length === 0) return null;
   const { asking, setAsking, send } = x;
   return (
-    <AlertDialog open={asking} onOpenChange={setAsking}>
-        <AlertDialogContent data-testid="discard-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-heading font-semibold">Discard what this task left?</AlertDialogTitle>
-            <AlertDialogDescription>{`This removes ${left.join(" and ")}. The work on ${remains.branch ? "the branch" : "it"} is gone for good. Nothing is merged or pushed.`}</AlertDialogDescription>
-          </AlertDialogHeader>
-          {remains.files.length > 0 && (
-            <div className="flex flex-col gap-1 text-meta">
-              <p>{`${plural(remains.files.length, "This file is", "These files are")} in the task's copy and not on the branch, and ${plural(remains.files.length, "goes", "go")} with it:`}</p>
-              <ul data-testid="leftovers">
-                {remains.files.map((file) => (
-                  <li key={file}>
-                    <code data-ds-content="">{file}</code>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep them</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={send}>
-              Discard
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+    <DestructiveDialog open={asking} onOpenChange={setAsking} title="Discard what this task left?" keepLabel="Keep them" confirmLabel="Discard" onConfirm={send} testId="discard-dialog">
+      <p>{`This removes ${left.join(" and ")}. The work on ${remains.branch ? "the branch" : "it"} is gone for good. Nothing is merged or pushed.`}</p>
+      {remains.files.length > 0 && (
+        <div className="flex flex-col gap-1 text-meta">
+          <p>{`${plural(remains.files.length, "This file is", "These files are")} in the task's copy and not on the branch, and ${plural(remains.files.length, "goes", "go")} with it:`}</p>
+          <ul data-testid="leftovers">
+            {remains.files.map((file) => (
+              <li key={file}>
+                <code data-ds-content="">{file}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </DestructiveDialog>
   );
 }

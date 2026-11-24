@@ -12,7 +12,7 @@ import { fullDate } from "../../app/format.ts";
 import { editChanged, editStands, fromLines, NEW_EDIT, openEdit } from "../../app/plan-edit.ts";
 import { MODE_NAMES, modeSentence } from "../../app/run-words.ts";
 import { useThreePanes } from "../../app/wide.ts";
-import { ApprovalCard } from "../../components/approval-card.tsx";
+import { ApprovalQueue } from "../decision/decision-surface.tsx";
 import { modelState, sessionModel, useModelNames } from "../../components/model-picker.tsx";
 import { runLook, runSentence, runWord } from "../../components/run-status.ts";
 import { mergeEvents, Transcript } from "../../components/transcript.tsx";
@@ -509,7 +509,7 @@ export default function RunScreen({ id, onSignedOut }: { id: number; onSignedOut
                 </Notice>
               )}
 
-              {asking !== undefined && <ApprovalCard key={asking.id} approval={asking} more={waiting.length - 1} on="run" onSignedOut={onSignedOut} />}
+              <ApprovalQueue waiting={waiting} on="run" onSignedOut={onSignedOut} />
 
               {gate && (
                 <section aria-labelledby="plan-heading" className="flex flex-col gap-3">

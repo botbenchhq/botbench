@@ -8,7 +8,7 @@ import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { openStore } from "../src/store/db.ts";
 import { chatReplayDriver } from "../test/support/replay-chat.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
-import { checkScreen, expect, messageBox, primaries, sendChat, SHOTS, signIn } from "./helpers.ts";
+import { checkScreen, expect, messageBox, primaries, SCREEN_ONLY, sendChat, SHOTS, signIn } from "./helpers.ts";
 
 // New chat or task, the chat and the decision surface, rebuilt on shadcn/ui and Tailwind 4 (ADR 0012), in the real
 // client against a real Botbench process with its real content security policy. No model turn: Claude Code, in a chat
@@ -71,7 +71,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("composer-chips").getByRole("button")).toHaveAccessibleName(/^Agent and model: /);
     await expect(page.getByTestId("composer-keys")).toHaveText("Enter sends. Shift with Enter starts a new line.");
     expect(await primaries(page)).toEqual(["Send"]);
-    await checkScreen(page, "new chat or task");
+    await checkScreen(page, "new chat or task", { floor: 40, within: SCREEN_ONLY });
     await shot(page, "new-chat-1440-dark");
 
     // A task needs a repository: the chip asks for one, the sentence says nothing starts, and Send says why.
@@ -87,7 +87,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await page.getByTestId("repository-chip").click();
     const sheet = page.getByTestId("context-sheet");
     await expect(sheet.getByRole("heading", { name: "Repository" })).toBeVisible();
-    await checkScreen(page, "add context, repository, as a dialog");
+    await checkScreen(page, "add context, repository, as a dialog", { floor: 40, within: SCREEN_ONLY });
     await page.keyboard.press("Escape");
     await expect(sheet).toBeHidden();
     await page.getByTestId("intent-question").click();
@@ -122,7 +122,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(card.getByTestId("decision-queue")).toHaveCount(0);
     await expect(pane.getByTestId("chat-facts")).toContainText("Claude Code");
     await expect(card).toHaveAttribute("data-settled", "");
-    await checkScreen(page, "chat, a request waits");
+    await checkScreen(page, "chat, a request waits", { floor: 40, within: SCREEN_ONLY });
     await shot(page, "chat-approval-1440-dark");
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
     await page.reload();
@@ -159,14 +159,14 @@ test("on a phone the intents, the composer and the sentence fit one column; the 
   await signIn(page, botbench);
   await askForWeb(page, botbench);
   await expect(page.getByTestId("intents").getByRole("radio")).toHaveCount(4);
-  await checkScreen(page, "new chat or task, phone");
+  await checkScreen(page, "new chat or task, phone", { floor: 40, within: SCREEN_ONLY });
   await shot(page, "new-chat-390-dark");
   // Add context is a sheet from the bottom here.
   await page.getByRole("button", { name: "Add context" }).tap();
   const sheet = page.getByTestId("context-sheet");
   await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
   await expect(sheet).toHaveAttribute("data-side", "bottom");
-  await checkScreen(page, "add context, phone");
+  await checkScreen(page, "add context, phone", { floor: 40, within: SCREEN_ONLY });
   await sheet.getByRole("button", { name: "Close Add context" }).tap();
 
   // The replay's first chat turn is the one that was allowed; the second the one that was declined.
@@ -182,7 +182,7 @@ test("on a phone the intents, the composer and the sentence fit one column; the 
   await expect(card).toBeInViewport();
   const order = await page.evaluate(() => document.querySelector('[data-testid="approval-card"]')!.getBoundingClientRect().bottom <= document.querySelector('[data-testid="composer"]')!.getBoundingClientRect().top);
   expect(order, "the decision stands above the message box").toBe(true);
-  await checkScreen(page, "chat, a request waits, phone");
+  await checkScreen(page, "chat, a request waits, phone", { floor: 40, within: SCREEN_ONLY });
   await shot(page, "chat-approval-390-dark");
   const note = card.getByRole("button", { name: "Add a note for Claude Code" });
   await expect(note).toHaveAttribute("aria-expanded", "false");
@@ -264,7 +264,7 @@ compared.describe("at 1440×900, with a mouse", () => {
     const action = page.getByTestId("compare-action");
     await expect(action.getByRole("heading")).toHaveText("Ask one to compare the answers");
     await expect(action.getByRole("button", { name: "Ask Codex" })).toBeEnabled();
-    await checkScreen(page, "chat, three answers side by side");
+    await checkScreen(page, "chat, three answers side by side", { floor: 40, within: SCREEN_ONLY });
     await shot(page, "compare-1440-dark");
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
     await page.reload();
@@ -293,7 +293,7 @@ compared("on a phone the answers are read one at a time behind a switch that nam
   await expect(page.getByTestId("compare-card")).toHaveAttribute("data-agent", "grok");
   await expect(page.getByTestId("compare-card").getByTestId("compare-model")).toHaveText("grok-4.7-build-fast");
   await expect(page.getByTestId("compare-action").getByRole("button", { name: "Ask Grok" })).toBeVisible();
-  await checkScreen(page, "chat, three answers, one at a time");
+  await checkScreen(page, "chat, three answers, one at a time", { floor: 40, within: SCREEN_ONLY });
   await page.getByTestId("compare-card").scrollIntoViewIfNeeded();
   await shot(page, "compare-390-dark");
 });

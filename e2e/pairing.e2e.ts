@@ -1,6 +1,5 @@
 import type { Browser, Page } from "@playwright/test";
-import { checkWords, expect, messageBox, signIn, test } from "./helpers.ts";
-import { checkNext } from "./settings-helpers.ts";
+import { checkScreen, checkWords, expect, messageBox, signIn, test } from "./helpers.ts";
 
 // Adding a device with a one-time code, in the real client at a phone's size, with no model turn: Settings → Add a
 // device on a signed-in browser, and the sign-in screen on a second browser, which has no session of its own.
@@ -56,7 +55,7 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await expect(page.getByTestId("pairing-code")).not.toContainText(first);
   const code = await codeShown(page);
   await expect.poll(() => readQr(page), { message: "the QR code reads as the sign-in address" }).toEqual([`${botbench.base}/#code=${code}`]);
-  await checkNext(page, "settings, add a device");
+  await checkScreen(page, "settings, add a device");
   await checkWords(page, "settings, add a device");
 
   // The second browser opens the address in the QR code: the sign-in screen, with the code chosen and filled in.
@@ -67,7 +66,7 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await expect(phone.getByRole("textbox", { name: "One-time code" })).toHaveValue(code);
   // The code is taken out of the address once read.
   expect(new URL(phone.url()).hash).toBe("");
-  await checkNext(phone, "sign-in, with a code from the address");
+  await checkScreen(phone, "sign-in, with a code from the address");
   await checkWords(phone, "sign-in, with a code from the address");
 
   // The code that was replaced is refused, in words, and no session is made.
@@ -77,7 +76,7 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await expect(phone.getByRole("alert")).toHaveText("Error: That code was replaced by a newer one. Use the code Settings shows now, or make a new one.");
   await expect(phone.getByRole("textbox", { name: "One-time code" })).toHaveAttribute("aria-invalid", "true");
   expect((await phone.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
-  await checkNext(phone, "sign-in, a replaced code");
+  await checkScreen(phone, "sign-in, a replaced code");
 
   // The code shown now signs it in, typed as a person might, and Botbench opens on Home.
   await phone.getByRole("textbox", { name: "One-time code" }).fill(` ${code.replace("-", " ").toLowerCase()} `);
@@ -94,14 +93,14 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await third.getByRole("button", { name: "Sign in" }).click();
   await expect(third.getByRole("alert")).toHaveText("Error: That code was already used. A code works once: make a new one in Settings → Signed-in devices on a device that is signed in.");
   expect((await third.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
-  await checkNext(third, "sign-in, a used code");
+  await checkScreen(third, "sign-in, a used code");
   await checkWords(third, "sign-in, a used code");
 
   // The first browser's Settings lists and names the new device without a reload, and takes the used code off the screen.
   await expect(page.getByTestId("devices").getByTestId("device")).toHaveCount(2);
   await expect(page.getByTestId("device-added")).toHaveText(/^Note: .* was added with the code and is signed in\. If you did not add it, sign it out below\.$/);
   await expect(page.getByTestId("pairing")).toHaveCount(0);
-  await checkNext(page, "settings, a device added");
+  await checkScreen(page, "settings, a device added");
   await checkWords(page, "settings, a device added");
 
   // Opened again on the device that is now signed in, the address with the code goes to the first screen, Home.

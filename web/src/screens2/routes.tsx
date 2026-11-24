@@ -3,12 +3,11 @@ import { holdArrival } from "../app/arrival.ts";
 import type { Route } from "../app/route.ts";
 
 /*
- * The one place that sends an address to a screen rebuilt on shadcn/ui and Tailwind (ADR 0012). Each rebuilt screen
- * is a folder under screens2/ and one line here; it is fetched only when its address is opened. Until a screen is
- * listed the old screen is shown, exactly as before.
+ * The one place that sends an address to its screen (ADR 0012). Each screen is a folder under screens2/ and one line
+ * here; it is fetched only when its address is opened.
  *
  * To add a screen: make screens2/<name>/<name>-screen.tsx with a default export that renders inside <NextShell>
- * (shell/shell.tsx), add its lazy import below, return it from `rebuilt` for its route, and delete the old screen.
+ * (shell/shell.tsx), add its lazy import below, and return it from `rebuilt` for its route.
  */
 
 const TaskScreen = lazy(() => import("./task/task-screen.tsx"));
@@ -21,6 +20,7 @@ const SessionState = lazy(() => import("./sign-in/sign-in-screen.tsx").then((m) 
 const RunScreen = lazy(() => import("./run/run-screen.tsx"));
 const HomeScreen = lazy(() => import("./home/home-screen.tsx"));
 const WorkScreen = lazy(() => import("./work/work-screen.tsx"));
+const NotFoundScreen = lazy(() => import("./not-found/not-found-screen.tsx"));
 
 /** Shown, as nothing, while a rebuilt screen's code is fetched: the screen's heading still takes focus when it is drawn (app/arrival.ts). */
 function Fetching() {
@@ -28,7 +28,7 @@ function Fetching() {
   return null;
 }
 
-/** The rebuilt screen for `route`, or null when there is none and the old screen is to be shown. */
+/** The screen for `route`, or null for an old address, which is only passed on to its new one. */
 export function rebuilt(route: Route, onSignedOut: () => void): ReactNode | null {
   if (route.screen === "task") {
     return (
@@ -92,11 +92,15 @@ export function rebuilt(route: Route, onSignedOut: () => void): ReactNode | null
       </Suspense>
     );
   }
+  if (route.screen === "none") {
+    return (
+      <Suspense fallback={<Fetching />}>
+        <NotFoundScreen key={route.what} what={route.what} />
+      </Suspense>
+    );
+  }
   return null;
 }
-
-/** Whether `route` is shown by a rebuilt screen, which brings its own navigation and takes the whole window. */
-export const isRebuilt = (route: Route): boolean => route.screen !== "redirect" && route.screen !== "none";
 
 /** Sign in: the whole window, with no navigation. */
 export function signInScreen(notice: string | null, onSignedIn: () => void): ReactNode {

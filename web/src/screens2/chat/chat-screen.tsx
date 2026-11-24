@@ -56,8 +56,8 @@ export function OpenChat({ id, onSignedOut }: { id: number; onSignedOut: () => v
     };
   }, [id, onSignedOut]);
   return (
-    <NextShell open={null} bar={<span className="text-sm font-semibold">Chat</span>}>
-      <div data-testid="screen" className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-8 md:px-8">
+    <NextShell open={null} current="Chat" bar={<span className="text-sm font-semibold">Chat</span>}>
+      <main data-testid="screen" className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-8 md:px-8">
         <h1 ref={heading} tabIndex={-1} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight outline-none">
           Chat
         </h1>
@@ -77,7 +77,7 @@ export function OpenChat({ id, onSignedOut }: { id: number; onSignedOut: () => v
             </p>
           </>
         )}
-      </div>
+      </main>
     </NextShell>
   );
 }

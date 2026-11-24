@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Check, Circle, CirclePause, Clock, Copy, Ellipsis, ExternalLink, ListChecks, MessageSquare, Minus, Plus, Search, SquareCheck, TriangleAlert, type LucideIcon } from "lucide-react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Button, buttonVariants } from "@/ui/button";
 import { Card } from "@/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/ui/dropdown-menu";
@@ -20,6 +20,7 @@ import { waitingForWords } from "../../components/task-status.ts";
 import { OtherWorkbenches } from "../../components/other-workbenches.tsx";
 import { Proposals } from "../../components/proposals.tsx";
 import { NextShell } from "../../shell/shell.tsx";
+import { DestructiveDialog } from "../decision/decision-surface.tsx";
 import { hrefOf } from "../home/home-model.ts";
 import { aboutLine, agentWord, changed, kindWord, KINDS, noneLine, olderLine, repoWord, shownLine, STATES, stateWord } from "./work-model.ts";
 
@@ -279,7 +280,7 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
 
   return (
     <NextShell open={null} current="Work" bar={<span className="text-sm font-semibold">Work</span>}>
-      <div className="@container mx-auto w-full max-w-[76rem] px-4 pt-6 pb-16 md:px-8">
+      <main className="@container mx-auto w-full max-w-[76rem] px-4 pt-6 pb-16 md:px-8">
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <h1 ref={heading} tabIndex={-1} className="text-title font-semibold tracking-tight outline-none">
             Work
@@ -424,28 +425,22 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
             <OtherWorkbenches onSignedOut={onSignedOut} />
           </div>
         )}
-        <AlertDialog open={asking?.kind === "cancel"} onOpenChange={(open) => !open && setAsking(null)}>
-          <AlertDialogContent data-testid="cancel-run">
-            <AlertDialogHeader>
-              <AlertDialogTitle className="text-heading font-semibold">Cancel this run?</AlertDialogTitle>
-              <AlertDialogDescription>{asking?.kind === "cancel" ? cancelStatement(asking.item.status, asking.item.taskCount) : ""}</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep run</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  if (asking?.kind !== "cancel") return;
-                  const id = asking.item.id;
-                  setAsking(null);
-                  cancelRun(id).then(load, failedWith("The run was not cancelled."));
-                }}
-              >
-                Cancel run
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <DestructiveDialog
+          open={asking?.kind === "cancel"}
+          onOpenChange={(open) => !open && setAsking(null)}
+          title="Cancel this run?"
+          keepLabel="Keep run"
+          confirmLabel="Cancel run"
+          testId="cancel-run"
+          onConfirm={() => {
+            if (asking?.kind !== "cancel") return;
+            const id = asking.item.id;
+            setAsking(null);
+            cancelRun(id).then(load, failedWith("The run was not cancelled."));
+          }}
+        >
+          <p>{asking?.kind === "cancel" ? cancelStatement(asking.item.status, asking.item.taskCount) : ""}</p>
+        </DestructiveDialog>
         {asking?.kind === "rename" && (
           <RenameChat
             chat={asking.item}
@@ -458,7 +453,7 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
             }}
           />
         )}
-      </div>
+      </main>
     </NextShell>
   );
 }

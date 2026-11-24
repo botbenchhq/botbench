@@ -1,5 +1,5 @@
-import { checkWords, expect } from "./helpers.ts";
-import { appearance, ASKING, checkLayout, MANY, shot, signInAtHome, startTask, test } from "./home-seed.ts";
+import { checkScreen, checkWords, expect } from "./helpers.ts";
+import { appearance, ASKING, MANY, shot, signInAtHome, startTask, test } from "./home-seed.ts";
 
 // Work, the full inventory, in the real client against a real Botbench process with its real content security policy.
 // No model turn (e2e/home-seed.ts). What is checked: every run and task is a row with its real state word; the search,
@@ -51,7 +51,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(kind.getByRole("button")).toHaveText(["All12", "Tasks11", "Runs1", "Chats0"]);
     await expect(state.getByRole("button")).toHaveText(["Any state12", "Needs you5", "In progress1", "Waiting1", "Completed2", "Failed1", "Ended otherwise2"]);
     // The navigation's own controls are the small ones, 32px with a mouse; the screen's are 40px.
-    await checkLayout(page, 32, "Work, 1440, dark");
+    await checkScreen(page, "Work, 1440, dark", { floor: 32 });
     await checkWords(page, "Work");
     await shot(page, "work-1440-dark");
     await appearance(page, "light");
@@ -87,7 +87,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await cancelled.getByRole("button", { name: `More actions for task ${seeded.ids.cancelled}` }).click();
     const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem")).toHaveText([`Open task ${seeded.ids.cancelled}`, "Hide from the list"]);
-    await checkLayout(page, 32, "Work, a row's menu");
+    await checkScreen(page, "Work, a row's menu", { floor: 32 });
     await shot(page, "work-1440-dark-menu");
     await menu.getByRole("menuitem", { name: "Hide from the list" }).click();
     await expect(page.getByTestId("row-said")).toHaveText(`Hidden from the list: task ${seeded.ids.cancelled}. Nothing was deleted; Show hidden lists it.`);
@@ -144,7 +144,7 @@ test.describe("at 390×844, on a phone", () => {
     await expect(rows(page)).toHaveCount(11);
     const row = rows(page).filter({ hasText: "Plan the billing export" });
     await expect(row.getByRole("link")).toContainText(`Plan ready for review · Run ${seeded.ids.plan} · `);
-    await checkLayout(page, 44, "Work, 390");
+    await checkScreen(page, "Work, 390", { floor: 44 });
     await checkWords(page, "Work, phone");
     await shot(page, "work-390-dark");
     await page.getByRole("group", { name: "State" }).getByRole("button", { name: /^Failed/ }).click();
