@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, expect, SHOTS, test, goTo } from "./helpers.ts";
+import { checkDesign, expect, goTo, SHOTS, test } from "./helpers.ts";
+import { checkNext, openSettingsGroup } from "./settings-helpers.ts";
 
 // Connect from Settings with the real Claude Code, pointed at an empty configuration directory so it reports itself
 // signed out and the owner's own sign-in is never touched. The sheet shows the link the real CLI printed. The sign-in
@@ -27,12 +28,11 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code: /);
-    await goTo(page, "Settings");
-    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+    await openSettingsGroup(page, "agents");
     const agent = page.getByTestId("agent-claude-code");
     await expect(agent.getByTestId("agent-state")).toHaveText("Signed out");
     await expect(agent.getByRole("button", { name: "Disconnect" })).toHaveCount(0);
-    await checkDesign(page, "settings, Claude Code signed out, with Connect");
+    await checkNext(page, "settings, Claude Code signed out, with Connect");
     await shot(page, "u26-settings-connect.png");
 
     await agent.getByRole("button", { name: "Connect Claude Code" }).click();
@@ -40,7 +40,8 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
     await expect(sheet.getByRole("heading", { name: "Connect Claude Code" })).toBeVisible();
     await expect(sheet.getByTestId("connect-waiting")).toBeVisible({ timeout: 30_000 });
     const open = sheet.getByRole("link", { name: "Open sign-in page" });
-    await expect(open).toHaveClass(/ds-button--primary/);
+    // The sheet's one filled button.
+    expect(await open.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
     await expect(open).toHaveAttribute("target", "_blank");
     const href = new URL((await open.getAttribute("href"))!);
     expect(href.origin).toBe("https://claude.com");
@@ -51,7 +52,7 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
     await expect(sheet.getByRole("button", { name: "Send code" })).toBeDisabled();
     await expect(sheet.getByRole("status").filter({ hasText: "Waiting for you to sign in" })).toBeVisible();
     expect(processesUsing(empty).length, "the real sign-in runs").toBeGreaterThan(0);
-    await checkDesign(page, "connect sheet, waiting for the sign-in");
+    await checkNext(page, "connect sheet, waiting for the sign-in");
     await shot(page, "u26-connect-sheet.png");
 
     await sheet.getByRole("button", { name: "Cancel connecting" }).click();
@@ -80,7 +81,7 @@ test("Antigravity, not connected in a new data folder, shows Connect; the sheet 
     await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await goTo(page, "Settings");
+    await openSettingsGroup(page, "agents");
     const agent = page.getByTestId("agent-antigravity");
     await expect(agent.getByTestId("agent-state")).toHaveText("Signed out", { timeout: 30_000 });
     await agent.getByRole("button", { name: "Connect Antigravity" }).click();
@@ -93,7 +94,7 @@ test("Antigravity, not connected in a new data folder, shows Connect; the sheet 
     await expect(sheet).toContainText("Copy it, or the page's whole address, and paste it here.");
     await expect(sheet.getByLabel("Code from the sign-in page")).toBeEditable();
     expect(running().length, "the real sign-in runs, for Botbench's profile").toBeGreaterThan(0);
-    await checkDesign(page, "connect sheet, Antigravity, waiting for the sign-in");
+    await checkNext(page, "connect sheet, Antigravity, waiting for the sign-in");
     await shot(page, "connect-antigravity-sheet.png");
     await sheet.getByRole("button", { name: "Cancel connecting" }).click();
     await expect(sheet).toHaveCount(0);

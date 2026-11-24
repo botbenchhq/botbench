@@ -1,24 +1,20 @@
 import type { RunSourceRef, WorkState } from "../api/client.ts";
 import type { Kind } from "./composer.ts";
 import { sourceInAddress } from "./run-source.ts";
+import { groupHref, isGroup, OLD_SECTIONS, type SettingsGroup } from "./settings-groups.ts";
 
 /*
  * The client's addresses and the screen each names, as a plain function so it is tested without a browser
  * (test/route.test.ts). The part after `#` is the whole address: the server only ever serves the one page.
  */
 
-/** A section of the two-pane Settings, from 1024px (screens/settings.tsx). */
-export type SettingsSection = "agents" | "appearance" | "notifications" | "devices" | "workbench" | "paired" | "permissions" | "usage";
-
 export type Route =
   | { screen: "turn"; start: Kind | null; proposal?: number; from?: RunSourceRef; fresh?: true }
   | { screen: "redirect"; to: string }
-  | { screen: "trust" }
-  | { screen: "usage" }
   | { screen: "task"; id: number; discard: boolean }
   | { screen: "home" }
   | { screen: "work"; state: WorkState | null }
-  | { screen: "settings"; section: SettingsSection | null }
+  | { screen: "settings"; group: SettingsGroup | null }
   | { screen: "run"; id: number }
   | { screen: "chat"; id: number }
   | { screen: "thread"; pairingId: string; contextId: string }
@@ -51,15 +47,15 @@ export function parseRoute(hash: string): Route {
   if (at === "/runs" || at === "/tasks") return { screen: "redirect", to: "#/work" };
   // The sign-in address from Add a device, opened on a device that is already signed in: the code is not needed.
   if (at.startsWith("code=")) return { screen: "redirect", to: "#/" };
-  if (at === "/trust") return { screen: "trust" };
-  if (at === "/usage") return { screen: "usage" };
-  if (at === "/settings") return { screen: "settings", section: null };
-  // Settings at its Agents section: where the home screen sends the owner to connect an agent.
-  if (at === "/settings/agents") return { screen: "settings", section: "agents" };
-  // The other sections of the two-pane Settings, from 1024px. Permissions and Usage keep their own addresses.
-  const part = /^\/settings\/(appearance|notifications|devices|workbench|paired)$/.exec(at);
-  if (part) return { screen: "settings", section: part[1] as SettingsSection };
-  // One conversation with the paired workbench, from its card or from Settings → Paired workbench.
+  // Settings (screens2/settings): Settings itself, or one of its six groups.
+  if (at === "/settings") return { screen: "settings", group: null };
+  const group = /^\/settings\/([a-z]+)$/.exec(at)?.[1];
+  if (group !== undefined && isGroup(group)) return { screen: "settings", group };
+  // The addresses of Settings before its six groups: each opens the group that now holds what it showed.
+  if (at === "/trust") return { screen: "redirect", to: groupHref("permissions") };
+  if (at === "/usage") return { screen: "redirect", to: groupHref("usage") };
+  if (group !== undefined && OLD_SECTIONS[group] !== undefined) return { screen: "redirect", to: groupHref(OLD_SECTIONS[group]) };
+  // One conversation with the paired workbench, from its card or from Settings → Connections and peers.
   const thread = /^\/paired\/([0-9a-f-]{36})\/threads\/([0-9a-f-]{36})$/.exec(at);
   if (thread) return { screen: "thread", pairingId: thread[1]!, contextId: thread[2]! };
   // A chat from the Work list: Chat, with that chat on it.

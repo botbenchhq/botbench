@@ -42,7 +42,6 @@ test("the other addresses parse as before the parser moved out of the shell", ()
   assert.deepEqual(parseRoute("#/tasks/9?discard"), { screen: "task", id: 9, discard: true });
   assert.deepEqual(parseRoute("#/runs/3"), { screen: "run", id: 3 });
   assert.deepEqual(parseRoute("#/chats/5"), { screen: "chat", id: 5 });
-  assert.deepEqual(parseRoute("#/settings/devices"), { screen: "settings", section: "devices" });
   assert.deepEqual(parseRoute("#/runs/new"), { screen: "redirect", to: "#/turn?start=run" });
   assert.deepEqual(parseRoute("#/runs/0"), { screen: "none", what: "/runs/0" });
 });
@@ -55,4 +54,16 @@ test("Botbench opens on Home: the bare address and Home's own; Chat keeps its ad
   for (const at of ["#/work?state=any", "#/work?state=finished", "#/work?state=", "#/work?state=failed&kind=run", "#/work?q=x", "#/home/", "#/Home"]) assert.equal(parseRoute(at).screen, "none", at);
   // The sign-in address opened on a signed-in device goes to the first screen, which is Home.
   assert.deepEqual(parseRoute("#code=abc"), { screen: "redirect", to: "#/" });
+});
+
+test("Settings is itself or one of its six groups, each at its own address; the addresses it had before the groups open the group that now holds what they showed; a conversation with the paired workbench keeps its address", () => {
+  assert.deepEqual(parseRoute("#/settings"), { screen: "settings", group: null });
+  for (const group of ["agents", "environments", "identity", "permissions", "usage", "connections"]) assert.deepEqual(parseRoute(`#/settings/${group}`), { screen: "settings", group });
+  assert.deepEqual(parseRoute("#/trust"), { screen: "redirect", to: "#/settings/permissions" });
+  assert.deepEqual(parseRoute("#/usage"), { screen: "redirect", to: "#/settings/usage" });
+  assert.deepEqual(parseRoute("#/settings/appearance"), { screen: "redirect", to: "#/settings/identity" });
+  assert.deepEqual(parseRoute("#/settings/workbench"), { screen: "redirect", to: "#/settings/identity" });
+  for (const old of ["notifications", "devices", "paired"]) assert.deepEqual(parseRoute(`#/settings/${old}`), { screen: "redirect", to: "#/settings/connections" });
+  assert.deepEqual(parseRoute("#/settings/nothing"), { screen: "none", what: "/settings/nothing" });
+  assert.deepEqual(parseRoute("#/paired/11111111-2222-3333-4444-555555555555/threads/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), { screen: "thread", pairingId: "11111111-2222-3333-4444-555555555555", contextId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" });
 });

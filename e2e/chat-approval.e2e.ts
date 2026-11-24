@@ -3,6 +3,7 @@ import path from "node:path";
 import { test as base } from "@playwright/test";
 import { startBotbench, type Botbench } from "./botbench.ts";
 import { checkDesign, expect, goTo, messageBox, openComposer, sendChat, signIn } from "./helpers.ts";
+import { checkNext, choice, choose, openSettingsGroup } from "./settings-helpers.ts";
 
 // A chat's Claude Code asking for approval, in the real client at a phone's size, against a real Botbench process whose
 // Claude Code, in a chat only, replays real chat turns that asked to fetch https://example.com (e2e/serve-replayed-chat.ts,
@@ -23,20 +24,21 @@ test("with Ask, a chat's fetch stands in the chat where it was asked with its de
   await signIn(page, botbench);
 
   // Settings: web access is Allow until the owner picks Ask.
-  await goTo(page, "Settings");
-  const web = page.getByLabel("Web access", { exact: true });
-  await expect(web).toHaveValue("allow");
-  await web.selectOption("ask");
-  // Ask before every command, under Runs, is Off until the owner turns it on, and is kept.
-  const every = page.getByLabel("Ask before every command", { exact: true });
-  await expect(every).toHaveValue("off");
-  await every.selectOption("on");
-  await checkDesign(page, "settings, web access and ask before every command");
+  await openSettingsGroup(page, "permissions");
+  await expect(choice(page, "Web access")).toHaveAttribute("data-value", "allow");
+  await choose(page, "Web access", "Ask");
+  await expect(page.getByTestId("web-access-saved")).toHaveText("Saved.");
+  // Ask before every command is Off until the owner turns it on, and is kept.
+  await expect(choice(page, "Ask before every command")).toHaveAttribute("data-value", "off");
+  await choose(page, "Ask before every command", "On");
+  await expect(page.getByTestId("ask-every-saved")).toHaveText("Saved.");
+  await checkNext(page, "settings, web access and ask before every command");
   await page.reload();
-  await expect(page.getByLabel("Web access", { exact: true })).toHaveValue("ask");
-  await expect(page.getByLabel("Ask before every command", { exact: true })).toHaveValue("on");
+  await expect(choice(page, "Web access")).toHaveAttribute("data-value", "ask");
+  await expect(choice(page, "Ask before every command")).toHaveAttribute("data-value", "on");
   expect(((await (await page.request.get(`${botbench.base}/api/settings`)).json()) as { askEveryCommand: boolean }).askEveryCommand).toBe(true);
-  await openComposer(page);
+  // Back to the home screen, by its address: Settings has the new navigation, which a phone keeps behind its menu button.
+  await page.goto(`${botbench.base}/#/turn`);
   await expect(messageBox(page)).toBeEnabled();
 
   await sendChat(page, "Fetch https://example.com and tell me its title.");

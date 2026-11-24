@@ -6,6 +6,7 @@ import { openStore } from "../src/store/db.ts";
 import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
 import { checkDesign, expect, messageBox, signIn } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Crossing the 1024px width, where a screen gains or loses the column of chats and work beside it (issue #156): from
@@ -101,19 +102,21 @@ for (const appearance of ["light", "dark"] as const) {
     await checkDesign(page, `task, ready for review, ${appearance}, at a phone's width after a wide one`);
     await page.setViewportSize(WIDE);
 
-    // Permissions: Settings' section when wide, its own screen when narrow, each with its h1.
+    // Permissions and autonomy: beside the settings navigation when wide, a screen of its own when narrow, with its
+    // one h1 either way. Its old address opens it.
     await page.goto(`${botbench.base}/#/trust`);
-    await expect(h1(page)).toHaveText("Settings");
-    await expect(page.getByTestId("settings-section")).toHaveAttribute("aria-label", "Permissions");
+    await expect(h1(page)).toHaveText("Permissions and autonomy");
+    await expect(page.getByTestId("settings-nav").locator("[aria-current=page]")).toHaveText("Permissions and autonomy");
     await page.setViewportSize(PHONE);
     await expect(h1(page)).toHaveCount(1);
-    await expect(h1(page)).toHaveText("Permissions");
+    await expect(h1(page)).toHaveText("Permissions and autonomy");
     await expect(h1(page)).toBeInViewport();
+    await expect(page.getByTestId("settings-nav")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Always allowed", level: 2 })).toBeVisible();
-    await checkDesign(page, `permissions, ${appearance}, at a phone's width after a wide one`);
+    await checkNext(page, `permissions, ${appearance}, at a phone's width after a wide one`);
     await page.setViewportSize(WIDE);
     await expect(h1(page)).toHaveCount(1);
-    await expect(h1(page)).toHaveText("Settings");
-    await expect(page.getByTestId("settings-section")).toHaveAttribute("aria-label", "Permissions");
+    await expect(h1(page)).toHaveText("Permissions and autonomy");
+    await expect(page.getByTestId("settings-nav").locator("[aria-current=page]")).toHaveText("Permissions and autonomy");
   });
 }

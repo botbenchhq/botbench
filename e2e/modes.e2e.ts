@@ -3,6 +3,7 @@ import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
 import { checkDesign, checkRebuilt, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // LIVE. The modes, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
@@ -57,12 +58,12 @@ test("LIVE modes: semi-autonomous builds without plan approval and runs a task's
   await signIn(page, botbench);
 
   // Settings: the default mode is Manual until the owner picks another, which a new run then starts with.
-  await page.goto(`${botbench.base}/#/settings`);
+  await page.goto(`${botbench.base}/#/settings/permissions`);
   const defaults = page.getByTestId("default-mode-picker");
   await expect(defaults.getByRole("radio", { name: "Manual" })).toBeChecked();
   await defaults.getByRole("radio", { name: "Semi-autonomous" }).check();
   await expect.poll(async () => ((await (await page.request.get(`${botbench.base}/api/settings`)).json()) as { defaultMode: string }).defaultMode).toBe("semi");
-  await checkDesign(page, "settings, default mode");
+  await checkNext(page, "settings, default mode");
 
   // Semi-autonomous: building starts on the planner's plan, whose one task must run a command, without the owner's approval.
   await openComposer(page);
@@ -122,6 +123,6 @@ test("LIVE modes: semi-autonomous builds without plan approval and runs a task's
   // Activity says the mode accepted it.
   await page.goto(`${botbench.base}/#/trust`);
   await expect(page.getByText("Accepted without you: fully autonomous").first()).toBeVisible();
-  await checkDesign(page, "permissions, activity with the mode's accept");
+  await checkNext(page, "permissions, activity with the mode's accept");
   expect(foreign).toEqual([]);
 });

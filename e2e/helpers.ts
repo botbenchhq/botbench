@@ -51,13 +51,16 @@ export async function askBeforeEveryCommand(page: Page, botbench: Botbench): Pro
 }
 
 /**
- * A link of the navigation, pressed. On a screen rebuilt on shadcn/ui the navigation is behind the menu button at a
- * phone's size; on the others it is in the header.
+ * Follow one link of the navigation, as a person would: behind the menu button from 768 to 1023px, in the bar at the
+ * foot under that (where New chat or task is "New"), at the left from 1024px. Home is found with or without its count.
  */
 export async function goTo(page: Page, name: string): Promise<void> {
-  const link = page.getByRole("link", { name, exact: true }).first();
-  if (!(await link.isVisible())) await page.getByRole("button", { name: "Screens menu" }).click();
-  await link.click();
+  const link = name === "Home" ? /^Home/ : name === "New chat or task" ? /^New( chat or task)?$/ : name;
+  const menu = page.getByRole("button", { name: "Screens menu" });
+  if (await menu.isVisible()) {
+    await menu.click();
+    await page.getByRole("dialog").getByRole("link", { name: link, exact: true }).click();
+  } else await nav(page).getByRole("link", { name: link, exact: true }).first().click();
 }
 
 /** Chat, from the navigation: the chat on this device, or, with none, New chat or task. Either has the composer. */
@@ -82,11 +85,17 @@ export const workState = (row: Locator): Locator => row.getByTestId("work-state"
 /** One choice of Work's State filter, by its name; its text ends with how many rows it would show ("Needs you1"). */
 export const workStateFilter = (page: Page, name: RegExp): Locator => page.getByRole("group", { name: "State" }).getByRole("button", { name });
 
-/** Permissions or Usage, reached from Settings (the header's gear), as the client offers them. */
+/**
+ * Permissions and autonomy or Usage and limits, two of the six groups of Settings, reached as a person reaches them:
+ * the Settings link, then the group, from the list of groups at a phone's width and from the settings navigation from 1024px.
+ */
 export async function openFromSettings(page: Page, screen: "Permissions" | "Usage"): Promise<void> {
+  const name = screen === "Permissions" ? "Permissions and autonomy" : "Usage and limits";
   await goTo(page, "Settings");
-  await page.getByTestId("settings-links").getByRole("link", { name: new RegExp(`^${screen}`) }).click();
-  await expect(page.getByRole("heading", { name: screen, level: 1 })).toBeVisible();
+  await expect(page.getByTestId("settings")).toBeVisible();
+  const from = (await page.getByTestId("settings-groups").count()) > 0 ? page.getByTestId("settings-groups") : page.getByTestId("settings-nav");
+  await from.getByRole("link", { name: new RegExp(`^${name}`) }).click();
+  await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
 }
 
 /**

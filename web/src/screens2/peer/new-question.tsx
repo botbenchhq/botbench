@@ -1,13 +1,13 @@
 import { useContext, useId, useState } from "react";
-import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
-import { ApiError, sendPeerMessage, type SentPeerMessage } from "../api/client.ts";
-import { PeerCardsContext } from "../app/peer-cards.tsx";
-import { MAX_MESSAGE } from "./peer-card.tsx";
+import { ApiError, sendPeerMessage, type SentPeerMessage } from "../../api/client.ts";
+import { PeerCardsContext } from "../../app/peer-cards.tsx";
+import { MAX_MESSAGE } from "../../components/peer-card.tsx";
+import { About, Busy, FieldLabel, Textarea } from "../settings/parts.tsx";
 
 /**
  * The owner's own question to the paired workbench, sent when they press Send (ADR 0004 decision 9: the owner's own
- * message needs no card). `parentId` names the message of a thread it follows; without one it starts a conversation.
- * What became of it is said under the button, in the server's words.
+ * message needs no card). `parentId` names the message of a conversation it follows; without one it starts a
+ * conversation. What became of it is said under the button, in the server's words.
  */
 export function NewQuestion({ pairingId, peer, parentId, onSent, onSignedOut }: { pairingId: string; peer: string; parentId?: string; onSent?: (sent: SentPeerMessage) => void; onSignedOut: () => void }) {
   const id = useId();
@@ -36,32 +36,32 @@ export function NewQuestion({ pairingId, peer, parentId, onSent, onSignedOut }: 
   };
   return (
     <form
-      className="ds-stack ds-gap-sm"
+      className="flex flex-col gap-2"
       data-testid="new-question"
       onSubmit={(e) => {
         e.preventDefault();
         send();
       }}
     >
-      <div className="ds-field">
-        <label htmlFor={id} className="ds-field__label">
-          {parentId === undefined ? `A new question for ${peer}` : `Ask ${peer} more`}
-        </label>
-        <textarea id={id} value={text} maxLength={MAX_MESSAGE} readOnly={busy} aria-describedby={`${id}-about`} onChange={(e) => setText(e.target.value)} className="ds-field__control ds-textarea" />
-        <p id={`${id}-about`} className="ds-field__description">
-          {`Only this text leaves this Mac, and only to ${peer}'s workbench, when you press Send. At most 8,000 characters.`}
-        </p>
-      </div>
-      <div className="ds-cluster">
-        <BusyButton type="submit" busy={busy} busyLabel="Sending" disabled={text.trim() === ""}>
+      <FieldLabel htmlFor={id} data-ds-content="">
+        {parentId === undefined ? `A new question for ${peer}` : `Ask ${peer} more`}
+      </FieldLabel>
+      <Textarea id={id} value={text} maxLength={MAX_MESSAGE} readOnly={busy} aria-describedby={`${id}-about`} onChange={(e) => setText(e.target.value)} />
+      <About id={`${id}-about`}>
+        {"Only this text leaves this Mac, and only to "}
+        <span data-ds-content="">{peer}</span>
+        {"'s workbench, when you press Send. At most 8,000 characters."}
+      </About>
+      <div className="flex flex-wrap items-center gap-3">
+        <Busy type="submit" busy={busy} busyLabel="Sending" disabled={text.trim() === ""}>
           Send
-        </BusyButton>
+        </Busy>
+        {said !== null && (
+          <p role={said.tone} data-testid="new-question-said" className={said.tone === "alert" ? "text-meta text-destructive" : "text-meta text-muted-foreground"}>
+            {said.text}
+          </p>
+        )}
       </div>
-      {said !== null && (
-        <p role={said.tone} data-testid="new-question-said">
-          {said.text}
-        </p>
-      )}
     </form>
   );
 }

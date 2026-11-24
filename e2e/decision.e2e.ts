@@ -3,6 +3,7 @@ import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, git, initRepo, worktreeCount } from "../test/support/repo.ts";
 import { RUN_TASK_STATE, SHOTS, checkDesign, checkRebuilt, expect, openFromSettings, openRunId, signIn, startRunIn, startTaskIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Decisions in the real client, at a phone's size: a real Botbench process, real temporary repositories, and the
@@ -185,7 +186,7 @@ test("LIVE: a task whose check left a file git does not ignore is not offered Ac
   const log = page.getByTestId("action-log");
   await expect(log).toContainText("You rejected");
   await expect(log).toContainText("You accepted");
-  await checkDesign(page, "permissions, with decisions");
+  await checkNext(page, "permissions, with decisions");
   expect(foreign).toEqual([]);
 });
 

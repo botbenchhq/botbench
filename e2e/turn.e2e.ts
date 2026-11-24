@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { nav, SCREENS, checkDesign, checkWords, copyShot, contextSheet, expect, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
+import { checkDesign, checkWords, contextSheet, copyShot, expect, nav, SCREENS, SHOTS, signIn, tempShot, test, watchRequests } from "./helpers.ts";
+import { checkNext } from "./settings-helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const reply = (page: Page) => page.locator('[data-event="text"]');
@@ -11,7 +12,7 @@ test("LIVE: sign in, send a prompt, and the real reply appears without a reload;
   await page.goto(botbench.base);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("button")).toHaveCount(1);
-  await checkDesign(page, "sign-in");
+  await checkNext(page, "sign-in");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u4-sign-in.png") });
   await copyShot(page, "sign-in");
 
@@ -300,11 +301,11 @@ test("a wrong token shows an error and stays on sign-in", async ({ page, botbenc
   await page.getByLabel("Login token").fill("not-the-token");
   await page.getByRole("button", { name: "Sign in" }).click();
   // The alert names its tone in a word, then says what happened and what to do.
-  await expect(page.getByRole("alert")).toHaveText("ErrorWrong token. Check it and try again.");
+  await expect(page.getByRole("alert")).toHaveText("Error: Wrong token. Check it and try again.");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
   await expect(page.getByLabel("Login token")).toBeVisible();
   await expect(page.getByLabel("Message Claude Code")).toHaveCount(0);
-  await checkDesign(page, "sign-in, with an error");
+  await checkNext(page, "sign-in, with an error");
   // No session came of it: the API still refuses this browser.
   expect((await page.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
   expect((await page.request.get(`${botbench.base}/api/driver`)).status()).toBe(401);

@@ -14,6 +14,10 @@ import type { Route } from "../app/route.ts";
 const TaskScreen = lazy(() => import("./task/task-screen.tsx"));
 const ChatScreen = lazy(() => import("./chat/chat-screen.tsx"));
 const OpenChat = lazy(() => import("./chat/chat-screen.tsx").then((module) => ({ default: module.OpenChat })));
+const SettingsScreen = lazy(() => import("./settings/settings-screen.tsx"));
+const PeerScreen = lazy(() => import("./peer/peer-screen.tsx"));
+const SignInScreen = lazy(() => import("./sign-in/sign-in-screen.tsx"));
+const SessionState = lazy(() => import("./sign-in/sign-in-screen.tsx").then((m) => ({ default: m.SessionState })));
 const RunScreen = lazy(() => import("./run/run-screen.tsx"));
 const HomeScreen = lazy(() => import("./home/home-screen.tsx"));
 const WorkScreen = lazy(() => import("./work/work-screen.tsx"));
@@ -64,6 +68,22 @@ export function rebuilt(route: Route, onSignedOut: () => void): ReactNode | null
       </Suspense>
     );
   }
+  // Settings and its six groups. One screen for all of them, so choosing another group keeps the navigation in place.
+  if (route.screen === "settings") {
+    return (
+      <Suspense fallback={<Fetching />}>
+        <SettingsScreen group={route.group} onSignedOut={onSignedOut} />
+      </Suspense>
+    );
+  }
+  // One conversation with the paired workbench.
+  if (route.screen === "thread") {
+    return (
+      <Suspense fallback={<Fetching />}>
+        <PeerScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />
+      </Suspense>
+    );
+  }
   // A run has no old screen any more: this is the screen at its address.
   if (route.screen === "run") {
     return (
@@ -76,4 +96,22 @@ export function rebuilt(route: Route, onSignedOut: () => void): ReactNode | null
 }
 
 /** Whether `route` is shown by a rebuilt screen, which brings its own navigation and takes the whole window. */
-export const isRebuilt = (route: Route): boolean => route.screen === "home" || route.screen === "work" || route.screen === "task" || route.screen === "run" || route.screen === "turn" || route.screen === "chat";
+export const isRebuilt = (route: Route): boolean => route.screen !== "redirect" && route.screen !== "none";
+
+/** Sign in: the whole window, with no navigation. */
+export function signInScreen(notice: string | null, onSignedIn: () => void): ReactNode {
+  return (
+    <Suspense fallback={<Fetching />}>
+      <SignInScreen notice={notice} onSignedIn={onSignedIn} />
+    </Suspense>
+  );
+}
+
+/** What stands in the window before the session is known: that it is being checked, or that Botbench cannot be reached. */
+export function sessionState(unreachable: boolean): ReactNode {
+  return (
+    <Suspense fallback={<Fetching />}>
+      <SessionState unreachable={unreachable} />
+    </Suspense>
+  );
+}
