@@ -274,12 +274,12 @@ export function RejectDialog({ d }: { d: Decision }) {
             </RadioGroup>
           </fieldset>
           {left.length > 0 && (
-            <div className="flex flex-col gap-1 text-meta">
+            <div className="flex min-w-0 flex-col gap-1 text-meta">
               <p>These files were left by the checks and are not on the branch:</p>
-              <ul data-testid="leftovers">
+              <ul data-testid="leftovers" className="max-h-40 overflow-y-auto">
                 {left.map((file) => (
                   <li key={file}>
-                    <code data-ds-content="">{file}</code>
+                    <code data-ds-content="" className="break-all">{file}</code>
                   </li>
                 ))}
               </ul>
