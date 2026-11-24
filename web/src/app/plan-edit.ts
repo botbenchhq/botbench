@@ -1,5 +1,5 @@
 /*
- * A task of a run's plan while the owner edits it (screens/run.tsx), decided without a browser (test/plan-edit.test.ts).
+ * A task of a run's plan while the owner edits it (screens2/run/), decided without a browser (test/plan-edit.test.ts).
  */
 
 /** A task as the plan holds it. */

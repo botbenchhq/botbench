@@ -55,7 +55,7 @@ import { loadGhCapture } from "../test/support/replay-github.ts";
 import { ISSUE_ADDRESS, ISSUE_NUMBER, ISSUE_REPO, loadIssueCapture } from "../test/support/replay-issue.ts";
 import { parseIssueView } from "../src/github.ts";
 import { git, initRepo } from "../test/support/repo.ts";
-import { checkDesign, chooseRepository, closeContext, choose, expect, messageBox, openComposer, openRow, openWork, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, checkRebuilt, chooseRepository, closeContext, choose, expect, messageBox, openComposer, openRow, openRunId, openWork, runTaskRows, SHOTS, signIn, startRunIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 const PHONE = { width: 390, height: 844 };
@@ -165,7 +165,8 @@ async function matchDevice(page: Page): Promise<void> {
  * The design checks and screenshots of one screen at 390x844 and 1280x800, dark and light. `reopen` puts back what a
  * change of size closed (the Add context sheet does not stay open across a resize).
  */
-async function judge(page: Page, screen: string, name: string, ready: Locator, reopen?: () => Promise<void>): Promise<void> {
+// `check` is the design check for a screen still drawn with the design system's classes; a rebuilt screen (the run) is held to `checkRebuilt`.
+async function judge(page: Page, screen: string, name: string, ready: Locator, reopen?: () => Promise<void>, check: (page: Page, screen: string) => Promise<void> = checkDesign): Promise<void> {
   for (const [size, viewport] of [["phone", PHONE], ["desktop", DESKTOP]] as const) {
     for (const mode of ["dark", "light"] as const) {
       await page.setViewportSize(viewport);
@@ -177,7 +178,7 @@ async function judge(page: Page, screen: string, name: string, ready: Locator, r
       await expect(ready).toBeVisible();
       // Colours change with a short transition after the mode changes: judge the settled page, not one in between.
       await page.waitForTimeout(500);
-      await checkDesign(page, `${screen}, ${size}, ${mode}`);
+      await check(page, `${screen}, ${size}, ${mode}`);
       if (SHOTS) await tallShot(page, path.join(SHOTS, `northstar-${name}-${size}-${mode}.png`));
     }
   }
@@ -223,8 +224,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await page.reload();
   await expect(messageBox(page)).toBeVisible();
   await startRunIn(page, world.alice, MESSAGE, { mode: "Fully autonomous", review: "codex ?default", delivery: "Open a pull request" });
-  await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  const runA = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const runA = await openRunId(page);
   await expect(page.getByTestId("run-mode")).toHaveText(MODE_SENTENCE.full);
   await expect(page.getByTestId("run-delivery")).toHaveText("Botbench pushes its branch and opens a pull request");
 
@@ -237,7 +237,7 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   const claimed = remoteBranches(world.bare);
   expect(claimed.get(lock), "the issue's lock is on the remote").toBeDefined();
   expect(claimed.get(claimBranch), "A's named claim is at the lock's commit").toBe(claimed.get(lock));
-  await judge(page, "A, the run, its claim pushed", "a-run-claimed", claimA);
+  await judge(page, "A, the run, its claim pushed", "a-run-claimed", claimA, undefined, checkRebuilt);
 
   // Workbench B, on its own clone, starts on the same issue while A's claim is on the remote.
   const foreignB = watchRequests(pageB, bob);
@@ -262,24 +262,23 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   await expect(pageB.getByTestId("peer-warning")).toHaveText(new RegExp(`^A best-effort match on #${ISSUE_NUMBER} in your message: alice started on this issue (less than a minute|\\d+ minutes?) ago\\.$`));
   await expect(pageB.getByRole("button", { name: "Send" })).toBeEnabled();
   await pageB.getByRole("button", { name: "Send" }).click();
-  await expect(pageB.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  const runB = Number(/Run (\d+)/.exec((await pageB.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const runB = await openRunId(pageB);
 
   // B withdraws: its claim names A and A's earlier time, the run is stopped, and nothing of it was built or pushed.
   await expect(pageB.getByTestId("run-claim")).toHaveText(
     new RegExp(`^alice started on issue #${ISSUE_NUMBER} at \\d{2}:\\d{2}:\\d{2} UTC on \\d{4}-\\d{2}-\\d{2}, before this workbench did \\(\\d{2}:\\d{2}:\\d{2} UTC on \\d{4}-\\d{2}-\\d{2}\\), so this run stopped: when two workbenches start on one issue, the earliest claim goes ahead\\. The remote refused this workbench's claim, so nothing of this run was pushed\\.$`),
   );
   await expect(pageB.getByTestId("run-status")).toHaveText("Cancelled. Nothing was built, and no task was made from this run.");
-  await expect(pageB.getByTestId("run-tasks").getByRole("link")).toHaveCount(0);
+  await expect(runTaskRows(pageB)).toHaveCount(0);
   const withdrawn = (await (await pageB.request.get(`${bob.base}/api/runs/${runB}`)).json()) as { status: string; claim: { state: string } };
   expect([withdrawn.status, withdrawn.claim.state]).toEqual(["cancelled", "withdrawn"]);
   const afterB = remoteBranches(world.bare);
   expect([...afterB.keys()].filter((branch) => branch.startsWith("botbench/bob/")), "nothing of B's is on the remote").toEqual([]);
   expect(afterB.get(lock), "A still holds the issue's lock").toBe(claimed.get(lock));
-  await judge(pageB, "B, the run, withdrawn", "b-run-withdrawn", pageB.getByTestId("run-claim"));
+  await judge(pageB, "B, the run, withdrawn", "b-run-withdrawn", pageB.getByTestId("run-claim"), undefined, checkRebuilt);
 
   // Back on A: the planner's one task appears, and is built, checked, fixed, reviewed and fixed again with nobody asked.
-  await expect(page.getByTestId("run-tasks").getByRole("link")).toHaveCount(1, { timeout: 600_000 });
+  await expect(runTaskRows(page)).toHaveCount(1, { timeout: 600_000 });
   await page.getByTestId("run-tasks").getByRole("link").first().click();
   await expect(page.getByTestId("task-name")).toHaveText(/^Task \d+ · /);
   const taskId = Number(/Task (\d+)/.exec((await page.getByTestId("task-name").textContent()) ?? "")![1]);
@@ -345,8 +344,10 @@ test("MILESTONE North Star: an issue becomes a reviewed, refined pull request wi
   // The run's screen: done, its one task with its pull request.
   await page.goto(`${alice.base}/#/runs/${runA}`);
   await expect(page.getByTestId("run-task-pull-request")).toHaveText(`The branch is on origin, and Botbench opened pull request #${prNumber} into main. Nothing was merged.`);
-  await judge(page, "A, the run, done with its pull request", "a-run-done", page.getByTestId("run-task-pull-request"));
-  await openWork(page);
+  await judge(page, "A, the run, done with its pull request", "a-run-done", page.getByTestId("run-task-pull-request"), undefined, checkRebuilt);
+  // On a phone the run screen's navigation is behind its menu button; the bar's own link leads to Work.
+  await page.getByRole("navigation", { name: "Where this is" }).getByRole("link", { name: "Work" }).click();
+  await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
   await judge(page, "A, Work", "a-work", page.getByRole("heading", { name: "Work", level: 1 }));
 
   // B's Work lists A's claim and A's pushed branch under Other workbenches; B built nothing of its own.

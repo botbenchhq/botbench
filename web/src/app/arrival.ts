@@ -20,6 +20,14 @@ export function noteNavigation(): void {
   unclaimed = window.setTimeout(() => (navigated = false), 250);
 }
 
+/**
+ * The next screen's code is still being fetched (a rebuilt screen is loaded when its address is first opened,
+ * screens2/routes.tsx), so its heading is drawn later than a moment: the note is kept until that heading claims it.
+ */
+export function holdArrival(): void {
+  if (navigated) window.clearTimeout(unclaimed);
+}
+
 /** A field somebody may be typing in. */
 const typing = (el: Element): boolean => el.matches("input, textarea, select, [contenteditable]:not([contenteditable='false'])");
 
