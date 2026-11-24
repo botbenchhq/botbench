@@ -104,3 +104,6 @@ The first competitive library said "none of the projects" does something and tha
 
 ## 2026-11-23: a document was called wrong from a commit title
 The library said the README was out of date about Codex because a merged commit was titled "Make Codex a builder". The commit changed no behaviour, and the driver's declared capabilities said Codex cannot build. Rule going forward: before saying what Botbench can do, read the capability in the code (`src/drivers/*`, `src/engine/roles.ts`), not a title, a pull request description or an issue.
+
+## 2026-11-24: the phone had no mark, and the screens were only tested with short content
+The owner found on their phone that no screen under 1024px showed the Botbench mark: it stood only in the navigation's pane, which is not drawn there. The same day a list ran off the screen's edge because the test data had only short titles. Rule going forward: a part of the shell that one layout carries (the mark, the workbench, what waits) is checked at every layout, and a screen's browser test seeds long and many things (`e2e/stress.e2e.ts`, `e2e/fit.ts`), not only what fits.
