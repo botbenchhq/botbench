@@ -1,6 +1,6 @@
-# ADR 0011: A headless library for interactive primitives: Base UI
+# ADR 0011: A headless library for interactive primitives (Base UI), and the rule for client dependencies
 
-Date: 2026-11-23. Status: proposed, for the owner to accept. Nothing is installed and no source is changed by this record; where it names a test, a rule or a line that is not in the repository yet, that is what the pull requests after it would add. The design system's side of the same decision is its `docs/adr/0001-a-headless-library-for-the-react-layer.md`.
+Date: 2026-11-23. Status: **accepted for the headless library**, by the owner's instruction to proceed, relayed to this session on 2026-11-23 with the words "If our product looks bad it won't get much attention, so let's not be super strict here"; **proposed for each optional addition** in "Optional additions", to be taken up when its work starts. Nothing is installed and no source is changed by this record; where it names a test, a rule or a line that is not in the repository yet, that is what the pull requests after it would add. The design system's side of the same decision is its `docs/adr/0001-a-headless-library-for-the-react-layer.md`.
 
 ## Context
 
@@ -20,17 +20,40 @@ Date: 2026-11-23. Status: proposed, for the owner to accept. Nothing is installe
 5. **The first pull request installs it for one component, the menu, and is not merged until two things are measured in it**: Botbench's own content security policy with the menu open (see "Security notes"), and the size of the built client before and after. Both go in that pull request's evidence. If the policy refuses the menu's placement, the pull request is closed and this record is revisited.
 6. **Adoption is one component at a time**, in the numbered order of the design system's ADR ("Order of work"). A component that does not need the library does not get it.
 
-## How the zero-dependency rule reads after this
+## The rule for client dependencies
 
 `CLAUDE.md`, Engineering standards, today:
 
 > Dependencies and secrets: zero runtime dependencies unless an ADR says why. `npm audit` clean, lockfile committed, no secret or token in the repo, logs or responses.
 
-Proposed, to be changed in the pull request that installs the library, not in this one:
+Replacement, to be made in the pull request that installs the library, not in this one:
 
-> Dependencies and secrets: the server has zero runtime dependencies. The client declares three: `react`, `react-dom` and `@base-ui/react` (ADR 0011), which brings eight more of its own, all in `web/package-lock.json`. Only the design system's React files import it. Any other runtime dependency needs an ADR that says why. `npm audit` clean, lockfile committed, no secret or token in the repo, logs or responses.
+> Dependencies and secrets: the server has zero runtime dependencies. The client may have a small number, each one where it makes the interface clearly better and would be done worse by hand. Each is a row in the table of ADR 0011 (name, what it is for, licence, size, why not hand-built, how it would be replaced) before it is installed. None may make a network request or collect telemetry. `npm audit` clean, lockfile committed, no secret or token in the repo, logs or responses.
 
-What changes: one named package, with the eight it depends on, joins the two the client already has. What does not: the server, the rule that a further dependency needs its own ADR, and the audit and lockfile rules.
+The design system's `AGENTS.md`, today:
+
+> No runtime dependencies. Development dependencies are for tests (React and esbuild only build a test fixture) and for `npm run vendor`, which copies font and icon files from `node_modules` into `base/`. The build never reads `node_modules`.
+
+Replacement:
+
+> No runtime dependencies in the stylesheet, the tokens, the checker, the behaviour modules or the build. A file in `react/` may import a client dependency that is a row in the table of Botbench's ADR 0011 and is named in `docs/adr/0001`; the app installs it. Development dependencies are for tests (React, those client dependencies and esbuild only build a test fixture) and for `npm run vendor`, which copies font and icon files from `node_modules` into `base/`. The build never reads `node_modules`.
+
+What changes: the client's bar moves from "none without an ADR each" to "few, each a row here with its reasons". What does not: the server stays at zero and nothing is added to it under this record; the audit and lockfile rules; no network use.
+
+### The table
+
+A row is added by a pull request that amends this record. "Size" is the registry's unpacked size, then the whole package minified and gzipped by Bundlephobia [S1]; neither is the cost in Botbench's build, which each installing pull request measures.
+
+| Name | Status | What it is for | Licence | Size | Why not hand-built | How it would be replaced |
+|---|---|---|---|---|---|---|
+| `react`, `react-dom` ^19.3 | In use | The client | MIT | Not looked up for this record | | |
+| `@base-ui/react` ^1.9.0 | Accepted | Menu, select, combobox, popover, tooltip, hover card, context menu, toast, sheet, dialog, tabs, disclosure | MIT [B2] | 10,377,319 bytes unpacked; 166,427 gzipped whole; about 130 kB gzipped for the full list by bundlejs [S3] | Submenus, typeahead, delay groups, drag and exits in three engines are the work the audit found missing | One file of the design system's `react/` at a time, behind the same props and `ds-` classes |
+| `@tanstack/react-virtual` | Proposed: adopt when the transcript is virtualised | Rendering only the rows of a long transcript that are on screen | MIT [V1] | 65,103 bytes unpacked, and 690,700 for `@tanstack/virtual-core`; 10,773 gzipped | Measured row heights with the view held at the end while a reply arrives is easy to get subtly wrong; the library documents exactly that case [V3] | Behind `use-transcript.ts`; another virtualiser or none |
+| A syntax highlighter (`sugar-high`, or `shiki` by language) | Proposed: adopt when code blocks and the diff are rebuilt | Colour for code in replies, tool output and diffs | MIT, both [H1][H2] | `sugar-high`: 102,775 unpacked; 11,507 gzipped. `shiki`: 601,994 unpacked without its grammars (`@shikijs/langs` 8,650,980) | A tokeniser for thirty-odd languages is not Botbench's work | Behind the code block's file; a block with no highlighter is plain mono text, as now |
+| `diff` | Proposed: adopt when the diff is rebuilt | Word-level marks inside a changed line | BSD-3-Clause [D1] | 615,597 unpacked; 7,851 gzipped | A correct shortest-edit algorithm is a known, tested thing | One function call behind the diff component |
+| `motion` | Not adopted | | | | See below | |
+| `cmdk` | Not adopted | | | | See below | |
+| `lucide-react` | Not adopted | | | | See below | |
 
 ## What was compared
 
@@ -163,6 +186,54 @@ The new composite components of the approved visual direction:
 | Progress track | No | A list with the run's status set. |
 | Docked sheet | Yes | `Drawer` with `modal={false}`, which the documentation describes as opting "out of focus trapping"; a docked use is not described as such there, so it is tried before it is promised [B8]. |
 
+## Optional additions
+
+Each was looked up on 2026-11-23 from the registry and the project's own pages. None was installed or run. Verdicts: adopt now, adopt when its work starts, or do not adopt.
+
+| Addition | Candidate, version, licence | React 19 | Verdict |
+|---|---|---|---|
+| Motion | `motion` 14.14.0, MIT; it depends on `framer-motion` 14.14.0 (8,509,787 bytes unpacked), which depends on `motion-dom` (5,210,334) [M1] | Peer range `^18.0.0 \|\| ^19.0.0`; "only compatible with React versions `18.2` and higher" [M1][M2] | Do not adopt now. Look again when list motion in the work queue is built. |
+| Syntax highlighter | `sugar-high` 2.7.0, MIT, no dependencies; `shiki` 4.6.0, MIT [H1][H2] | Neither needs React | Adopt when its work starts: `sugar-high` first. |
+| List virtualiser | `@tanstack/react-virtual` 3.14.28, MIT [V1] | Peer range includes `^19.0.0` [V1] | Adopt when its work starts. |
+| Diff computation | `diff` 9.0.0, BSD-3-Clause, no dependencies [D1] | Does not use React | Adopt when its work starts. |
+| Command palette | `cmdk` 1.1.1, MIT [C1] | Peer range `^18 \|\| ^19` [C1] | Do not adopt. Base UI covers it. |
+| Icons | `lucide-react` 1.78.0, ISC [L1] | Peer range includes `^19.0.0` [L1] | Do not adopt. Keep the sprite. |
+| Typeface | IBM Plex Sans, or Geist; both SIL Open Font License 1.1 [F1] | Not a script | Do not adopt now. It is the owner's call, and `DESIGN.md` forbids it as written. |
+| shadcn/ui | Not a dependency: component source to copy, MIT [U1] | | Use as a reference for structure. Do not take its styling. |
+
+**Motion.** What it would be for: the dialog, sheet, list and approval entrances and exits.
+
+- Entrances are already CSS in all three engines (`@starting-style`, addendum section 7), so the approval's entrance needs nothing.
+- Exits of the dialog, sheet, menu, popover, tooltip and toast are what Base UI is adopted for: it holds the closing element while a CSS transition runs.
+- What Motion has that those two do not: layout animation (a row sliding to its new place when a list reorders, inserts or removes), springs that can be interrupted mid-way, and drag. Drag for the sheet comes with Base UI's drawer.
+- The cost by Motion's own figures: the `motion` component cannot be made "smaller than 43kb"; the lazy form is "just over 5kb" plus 24kb for the set with exit animations, or plus 38kb for the set with "pan/drag gestures and layout animations" [M3]. So the one thing it would be wanted for, layout animation, is the 38kb set. Bundlephobia gives 64,323 bytes gzipped for the whole package [S1].
+- Judgement: for dialogs, sheets and the approval it would not look noticeably better than CSS transitions with the right easing and durations, which the audit's motion plan already specifies. For a reordering work queue it might. Same-document view transitions are supported in all three engines by the addendum's table and cost nothing; they are tried first. If rows still jump, Motion's lazy form is proposed then, with a measured size.
+
+**Syntax highlighter.**
+
+- Shiki is the accurate one (the grammars editors use) and the heavy one. Its own page gives the full bundle as "6.4 MB (minified), 1.2 MB (gzip), async chunks included" and the web bundle as "3.8 MB (minified), 695 KB (gzip)", and says "it's always better to use the fine-grained bundles" [H3]. Its JavaScript engine "doesn't require loading a large WebAssembly file" [H4]; the default engine is WebAssembly, which Botbench's policy has no allowance for.
+- `sugar-high` is the light one: no dependencies, more than thirty built-in languages that can be imported one by one, 5.16 KiB gzipped for a TypeScript-only bundle by its own benchmark, token colours through CSS custom properties, which suits the system's tokens [H5].
+- Verdict: `sugar-high` when the code block is rebuilt, a few languages only. Shiki by language with the JavaScript engine, loaded only when a block needs it, if `sugar-high`'s colouring proves too coarse on real transcripts.
+- A condition for either: agent text is never set as markup here. Both libraries return HTML strings in their simplest use [H5]; the one adopted must be used through a form that gives tokens for React to render, or its output must be shown to escape every character of its input by a test. Which form each offers was not checked for this record.
+
+**List virtualiser.** TanStack Virtual "does not ship with or render any markup or styles" [V2], so the rows keep the system's classes. Its documentation names Botbench's case: "Set `anchorTo: 'end'` for chat, logs, and reverse/inverted feeds", it "keeps an end-pinned viewport pinned when the last item grows during streaming output", and "the follow only happens if the viewport was already at the end before the append" [V3], which is the rule `use-transcript.ts` implements by hand today. The addendum's section 3 measured the cost of long transcripts without it. The alternative looked at, `virtua` 0.55.0 (MIT, no dependencies, 10,193 gzipped), has no 1.0 [V4]. Verdict: adopt when the transcript is virtualised; the pull request shows the addendum's numbers before and after.
+
+**Diff computation.** `diff` is "a JavaScript text differencing implementation" with `diffWords`, which treats "each word and each punctuation mark as a token", on Myers' O(ND) algorithm; it ships its own types since version 8 [D2]. Botbench's diff shows what git produced, line by line; word-level marks inside a changed line need a second, smaller diff of the two lines, in the client. Its licence, BSD-3-Clause, is permissive and needs its notice kept, as MIT does. Verdict: adopt when the diff is rebuilt.
+
+**Command palette.** `cmdk` "composes Radix UI's Dialog component" and depends on four `@radix-ui` packages [C1][C2], so it would bring a second headless library into the client, which the owner ruled out. Its registry entry was last modified on 2025-08-27. Base UI has the parts: `Dialog`, and `Autocomplete` ("Input with a filtered list of options") or `Combobox` [B1]. Ranking and nested pages are written here either way: `cmdk`'s README shows pages "implemented with simple state" by the app [C2]. Verdict: do not adopt.
+
+**Icons.** `lucide-react` gives each icon as "a standalone component that renders an optimized inline SVG", tree-shaken to the icons imported [L2]. The design system already ships the same icons as one sprite: 42 icons from `lucide-static` 1.77.0, 11,360 bytes in Botbench's copy, one cached file, with the names the checker knows. Inline components would put each icon's paths in the script instead. Nothing would look different. Verdict: do not adopt; a missing icon is added to the sprite in the design system.
+
+**Typeface.**
+
+- Today: the Botbench theme sets `system-ui` and `ui-monospace`, and `DESIGN.md` says "Botbench loads no font of its own" and, under Never, "Inter or Roboto as brand type, or any font set by Botbench itself". So this is not adopted without the owner changing that line.
+- What it would cost: the design system's copy already holds IBM Plex Sans as one variable file, Latin subset, 45,712 bytes, and IBM Plex Mono at three weights, 14,708, 14,888 and 15,620 bytes [F1]. One typeface for the interface is about 46 kB and one more request; with mono at two weights about 75 kB. No npm dependency is added: the files are already in the vendored copy and the theme would stop overriding them.
+- What it would buy: the same letterforms, widths and figures on every device, so the dense table, the work queue and screenshots line up the same on a Mac, an iPhone and anything else; a recognisable look that the platform font, by definition, does not give. What it loses: the platform's own rendering, which is what readers of each device are used to, and a first paint with no font to wait for.
+- Candidates, neither banned: **IBM Plex Sans** (SIL OFL 1.1, already in the copy and already measured against the system's tokens) and **Geist** (SIL OFL 1.1 by its Fontsource package, 5.3.0; its file size was not measured) [F1]. Plex is the cheaper to try, since it is a one-line change in the theme.
+- Verdict: do not adopt now. If the owner wants a face of its own, try Plex in the theme on a branch and look at the real screens before deciding.
+
+**shadcn/ui.** In its own words "This is not a component library. It is how you build your component library": it "hands you the actual component code" [U2]. That code is React components on a headless library, styled with Tailwind classes: "Components are styled using Tailwind CSS", and a manual install adds `class-variance-authority`, `lucide-react` and `tw-animate-css` [U3]. Its changelog has "Base UI as the Default" in July 2026 [U4]. Taking its components would put Tailwind utility classes and its own look where the `ds-` classes and tokens are, outside the closed vocabulary the checker holds. Its Base UI components are, though, a worked example of how the parts of each primitive are composed, and that is how to use it: read for structure when writing a file of the design system's `react/`, copy no styling, and list any file actually copied in `NOTICE`.
+
 ## Evidence
 
 All read on 2026-11-23, local time (US Central); the last reads fell on 2026-11-24 UTC, which is why two rows show a push dated the 24th.
@@ -212,6 +283,29 @@ All read on 2026-11-23, local time (US Central); the last reads fell on 2026-11-
 | O1 | `npm view @ariakit/react`; https://ariakit.com/components | 0.4.44, MIT, published 2026-11-22; the component list |
 | O2 | `npm view @headlessui/react`; https://headlessui.com/ | 2.2.10, MIT, last modified 2026-04-13, dependencies; the component list |
 | O3 | `npm view vaul` | 1.1.2, MIT, depends on `@radix-ui/react-dialog`, last modified 2024-12-14 |
+| M1 | `npm view motion`, `framer-motion`, `motion-dom`; `gh api repos/motiondivision/motion` | 14.14.0, MIT, dependencies, peer ranges, sizes; modified 2026-11-13 |
+| M2 | https://motion.dev/docs/react-installation | "only compatible with React versions `18.2` and higher" |
+| M3 | https://motion.dev/docs/react-reduce-bundle-size | 43kb, 5kb, +24kb, +38kb and what each set includes |
+| H1 | `npm view sugar-high` | 2.7.0, MIT, no dependencies, 102,775 bytes, modified 2026-11-13 |
+| H2 | `npm view shiki`, `@shikijs/core`, `@shikijs/langs`, `@shikijs/themes`; also `highlight.js` (11.12.0, BSD-3-Clause, 307,085 gzipped whole) and `prismjs` (1.30.0, MIT), looked at and not taken further | 4.6.0, MIT, dependencies, sizes, modified 2026-11-02 |
+| H3 | https://shiki.style/guide/bundles | The bundle sizes quoted |
+| H4 | https://shiki.style/guide/regex-engines | The JavaScript and Oniguruma engines |
+| H5 | https://raw.githubusercontent.com/huozhi/sugar-high/main/packages/sugar-high/README.md | Languages, output, sizes, CSS custom properties |
+| V1 | `npm view @tanstack/react-virtual`, `@tanstack/virtual-core` | 3.14.28, MIT, peer range, sizes, modified 2026-11-22 |
+| V2 | https://tanstack.com/virtual/latest/docs/introduction | "does not ship with or render any markup or styles" |
+| V3 | https://tanstack.com/virtual/latest/docs/api/virtualizer | `measureElement`, `anchorTo: 'end'` and the sentences quoted |
+| V4 | `npm view virtua` | 0.55.0, MIT, no dependencies |
+| D1 | `npm view diff` | 9.0.0, BSD-3-Clause, no dependencies, 615,597 bytes, modified 2026-04-13 |
+| D2 | https://raw.githubusercontent.com/kpdecker/jsdiff/master/README.md | `diffWords`, the algorithm, types since version 8 |
+| C1 | `npm view cmdk` | 1.1.1, MIT, four `@radix-ui` dependencies, peer range, modified 2025-08-27 |
+| C2 | https://raw.githubusercontent.com/pacocoursey/cmdk/main/README.md | "Composes Radix UI's Dialog component"; pages by the app's own state |
+| L1 | `npm view lucide-react`, `lucide-static` | 1.78.0, ISC, 40,042,183 bytes unpacked, peer range; 216,851 gzipped whole |
+| L2 | https://lucide.dev/guide/packages/lucide-react | Tree-shaking, inline SVG, ISC |
+| F1 | `web/vendor/design-system/fonts/` in this repository (file sizes, licence texts); `npm view @fontsource-variable/ibm-plex-sans`, `@fontsource-variable/geist` | The byte counts; OFL-1.1 for both; Geist package 180,843 bytes unpacked, all subsets |
+| U1 | `gh api repos/shadcn-ui/ui` | MIT, last push 2026-11-23 |
+| U2 | https://ui.shadcn.com/docs | The self-description quoted |
+| U3 | https://ui.shadcn.com/docs/installation/manual | Tailwind, and the packages a manual install adds |
+| U4 | https://ui.shadcn.com/docs/changelog | "Base UI as the Default", July 2026; Base UI, React Aria and Radix variants |
 | S1 | `https://bundlephobia.com/api/size?package=<name>@<version>` | Whole-package minified and gzipped sizes |
 | S2 | `https://bundlephobia.com/api/exports-sizes?package=<name>@<version>` | Per-export minified and gzipped sizes |
 | S3 | `https://deno.bundlejs.com/` with `q=@base-ui/react@1.9.0`, `treeshake=[{Menu,ContextMenu,Select,Combobox,Popover,Tooltip,PreviewCard,Toast,Dialog,AlertDialog,Drawer,Tabs,ToggleGroup,Toggle,Collapsible}]`, React external | 393,951 bytes, 129,787 gzipped; with `treeshake=[{Menu}]`, 180,846 and 61,222. The full-set query for the other two returned an error |
@@ -227,4 +321,5 @@ All read on 2026-11-23, local time (US Central); the last reads fell on 2026-11-
 - Whether a Base UI popup is placed correctly under Botbench's content security policy.
 - That React Aria's and Radix's full trees make no network call: only the packages named in A12 and R8 were searched.
 - Whether React Aria's `PreviewTrigger` and `Sheet` are considered stable; their pages do not say.
+- For the optional additions: nothing but the registry and each project's pages. Not established: whether any of them makes a network request (none was searched as Base UI was; that search is a condition of each one's installing pull request); the size of any in Botbench's build; whether `sugar-high` or Shiki offers tokens rather than an HTML string in the form needed; Geist's file size; how Motion's layout animation compares with view transitions on the real work queue.
 - How any of the three behaves in iOS Safari or with VoiceOver. Nothing was run; this record is from documentation, the registry and package text.
