@@ -21,7 +21,7 @@
 
 **Coordinate.** See what your teammates' workbenches are doing on the same repository, claim an issue so only one of you takes it (a setting you turn on for a repository), check two changes together before either is merged, and, once paired, ask the other workbench a question. Every message between workbenches is one its owner approved.
 
-[Quickstart](#quickstart) · [Documentation](#where-to-go-next) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going)
+[Website](https://botbenchhq.github.io/) · [Quickstart](#quickstart) · [Documentation](#where-to-go-next) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going)
 
 As you add more agents, tools and teammates, keeping their work organized, and making sure it all fits together, becomes a job of its own.
 
@@ -124,7 +124,7 @@ Real screens from two Botbench installations on one Mac, named maya and theo, wo
 **Do not use it if:**
 
 - **You are on Windows or Linux.** Agents are started only on macOS, because the confinement relies on macOS's sandbox.
-- **You want a hosted service or a shared team server.** Each developer runs their own Botbench on their own Mac, behind its own login token. There are no accounts, and two workbenches share nothing but what they push to GitHub.
+- **You want a hosted service or a shared team server.** Each developer runs their own Botbench on their own Mac, behind its own login token. Botbench has no accounts or shared server. Workbenches see branches and pull requests on a shared GitHub repository; paired workbenches can also exchange questions and answers approved by their owners.
 - **You need a hard security boundary for code you do not trust.** See [Is it a sandbox?](#is-it-a-sandbox) below.
 - **You need it stable.** It changes often, and nothing here is promised to stay the same.
 
@@ -334,6 +334,8 @@ Do not put Botbench on the public internet. Its sign-in is one token, made for a
 | Report a bug | [GitHub issues](https://github.com/botbenchhq/botbench/issues), with what you did, what you expected and what Botbench printed |
 | Report a security problem | Not in an issue. See [`CONTRIBUTING.md`, Reporting a security problem](CONTRIBUTING.md#reporting-a-security-problem) |
 | See what is planned, and why | [The plan](docs/plans/2026-11-21-2234-feat-botbench-software-factory-plan.md) |
+
+Built and maintained by [Jon Lange](https://github.com/jon-lange).
 
 ## Licence
 
