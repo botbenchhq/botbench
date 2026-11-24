@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CSPProvider } from "@base-ui/react/csp-provider";
-import { House, Layers, Menu, MessageSquare, Moon, PanelBottomOpen, Settings, Sun } from "lucide-react";
+import { House, Layers, Menu, MessageSquare, Moon, PanelBottomOpen, Plus, Settings, Sun } from "lucide-react";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
@@ -18,6 +18,7 @@ const SCREENS = [
   { label: "Home", href: "#/", icon: House },
   { label: "Work", href: "#/work", icon: Layers },
   { label: "Chat", href: "#/turn", icon: MessageSquare },
+  { label: "New chat or task", href: "#/new", icon: Plus },
   { label: "Settings", href: "#/settings", icon: Settings },
 ] as const;
 

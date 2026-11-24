@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, expect, SHOTS, test } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, test, goTo } from "./helpers.ts";
 
 // Connect from Settings with the real Claude Code, pointed at an empty configuration directory so it reports itself
 // signed out and the owner's own sign-in is never touched. The sheet shows the link the real CLI printed. The sign-in
@@ -27,7 +27,7 @@ test("a signed-out Claude Code shows Connect; the sheet shows the real sign-in l
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code: /);
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    await goTo(page, "Settings");
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     const agent = page.getByTestId("agent-claude-code");
     await expect(agent.getByTestId("agent-state")).toHaveText("Signed out");
@@ -80,7 +80,7 @@ test("Antigravity, not connected in a new data folder, shows Connect; the sheet 
     await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    await goTo(page, "Settings");
     const agent = page.getByTestId("agent-antigravity");
     await expect(agent.getByTestId("agent-state")).toHaveText("Signed out", { timeout: 30_000 });
     await agent.getByRole("button", { name: "Connect Antigravity" }).click();

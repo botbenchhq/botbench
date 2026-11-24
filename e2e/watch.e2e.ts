@@ -62,8 +62,8 @@ test("a proposed issue shows on Work with its title and author as plain text; St
   await expect(sheet.getByTestId("issue-preview").getByRole("heading", { name: issue.title })).toBeVisible();
   await checkDesign(page, "the composer, opened from Start with the issue attached");
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
-  await expect(sheet.locator(".ds-context-list__button", { hasText: "From an issue" }).locator(".ds-context-list__value")).toHaveText(issueWords({ number: issue.number, title: issue.title }));
-  await expect(sheet.locator(".ds-context-list__button", { hasText: /^Repository/ }).locator(".ds-context-list__value")).toHaveText(path.basename(repo));
+  await expect(sheet.locator("button[data-row]", { hasText: "From an issue" }).locator('[data-testid="context-row-value"]')).toHaveText(issueWords({ number: issue.number, title: issue.title }));
+  await expect(sheet.locator("button[data-row]", { hasText: /^Repository/ }).locator('[data-testid="context-row-value"]')).toHaveText(path.basename(repo));
   await closeContext(page);
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 

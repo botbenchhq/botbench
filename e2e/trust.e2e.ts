@@ -6,7 +6,7 @@ import { insertStanding, realRepo } from "../src/approvals/grants.ts";
 import { createTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { checkoutState, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
+import { SCREENS, MONO_FAMILY, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, copyShot, expect, nav, openCanDo, openFromSettings, primaries, signIn, startTaskIn, test as base, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // Standing permissions in the real client, at a phone's size: a real Botbench process whose settings offer standing
@@ -53,8 +53,9 @@ async function cardOf(page: Page, id: number): Promise<Locator> {
 test("Permissions starts empty in words, with nothing to tap and nothing in the tray", async ({ page, botbench }) => {
   await signIn(page, botbench);
   // Permissions is a screen of its own, reached from Settings, with a link back. With nothing granted and nothing logged it says so in words.
-  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await openFromSettings(page, "Permissions");
+  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Always allowed", "Check a command", "Activity"]);
   await expect(page.getByRole("banner").getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("href", "#/settings");
   await expect(nav(page).locator('[aria-current="page"]')).toHaveCount(0);

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { allowCommands, askCancelRun, checkDesign, checkRebuilt, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, RUN_TASK_STATE, runSteps, runTaskRows, SHOTS, signIn, test, watchRequests, checkWords, workRows, workState } from "./helpers.ts";
+import { SCREENS, allowCommands, askCancelRun, checkDesign, checkRebuilt, checkWords, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, primaries, RUN_TASK_STATE, runSteps, runTaskRows, SHOTS, signIn, test, watchRequests, workRows, workState } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -185,11 +185,13 @@ test("the navigation lists the destinations; New run opens the composer asking f
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
   // Starting something new is a button in Work, not a destination.
-  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await openWork(page);
   await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
   await checkWords(page, "work, none yet");
   await page.getByRole("link", { name: "New run" }).click();
+  // The sheet opens on Repository, over the screen: once it is there it is closed.
+  await expect(page.getByTestId("context-sheet")).toBeVisible();
   await closeContext(page);
   await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
   await checkDesign(page, "composer, a new run with no repository");
@@ -203,7 +205,8 @@ test("the navigation lists the destinations; New run opens the composer asking f
   await expect(page.getByTestId("preapproved-list").getByRole("listitem")).toHaveText([/npm test/]);
   await closeContext(page);
   await messageBox(page).fill("Add a.txt containing a.");
-  await expect(page.locator(".ds-button--primary")).toHaveCount(1);
+  // Send is the screen's one filled button.
+  expect(await primaries(page)).toEqual(["Send"]);
   await checkDesign(page, "composer, a run filled in");
 });
 
@@ -223,7 +226,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
   const sheet = await openRow(page, "Spec file");
   await sheet.getByLabel("Spec file path").fill(missing);
   await sheet.getByRole("button", { name: "Back to Add context" }).click();
-  await expect(sheet.locator('[data-row="spec"] .ds-context-list__value')).toHaveText("no-such-spec.md");
+  await expect(sheet.locator('[data-row="spec"] [data-testid="context-row-value"]')).toHaveText("no-such-spec.md");
   await closeContext(page);
   await messageBox(page).fill("and a prompt as well");
   await expect(send).toBeDisabled();

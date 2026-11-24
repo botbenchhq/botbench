@@ -7,7 +7,7 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { storeChecks } from "../test/support/checks.ts";
 import { git, initRepo, write } from "../test/support/repo.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
-import { checkLayout, checkWords, expect, SHOTS, signIn, watchRefused } from "./helpers.ts";
+import { checkLayout, checkWords, expect, SCREENS, SHOTS, signIn, watchRefused } from "./helpers.ts";
 
 // The review of a task on its screen rebuilt on shadcn/ui and Tailwind 4 (ADR 0012), at the task's own address, in the real
 // client against a real Botbench process, which serves it with its real content security policy. No model turn: before
@@ -101,7 +101,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("branch")).toHaveText(seeded.current.branch);
     await expect(page.getByTestId("commit")).toHaveText(short(seeded.current.commit));
     // The navigation holds the screens that exist, and names the open task.
-    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText([/^Home/, "Work", "Chat", "Settings"]);
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(SCREENS);
     await expect(page.getByRole("link", { name: seeded.current.title })).toHaveAttribute("aria-current", "page");
 
     // An overlay the library places itself (the whole commit, on hover or focus) is placed under the same policy: beneath its trigger.

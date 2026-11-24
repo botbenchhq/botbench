@@ -33,8 +33,11 @@ export async function signIn(page: Page, botbench: Botbench): Promise<void> {
  * steps are the one place the tests drive it, so a change to the composer changes the tests here.
  */
 
-/** The navigation: Home, Work and Chat. */
+/** The navigation of every screen. */
 export const nav = (page: Page): Locator => page.getByRole("navigation", { name: "Screens" });
+
+/** The navigation's links, in their order. Home's ends with its count when something needs the owner; the bar at the foot of a phone says "New" for New chat or task. */
+export const SCREENS = [/^Home/, "Work", "Chat", /^New( chat or task)?$/, "Settings"];
 
 /** The home screen, from the navigation. Its one h1, Chat, is for assistive technology only. */
 /**
@@ -47,18 +50,25 @@ export async function askBeforeEveryCommand(page: Page, botbench: Botbench): Pro
   expect(res.status(), await res.text()).toBe(200);
 }
 
+/**
+ * A link of the navigation, pressed. On a screen rebuilt on shadcn/ui the navigation is behind the menu button at a
+ * phone's size; on the others it is in the header.
+ */
+export async function goTo(page: Page, name: string): Promise<void> {
+  const link = page.getByRole("link", { name, exact: true }).first();
+  if (!(await link.isVisible())) await page.getByRole("button", { name: "Screens menu" }).click();
+  await link.click();
+}
+
+/** Chat, from the navigation: the chat on this device, or, with none, New chat or task. Either has the composer. */
 export async function openComposer(page: Page): Promise<void> {
-  await nav(page).getByRole("link", { name: "Chat", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
+  await goTo(page, "Chat");
   await expect(messageBox(page)).toBeVisible();
 }
 
 /** Work, every run, task started on its own and chat, from the navigation. Its list has been read when this returns. */
 export async function openWork(page: Page): Promise<void> {
-  // On Home, at a phone's width, the navigation is behind the menu button: Work is opened by its address there.
-  const link = nav(page).getByRole("link", { name: "Work", exact: true });
-  if (await link.first().isVisible()) await link.first().click();
-  else await page.evaluate(() => (window.location.hash = "#/work"));
+  await goTo(page, "Work");
   await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
   await expect(page.getByTestId("work-shown")).toBeVisible();
 }
@@ -74,7 +84,7 @@ export const workStateFilter = (page: Page, name: RegExp): Locator => page.getBy
 
 /** Permissions or Usage, reached from Settings (the header's gear), as the client offers them. */
 export async function openFromSettings(page: Page, screen: "Permissions" | "Usage"): Promise<void> {
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await goTo(page, "Settings");
   await page.getByTestId("settings-links").getByRole("link", { name: new RegExp(`^${screen}`) }).click();
   await expect(page.getByRole("heading", { name: screen, level: 1 })).toBeVisible();
 }
@@ -87,8 +97,9 @@ export async function openFromSettings(page: Page, screen: "Permissions" | "Usag
 export async function openNewTask(page: Page): Promise<void> {
   await page.evaluate(() => (window.location.hash = "#/turn?start=task"));
   await expect(messageBox(page)).toBeVisible();
-  const sheet = contextSheet(page);
-  if (await sheet.evaluate((d: HTMLDialogElement) => d.open)) await closeContext(page);
+  // The sheet opens as the screen is drawn, when no repository is remembered: it is closed once it is there.
+  await contextSheet(page).waitFor({ state: "visible", timeout: 1000 }).catch(() => {});
+  await closeContext(page);
 }
 
 /** The task screen's Details: the repository's full path and, while the task is worked on, its branch. Opened, and returned. */
@@ -106,14 +117,26 @@ export async function openCanDo(page: Page): Promise<Locator> {
 }
 
 /** The composer's message box, whatever it is named for (a chat, a task, a run). */
-export const messageBox = (page: Page): Locator => page.locator("form.ds-composer textarea");
+export const messageBox = (page: Page): Locator => page.getByTestId("composer").locator("textarea");
 /** The Add context sheet, in whichever of its views. */
-export const contextSheet = (page: Page): Locator => page.locator("dialog.ds-sheet");
+export const contextSheet = (page: Page): Locator => page.getByTestId("context-sheet");
+
+/** The Add context sheet's rows as they read: the setting, then its value. */
+export const contextRows = (page: Page): Promise<string[]> =>
+  contextSheet(page)
+    .locator("button[data-row]")
+    .evaluateAll((buttons) => buttons.map((b) => `${b.querySelector('[data-testid="context-row-label"]')!.textContent} ${b.querySelector('[data-testid="context-row-value"]')!.textContent}`));
+
+/** One row of the Add context sheet, by its setting's name. */
+export const contextRow = (page: Page, row: string): Locator => contextSheet(page).locator("button[data-row]", { has: page.getByTestId("context-row-label").filter({ hasText: new RegExp(`^${row}$`) }) });
+
+/** The chip that names the agent asked and its model, which opens Add context on that view. */
+export const modelChip = (page: Page): Locator => page.getByTestId("agent-chip");
 
 /** Open the Add context sheet on its rows, from wherever it is. */
 export async function openContext(page: Page): Promise<Locator> {
   const sheet = contextSheet(page);
-  if (!(await sheet.evaluate((d: HTMLDialogElement) => d.open))) await page.getByRole("button", { name: "Add context" }).click();
+  if (!(await sheet.isVisible())) await page.getByRole("button", { name: "Add context" }).click();
   const back = sheet.getByRole("button", { name: "Back to Add context" });
   if (await back.isVisible()) await back.click();
   await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
@@ -123,14 +146,14 @@ export async function openContext(page: Page): Promise<Locator> {
 /** Open one row's view in the sheet: `row` is the row's name, as "Repository" or "Mode". */
 export async function openRow(page: Page, row: string): Promise<Locator> {
   const sheet = await openContext(page);
-  await sheet.locator(".ds-context-list__button", { has: page.locator(".ds-context-list__label", { hasText: new RegExp(`^${row}$`) }) }).click();
+  await sheet.locator("button[data-row]", { has: page.getByTestId("context-row-label").filter({ hasText: new RegExp(`^${row}$`) }) }).click();
   await expect(sheet.getByRole("button", { name: "Back to Add context" })).toBeVisible();
   return sheet;
 }
 
 export async function closeContext(page: Page): Promise<void> {
   const sheet = contextSheet(page);
-  if (await sheet.evaluate((d: HTMLDialogElement) => d.open)) await sheet.getByRole("button", { name: "Close Add context" }).click();
+  if (await sheet.isVisible()) await sheet.getByRole("button", { name: "Close Add context" }).click();
   await expect(sheet).toBeHidden();
 }
 
@@ -299,6 +322,39 @@ export async function checkStatuses(page: Page, screen: string): Promise<void> {
   }
 }
 
+/** Whether the screen now shown is one rebuilt on shadcn/ui and Tailwind (ADR 0012): the page's root says so while it is. */
+export const isRebuilt = (page: Page): Promise<boolean> => page.evaluate(() => document.documentElement.getAttribute("data-ui") === "next");
+
+/**
+ * The whole check of a rebuilt screen whose states a fast test can produce (Chat, New chat or task): the words (docs/product/voice.md); no control under 40px
+ * high with a mouse, or 44px under a finger (a control drawn smaller carries its pointer target on a pseudo-element);
+ * no text under 12px; nothing scrolls sideways; and no inline style element, which the content security policy refuses.
+ */
+export async function checkScreen(page: Page, screen: string): Promise<void> {
+  // A dialog is measured once it has opened: while it grows into place its controls are drawn smaller than they are.
+  await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 500))]));
+  const found = await page.evaluate(() => {
+    const least = window.matchMedia("(pointer: coarse)").matches ? 44 : 40;
+    const low: string[] = [];
+    for (const el of document.querySelectorAll("button, input, textarea, [role=radio], [role=tab], a[href]")) {
+      const box = el.getBoundingClientRect();
+      // Not drawn, a link inside a sentence, an input drawn by its label (visually hidden), or the hidden input a drawn radio keeps for a form.
+      if (box.height <= 1 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true") continue;
+      // The shell's own navigation is checked where the shell is (its unit's tests); here, the screen, its pane and its dialogs.
+      if (el.closest("main, aside, [role=dialog], [role=alertdialog]") === null) continue;
+      // The old option views inside the Add context sheet are the design system's own, checked on its own screens.
+      if (el.closest('[class*="ds-"]') !== null) continue;
+      const target = getComputedStyle(el, "::after");
+      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
+      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
+    }
+    const small = [...document.querySelectorAll("body *")].filter((el) => el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
+    return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth, styleElements: document.querySelectorAll("body style").length };
+  });
+  expect(found, screen).toEqual({ low: [], small: [], sideways: 0, styleElements: 0 });
+  await checkWords(page, screen);
+}
+
 /** The primary button's look and a secondary button's, from the theme's tokens, in the default mode. */
 export const PRIMARY_LOOK = { background: token("accent"), text: token("on-accent"), border: token("accent") };
 // A secondary control rests on the theme's `fill` (design system 0.9.0), with the faint border.
@@ -306,7 +362,17 @@ export const SECONDARY_LOOK = { background: token("fill"), text: token("on-surfa
 
 /** The buttons drawn as the primary action: filled with the theme's accent colour in the mode the page is drawn in. */
 export const primaries = async (page: Page): Promise<(string | null)[]> => {
-  const accent = token("accent", await pageMode(page));
+  // On a screen rebuilt on shadcn/ui the filled button takes the new theme's primary colour, read from the page itself.
+  const accent = (await isRebuilt(page))
+    ? await page.evaluate(() => {
+        const probe = document.createElement("span");
+        probe.className = "bg-primary";
+        document.body.append(probe);
+        const colour = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return colour;
+      })
+    : token("accent", await pageMode(page));
   return page.getByRole("button").evaluateAll((buttons, accent) => buttons.filter((b) => getComputedStyle(b).backgroundColor === accent).map((b) => b.textContent), accent);
 };
 

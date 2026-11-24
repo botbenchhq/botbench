@@ -111,10 +111,10 @@ for (const [size, viewport] of Object.entries(SIZES)) {
         await chooseRepository(page, seeded.repo);
         // A task on its own has no such row.
         await choose(page, "What to do", "One task");
-        await expect(contextSheet(page).locator(".ds-context-list__label", { hasText: /^Approval time limit$/ })).toHaveCount(0);
+        await expect(contextSheet(page).locator('[data-testid="context-row-label"]', { hasText: /^Approval time limit$/ })).toHaveCount(0);
         await choose(page, "What to do", "Plan a run");
-        const row = contextSheet(page).locator(".ds-context-list__button", { has: page.locator(".ds-context-list__label", { hasText: /^Approval time limit$/ }) });
-        await expect(row.locator(".ds-context-list__value")).toHaveText("Off");
+        const row = contextSheet(page).locator("button[data-row]", { has: page.locator('[data-testid="context-row-label"]', { hasText: /^Approval time limit$/ }) });
+        await expect(row.locator('[data-testid="context-row-value"]')).toHaveText("Off");
         await fits(page, `composer rows, ${size}, ${scheme}`, [row]);
 
         const sheet = await openRow(page, "Approval time limit");
@@ -127,12 +127,12 @@ for (const [size, viewport] of Object.entries(SIZES)) {
         await expect(sheet.getByText("Requests wait for your answer, however long that takes.")).toBeVisible();
         await expect(sheet.getByText("A request nobody answers within 1 hour is denied.")).toBeVisible();
         await checkDesign(page, `composer, approval time limit, ${size}, ${scheme}`);
-        await fits(page, `composer, approval time limit, ${size}, ${scheme}`, [sheet.locator(".ds-sheet__body")]);
+        await fits(page, `composer, approval time limit, ${size}, ${scheme}`, [sheet.getByTestId("context-body")]);
 
         // Chosen, it goes back to the rows, which say it.
         await sheet.getByRole("radio", { name: "1 hour", exact: true }).click();
         await expect(sheet.getByRole("heading", { name: "Add context" })).toBeVisible();
-        await expect(row.locator(".ds-context-list__value")).toHaveText("1 hour");
+        await expect(row.locator('[data-testid="context-row-value"]')).toHaveText("1 hour");
         await checkDesign(page, `composer rows with a limit, ${size}, ${scheme}`);
       });
     });

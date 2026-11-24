@@ -35,7 +35,7 @@ async function signedIn(browser: Browser, w: Workbench): Promise<Page> {
   await page.goto(`${w.base}/#/turn`);
   await page.getByLabel("Login token").fill(fs.readFileSync(path.join(w.home, LOGIN_TOKEN_FILE), "utf8").trim());
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.locator("form.ds-composer textarea")).toBeEnabled();
+  await expect(page.getByTestId("composer").locator("textarea")).toBeEnabled();
   return page;
 }
 

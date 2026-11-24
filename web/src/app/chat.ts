@@ -273,3 +273,61 @@ export function chatView(events: readonly StoredEvent[], infos: ReadonlyMap<numb
   }
   return { events: shown, who, compare };
 }
+
+/** One agent's answer in a round several agents were asked, as its card shows it. */
+export interface CompareCard {
+  attemptId: number;
+  agent: string;
+  /** The model that answered, as its session named it; else the one asked for; null when neither is known. */
+  model: string | null;
+  /** Each piece of its reply, in order. */
+  texts: string[];
+  /** What went wrong, in the agent's or Botbench's own words, in order. */
+  errors: string[];
+  /** The calls it made, in order: the tool's name, what it was given, and whether it failed or was not run (refused, declined or denied). */
+  calls: { id: string; name: string; input: unknown; failed: boolean; refused: boolean }[];
+  /** `working` until its reply ended; `answered` when it completed; `stopped` when it was stopped; `failed` when it ended with an error. */
+  state: "working" | "answered" | "stopped" | "failed";
+  /** What its end said of an error, in the agent's or Botbench's words; null when it said nothing or did not fail. */
+  detail: string | null;
+  /** Its reply stopped because the agent's usage limit was reached. */
+  limited: boolean;
+  /** When its first event and its end were stored; null while it works. */
+  from: string | null;
+  to: string | null;
+}
+
+/**
+ * The newest round of the chat, when it asked several agents the same question: the question and one card an agent, in
+ * the order they were asked. Null when the newest round asked one agent, or asked one to compare. The cards are equal:
+ * nothing here ranks the answers or says where they agree.
+ */
+export function compareRound(events: readonly StoredEvent[], infos: ReadonlyMap<number, AttemptInfo>, conversation: readonly number[]): { roundId: number; message: string; cards: CompareCard[] } | null {
+  const last = conversation.at(-1);
+  const round = last === undefined ? null : (infos.get(last)?.round ?? null);
+  if (round === null || round.kind !== "ask") return null;
+  const members = conversation.filter((id) => infos.get(id)?.round?.id === round.id);
+  if (members.length < 2) return null;
+  const cards = members.map((attemptId): CompareCard => {
+    const info = infos.get(attemptId)!;
+    const own = events.filter((e) => e.attemptId === attemptId);
+    const results = new Map(own.flatMap((e) => (e.payload.type === "tool_result" ? [[e.payload.id, e.payload.isError] as const] : [])));
+    const end = own.flatMap((e) => (e.payload.type === "turn_ended" ? [{ ts: e.ts, ...e.payload }] : []))[0];
+    const refused = new Set(own.flatMap((e) => (e.payload.type === "permission_denied" ? [e.payload.id] : e.payload.type === "permission_resolved" && ["declined", "denied", "cancelled"].includes(e.payload.decision) ? [e.payload.toolCallId] : [])));
+    const started = own.flatMap((e) => (e.payload.type === "session_started" && typeof e.payload.model === "string" ? [e.payload.model] : []))[0];
+    return {
+      attemptId,
+      agent: info.agent,
+      model: started ?? info.model,
+      texts: own.flatMap((e) => (e.payload.type === "text" ? [e.payload.text] : [])),
+      errors: own.flatMap((e) => (e.payload.type === "error" ? [e.payload.message] : [])),
+      calls: own.flatMap((e) => (e.payload.type === "tool_call" ? [{ id: e.payload.id, name: e.payload.name, input: e.payload.input, failed: results.get(e.payload.id) === true, refused: refused.has(e.payload.id) }] : [])),
+      state: end === undefined ? "working" : end.reason === "completed" ? "answered" : end.reason === "interrupted" ? "stopped" : "failed",
+      detail: end !== undefined && end.reason === "error" ? end.detail : null,
+      limited: end?.usageLimit !== undefined,
+      from: own[0]?.ts ?? null,
+      to: end?.ts ?? null,
+    };
+  });
+  return { roundId: round.id, message: round.message, cards };
+}

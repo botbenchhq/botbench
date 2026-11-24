@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, nav, openCanDo, openDetails, openNewTask, openRow, openWork, signIn, startTaskIn, test, watchRequests, checkWords, workRows, workState } from "./helpers.ts";
+import { SCREENS, checkDesign, checkWords, closeContext, contextSheet, copyShot, expect, goTo, messageBox, MONO_FAMILY, nav, openCanDo, openDetails, openNewTask, openRow, openWork, SHOTS, signIn, startTaskIn, test, watchRequests, workRows, workState } from "./helpers.ts";
 import type { Page } from "@playwright/test";
 
 /** The Folder path field of the Repository view, with Another folder chosen. */
@@ -143,7 +143,7 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // The turn screen is still there and still works as the first screen. Its composer opens on what was used last: a
   // task in this repository.
-  await nav(page).getByRole("link", { name: "Chat" }).click();
+  await goTo(page, "Chat");
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Describe the task" })).toBeEnabled();
 
@@ -155,8 +155,8 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 test("the navigation is Home, Work and Chat, and Work says there is nothing yet; Tasks leads there; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
-  // The navigation lists the three destinations, and gets to each.
-  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
+  // The navigation lists the destinations, and gets to each.
+  await expect(nav(page).getByRole("link")).toHaveText(SCREENS);
   await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
   await openWork(page);
   await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
@@ -168,8 +168,8 @@ test("the navigation is Home, Work and Chat, and Work says there is nothing yet;
     await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
   }
   await openNewTask(page);
-  // New task opens the composer on the home screen with One task chosen.
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
+  // New task opens New chat or task with Start one task chosen.
+  await expect(page.getByRole("radio", { name: "Start one task" })).toBeChecked();
   await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
 
   // The path is checked as it is typed, and the answer is in words.

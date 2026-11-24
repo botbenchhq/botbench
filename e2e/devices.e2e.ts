@@ -1,4 +1,4 @@
-import { checkDesign, expect, signIn, test } from "./helpers.ts";
+import { checkDesign, expect, signIn, test, goTo } from "./helpers.ts";
 
 // Staying signed in, in the real client at a phone's size, with no model turn: a real Botbench process that is
 // stopped and started again on the same data, and the Settings list of signed-in devices.
@@ -10,7 +10,7 @@ test("a device stays signed in across a restart; Settings lists it as this devic
   await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeEnabled();
   await expect(page.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
 
-  await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+  await goTo(page, "Settings");
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
   const devices = page.getByTestId("devices");
   await expect(devices.getByRole("heading", { name: "Signed-in devices" })).toBeVisible();

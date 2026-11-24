@@ -9,7 +9,6 @@ import { Alert, Frame, Page } from "../components/header.tsx";
 import { SettingsScreen } from "../screens/settings.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
-import { OpenChat, TurnScreen } from "../screens/turn.tsx";
 import { isRebuilt, rebuilt } from "../screens2/routes.tsx";
 import { UsageScreen } from "../screens/usage.tsx";
 import { WorkColumn } from "../components/work-column.tsx";
@@ -79,19 +78,16 @@ function NotFound({ what }: { what: string }) {
 function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
   // From 1024px Permissions and Usage are sections of the two-pane Settings, at their own addresses.
   if (wide && (route.screen === "trust" || route.screen === "usage")) return <SettingsScreen section={route.screen === "trust" ? "permissions" : "usage"} onSignedOut={onSignedOut} />;
-  if (route.screen === "turn") return <TurnScreen key={`${route.start ?? ""} ${route.proposal ?? ""} ${route.from === undefined ? "" : `${route.from.kind}-${route.from.id}`}`} start={route.start} proposal={route.proposal ?? null} from={route.from ?? null} onSignedOut={onSignedOut} />;
+  // A screen rebuilt on shadcn/ui (ADR 0012), when there is one for this address: screens2/routes.tsx is the one switch.
+  const next = rebuilt(route, onSignedOut);
+  if (next !== null) return next;
   if (route.screen === "redirect") return <Redirect to={route.to} />;
   if (route.screen === "trust") return <TrustScreen onSignedOut={onSignedOut} />;
   if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
   if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
-  // A screen rebuilt on shadcn/ui (ADR 0012), when there is one for this address: screens2/routes.tsx is the one switch.
-  const next = rebuilt(route, onSignedOut);
-  if (next !== null || route.screen === "task") return next;
   if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
-  if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
-  // Home, Work and a run are rebuilt screens (screens2/routes.tsx), returned above.
-  if (route.screen !== "none") return null;
-  return <NotFound key={route.what} what={route.what} />;
+  // Home, Work, a task, a run, Chat and New chat or task are always rebuilt screens (screens2/routes.tsx), returned above.
+  return route.screen === "none" ? <NotFound key={route.what} what={route.what} /> : null;
 }
 
 /** The row of the column of chats and work that the open screen shows, as WorkColumn keys it. */

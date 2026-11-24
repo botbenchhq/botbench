@@ -1,4 +1,4 @@
-import { checkDesign, expect, signIn, test } from "./helpers.ts";
+import { checkDesign, expect, openWork, signIn, test } from "./helpers.ts";
 
 // The brand marks in the real client, at a phone's size: a real Botbench process serving the built client. No CLI turn.
 
@@ -21,6 +21,8 @@ test("the page names its icons and Botbench serves them before sign-in; the head
   await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Botbench");
 
   await signIn(page, botbench);
+  // The header is on every screen not yet rebuilt on shadcn/ui; Work is one.
+  await openWork(page);
   const name = page.locator("header a", { hasText: "Botbench" });
   const mark = name.locator("svg");
   await expect(mark).toBeVisible();

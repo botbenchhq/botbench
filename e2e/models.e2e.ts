@@ -16,10 +16,10 @@ const NAME = "Haiku [\\d.]+";
 const UNKNOWN = `botbench-no-such-model-${"1".repeat(77)}`;
 
 /** The model chip under the box, which opens Add context on the model's view. */
-const chip = (page: Page) => page.locator(".ds-composer__chip");
+const chip = (page: Page) => page.getByTestId("agent-chip");
 async function openModels(page: Page) {
   // While a repository is still to be chosen, the chip asks for it, and the model is a row of the sheet.
-  if ((await chip(page).getAttribute("aria-describedby")) === null) await chip(page).click();
+  if ((await chip(page).count()) > 0) await chip(page).click();
   else await openRow(page, "Model");
   const sheet = contextSheet(page);
   await expect(sheet.getByRole("heading", { name: "Model" })).toBeVisible();

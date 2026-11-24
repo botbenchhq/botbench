@@ -11,7 +11,7 @@ import { sourceInAddress } from "./run-source.ts";
 export type SettingsSection = "agents" | "appearance" | "notifications" | "devices" | "workbench" | "paired" | "permissions" | "usage";
 
 export type Route =
-  | { screen: "turn"; start: Kind | null; proposal?: number; from?: RunSourceRef }
+  | { screen: "turn"; start: Kind | null; proposal?: number; from?: RunSourceRef; fresh?: true }
   | { screen: "redirect"; to: string }
   | { screen: "trust" }
   | { screen: "usage" }
@@ -30,6 +30,8 @@ export function parseRoute(hash: string): Route {
   // Home, the queue, is where Botbench opens: the bare address, and the one the navigation names.
   if (at === "" || at === "/" || at === "/home") return { screen: "home" };
   if (at === "/turn") return { screen: "turn", start: null };
+  // New chat or task: the composer with its four intents, and no chat on the screen.
+  if (at === "/new") return { screen: "turn", start: null, fresh: true };
   // New task and New run open the composer with that kind chosen.
   if (at === "/turn?start=task" || at === "/turn?start=run") return { screen: "turn", start: at.endsWith("task") ? "task" : "run" };
   // Make this a run, on a finished task or a chat: Plan a run, with the owner's note as the prompt (components/make-run.tsx).

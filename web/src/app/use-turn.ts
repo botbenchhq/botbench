@@ -1,31 +1,23 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, getChat, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type RunSourceRef, type StoredEvent, type UpdateWithMain } from "../api/client.ts";
-import { MAIN_CHOICE_WORDS } from "../app/main-words.ts";
-import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, limitName, modeFor, modeLine, oneTaskFor, startMode, READ_ABOUT, readName, type ChosenMode, readRemembered, repoName, rowsFor, SEND_KEY_HINT, sendFor, sendsOn, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "../app/composer.ts";
-import { useFinePointer } from "../app/wide.ts";
-import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, sendWords, type AttemptInfo } from "../app/chat.ts";
-import { chatChip, CompareAction, useChatAgents } from "../components/agent-choice.tsx";
-import { agentLine, agentStatus, AGENTS_ADDRESS, CONNECT, FIRST_STEP, type AgentStatus } from "../app/first-run.ts";
-import { ApprovalsContext } from "../app/approvals.tsx";
-import { ApprovalCard } from "../components/approval-card.tsx";
-import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "../app/dictation.ts";
-import { ContextSheet, type SheetView } from "../components/composer-sheet.tsx";
-import { Alert, Frame, Page, PageHeader, StreamBanner } from "../components/header.tsx";
-import { jumpCount } from "../components/follow.ts";
-import { Icon, SPRITE } from "../components/icon.tsx";
-import { MODES } from "../components/mode-choice.tsx";
+import { ApiError, getDefaultMode, getDriver, getFirstRun, getProposal, getTranscript, getVoice, interruptTurn, openEventStream, sendChatMessage, startRun, startTask, type ChatTarget, type Delivery, type DriverState, type OnLimit, type RunMode, type RunSourceRef, type StoredEvent, type UpdateWithMain } from "../api/client.ts";
+import { MAIN_CHOICE_WORDS } from "./main-words.ts";
+import { arrive, blocked as blockedBy, builderChip, builderName, chipModel, LIMIT_WORDS, type Builder, commandsWords, issueWords, limitName, modeFor, oneTaskFor, startMode, readName, type ChosenMode, readRemembered, repoName, rowsFor, sendFor, sendsOn, writeRemembered, type Facts, type Kind, type ReadPick, type RepoPick, type Row } from "./composer.ts";
+import { useFinePointer } from "./wide.ts";
+import { agentName, agentRowValue, CLAUDE, chatTargets, chatView, type AttemptInfo } from "./chat.ts";
+import { chatChip, useChatAgents } from "../components/agent-choice.tsx";
+import { agentLine, agentStatus, type AgentStatus } from "./first-run.ts";
+import { ApprovalsContext } from "./approvals.tsx";
+import { cannotRecord, createDictation, insertAt, type Dictation, type DictationState } from "./dictation.ts";
+import type { SheetState, SheetView } from "../components/composer-sheet.tsx";
 import { choiceName, modelName, useModelChoice } from "../components/model-picker.tsx";
 import { useKnownRepositories, useRepository } from "../components/repository.tsx";
 import { useIssueChoice } from "../components/issue-choice.tsx";
 import { usePeersOf } from "../components/other-workbenches.tsx";
-import { ago } from "../app/format.ts";
-import { claimNotice, issueWarnings, oldClaims } from "../app/peers.ts";
-import { ConfirmAction } from "../components/confirm.tsx";
+import { issueWarnings, oldClaims } from "./peers.ts";
+import { MODES } from "../components/mode-choice.tsx";
 import { useReviewChoice } from "../components/review-choice.tsx";
-import { mergeEvents, Transcript } from "../components/transcript.tsx";
-import { MakeRunDialog } from "../components/make-run.tsx";
-import { composerOpening, MAKE_RUN, takeHandOff } from "../app/run-source.ts";
-import { BusyButton } from "../../vendor/design-system/react/busy-button.tsx";
+import { mergeEvents } from "../components/transcript.tsx";
+import { composerOpening, takeHandOff } from "./run-source.ts";
 import { useTranscript } from "../../vendor/design-system/react/use-transcript.ts";
 
 /** The attempts that make up the conversation on this device, oldest first. Kept so a reload shows the transcript again. */
@@ -33,7 +25,7 @@ const CONVERSATION_KEY = "botbench.conversation";
 /** The same entry under the product's old name (Smelt), read for one release while the new one has never been written. */
 const OLD_CONVERSATION_KEY = "smelt.conversation";
 
-function loadConversation(): number[] {
+export function loadConversation(): number[] {
   try {
     const parsed: unknown = JSON.parse((window.localStorage.getItem(CONVERSATION_KEY) ?? window.localStorage.getItem(OLD_CONVERSATION_KEY)) ?? "[]");
     return Array.isArray(parsed) && parsed.every((id) => Number.isSafeInteger(id) && id > 0) ? (parsed as number[]) : [];
@@ -42,7 +34,7 @@ function loadConversation(): number[] {
   }
 }
 
-function saveConversation(ids: number[]): void {
+export function saveConversation(ids: number[]): void {
   try {
     window.localStorage.setItem(CONVERSATION_KEY, JSON.stringify(ids));
   } catch {
@@ -50,56 +42,7 @@ function saveConversation(ids: number[]): void {
   }
 }
 
-/**
- * A chat opened from its row on Work: its attempts become the conversation this device shows, and Chat opens on it.
- * The chat the device showed before is not lost: Botbench keeps every chat, and Work lists it.
- */
-export function OpenChat({ id, onSignedOut }: { id: number; onSignedOut: () => void }) {
-  const [problem, setProblem] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    getChat(id).then(
-      (chat) => {
-        if (!live) return;
-        saveConversation(chat.attempts);
-        window.location.replace("#/turn");
-      },
-      (err: unknown) => {
-        if (!live) return;
-        if (err instanceof ApiError && err.status === 401) return onSignedOut();
-        setProblem(`The chat could not be opened. ${err instanceof ApiError ? err.message : "Botbench could not be reached."}`);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [id, onSignedOut]);
-  return (
-    <Frame current="turn">
-      <Page>
-        <PageHeader title="Chat" />
-        {problem === null ? (
-          <p role="status" className="ds-spinner">
-            Opening the chat.
-          </p>
-        ) : (
-          <div className="ds-stack ds-gap-sm">
-            <Alert tone="error" role="alert">
-              {problem}
-            </Alert>
-            <p>
-              <a href="#/work" className="ds-link">
-                Back to Work
-              </a>
-            </p>
-          </div>
-        )}
-      </Page>
-    </Frame>
-  );
-}
-
-/** What is wrong with the agent, or null: while it is being checked and when all is well, the header says nothing. */
+/** What is wrong with the agent, or null: while it is being checked and when all is well, the screen says nothing. */
 const HEADER_PROBLEM: Record<AgentStatus, string | null> = {
   checking: null,
   ready: null,
@@ -109,19 +52,6 @@ const HEADER_PROBLEM: Record<AgentStatus, string | null> = {
   "signed-out": "Claude Code: signed out",
   unavailable: "Claude Code: unavailable",
 };
-
-/** The one link to connect an agent, at the end of a sentence that says the agent cannot be used. */
-function ConnectAgent({ first = false }: { first?: boolean }) {
-  return (
-    <>
-      {`${first ? "" : " "}${CONNECT.before}`}
-      <a href={AGENTS_ADDRESS} className="ds-link">
-        {CONNECT.link}
-      </a>
-      {CONNECT.after}
-    </>
-  );
-}
 
 /** What the composer remembers on this device: the repository, what to do, mode, review and delivery. */
 const COMPOSER_KEY = "botbench.composer";
@@ -145,14 +75,18 @@ function saveComposer(value: string): void {
 const inRepository = (repo: RepoPick): repo is { kind: "known" | "other"; path: string } => repo.kind === "known" || repo.kind === "other";
 
 /**
- * The home screen: the conversation, and under it the one composer that starts anything. With no repository it sends
- * a chat prompt; with a repository it starts a task or plans a run, and opens its screen. `start` comes from New task
- * and New run, which arrive with that kind chosen.
+ * Everything the conversation and the one composer do, as the home screen always did it (the old screens/turn.tsx, moved
+ * here whole): the chat on this device and its live transcript, what the composer holds and remembers, what Send would
+ * start and why it cannot, dictation, and the requests. The screens that show it (screens2/chat) only draw what this
+ * returns. `fresh`: arrived at New chat or task, which begins with no chat on the screen.
  */
-export function TurnScreen({ start, proposal = null, from = null, onSignedOut }: { start: Kind | null; proposal?: number | null; from?: RunSourceRef | null; onSignedOut: () => void }) {
+export function useTurn({ start, proposal = null, from = null, fresh = false, onSignedOut }: { start: Kind | null; proposal?: number | null; from?: RunSourceRef | null; fresh?: boolean; onSignedOut: () => void }) {
   const [driver, setDriver] = useState<DriverState | null>(null);
   const [driverFailed, setDriverFailed] = useState(false);
-  const [conversation, setConversation] = useState<number[]>(loadConversation);
+  // At New chat or task, and come to start a task or a run, there is no chat on the screen from the first draw. The chat
+  // this device shows is left as it is until a new one is sent: Chat shows it again.
+  const blank = fresh || start !== null || proposal !== null || from !== null;
+  const [conversation, setConversation] = useState<number[]>(() => (blank ? [] : loadConversation()));
   const [events, setEvents] = useState<StoredEvent[]>([]);
   /** The chat turns the screen is waiting on: one, or one per agent asked at once. */
   const [active, setActive] = useState<{ attemptId: number; turn: number }[]>([]);
@@ -176,6 +110,8 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const freshRef = useRef(blank);
+  freshRef.current = blank;
 
   // What the composer holds, starting from what this device remembers.
   const [remembered] = useState(() => readRemembered(loadComposer()));
@@ -265,12 +201,12 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     };
   }, [onSignedOut]);
 
-  /** The Add context sheet and the view it shows. */
-  const sheetRef = useRef<HTMLDialogElement>(null);
+  /** The Add context sheet: whether it is open, and the view it shows. */
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [view, setView] = useState<SheetView>("rows");
   const openSheet = (on: SheetView): void => {
     setView(on);
-    if (sheetRef.current !== null && !sheetRef.current.open) sheetRef.current.showModal();
+    setSheetOpen(true);
   };
   // Coming from New task or New run with no repository remembered, the owner came to work in one: the sheet opens on it.
   useEffect(() => {
@@ -375,14 +311,15 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
         // A turn started after this request was sent is newer than what it says, and is left alone.
         setActive((current) => {
           const others = current.filter((a) => a.attemptId !== id || a.turn > turn);
-          return transcript.turnRunning && !others.some((a) => a.attemptId === id) ? [...others, { attemptId: id, turn }] : others;
+          // A chat taken off the screen since this was asked (New chat or task) is not waited on here.
+          return transcript.turnRunning && conversationRef.current.includes(id) && !others.some((a) => a.attemptId === id) ? [...others, { attemptId: id, turn }] : others;
         });
       } catch (err) {
         // An attempt this server does not know (another data directory) drops out of the conversation.
         if (!(err instanceof ApiError && err.status === 404)) throw err;
       }
     }
-    if (kept.length !== ids.length) {
+    if (kept.length !== ids.length && ids.every((id) => conversationRef.current.includes(id))) {
       setConversation(kept);
       saveConversation(kept);
     }
@@ -426,15 +363,6 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const { pending } = useContext(ApprovalsContext);
   // A chat's request from another device's chat (or one this device put away) is shown here too, after the transcript.
   const waitingHere = useMemo(() => (pending ?? []).filter((approval) => approval.chat), [pending]);
-  const askedAt = useMemo(() => new Set(shown.flatMap((e) => (e.payload.type === "permission_request" ? [`${e.attemptId}:${e.payload.toolCallId}`] : []))), [shown]);
-  const cardOf = (approval: (typeof waitingHere)[number]) => <ApprovalCard key={approval.id} approval={approval} more={0} on="chat" onSignedOut={onSignedOut} />;
-  const asking = useCallback(
-    (attemptId: number, toolCallId: string) => {
-      const approval = waitingHere.find((a) => a.attemptId === attemptId && a.toolCallId === toolCallId);
-      return approval === undefined ? null : cardOf(approval);
-    },
-    [waitingHere, onSignedOut],
-  );
   const chat = useMemo(() => chatView(shown, infos, conversation), [shown, infos, conversation]);
   const endedOf = (a: { attemptId: number; turn: number }): boolean => events.some((e) => e.attemptId === a.attemptId && e.turn === a.turn && e.type === "turn_ended");
   const working = active.filter((a) => !endedOf(a));
@@ -447,21 +375,10 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     }
   });
 
-  // The transcript follows its newest row while the reader is at the bottom (the design system's own hook). It counts
-  // the rows the log shows, read from the page once React has put them there.
-  const logBox = useRef<HTMLDivElement | null>(null);
-  const [rowCount, setRowCount] = useState(0);
-  useLayoutEffect(() => {
-    setRowCount(logBox.current?.querySelector('ol[role="log"]')?.querySelectorAll(":scope > li:not(.ds-streaming)").length ?? 0);
-  });
-  const { scrollerRef, logRef, newCount, jumpToLatest, jumpButtonProps } = useTranscript({ rowCount });
-  const setLog = useCallback(
-    (el: HTMLDivElement | null) => {
-      logBox.current = el;
-      logRef(el);
-    },
-    [logRef],
-  );
+  // The transcript follows its newest row while the reader is at the bottom: the screen that draws it says how to go
+  // there (`useFollow`), since the transcript is not on the screen until there is a chat.
+  const jumpRef = useRef<() => void>(() => {});
+  const jumpToLatest = (): void => jumpRef.current();
 
   // Who a chat asks. The agents are asked for when the screen opens, so the choice lists them all at once.
   const agents = useChatAgents(onSignedOut);
@@ -515,7 +432,9 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     setStarting(true);
     // Whoever sends wants to see the answer: the transcript follows again.
     jumpToLatest();
-    const started = sendChatMessage({ prompt: text, conversation: conversationRef.current, agents: to, ...(compare === undefined ? {} : { compare }), ...(repository === undefined ? {} : { repository }) });
+    // The chat as it is when this is sent: what comes back is added to it, wherever the screen has gone since.
+    const sentIn = conversationRef.current;
+    const started = sendChatMessage({ prompt: text, conversation: sentIn, agents: to, ...(compare === undefined ? {} : { compare }), ...(repository === undefined ? {} : { repository }) });
     const turns = started.then((replies) => replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
     startRef.current = turns;
     started.then(
@@ -526,10 +445,12 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
           for (const r of replies) next.set(r.attemptId, { agent: r.agent, model: r.model, round: r.roundId === null ? null : { id: r.roundId, kind: compare === undefined ? "ask" : "compare", message: text, compares: compare ?? null } });
           return next;
         });
-        const ids = replies.map((r) => r.attemptId).filter((id) => !conversationRef.current.includes(id));
-        const next = [...conversationRef.current, ...ids];
+        const ids = replies.map((r) => r.attemptId).filter((id) => !sentIn.includes(id));
+        const next = [...sentIn, ...ids];
         setConversation(next);
         saveConversation(next);
+        // Sent from New chat or task: the chat is at Chat's own address from here on, so a reload shows it.
+        if (freshRef.current) window.location.hash = "#/turn";
         setAsked((have) => ({ ...have, ...Object.fromEntries(replies.map((r) => [r.attemptId, r.model])) }));
         setActive(replies.map(({ attemptId, turn }) => ({ attemptId, turn })));
         // The chat is stored now, and the first run is over for good: New chat does not bring the lines back.
@@ -615,19 +536,6 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
     }
   };
 
-  /** Begin again: the transcript is put away on this device (Botbench keeps what was stored), and the next prompt starts afresh. */
-  const newChat = (): void => {
-    if (running) return;
-    setConversation([]);
-    saveConversation([]);
-    setActive([]);
-    // A new chat reads no repository until one is chosen for it.
-    setReadPick({ kind: "none" });
-    setError(null);
-    jumpToLatest();
-    promptRef.current?.focus();
-  };
-
   const nameOf = useCallback((id: string) => modelName(models.list, id), [models.list]);
   const claudeStatus = agentStatus(driver, driverFailed);
   const problem = HEADER_PROBLEM[claudeStatus];
@@ -680,324 +588,118 @@ export function TurnScreen({ start, proposal = null, from = null, onSignedOut }:
   const label = repo.kind === "none" ? (agents.choice.pick.kind === "several" ? "Message several agents" : `Message ${agentName(agents.choice.pick.agent)}`) : kind === "task" ? "Describe the task" : "Describe what to plan";
   const describedBy = [stopReason !== null ? "composer-reason" : null, error !== null ? "composer-error" : null].filter((id) => id !== null).join(" ") || undefined;
   const builderDown = builder.state !== "ready";
-  // With a keyboard and a mouse, the line that says which key sends is part of what the box is described by.
-  // Arrival put focus on the chat's heading, which only a screen reader meets, because the box was not ready yet
-  // (arrival.ts): with a keyboard, the box takes it once it can.
-  useEffect(() => {
-    if (fine && !builderDown && document.activeElement?.closest(".ds-visually-hidden") != null) promptRef.current?.focus();
-  }, [fine, builderDown]);
   // It stays while the agent works: Enter is still Send's key then, and the line above says when sending is possible again.
   const keysHint = fine && !builderDown;
   const boxDescribedBy = [describedBy, keysHint ? "composer-keys" : null].filter((id) => id != null).join(" ") || undefined;
   const name = repoName(repo, known);
 
-  return (
-    <Frame
-      current="turn"
-      fill
-      showing={waitingHere.map((approval) => approval.id)}
-      banner={connected ? undefined : <StreamBanner />}
-      actions={
-        conversation.length > 0 && (
-          <button type="button" aria-label="New chat" disabled={running} onClick={newChat} className="ds-app-header__action">
-            <Icon name="plus" className="ds-app-header__icon" />
-          </button>
-        )
-      }
-    >
-      <main className="flex min-h-0 min-w-0 flex-col">
-        {/* The screen is its transcript and its message box: the view's one h1 is for assistive technology only. */}
-        <PageHeader title="Chat" hidden />
-        {problem !== null && (
-          <div className="ds-container pt-md">
-            <p data-testid="driver-state" className="ds-composer__reason">
-              {problem}
-            </p>
-          </div>
-        )}
+  // New chat or task begins with no chat on the screen: the chat this device shows is only taken off the screen, and
+  // Chat shows it again, with its reply if one still runs. It is put away (Botbench keeps it, and Work lists it) when a
+  // new chat is sent, which becomes the one this device shows.
+  useEffect(() => {
+    if (blank) {
+      if (conversationRef.current.length === 0) return;
+      setConversation([]);
+      setActive([]);
+      setReadPick({ kind: "none" });
+      setError(null);
+      return;
+    }
+    const stored = loadConversation();
+    if (conversationRef.current.length > 0 || stored.length === 0) return;
+    conversationRef.current = stored;
+    setConversation(stored);
+    refresh(stored).catch((err: unknown) => {
+      if (err instanceof ApiError && err.status === 401) return onSignedOut();
+      setError("The chat could not be read: Botbench could not be reached.");
+    });
+  }, [blank, refresh, onSignedOut]);
 
-        <div ref={scrollerRef} role="region" aria-label="Transcript" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto">
-          <div ref={setLog} className="ds-container pb-lg">
-            {shown.length > 0 ? (
-              <Transcript
-                events={chat.events}
-                asking={asking}
-                working={running && working.length <= 1 ? (waitingHere.some((a) => working.some((w) => w.attemptId === a.attemptId)) && !stopping ? `${agentName(CLAUDE)} is waiting for your answer.` : stopping ? `Stopping ${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)}.` : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? (askedCount === 1 && targets.ok ? targets.targets[0]!.agent : CLAUDE))} is working.`) : null}
-                modelName={nameOf}
-                modelDiffers={differs}
-                who={chat.who}
-                after={
-                  <>
-                    {/* A request whose place in the transcript has not arrived yet still shows its card. */}
-                    {waitingHere.filter((a) => !askedAt.has(`${a.attemptId}:${a.toolCallId}`)).map((a) => (
-                      <li key={`asked-${a.id}`}>{cardOf(a)}</li>
-                    ))}
-                    {working.length > 1 &&
-                      working.map(({ attemptId }) => (
-                        <li key={`working-${attemptId}`} className="ds-split">
-                          <p className="ds-streaming ds-streaming--row">
-                            <span role="status">{`${agentName(infos.get(attemptId)?.agent ?? CLAUDE)} is working.`}</span>
-                          </p>
-                          <button type="button" className="ds-button ds-button--small" onClick={() => stop(attemptId)}>
-                            Stop {agentName(infos.get(attemptId)?.agent ?? CLAUDE)}
-                          </button>
-                        </li>
-                      ))}
-                    {chat.compare !== null && !running && <CompareAction agents={agents} claude={models} onCompare={(to) => sendChat("", [to], chat.compare!.roundId)} busy={starting} />}
-                    {/* The owner's feedback in this chat, made into a run: a note of their own, or one of their messages.
-                        Offered while a reply still runs too: only the owner's words go with it, and those are stored. */}
-                    {chatting && conversation.length > 0 && (
-                      <li data-testid="make-run-chat" className="ds-cluster">
-                        <button type="button" className="ds-button ds-button--quiet ds-button--small" aria-haspopup="dialog" onClick={() => setMakingRun(true)}>
-                          {MAKE_RUN}
-                        </button>
-                      </li>
-                    )}
-                  </>
-                }
-              />
-            ) : welcome !== null ? (
-              // A first run: at most two plain lines, no tour and nothing over the screen. Gone once a chat, task or run is stored.
-              <div data-testid="first-run" className="ds-stack ds-gap-xs pt-md">
-                <p className="ds-composer__reason">{FIRST_STEP}</p>
-                {welcome.agent !== null && (
-                  <p data-testid="first-run-agent" className="ds-composer__reason">
-                    {welcome.agent.connect ? <ConnectAgent first /> : welcome.agent.words}
-                  </p>
-                )}
-              </div>
-            ) : (
-              // An empty chat shows nothing above the box but a chat's request still waiting. Work in a repository says, in one muted line, where and what follows.
-              waitingHere.length > 0 ? (
-                <ol className="ds-stack ds-gap-sm pt-md">
-                  {waitingHere.map((a) => (
-                    <li key={`asked-${a.id}`}>{cardOf(a)}</li>
-                  ))}
-                </ol>
-              ) : !chatting && (
-                <p data-testid="composer-about" className="ds-composer__reason pt-md">
-                  {kind === "task"
-                    ? `A task in ${name}: ${builderName(chosenBuilder)} works on a new branch, in a separate copy of the repository (a git worktree). Your own files and your branch are not touched.`
-                    : `A run in ${name}: Claude Code plans ${oneTask ? "one task" : "tasks"} first, reading a copy it cannot change.${chosenBuilder === "codex" ? " Codex builds them." : ""} ${mode === "full" || (mode === "semi" && issue.attached === null) ? "Building starts on the plan without your approval." : "Nothing is built until you approve the plan."}${delivery === "pull_request" ? " Each accepted task is then opened as a pull request." : ""}${claimNotice({ claimIssues: repository.listed?.claimIssues === true, delivery, attached: issue.attached?.number ?? null, message: prompt })}`}
-                </p>
-              )
-            )}
-          </div>
-        </div>
+  return {
+    // The conversation.
+    conversation, shown, chat, infos, working, running, starting, stopping, connected, waitingHere, askedCount, targets,
+    jumpRef, nameOf, differs, sendChat, stop, makingRun, setMakingRun,
+    // The composer.
+    prompt, setPrompt, promptRef, label, submit, onKeyDown, send, showStop, stopReason, builder, builderDown, checkDriver, describedBy, boxDescribedBy, keysHint, error, chatting, run, kind, setKind, repo, setRepo, name, known,
+    chip, rows, values, mode, started, oneTask, delivery, chosenBuilder, issue, repository, source, sourceLine, readAttached, readPick, reading, readers, peerWarnings, offeredClaims, takeOver, setTakenOver, agents, models, buildModels, sameBuild,
+    canDictate, dictation, toggleDictation, problem, welcome, fine,
+    // The Add context sheet.
+    sheetOpen, setSheetOpen, view, setView, openSheet,
+    sheet: {
+      rows,
+      values,
+      warning: { mode: run && mode === "full" },
+      repo,
+      otherPath,
+      known,
+      chooseRepo: setRepo,
+      setOtherPath: (path: string) => {
+        setOtherPath(path);
+        setRepo({ kind: "other", path });
+      },
+      repository,
+      read: {
+        pick: readPick,
+        choose: setReadPick,
+        otherPath: readOther,
+        setOtherPath: (path: string) => {
+          setReadOther(path);
+          setReadPick({ kind: "other", path });
+        },
+        check: reading,
+        readers,
+      },
+      kind,
+      setKind,
+      builder: chosenBuilder,
+      setBuilder: setBuilderPick,
+      specPath,
+      setSpecPath,
+      mode,
+      setMode: (chosen: RunMode) => {
+        setChosenMode({ repo: repoPath, mode: chosen });
+        setModeChosenHere(true);
+      },
+      review,
+      delivery,
+      setDelivery,
+      onLimit,
+      setOnLimit,
+      updateWithMain,
+      setUpdateWithMain,
+      oneTask,
+      setOneTask: setChosenOneTask,
+      approvalLimit,
+      setApprovalLimit,
+      issue,
+      models,
+      sameBuild,
+      setSameBuild,
+      buildModels,
+      agents,
+    } satisfies SheetState,
+  };
+}
 
-        <div className="ds-jump-to-latest" hidden={newCount === 0}>
-          <button type="button" className="ds-jump-to-latest__button" {...jumpButtonProps}>
-            <span className="ds-jump-to-latest__count">{jumpCount(newCount)}</span> Jump to latest
-          </button>
-        </div>
+export type Turn = ReturnType<typeof useTurn>;
 
-        <form onSubmit={submit} aria-busy={showStop || undefined} className="ds-composer ds-composer--sticky" noValidate>
-          <div className="ds-composer__box">
-            <textarea id="prompt" name="prompt" ref={promptRef} rows={1} aria-label={label} placeholder={label} value={prompt} disabled={builderDown} onChange={(e) => setPrompt(e.target.value)} onKeyDown={onKeyDown} aria-describedby={boxDescribedBy} className="ds-composer__input" />
-            <div className="ds-composer__bar">
-              <BusyButton icon="plus" spriteHref={SPRITE} className="ds-icon-button" aria-label="Add context" aria-haspopup="dialog" onClick={() => openSheet("rows")}>
-                {null}
-              </BusyButton>
-              <div className="ds-composer__controls">
-                {stopReason?.required === "repository" ? (
-                  <BusyButton size="small" className="ds-composer__chip" aria-haspopup="dialog" aria-describedby="composer-reason" onClick={() => openSheet("repository")}>
-                    <span className="ds-composer__value">
-                      <span className="ds-visually-hidden">Choose a </span>Repository
-                    </span>
-                  </BusyButton>
-                ) : (
-                  <BusyButton variant="quiet" size="small" className="ds-composer__chip" aria-haspopup="dialog" onClick={() => openSheet("models")}>
-                    <span className="ds-composer__value">
-                      <span className="ds-visually-hidden">Agent and model: </span>
-                      {chip.value}
-                      {chip.qualifier !== null && (
-                        <>
-                          {" "}
-                          <span className="ds-composer__qualifier">{chip.qualifier}</span>
-                        </>
-                      )}
-                    </span>
-                  </BusyButton>
-                )}
-              </div>
-              {canDictate && (
-                <button
-                  type="button"
-                  onClick={toggleDictation}
-                  aria-label="Dictate"
-                  aria-pressed={dictation.kind === "listening"}
-                  aria-busy={dictation.kind === "transcribing" || undefined}
-                  aria-describedby={dictation.kind === "error" ? "dictation-error" : dictation.kind === "idle" ? undefined : "dictation-status"}
-                  className="ds-button ds-button--quiet ds-icon-button"
-                >
-                  <Icon name="mic" className="ds-button__icon" />
-                </button>
-              )}
-              {showStop ? (
-                <BusyButton busy={stopping} busyLabel="Stopping" onClick={() => stop()} aria-describedby="composer-reason">
-                  Stop
-                </BusyButton>
-              ) : (
-                <BusyButton type="submit" variant="primary" busy={starting} busyLabel={chatting ? "Sending" : "Starting"} disabled={stopReason !== null} aria-describedby={describedBy} {...(chatting && askedCount > 1 ? { "aria-label": sendWords(askedCount).label } : {})}>
-                  Send
-                </BusyButton>
-              )}
-            </div>
-          </div>
-          {showStop ? (
-            <p id="composer-reason" className="ds-composer__reason">
-              {working.length > 1 ? "The agents are working. You can send again when each has answered or stopped." : `${agentName(infos.get(working[0]?.attemptId ?? 0)?.agent ?? CLAUDE)} is working. You can send again when it has answered.`}
-            </p>
-          ) : (
-            stopReason !== null && (
-              <p id="composer-reason" data-testid={builderDown ? "driver-problem" : "composer-reason"} className="ds-composer__reason">
-                {stopReason.reason}
-                {stopReason.connect && <ConnectAgent />}
-              </p>
-            )
-          )}
-          {!showStop && run && modeLine(started) !== null && (
-            <p data-testid="composer-mode" className="ds-composer__reason">
-              {modeLine(started)}
-            </p>
-          )}
-          {!showStop && stopReason === null && chatting && sendWords(askedCount).line !== null && (
-            <p data-testid="asked-line" className="ds-composer__reason">
-              {sendWords(askedCount).line}
-            </p>
-          )}
-          {sourceLine !== null && (
-            <p data-testid="run-source-line" className="ds-composer__reason">
-              {sourceLine}
-            </p>
-          )}
-          {!showStop && readAttached && (
-            <p data-testid="read-line" className="ds-composer__reason">
-              {`For the chat to read: ${readName(readPick, known)}. ${READ_ABOUT}`}
-            </p>
-          )}
-          {peerWarnings.map((line) => (
-            <p key={line} data-testid="peer-warning" className="ds-composer__reason">
-              {line}
-            </p>
-          ))}
-          {offeredClaims.map((c) =>
-            takeOver.includes(c.branch) ? (
-              <p key={c.branch} data-testid="peer-taken-over" className="ds-composer__reason">
-                <span data-ds-content="">{c.workbench}</span>
-                {`'s claim on issue #${c.issue} is taken over: your run goes ahead, and Botbench leaves its branches as they are.`}
-              </p>
-            ) : (
-              <ConfirmAction
-                key={c.branch}
-                label="Take over"
-                opener={{ small: true, name: `Take over ${c.workbench}'s claim on issue #${c.issue}` }}
-                title={`Take over ${c.workbench}'s claim?`}
-                confirmLabel="Take over"
-                cancelLabel={`Leave ${c.workbench}'s claim`}
-                disabled={starting}
-                testId="take-over-dialog"
-                onConfirm={() => setTakenOver((have) => [...have, c.branch])}
-              >
-                <p>
-                  <span data-ds-content="">{c.workbench}</span>
-                  {` started on issue #${c.issue} ${ago(c.startedAt, Date.now())} and has opened no pull request. Your run goes ahead as if `}
-                  <span data-ds-content="">{c.workbench}</span>
-                  {" had not started. Botbench leaves its branches on the remote as they are, and pushes only a branch of your own. If that workbench is still working on the issue, the two of you may do the same work twice."}
-                </p>
-              </ConfirmAction>
-            ),
-          )}
-          {builder.state === "problem" && (
-            // Asks the agent again, for real, once the owner has fixed what the reason names.
-            <BusyButton variant="quiet" size="small" onClick={checkDriver}>
-              Check again
-            </BusyButton>
-          )}
-          {keysHint && (
-            <p id="composer-keys" data-testid="composer-keys" className="ds-composer__reason">
-              {SEND_KEY_HINT}
-            </p>
-          )}
-          {error !== null && (
-            <p id="composer-error" role="alert" className="ds-composer__error">
-              {error}
-            </p>
-          )}
-          {(dictation.kind === "listening" || dictation.kind === "transcribing") && (
-            <p id="dictation-status" role="status" className="ds-composer__reason">
-              {dictation.kind === "listening" ? "Listening. Press Dictate again when you have finished." : "Transcribing"}
-            </p>
-          )}
-          {dictation.kind === "error" && (
-            <p id="dictation-error" role="alert" className="ds-composer__error">
-              {dictation.message}
-            </p>
-          )}
-        </form>
-
-        {/* The repository the chat reads here, if any, is the one the composer opens on; the owner can choose another. */}
-        {makingRun && conversation.length > 0 && <MakeRunDialog attemptId={conversation[0]!} {...(readPick.kind !== "none" && reading.status.state === "usable" ? { repo: readPick.path.trim() } : {})} onClose={() => setMakingRun(false)} onSignedOut={onSignedOut} />}
-
-        <ContextSheet
-          sheetRef={sheetRef}
-          view={view}
-          setView={setView}
-          state={{
-            rows,
-            values,
-            warning: { mode: run && mode === "full" },
-            repo,
-            otherPath,
-            known,
-            chooseRepo: setRepo,
-            setOtherPath: (path) => {
-              setOtherPath(path);
-              setRepo({ kind: "other", path });
-            },
-            repository,
-            read: {
-              pick: readPick,
-              choose: setReadPick,
-              otherPath: readOther,
-              setOtherPath: (path) => {
-                setReadOther(path);
-                setReadPick({ kind: "other", path });
-              },
-              check: reading,
-              readers,
-            },
-            kind,
-            setKind,
-            builder: chosenBuilder,
-            setBuilder: setBuilderPick,
-            specPath,
-            setSpecPath,
-            mode,
-            setMode: (chosen: RunMode) => {
-              setChosenMode({ repo: repoPath, mode: chosen });
-              setModeChosenHere(true);
-            },
-            review,
-            delivery,
-            setDelivery,
-            onLimit,
-            setOnLimit,
-            updateWithMain,
-            setUpdateWithMain,
-            oneTask,
-            setOneTask: setChosenOneTask,
-            approvalLimit,
-            setApprovalLimit,
-            issue,
-            models,
-            sameBuild,
-            setSameBuild,
-            buildModels,
-            agents,
-          }}
-        />
-      </main>
-    </Frame>
+/**
+ * The transcript follows its newest row while the reader is at the bottom (the design system's own hook). It counts the
+ * rows the log shows, read from the page once React has put them there. For the screen that draws the transcript.
+ */
+export function useFollow() {
+  const logBox = useRef<HTMLDivElement | null>(null);
+  const [rowCount, setRowCount] = useState(0);
+  useLayoutEffect(() => {
+    setRowCount(logBox.current?.querySelector('ol[role="log"]')?.querySelectorAll(":scope > li:not(.ds-streaming)").length ?? 0);
+  });
+  const { scrollerRef, logRef, newCount, jumpToLatest, jumpButtonProps } = useTranscript({ rowCount });
+  const setLog = useCallback(
+    (el: HTMLDivElement | null) => {
+      logBox.current = el;
+      logRef(el);
+    },
+    [logRef],
   );
+  return { scrollerRef, setLog, newCount, jumpToLatest, jumpButtonProps };
 }

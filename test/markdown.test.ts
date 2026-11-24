@@ -225,8 +225,9 @@ test("the renderer builds React elements only: no HTML string, no link, no image
 test("only an agent's reply and a review go through the renderer; prompts, issues and peers' text stay plain", () => {
   const source = (path: string) => readFileSync(new URL(`../web/src/${path}`, import.meta.url), "utf8");
   // On the rebuilt task screen: the agent's text in its narrative, and a review's own words among the reviewer's findings.
-  const users = ["components/transcript.tsx", "components/evidence.tsx", "screens2/task/narrative.tsx", "screens2/review/review-parts.tsx"];
-  const all = ["components/outside-text.tsx", "components/other-workbenches.tsx", "components/issue-choice.tsx", "screens2/task/task-screen.tsx", "screens2/task/steer.tsx", "screens2/task/recovery.tsx", "screens2/task/legacy.tsx", "screens2/run/run-screen.tsx", "screens2/run/run-parts.tsx", "screens2/run/plan.tsx", "screens/turn.tsx", "app/peers.ts", ...users];
+  // The cards of a round several agents answered draw each agent's reply as the transcript does.
+  const users = ["components/transcript.tsx", "components/evidence.tsx", "screens2/task/narrative.tsx", "screens2/review/review-parts.tsx", "screens2/chat/compare.tsx"];
+  const all = ["components/outside-text.tsx", "components/other-workbenches.tsx", "components/issue-choice.tsx", "screens2/task/task-screen.tsx", "screens2/task/steer.tsx", "screens2/task/recovery.tsx", "screens2/task/legacy.tsx", "screens2/run/run-screen.tsx", "screens2/run/run-parts.tsx", "screens2/run/plan.tsx", "screens2/chat/chat-view.tsx", "screens2/chat/new-work.tsx", "screens2/chat/composer.tsx", "app/peers.ts", ...users];
   for (const path of all) assert.equal(/markdown-view/.test(source(path)), users.includes(path), path);
   const transcript = source("components/transcript.tsx");
   // The one place in the transcript is the agent's text row; the owner's prompt there is still plain text.
