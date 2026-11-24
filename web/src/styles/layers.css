@@ -1,0 +1,6 @@
+/*
+ * The order of the cascade layers, declared before any stylesheet (main.tsx imports this file first). Tailwind's reset
+ * (base) lies under the vendored design system (ds), so the screens still drawn with ds- classes look as they did;
+ * Tailwind's utilities lie over it, as they did when Tailwind 3 wrote them outside any layer. ADR 0012.
+ */
+@layer theme, base, ds, components, utilities;

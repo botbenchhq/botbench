@@ -41,7 +41,7 @@ export function MachineChecksNote({ rows }: { rows: readonly Evidence[] }) {
 import { StatusBadge } from "./status.tsx";
 
 /** A command's result in words, and the modifier that draws its icon. The word always says it; the icon only repeats it. */
-function result(row: Evidence): { words: string; look: string } {
+export function commandResult(row: Evidence): { words: string; look: string } {
   switch (row.outcome) {
     case "passed":
       return { words: "Passed", look: "ds-check-list__result--passed" };
@@ -64,7 +64,7 @@ function result(row: Evidence): { words: string; look: string } {
  * The count a check list opens with: how many passed out of the whole list, then each other result by itself. The
  * whole list is `total`, recorded before its first command ran; a round from before that was recorded counts its rows.
  */
-function summary(rows: readonly Evidence[], what: { one: string; many: string }, total = rows.length): string {
+export function checksSummary(rows: readonly Evidence[], what: { one: string; many: string }, total = rows.length): string {
   const count = (outcome: Evidence["outcome"]): number => rows.filter((row) => row.outcome === outcome).length;
   const others = [
     count("failed") > 0 ? `${count("failed")} failed` : null,
@@ -90,10 +90,10 @@ export function CommandEvidence({ rows, what, failedFirst = false, testId, total
   const shownRows = failedFirst ? [...rows].sort((a, b) => RANK[a.outcome] - RANK[b.outcome] || a.position - b.position) : rows;
   return (
     <div data-testid={testId} className="ds-check-list">
-      <p className="ds-check-list__summary">{summary(rows, what, Math.max(total ?? rows.length, rows.length))}</p>
+      <p className="ds-check-list__summary">{checksSummary(rows, what, Math.max(total ?? rows.length, rows.length))}</p>
       <ul className="ds-check-list__items">
         {shownRows.map((row) => {
-          const shown = result(row);
+          const shown = commandResult(row);
           const took = duration(row.durationMs, "units");
           return (
             <li key={row.id} className="ds-check-list__item">

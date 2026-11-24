@@ -13,6 +13,7 @@ import { SignInScreen } from "../screens/sign-in.tsx";
 import { TaskScreen } from "../screens/task.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
 import { OpenChat, TurnScreen } from "../screens/turn.tsx";
+import { isRebuilt, rebuilt } from "../screens2/routes.tsx";
 import { UsageScreen } from "../screens/usage.tsx";
 import { WorkColumn } from "../components/work-column.tsx";
 import { useWide } from "./wide.ts";
@@ -89,6 +90,9 @@ function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
   if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
   if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // The key gives each task its own screen state, so one task's transcript never shows under another's name.
+  // A screen rebuilt on shadcn/ui (ADR 0012), when there is one for this address: screens2/routes.tsx is the one switch.
+  const next = rebuilt(route, onSignedOut);
+  if (next !== null) return next;
   if (route.screen === "task") return <TaskScreen key={route.id} id={route.id} discard={route.discard} onSignedOut={onSignedOut} />;
   if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
@@ -110,7 +114,8 @@ function Beside({ route, wide, onSignedOut, children }: { route: Route; wide: bo
   // Kept here, so the search is still there after a visit to Settings, which has no column.
   const [query, setQuery] = useState("");
   const settings = route.screen === "settings" || route.screen === "trust" || route.screen === "usage";
-  const split = wide && !settings;
+  // A rebuilt screen has its own navigation at the left, and no column beside it.
+  const split = wide && !settings && !isRebuilt(route);
   // The screen keeps its place in the tree at every width: crossing 1024px only adds or removes the column and the
   // panel's classes, so the screen is not drawn anew and keeps what the owner typed (a note, a message, an open dialog).
   // Below 1024px, and on Settings, the two wrappers are `display: contents`: the screen is laid out as if drawn alone.

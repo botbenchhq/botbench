@@ -1,5 +1,7 @@
 # ADR 0011: A headless library for interactive primitives (Base UI), and the rule for client dependencies
 
+**The library choice here is superseded by [ADR 0012](0012-the-interface-is-built-on-shadcn-ui-and-tailwind.md): the interface is built on shadcn/ui (on Base UI) and Tailwind CSS. The rule for client dependencies below stands, and its table continues there.**
+
 Date: 2026-11-23. Status: **accepted for the headless library**, by the owner's instruction to proceed, relayed to this session on 2026-11-23 with the words "If our product looks bad it won't get much attention, so let's not be super strict here"; **proposed for each optional addition** in "Optional additions", to be taken up when its work starts. Nothing is installed and no source is changed by this record; where it names a test, a rule or a line that is not in the repository yet, that is what the pull requests after it would add. The design system's side of the same decision is its `docs/adr/0001-a-headless-library-for-the-react-layer.md`.
 
 ## Context
