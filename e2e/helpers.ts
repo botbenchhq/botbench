@@ -598,6 +598,43 @@ export async function checkScreen(page: Page, screen: string, { floor = 32, with
 }
 
 /**
+ * Content longer than its place, in `within` (the screen itself unless told otherwise): nothing drawn reaches past the
+ * window's edge, text that does not fit is cut with an ellipsis and never just clipped, and whatever is cut can be read
+ * whole from a `title` on it or around it, or from the name of the link or button it is in. For a screen seeded with
+ * long titles and names (e2e/home-seed.ts, `stressed`); `checkScreen` holds the rest.
+ */
+export async function checkLongContent(page: Page, screen: string, within = "main"): Promise<void> {
+  const found = await page.evaluate((within) => {
+    const width = document.documentElement.clientWidth;
+    const name = (el: Element): string => `${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 40)}"`;
+    const past: string[] = [];
+    const clipped: string[] = [];
+    const unreadable: string[] = [];
+    for (const el of document.querySelectorAll(`:is(${within}) *`)) {
+      if (el.getClientRects().length === 0) continue;
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      // Drawn for assistive technology only: a pixel, at some widths only.
+      if (box.width <= 1 || el.clientWidth <= 1) continue;
+      // What of it is drawn: an ancestor that clips or scrolls inside itself keeps the rest from the screen.
+      let [left, right] = [box.left, box.right];
+      for (let up = el.parentElement; up !== null && up !== document.body; up = up.parentElement) {
+        if (getComputedStyle(up).overflowX === "visible") continue;
+        const around = up.getBoundingClientRect();
+        [left, right] = [Math.max(left, around.left), Math.min(right, around.right)];
+      }
+      if (style.position !== "absolute" && right > left && (right > width + 0.5 || left < -0.5)) past.push(name(el));
+      const ownText = [...el.childNodes].some((node) => node.nodeType === 3 && (node.textContent ?? "").trim() !== "");
+      if (!ownText || el.scrollWidth <= el.clientWidth + 1 || ["visible", "auto", "scroll"].includes(style.overflowX)) continue;
+      if (style.textOverflow !== "ellipsis") clipped.push(name(el));
+      else if (el.closest("[title]") === null && !el.closest("a, button")?.getAttribute("aria-label")) unreadable.push(name(el));
+    }
+    return { past, clipped, unreadable };
+  }, within);
+  expect(found, `${screen}: nothing past the edge, nothing clipped without an ellipsis, nothing cut that cannot be read whole`).toEqual({ past: [], clipped: [], unreadable: [] });
+}
+
+/**
  * Everything the browser refuses or complains of from now on, as lines: a violation of the content security policy
  * (the page's own event, and Chrome's console line for one), any console error, any failed request, any page error.
  * Call it before the page is opened; a test ends by expecting the list to be empty.

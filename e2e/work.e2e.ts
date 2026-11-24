@@ -42,7 +42,10 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(stateOf("Migrate the invoices table")).toHaveText("Failed");
     await expect(stateOf("Generate the changelog from the release tags")).toHaveText("Failed");
     const plan = rows(page).filter({ hasText: "Plan the billing export" });
-    await expect(plan.getByRole("cell")).toContainText(["Plan ready for review", "Plan the billing export", `Run ${seeded.ids.plan}`, "Claude Code", "billing-api"]);
+    await expect(plan.getByRole("cell")).toContainText(["Plan ready for review", "Plan the billing export", `Run ${seeded.ids.plan}`, "Claude Code"]);
+    // The repository has no column: it is on the line under the title.
+    // At this width the kind has its column, so the line is the repository alone.
+    expect(await plan.getByTestId("work-kind-line").innerText()).toBe("billing-api");
     await expect(plan.getByRole("link", { name: "Plan the billing export" })).toHaveAttribute("href", `#/runs/${seeded.ids.plan}`);
 
     // Each filter says how many rows it would show, as the server counts them.
@@ -143,7 +146,7 @@ test.describe("at 390×844, on a phone", () => {
     await open(page, botbench.base);
     await expect(rows(page)).toHaveCount(11);
     const row = rows(page).filter({ hasText: "Plan the billing export" });
-    await expect(row.getByRole("link")).toContainText(`Plan ready for review · Run ${seeded.ids.plan} · `);
+    await expect(row.getByRole("link")).toContainText(`Plan ready for review · Run ${seeded.ids.plan} · billing-api · `);
     await checkScreen(page, "Work, 390", { floor: 44 });
     await checkWords(page, "Work, phone");
     await shot(page, "work-390-dark");

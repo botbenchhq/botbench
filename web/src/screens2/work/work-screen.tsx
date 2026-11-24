@@ -22,7 +22,7 @@ import { Proposals } from "../../components/proposals.tsx";
 import { NextShell } from "../../shell/shell.tsx";
 import { DestructiveDialog } from "../decision/decision-surface.tsx";
 import { hrefOf } from "../home/home-model.ts";
-import { aboutLine, agentWord, changed, kindWord, KINDS, noneLine, olderLine, repoWord, shownLine, STATES, stateWord } from "./work-model.ts";
+import { aboutLine, agentWord, changed, changedShort, kindWord, KINDS, noneLine, olderLine, repoWord, shownLine, STATES, stateWord } from "./work-model.ts";
 
 /*
  * Work, the full inventory (the approved board V2Work): every run, every task started on its own and every chat,
@@ -69,7 +69,7 @@ function Choice<T extends string>({ name, choices, counts, value, onChange }: { 
           type="button"
           aria-pressed={choice.value === value}
           onClick={() => onChange(choice.value)}
-          className={cn("flex h-(--control) shrink-0 items-center gap-2 rounded-md px-3 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50", choice.value === value && "bg-background font-semibold text-foreground")}
+          className={cn("flex h-(--control) shrink-0 items-center gap-2 rounded-md px-3 text-sm whitespace-nowrap text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset", choice.value === value && "bg-background font-semibold text-foreground")}
         >
           {choice.label}
           {counts !== null && <span className="text-meta font-normal text-muted-foreground tabular-nums">{counts[choice.value]}</span>}
@@ -286,7 +286,7 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
             Work
           </h1>
           {page !== null && (
-            <p data-testid="work-about" className="min-w-0 flex-1 text-meta text-muted-foreground">
+            <p data-testid="work-about" className="min-w-0 flex-1 text-meta text-muted-foreground @max-2xl:order-last @max-2xl:basis-full">
               {aboutLine(page.all, hiddenView)}
             </p>
           )}
@@ -333,18 +333,22 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
           </p>
         ) : (
           <Card className="mt-4 gap-0 overflow-hidden py-0">
-            {/* The agent and the repository are shown only where the title keeps room beside them (64rem of container): at 1024px wide they would leave it a hundred pixels. */}
+            {/*
+              The title is the column that takes what is left, and it keeps at least 45% of the table from 42rem up. The
+              others are fixed and give way for it: under 56rem the kind is said under the title and the state has the
+              room of two lines; the agent has a column from 69rem. The repository would leave the title less than its
+              share at any width the screen has, so it is on the line under the title.
+            */}
             <Table data-testid="work-table" className="table-fixed text-sm">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-11 px-4 text-meta font-semibold text-muted-foreground @2xl:w-52">
+                  <TableHead className="w-11 px-4 text-meta font-semibold text-muted-foreground @2xl:w-40 @4xl:w-52">
                     <span className="@max-2xl:sr-only">State</span>
                   </TableHead>
                   <TableHead className="px-2 text-meta font-semibold text-muted-foreground">Title</TableHead>
-                  <TableHead className="w-24 px-2 text-meta font-semibold text-muted-foreground @max-2xl:hidden">Kind</TableHead>
-                  <TableHead className="w-32 px-2 text-meta font-semibold text-muted-foreground @max-5xl:hidden">Agent</TableHead>
-                  <TableHead className="w-36 px-2 text-meta font-semibold text-muted-foreground @max-5xl:hidden">Repository</TableHead>
-                  <TableHead className="w-40 px-2 text-right text-meta font-semibold text-muted-foreground @max-lg:hidden">Last change</TableHead>
+                  <TableHead className="w-24 px-2 text-meta font-semibold text-muted-foreground @max-4xl:hidden">Kind</TableHead>
+                  <TableHead className="w-28 px-2 text-meta font-semibold text-muted-foreground @max-[69rem]:hidden">Agent</TableHead>
+                  <TableHead className="w-32 px-2 text-right text-meta font-semibold text-muted-foreground @max-lg:hidden">Last change</TableHead>
                   <TableHead className="w-14 px-2">
                     <span className="sr-only">More</span>
                   </TableHead>
@@ -355,12 +359,13 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                   const { icon: Icon, tone, strong } = look(item);
                   const word = stateWord(item);
                   const facts = rowFacts(item);
+                  const repo = item.kind === "chat" ? null : repoWord(item);
                   return (
                     <TableRow key={`${item.kind} ${item.id}`} data-testid="work-row">
-                      <TableCell className="px-4 py-1">
+                      <TableCell className="px-4 py-1 whitespace-normal">
                         <span className={cn("flex items-center gap-2.5", strong ? "font-semibold text-foreground" : "text-muted-foreground")}>
                           <Icon aria-hidden="true" className={cn("size-4 shrink-0", tone)} />
-                          <span data-testid="work-state" className="truncate @max-2xl:sr-only">
+                          <span data-testid="work-state" className="min-w-0 leading-tight @max-2xl:sr-only">
                             {word}
                           </span>
                         </span>
@@ -371,23 +376,27 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                             {item.title}
                           </span>
                           {/* Where the screen is narrow the columns that do not fit are one line under the title. */}
-                          <span data-ds-content="" className="truncate text-meta text-muted-foreground @2xl:hidden">
-                            {[word, ...(kindWord(item) === word ? [] : [kindWord(item)]), changed(item.updatedAt, now)].join(" \u00b7 ")}
+                          <span data-ds-content="" title={repo ?? undefined} className="truncate text-meta text-muted-foreground @2xl:hidden">
+                            {[word, ...(kindWord(item) === word ? [] : [kindWord(item)]), ...(repo === null ? [] : [repo]), changed(item.updatedAt, now)].join(" \u00b7 ")}
+                          </span>
+                          {/* The repository has no column at any width: it is said here, after the kind where the kind has no column either (under 56rem). */}
+                          <span data-testid="work-kind-line" data-ds-content="" title={repo ?? undefined} className="truncate text-meta text-muted-foreground @max-2xl:hidden">
+                            <span className="@4xl:hidden">{repo === null ? kindWord(item) : `${kindWord(item)} \u00b7 `}</span>
+                            {repo}
                           </span>
                           {facts !== null && (
-                            <span data-testid="work-facts" className="truncate text-meta text-muted-foreground">
+                            <span data-testid="work-facts" title={facts} className="truncate text-meta text-muted-foreground">
                               {facts}
                             </span>
                           )}
                         </a>
                       </TableCell>
-                      <TableCell className="truncate px-2 py-1 text-muted-foreground @max-2xl:hidden">{kindWord(item)}</TableCell>
-                      <TableCell className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">{agentWord(item)}</TableCell>
-                      <TableCell data-ds-content="" className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">
-                        {repoWord(item)}
+                      <TableCell className="truncate px-2 py-1 text-muted-foreground @max-4xl:hidden">{kindWord(item)}</TableCell>
+                      <TableCell title={agentWord(item)} className="truncate px-2 py-1 text-muted-foreground @max-[69rem]:hidden">
+                        {agentWord(item)}
                       </TableCell>
-                      <TableCell className="truncate px-2 py-1 text-right text-muted-foreground tabular-nums @max-lg:hidden">
-                        <time dateTime={item.updatedAt}>{changed(item.updatedAt, now)}</time>
+                      <TableCell title={changed(item.updatedAt, now)} className="truncate px-2 py-1 text-right text-muted-foreground tabular-nums @max-lg:hidden">
+                        <time dateTime={item.updatedAt}>{changedShort(item.updatedAt, now)}</time>
                       </TableCell>
                       <TableCell className="px-2 py-1 text-right">
                         <RowMenu item={item} hiddenView={hiddenView} onAction={(action) => act(item, action)} />

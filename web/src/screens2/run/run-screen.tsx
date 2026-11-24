@@ -436,7 +436,7 @@ export default function RunScreen({ id, onSignedOut }: { id: number; onSignedOut
                 <StateBadge look={runLook(summary)} testId="run-state">
                   {runWord(summary)}
                 </StateBadge>
-                <span data-ds-content="" className="ml-auto text-muted-foreground max-md:hidden">
+                <span data-testid="run-bar-repo" data-ds-content="" title={folderName(run.repo)} className="min-w-0 flex-1 truncate text-right text-muted-foreground max-md:hidden">
                   {folderName(run.repo)}
                 </span>
               </>

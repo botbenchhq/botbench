@@ -95,8 +95,11 @@ test.describe("at 1440×900, with a mouse", () => {
     await checkScreen(page, "Home, 1024", { floor: 32 });
     // The groups follow the width the screen really has: at 768px, with the navigation behind its menu button, there is still room for two; one column where there is not.
     await page.setViewportSize({ width: 640, height: 1024 });
-    const [one, other] = [(await page.getByTestId("waiting").boundingBox())!, (await page.getByTestId("completed").boundingBox())!];
-    expect(other.y, "at 640px the groups are one column").toBeGreaterThan(one.y + one.height - 1);
+    // The layout follows the new width a frame later, so the measure is asked again until it settles.
+    await expect.poll(async () => {
+      const [one, other] = [(await page.getByTestId("waiting").boundingBox())!, (await page.getByTestId("completed").boundingBox())!];
+      return other.y > one.y + one.height - 1;
+    }, { message: "at 640px the groups are one column" }).toBe(true);
     await shot(page, "home-768-dark");
     await checkScreen(page, "Home, 640", { floor: 32 });
     expect(refused).toEqual([]);

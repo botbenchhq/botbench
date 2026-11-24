@@ -103,15 +103,22 @@ function NeedRow({ item, now }: { item: HomeItem; now: number }) {
       <Icon aria-hidden="true" className={cn("size-4 shrink-0", item.cause === "approval" ? "text-attention" : "text-muted-foreground")} />
       <div className="min-w-0 flex-1">
         <Title>{item.title}</Title>
-        <p className="truncate text-meta text-muted-foreground">
-          <span className="font-semibold text-foreground">{n.label}</span>
-          {" · "}
-          {n.words}
-          {n.code !== null && <> <Code>{n.code}</Code></>}
-          <span data-ds-content="">{` · ${facts(item)}`}</span>
+        <p title={`${n.label} \u00b7 ${n.words}${n.code === null ? "" : ` ${n.code}`} \u00b7 ${facts(item)}`} className="flex text-meta text-muted-foreground">
+          <span className="min-w-0 truncate">
+            <span className="font-semibold text-foreground">{n.label}</span>
+            {" · "}
+            {n.words}
+            {n.code !== null && <> <Code>{n.code}</Code></>}
+            <span data-ds-content="">{` · ${facts(item)}`}</span>
+          </span>
+          {/* On a phone the title has the row: the wait ends this line, and is never the part that is cut. */}
+          <span className="shrink-0 whitespace-pre @2xl:hidden">
+            {" \u00b7 "}
+            <Waited since={item.since} now={now} />
+          </span>
         </p>
       </div>
-      <Waited since={item.since} now={now} />
+      <Waited since={item.since} now={now} className="@max-2xl:hidden" />
       {/*
         Where the screen is narrow the action is the row itself, drawn as a chevron; where it is wide, a button at the
         row's end. The button's pressed look moves it by a pixel, which would make the link the box its own stretched
@@ -158,7 +165,7 @@ function Row({ item, icon: Icon, tone, line, end, whole = false }: { item: HomeI
         <a href={hrefOf(item)} className="block rounded-sm after:absolute after:inset-0">
           <Title className="font-medium">{item.title}</Title>
         </a>
-        <p data-ds-content="" className={cn("text-meta text-muted-foreground", !whole && "truncate")}>
+        <p data-ds-content="" title={!whole && typeof line === "string" ? line : undefined} className={cn("text-meta text-muted-foreground", !whole && "truncate")}>
           {line}
         </p>
       </div>

@@ -34,8 +34,8 @@ const LEAD: Record<SettingsGroup, string> = {
   connections: "Who else reaches this workbench: one paired workbench, the devices signed in to it, and what it may tell this device.",
 };
 
-/** The widest a group's column grows: one column of settings reads best narrow, a group with two columns needs the room. */
-const WIDTH: Record<SettingsGroup, string> = { agents: "max-w-[47.5rem]", environments: "max-w-[65rem]", identity: "max-w-[65rem]", permissions: "max-w-[47.5rem]", usage: "max-w-[65rem]", connections: "max-w-[65rem]" };
+/** The groups of one column, which read best narrow; a group with two columns takes the whole width. */
+const NARROW: Record<SettingsGroup, boolean> = { agents: true, environments: false, identity: false, permissions: true, usage: false, connections: false };
 
 function Group({ group, onSignedOut }: { group: SettingsGroup; onSignedOut: () => void }) {
   if (group === "agents") return <AgentsGroup onSignedOut={onSignedOut} />;
@@ -203,7 +203,8 @@ export default function SettingsScreen({ group, onSignedOut }: { group: Settings
       }
     >
       <main data-testid="settings" data-group={open ?? ""} className="min-w-0 flex-1 px-4 pt-6 pb-16 md:px-8">
-        <div className={`mx-auto flex flex-col gap-8 ${open === null ? "max-w-[47.5rem]" : WIDTH[open]}`}>
+        {/* Every group starts at the same left edge, that of the widest: a narrow group keeps its measure inside it, so going from one group to the next moves no heading. */}
+        <div className={`mx-auto flex flex-col gap-8 ${open === null ? "max-w-[47.5rem]" : "max-w-[65rem]"} ${open !== null && NARROW[open] ? "*:max-w-[47.5rem]" : ""}`}>
           <header className="flex flex-col gap-2">
             <h1 ref={heading} tabIndex={-1} className="text-[1.5rem] leading-[1.875rem] font-bold tracking-tight outline-none md:text-title">
               {name}

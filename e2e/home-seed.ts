@@ -115,12 +115,48 @@ async function few(dir: string): Promise<Seeded> {
   };
 }
 
+/** A title of over 120 characters, and one that is a single unbroken token, as a branch name or a path is. */
+export const LONG_TITLE = "Rewrite the invoice reconciliation pipeline so that multi-currency ledgers are balanced per settlement day, and backfill every historic record since 2019";
+export const LONG_TOKEN = "feature/BILLING-12345-rewrite-the-invoice-reconciliation-pipeline-for-multi-currency-ledgers/src/engine/reconciliation/settlement_day_balancer.test.ts";
+/** A repository whose folder name is far longer than any column or chip that shows it. */
+export const LONG_REPO = "billing-api-for-the-european-payments-platform-and-its-settlement-ledgers-monorepo";
+
+/**
+ * A few of everything, each with a title or a name longer than its place on the screen: what a layout must cut short or
+ * wrap inside its card. One long title in each group of Home, so each kind of row is stretched.
+ */
+async function stressed(dir: string): Promise<Seeded> {
+  const home = path.join(dir, "home");
+  const repo = path.join(dir, LONG_REPO);
+  initRepo(repo, { "README.md": "# Billing\n", "other.sh": "#!/bin/sh\necho other\n" });
+  const approval = leaveApproval(home, repo);
+  const db = openStore(home);
+  const s = seeder(db, home, repo);
+  const failure = await s.recoverable(`${LONG_TOKEN} fails on the first run`);
+  const plan = await s.plan(`${LONG_TITLE}, as a plan`, 12);
+  const result = await s.ready(`${LONG_TITLE}, as a result`);
+  const later = await s.ready(LONG_TOKEN);
+  const limited = await s.limited(`${LONG_TITLE}, waiting`, tomorrowAfternoon().toISOString());
+  await s.limited(`${LONG_TOKEN}-waiting`, tomorrowAfternoon().toISOString());
+  const accepted = await s.accepted(`${LONG_TITLE}, accepted`);
+  const second = await s.accepted(`${LONG_TOKEN}-accepted`);
+  const rejected = await s.rejected(`${LONG_TITLE}, rejected`);
+  const cancelled = await s.cancelled(`${LONG_TOKEN}-cancelled`);
+  const failed = await s.failed(`${LONG_TITLE}, failed`);
+  db.close();
+  return {
+    home, repo: fs.realpathSync(repo), approval,
+    needs: [ASKING, `${LONG_TOKEN} fails on the first run`, `${LONG_TITLE}, as a plan`, `${LONG_TITLE}, as a result`, LONG_TOKEN],
+    ids: { approval: approval.taskId, result: result.id, plan, failure: failure.id, later: later.id, limited: limited.id, accepted: accepted.id, second: second.id, rejected: rejected.id, cancelled: cancelled.id, failed: failed.id },
+  };
+}
+
 /** How many of each the sixty hold: what the board V2HomeFifty shows, and enough rows that Work has older ones to ask for. */
 export const MANY = { needs: 7, inProgress: 18, waiting: 8, completed: 14, rejected: 2, cancelled: 10, failed: 1 };
 
-async function many(dir: string): Promise<Seeded> {
+async function many(dir: string, name = "payments"): Promise<Seeded> {
   const home = path.join(dir, "home");
-  const repo = path.join(dir, "payments");
+  const repo = path.join(dir, name);
   initRepo(repo, { "README.md": "# Payments\n", "other.sh": "#!/bin/sh\necho other\n" });
   const approval = leaveApproval(home, repo);
   const db = openStore(home);
@@ -143,14 +179,15 @@ async function many(dir: string): Promise<Seeded> {
   return { home, repo: fs.realpathSync(repo), approval, needs, ids: { approval: approval.taskId } };
 }
 
-export const test = base.extend<{ size: "few" | "many"; dir: string; seeded: Seeded; botbench: Botbench; refused: string[] }>({
+export const test = base.extend<{ /** "stressed" is a few of everything with long titles and a long repository name; "many-long" is the sixty in a repository with a long name. */
+  size: "few" | "many" | "stressed" | "many-long"; dir: string; seeded: Seeded; botbench: Botbench; refused: string[] }>({
   size: ["few", { option: true }],
   dir: async ({}, use) => {
     const dir = tempDir("botbench-e2e-home-");
     await use(dir);
     fs.rmSync(dir, { recursive: true, force: true });
   },
-  seeded: async ({ dir, size }, use) => use(await (size === "few" ? few(dir) : many(dir))),
+  seeded: async ({ dir, size }, use) => use(await (size === "few" ? few(dir) : size === "stressed" ? stressed(dir) : many(dir, size === "many-long" ? LONG_REPO : undefined))),
   botbench: async ({ seeded }, use) => {
     const botbench = await startBotbench({ home: seeded.home, entry: path.resolve(import.meta.dirname, "serve-replayed-build.ts"), settings: { drivers: { "claude-code": { model: "haiku" } }, repositories: { [seeded.repo]: { checks: [CHECK] } } } });
     await use(botbench);

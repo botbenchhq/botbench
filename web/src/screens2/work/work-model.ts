@@ -1,7 +1,7 @@
 import type { WorkItem, WorkKind, WorkPage, WorkState } from "../../api/client.ts";
 import { agentName } from "../../app/chat.ts";
 import { folderName } from "../../app/composer.ts";
-import { ago, counted, dayAndClock, number, type Where } from "../../app/format.ts";
+import { ago, counted, day, dayAndClock, number, type Where } from "../../app/format.ts";
 import { runWord } from "../../components/run-status.ts";
 import { statusWord } from "../../components/task-status.ts";
 
@@ -54,6 +54,14 @@ export function changed(updatedAt: string, now: number, where: Where = {}): stri
   const since = now - Date.parse(updatedAt);
   if (since < 60_000) return "Now";
   return since < 24 * 60 * 60 * 1000 ? ago(updatedAt, now, where) : dayAndClock(updatedAt, where);
+}
+
+/** The same in the little room its column has, so the title keeps the table's width: "Now", "12 min ago", "3 h ago", and from a day back the day alone. `changed` is its whole form. */
+export function changedShort(updatedAt: string, now: number, where: Where = {}): string {
+  const minutes = Math.floor((now - Date.parse(updatedAt)) / 60_000);
+  if (minutes < 1) return "Now";
+  if (minutes < 60) return `${number(minutes, where)} min ago`;
+  return minutes < 24 * 60 ? `${number(Math.floor(minutes / 60), where)} h ago` : day(updatedAt, where);
 }
 
 /** The line under the heading: what Work is, and how much of it there is. */
