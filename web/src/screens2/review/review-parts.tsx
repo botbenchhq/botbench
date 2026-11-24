@@ -64,10 +64,13 @@ function CheckClaim({ row, current }: { row: Evidence; current: boolean }) {
     <Claim kind="check">
       <Collapsible>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Mark aria-hidden="true" className={cn("size-4 shrink-0", current && passed ? "text-success" : current && (row.outcome === "failed" || row.outcome === "timed_out") ? "text-destructive" : "text-muted-foreground")} />
-          <code data-ds-content="" className="min-w-0 break-words text-foreground">
-            {row.command}
-          </code>
+          {/* The mark and the command are one piece, so a command too long for the line wraps beside its mark, not under it. */}
+          <span className="flex min-w-0 items-start gap-x-3">
+            <Mark aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0", current && passed ? "text-success" : current && (row.outcome === "failed" || row.outcome === "timed_out") ? "text-destructive" : "text-muted-foreground")} />
+            <code data-ds-content="" className="min-w-0 wrap-anywhere text-foreground">
+              {row.command}
+            </code>
+          </span>
           <Badge variant="outline" className={tone}>
             {result}
           </Badge>
@@ -364,9 +367,10 @@ export function ChangedFiles({ task, onSignedOut }: { task: TaskDetail; onSigned
       {files.map((file: FileChange, i) => (
         <Collapsible key={file.path} defaultOpen={i === 0} onOpenChange={(open) => open && read(file.path)} className="border-t">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-2">
-            <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="group/file -ml-3 min-w-0 justify-start font-normal" />}>
-              <ChevronRight aria-hidden="true" className="transition-transform group-data-panel-open/file:rotate-90" />
-              <code data-ds-content="" className="truncate text-foreground">
+            <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="group/file -ml-3 h-auto min-h-(--control-small) max-w-full min-w-0 justify-start py-1 text-left font-normal whitespace-normal" />}>
+              <ChevronRight aria-hidden="true" className="shrink-0 transition-transform group-data-panel-open/file:rotate-90" />
+              {/* The whole path, on as many lines as it takes: files in one deep folder differ only at the end. */}
+              <code data-ds-content="" className="min-w-0 break-all text-foreground">
                 {file.path}
               </code>
             </CollapsibleTrigger>
