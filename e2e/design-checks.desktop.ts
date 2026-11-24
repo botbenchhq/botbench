@@ -73,8 +73,9 @@ for (const mode of ["dark", "light"] as const) {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "auto");
 
     const heading = (name: string) => (p: Page) => p.getByRole("heading", { name, level: 1 });
-    await screen(page, botbench, { hash: "#/", name: "Chat", ready: () => messageBox(page), mode });
-    await screen(page, botbench, { hash: "#/work", name: "Work", ready: heading("Work"), mode });
+    // Home and Work are rebuilt on shadcn/ui and are not drawn with the design system's classes: their own tests judge
+    // them (e2e/home.e2e.ts, e2e/work.e2e.ts; ADR 0012).
+    await screen(page, botbench, { hash: "#/turn", name: "Chat", ready: () => messageBox(page), mode });
     await screen(page, botbench, { hash: `#/tasks/${seeded.task}`, name: "task, ready for review", ready: (p) => p.getByTestId("task-status"), mode });
     await expect(page.getByTestId("task-status")).toHaveText(/^Ready for review\./);
     // The run screen is rebuilt on shadcn/ui (ADR 0012) and is not drawn with the design system's classes: its checks, in dark and in light, are e2e/run.e2e.ts's.

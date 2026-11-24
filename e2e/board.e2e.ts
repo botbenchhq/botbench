@@ -2,19 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { askBeforeEveryCommand, checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, checkWords, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests, workRows, workState, workStateFilter } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// The runs board, Settings and the appearance choice in the real client, at a phone's size: a real Botbench process,
+// Work as the runs board (its own tests are e2e/work.e2e.ts and e2e/home.e2e.ts), Settings and the appearance choice in the real client, at a phone's size: a real Botbench process,
 // real temporary repositories, and, for the tests marked LIVE, the owner's Claude Code on its cheapest model. A run's
 // plan comes from a real planner turn; a failed task comes from a repository whose real setup command fails.
 
 async function shot(page: Page, name: string): Promise<void> {
   if (SHOTS) await tallShot(page, path.join(SHOTS, name));
 }
-
-const selector = (page: Page) => page.getByRole("group", { name: "Show" });
-const group = (page: Page) => page.getByTestId("board-group");
 
 const openBoard = openWork;
 
@@ -26,28 +23,29 @@ async function openSettings(page: Page): Promise<void> {
 
 /** Sign in where Claude Code cannot be used: the Chat screen then says why instead of offering a prompt. */
 async function signInAnyway(page: Page, botbench: Botbench): Promise<void> {
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await page.getByLabel("Login token").fill(botbench.token);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByTestId("driver-state")).toHaveText(/^Claude Code: /);
 }
 
-const primaryControls = (page: Page) => page.locator("main .ds-button--primary");
-
-test("with no runs and no tasks, the board is the first-run state, in words, with one primary action: New run", async ({ page, botbench }) => {
+test("with no runs and no tasks, Home and Work say so in words, and each has its one way to start something", async ({ page, botbench }) => {
   const foreign = watchRequests(page, botbench);
   await signIn(page, botbench);
-  await openBoard(page);
-  const empty = page.getByTestId("board-empty");
+  await nav(page).getByRole("link", { name: "Home", exact: true }).click();
+  await expect(page).toHaveTitle("Home \u2013 Botbench");
+  const empty = page.getByTestId("home-empty");
   await expect(empty.getByRole("heading", { name: "No work yet" })).toBeVisible();
-  await expect(empty).toContainText("A task you start from Chat, and a run with its plan of tasks, is listed here.");
-  await expect(primaryControls(page)).toHaveCount(1);
-  await expect(empty.getByRole("link", { name: "New run" })).toHaveClass(/ds-button--primary/);
-  // An empty board shows no group selector: there is nothing to choose between.
-  await expect(selector(page)).toHaveCount(0);
-  await checkDesign(page, "board, empty");
+  await expect(empty).toContainText("A task or a run you start from Chat is listed here while it is in progress, and comes to the top when it needs you");
+  await expect(empty.getByRole("link")).toHaveText(["New chat or task"]);
+  await expect(empty.getByRole("link", { name: "New chat or task" })).toHaveAttribute("href", "#/turn");
+  await checkWords(page, "Home, empty");
   await shot(page, "u16-board-empty.png");
-  await empty.getByRole("link", { name: "New run" }).click();
+  await openBoard(page);
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
+  await expect(workRows(page)).toHaveCount(0);
+  await checkWords(page, "Work, empty");
+  await page.getByRole("link", { name: "New run" }).click();
   await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
   // New run came to work in a repository: the sheet opens on Repository, and Send waits for one.
   await expect(page.locator("dialog.ds-sheet").getByRole("heading", { name: "Repository" })).toBeVisible();
@@ -55,22 +53,14 @@ test("with no runs and no tasks, the board is the first-run state, in words, wit
   expect(foreign).toEqual([]);
 });
 
-test("with Claude Code signed out, the empty board says why and links to Settings, which shows the agent signed out", async ({ page }) => {
+test("with Claude Code signed out, Chat says why, and Settings shows the agent signed out", async ({ page }) => {
   // The real CLI, pointed at an empty configuration directory, reports itself signed out.
   const empty = tempDir("botbench-e2e-claude-config-");
   const botbench = await startBotbench({ env: { CLAUDE_CONFIG_DIR: empty } });
   try {
     await signInAnyway(page, botbench);
-    await openBoard(page);
-    const state = page.getByTestId("board-empty");
-    await expect(state.getByRole("heading", { name: "Claude Code cannot be used yet" })).toBeVisible();
-    await expect(state).toContainText("Claude Code is signed out. Run `claude auth login` in a terminal.");
-    await expect(primaryControls(page)).toHaveCount(1);
-    await expect(state.getByRole("link", { name: "Open settings" })).toHaveClass(/ds-button--primary/);
-    await expect(page.getByRole("link", { name: "New run" })).toHaveCount(0);
-    await checkDesign(page, "board, empty, Claude Code signed out");
-    await shot(page, "u16-board-signed-out.png");
-    await state.getByRole("link", { name: "Open settings" }).click();
+    await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
+    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     const agent = page.getByTestId("agent-claude-code");
     await expect(agent.getByTestId("agent-state")).toHaveText("Signed out");
@@ -109,8 +99,8 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
   // Grok and Antigravity, each with the state its own probe reports.
   for (const key of ["grok", "antigravity"]) await expect(page.getByTestId(`agent-${key}`).getByTestId("agent-state")).toHaveText(/^(Available|Signed out|Not installed|Unsupported version|Unavailable)$/);
   await expect(page.getByText("Gemini CLI")).toHaveCount(0);
-  // Settings is no tab: the tab bar keeps its two destinations. Its first rows lead to Permissions and Usage.
-  await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Chat", "Work"]);
+  // Settings is no tab: the tab bar keeps its three destinations. Its first rows lead to Permissions and Usage.
+  await expect(page.locator(".ds-tab-bar__item")).toHaveText(["Home", "Work", "Chat"]);
   await expect(page.locator('.ds-tab-bar__item[aria-current="page"]')).toHaveCount(0);
   await expect(page.getByTestId("settings-links").getByRole("link")).toHaveText([/^Permissions/, /^Usage/]);
   expect(await page.getByTestId("settings-links").locator("svg use").evaluateAll((uses) => uses.map((use) => use.getAttribute("href")!.split("#")[1])), "each row ends with a chevron").toEqual(["ds-icon-chevron-right", "ds-icon-chevron-right"]);
@@ -191,60 +181,55 @@ test("Appearance: Light changes the page, its browser bar and its logo (which fo
   await checkDesign(page, "settings, dark");
 });
 
-test("LIVE: the board puts runs in their groups and moves them live, without a reload, and the selector switches the group shown", async ({ page, botbench }) => {
+test("LIVE: Work counts runs by state and moves them live, without a reload, and the State filter narrows the list", async ({ page, botbench }) => {
   test.setTimeout(300_000);
   const foreign = watchRequests(page, botbench);
   const repo = path.join(path.dirname(botbench.home), "board-repo");
   initRepo(repo, { "README.md": "# Sample\n" });
   await signIn(page, botbench);
   await openBoard(page);
-  await expect(page.getByTestId("board-empty")).toBeVisible();
+  await expect(page.getByTestId("work-none")).toBeVisible();
   await page.evaluate(() => ((window as unknown as { botbenchSamePage: boolean }).botbenchSamePage = true));
 
   // Two runs: the first is planned now by Claude Code; the second waits for it, one planner at a time.
   const start = async (prompt: string): Promise<number> => ((await (await page.request.post(`${botbench.base}/api/runs`, { data: { repo, prompt, preapproved: [] } })).json()) as { runId: number }).runId;
   const planned = await start("Add a file hello.txt that holds the word hi. Make it one task. Do not run any command.");
   const cancelled = await start("Add a file bye.txt that holds the word bye.");
-  await expect(selector(page)).toBeVisible();
-  await expect(selector(page).getByLabel(/^Running/)).toBeChecked();
-  await expect(group(page).getByRole("link")).toHaveCount(2);
-  await expect(selector(page)).toContainText("Running (2)");
+  await expect(workRows(page)).toHaveCount(2);
+  await expect(workStateFilter(page, /^In progress/)).toHaveText("In progress2");
 
-  // Cancelling the queued one moves it to Finished, live.
+  // Cancelling the queued one ends it, live.
   await page.request.post(`${botbench.base}/api/runs/${cancelled}/cancel`, { data: {} });
-  await expect(selector(page)).toContainText("Finished (1)");
-  await expect(selector(page)).toContainText("Running (1)");
+  await expect(workStateFilter(page, /^Ended otherwise/)).toHaveText("Ended otherwise1");
+  await expect(workStateFilter(page, /^In progress/)).toHaveText("In progress1");
 
   // The planner's plan, or a request it makes, needs the owner: the run moves to Needs you, live.
-  await expect(selector(page)).toContainText("Needs you (1)", { timeout: 180_000 });
-  await expect(selector(page)).toContainText("Running (0)");
+  await expect(workStateFilter(page, /^Needs you/)).toHaveText("Needs you1", { timeout: 180_000 });
+  await expect(workStateFilter(page, /^In progress/)).toHaveText("In progress0");
 
-  await selector(page).getByRole("radio", { name: /^Needs you/ }).check();
-  await expect(selector(page).getByLabel(/^Needs you/)).toBeChecked();
-  const row = group(page).getByRole("link");
-  await expect(row).toHaveCount(1);
-  await expect(row).toHaveAttribute("href", `#/runs/${planned}`);
-  await expect(row.locator(".ds-badge")).toHaveText(/^(Plan ready for review|Needs input)$/);
-  await checkDesign(page, "board, needs you");
+  await workStateFilter(page, /^Needs you/).click();
+  await expect(workRows(page)).toHaveCount(1);
+  await expect(workRows(page).getByRole("link")).toHaveAttribute("href", `#/runs/${planned}`);
+  await expect(workState(workRows(page))).toHaveText(/^(Plan ready for review|Needs input)$/);
+  await checkWords(page, "Work, needs you");
   await shot(page, "u16-board-needs-you.png");
 
-  await selector(page).getByRole("radio", { name: /^Running/ }).check();
-  await expect(group(page).getByRole("link")).toHaveCount(0);
-  await expect(group(page)).toHaveText("Nothing is running.");
-  await checkDesign(page, "board, running, none");
+  await workStateFilter(page, /^In progress/).click();
+  await expect(workRows(page)).toHaveCount(0);
+  await expect(page.getByTestId("work-none")).toHaveText("Nothing matches. Clear the search or choose All and Any state to see everything.");
 
-  await selector(page).getByRole("radio", { name: /^Finished/ }).check();
-  await expect(group(page).getByRole("link")).toHaveCount(1);
-  await expect(group(page).getByRole("link")).toHaveAttribute("href", `#/runs/${cancelled}`);
-  await expect(group(page).locator(".ds-badge")).toHaveText("Cancelled");
-  await checkDesign(page, "board, finished");
+  await workStateFilter(page, /^Ended otherwise/).click();
+  await expect(workRows(page)).toHaveCount(1);
+  await expect(workRows(page).getByRole("link")).toHaveAttribute("href", `#/runs/${cancelled}`);
+  await expect(workState(workRows(page))).toHaveText("Cancelled");
+  await checkWords(page, "Work, ended otherwise");
   await shot(page, "u16-board-finished.png");
 
   expect(await page.evaluate(() => (window as unknown as { botbenchSamePage?: boolean }).botbenchSamePage), "everything came without a reload").toBe(true);
   expect(foreign).toEqual([]);
 });
 
-test("Discard: a task whose setup failed keeps its copy and branch until the owner discards them; the dialog names the files that are not on the branch, and the board lists the task as finished", async ({ page }) => {
+test("Discard: a task whose setup failed keeps its copy and branch until the owner discards them; the dialog names the files that are not on the branch, and Work lists the task as failed", async ({ page }) => {
   const dir = tempDir("botbench-e2e-discard-");
   const repo = path.join(dir, "repo");
   initRepo(repo);
@@ -302,12 +287,12 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
     await openFromSettings(page, "Permissions");
     await expect(page.getByText("You discarded")).toBeVisible();
 
-    // A stand-alone task is a run of one: it is on the board, under Finished.
+    // A stand-alone task is a run of one: it is a row of Work, with its real state, under the Failed filter.
     await openBoard(page);
-    await expect(selector(page).getByLabel(/^Finished/)).toBeChecked();
-    await expect(group(page).getByRole("link")).toHaveAttribute("href", `#/tasks/${taskId}`);
-    await expect(group(page).locator(".ds-badge")).toHaveText("Failed");
-    await checkDesign(page, "board, a stand-alone task that failed");
+    await workStateFilter(page, /^Failed/).click();
+    await expect(workRows(page).getByRole("link")).toHaveAttribute("href", `#/tasks/${taskId}`);
+    await expect(workState(workRows(page))).toHaveText("Failed");
+    await checkWords(page, "Work, a stand-alone task that failed");
     await shot(page, "work.png");
   } finally {
     const { leftover } = await botbench.stop();
@@ -318,7 +303,7 @@ test("Discard: a task whose setup failed keeps its copy and branch until the own
 
 test("in light mode, sign-in and Settings are drawn in the light colours", async ({ page, botbench }) => {
   // The owner chose Light on this device before: the choice is on the device, so it holds before sign-in too.
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -333,13 +318,13 @@ test("in light mode, sign-in and Settings are drawn in the light colours", async
   await shot(page, "u16-light-settings.png");
 });
 
-test("LIVE: in light mode, a chat with a tool call, an approval card, a task ready for review and the board are drawn in the light colours", async ({ page, botbench }) => {
+test("LIVE: in light mode, a chat with a tool call, an approval card, a task ready for review and Work are drawn in the light colours", async ({ page, botbench }) => {
   test.setTimeout(420_000);
   const repo = path.join(path.dirname(botbench.home), "light-repo");
   initRepo(repo, { "README.md": "# Sample\n" });
   fs.writeFileSync(path.join(botbench.home, "scratch", "notes.txt"), "The word is heron.\n");
   // The owner chose Light on this device before: the choice is on the device, so it holds before sign-in too.
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "light"));
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -361,9 +346,8 @@ test("LIVE: in light mode, a chat with a tool call, an approval card, a task rea
   await checkDesign(page, "approval card, light");
   await shot(page, "u16-light-approval.png");
   await openBoard(page);
-  await expect(selector(page).getByLabel(/^Needs you/)).toBeChecked();
-  await expect(group(page).locator(".ds-badge")).toHaveText("Needs input");
-  await checkDesign(page, "board, a task waiting on an approval, light");
+  await expect(workState(workRows(page, "echo hi"))).toHaveText("Needs input");
+  await checkWords(page, "Work, a task waiting on an approval, light");
   await shot(page, "u16-light-board.png");
   await page.goto(`${botbench.base}/#/tasks/${taskId}`);
   await expect(page.getByTestId("approval-card")).toHaveAttribute("data-settled", "");

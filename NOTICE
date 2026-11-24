@@ -54,9 +54,9 @@ style base-nova) by its CLI, `shadcn` 4.23.0, and changed for Botbench's
 design; web/src/styles/shadcn-tailwind.css is that package's
 dist/tailwind.css, unmodified. Copyright (c) 2023 shadcn. MIT License.
 
-One more Lucide icon, outside the copy: the path of Lucide's message-circle
-icon, written into web/src/components/icon.tsx for the Chat destination,
-which the design system's icon set does not have yet. Same licence and notice
+Two more Lucide icons, outside the copy: the paths of Lucide's message-circle
+and house icons, written into web/src/components/icon.tsx for the Chat and
+Home destinations, which the design system's icon set does not have yet. Same licence and notice
 as the Lucide icons above (ISC License, Copyright (c) 2026 Lucide Icons and
 Contributors).
 

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { SHOTS, checkDesign, expect, openWork, signIn, startTaskIn, tallShot } from "./helpers.ts";
+import { SHOTS, checkDesign, expect, openWork, signIn, startTaskIn, tallShot, workRows, checkWords } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The verify station in the real client, at a phone's size: a real Botbench process whose settings give two real
@@ -103,10 +103,7 @@ test("LIVE: a task whose check fails says so in words with an icon, opens the fa
 
   // Work says the same in words.
   await openWork(page);
-  const listed = page.getByTestId("board-group").getByRole("listitem");
-  await expect(listed).toHaveCount(3);
-  await expect(listed.nth(0)).toContainText("No checks set up");
-  await expect(listed.nth(1)).toContainText("Checks passed");
-  await expect(listed.nth(2)).toContainText("Checks failed");
-  await checkDesign(page, "work, with checks");
+  const listed = workRows(page).getByTestId("work-facts");
+  await expect(listed).toHaveText(["No checks set up", "Checks passed", "Checks failed"]);
+  await checkWords(page, "work, with checks");
 });

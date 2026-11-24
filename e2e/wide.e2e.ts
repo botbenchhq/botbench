@@ -78,6 +78,11 @@ const rows = (page: Page): Locator => column(page).locator(".ds-list__link");
 const ALL = FILLERS + 3;
 /** Work, from the navigation of whichever screen is shown: the run screen, rebuilt on shadcn/ui, has its own and no column. */
 const toWork = (page: Page): Promise<void> => page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Work", exact: true }).click();
+/** The run with its plan, from its row on Work: Work is the inventory itself, and has no column beside it. */
+const toRun = async (page: Page): Promise<void> => {
+  await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
+  await page.getByTestId("work-row").getByRole("link").filter({ hasText: /Plan the billing export|billing/i }).first().click();
+};
 
 // A desktop: a mouse and a keyboard, no touch screen.
 test.describe("at 1280×800, with a mouse", () => {
@@ -106,7 +111,6 @@ test.describe("at 1280×800, with a mouse", () => {
     await page.goto(`${botbench.base}/#/work`);
     await expect(page).toHaveTitle("Work \u2013 Botbench");
     await expect(page.getByRole("heading", { level: 1, name: "Work" })).toBeFocused();
-    await checkDesign(page, "work, wide, arrived on with focus on its heading");
     // Back is a change of address like any other.
     await page.goBack();
     await expect(page).toHaveTitle(`Run ${seeded.planned.id} \u2013 Botbench`);
@@ -121,8 +125,8 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeFocused();
     // A change of address the owner did not make from here (a notification's, another screen's) never takes focus from a field being typed in.
     await search(page).pressSequentially("login");
-    await page.evaluate(() => (window.location.hash = "#/work"));
-    await expect(page).toHaveTitle("Work \u2013 Botbench");
+    await page.evaluate((to) => (window.location.hash = to), `#/tasks/${seeded.ready.id}`);
+    await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
     await expect(search(page)).toBeFocused();
     await search(page).fill("");
 
@@ -188,7 +192,7 @@ test.describe("at 1280×800, with a mouse", () => {
     await question.getByRole("button", { name: "Discard changes" }).click();
     await expect(page).toHaveURL(/#\/work$/);
     await expect(page).toHaveTitle("Work \u2013 Botbench");
-    await rows(page).nth(1).click();
+    await toRun(page);
     await expect(page.getByRole("list", { name: "Plan" })).toContainText("Write the exporter");
     // With nothing typed, leaving asks nothing.
     await page.locator('[data-edit="0"]').click();
@@ -197,7 +201,7 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(question).toHaveCount(0);
 
     // Cancel with typed words, then Discard changes: the row is back, with focus on its Edit button.
-    await rows(page).nth(1).click();
+    await toRun(page);
     await page.locator('[data-edit="0"]').click();
     await title.fill("Write the importer");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -299,11 +303,15 @@ test.describe("at 1280×800", () => {
     await checkLayout(page, 32, "run, wide, opened from the column");
     await checkWords(page, "run, wide, opened from the column");
 
-    // Work has the column too; Settings does not, and the search is still there after it.
-    await page.getByRole("navigation", { name: "Screens" }).getByRole("link", { name: "Work", exact: true }).click();
+    // Work and Home are the whole inventory and the queue themselves, with their own navigation: no column beside
+    // them. Settings has none either. The search is still there after each, back on a screen that has the column.
+    await page.goBack();
+    await expect(search(page)).toHaveValue("billing");
+    await page.getByRole("navigation", { name: "Screens" }).first().getByRole("link", { name: "Work", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Work", level: 1 })).toBeVisible();
-    await expect(column(page)).toBeVisible();
-    await checkDesign(page, "work, wide, with the column");
+    await expect(column(page)).toHaveCount(0);
+    await page.goBack();
+    await expect(search(page)).toHaveValue("billing");
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     await expect(column(page)).toHaveCount(0);

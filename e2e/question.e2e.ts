@@ -4,7 +4,7 @@ import { test as base } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
 import { loadQuestionRecording, NO_QUESTION_RECORDING } from "../test/support/replay-question.ts";
 import { startBotbench, type Botbench } from "./botbench.ts";
-import { checkDesign, expect, openWork, signIn, startTaskIn } from "./helpers.ts";
+import { checkDesign, expect, openWork, signIn, startTaskIn, workRows, workState } from "./helpers.ts";
 
 // Claude Code's question to the owner, in the real client at a phone's size, against a real Botbench process whose Claude
 // Code replays the real session in which it asked one (e2e/serve-replayed-question.ts, the owner's approved exception).
@@ -60,7 +60,7 @@ test("a builder's question shows as a card titled 'Claude Code has a question' w
 
   // On Work, the task waits on you.
   await openWork(page);
-  await expect(page.getByTestId("board-group").getByRole("link").filter({ hasText: "Task 1 · " })).toHaveText(/Needs input/);
+  await expect(workState(workRows(page, "Task 1 · "))).toHaveText("Needs input");
   await page.goBack();
 
   // Answered with a choice: the card goes, and the task no longer needs input.
@@ -71,5 +71,5 @@ test("a builder's question shows as a card titled 'Claude Code has a question' w
   await expect(page.getByTestId("question-card")).toHaveCount(0);
   await expect(page.getByRole("log", { name: "Activity" }).getByText(`Your answer: ${recording.answer}`)).toBeVisible({ timeout: 30_000 });
   await openWork(page);
-  await expect(page.getByTestId("board-group").getByRole("link").filter({ hasText: "Task 1 · " })).not.toHaveText(/Needs input/, { timeout: 30_000 });
+  await expect(workState(workRows(page, "Task 1 · "))).not.toHaveText("Needs input", { timeout: 30_000 });
 });

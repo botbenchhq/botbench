@@ -13,6 +13,8 @@ import type { Route } from "../app/route.ts";
 
 const TaskScreen = lazy(() => import("./task/task-screen.tsx"));
 const RunScreen = lazy(() => import("./run/run-screen.tsx"));
+const HomeScreen = lazy(() => import("./home/home-screen.tsx"));
+const WorkScreen = lazy(() => import("./work/work-screen.tsx"));
 
 /** Shown, as nothing, while a rebuilt screen's code is fetched: the screen's heading still takes focus when it is drawn (app/arrival.ts). */
 function Fetching() {
@@ -30,6 +32,20 @@ export function rebuilt(route: Route, onSignedOut: () => void): ReactNode | null
       </Suspense>
     );
   }
+  if (route.screen === "home") {
+    return (
+      <Suspense fallback={<Fetching />}>
+        <HomeScreen onSignedOut={onSignedOut} />
+      </Suspense>
+    );
+  }
+  if (route.screen === "work") {
+    return (
+      <Suspense fallback={<Fetching />}>
+        <WorkScreen key={route.state ?? ""} state={route.state} onSignedOut={onSignedOut} />
+      </Suspense>
+    );
+  }
   // A run has no old screen any more: this is the screen at its address.
   if (route.screen === "run") {
     return (
@@ -42,4 +58,4 @@ export function rebuilt(route: Route, onSignedOut: () => void): ReactNode | null
 }
 
 /** Whether `route` is shown by a rebuilt screen, which brings its own navigation and takes the whole window. */
-export const isRebuilt = (route: Route): boolean => route.screen === "task" || route.screen === "run";
+export const isRebuilt = (route: Route): boolean => route.screen === "home" || route.screen === "work" || route.screen === "task" || route.screen === "run";

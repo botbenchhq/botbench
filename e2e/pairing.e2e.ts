@@ -78,10 +78,10 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   expect((await phone.request.get(`${botbench.base}/api/session`)).status()).toBe(401);
   await checkDesign(phone, "sign-in, a replaced code");
 
-  // The code shown now signs it in, typed as a person might.
+  // The code shown now signs it in, typed as a person might, and Botbench opens on Home.
   await phone.getByRole("textbox", { name: "One-time code" }).fill(` ${code.replace("-", " ").toLowerCase()} `);
   await phone.getByRole("button", { name: "Sign in" }).click();
-  await expect(messageBox(phone)).toBeEnabled();
+  await expect(phone.getByTestId("headline")).toBeVisible();
   await expect(phone.getByRole("heading", { name: "Sign in" })).toHaveCount(0);
   expect((await phone.request.get(`${botbench.base}/api/session`)).status()).toBe(200);
 
@@ -103,9 +103,9 @@ test("Add a device shows a one-time code and its QR code; a second browser signs
   await checkDesign(page, "settings, a device added");
   await checkWords(page, "settings, a device added");
 
-  // Opened again on the device that is now signed in, the address with the code goes to Chat.
+  // Opened again on the device that is now signed in, the address with the code goes to the first screen, Home.
   await phone.goto(`${botbench.base}/#code=${code}`);
-  await expect(messageBox(phone)).toBeEnabled();
+  await expect(phone.getByTestId("headline")).toBeVisible();
   await expect(phone.getByText("There is no screen at")).toHaveCount(0);
   await phone.context().close();
   await third.context().close();

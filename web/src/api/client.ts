@@ -1091,6 +1091,73 @@ export interface BoardGroup {
 export const getBoard = (hidden = false): Promise<{ groups: BoardGroup[]; hidden: number }> => request("GET", hidden ? "/api/board?hidden=1" : "/api/board", undefined, 30_000);
 /** Hide a row from the Work list, or show it there again. Nothing of the run, task or chat is changed. */
 export const setRowHidden = (kind: BoardItem["kind"], id: number, hidden: boolean): Promise<{ kind: string; id: number; hidden: boolean }> => request("POST", hidden ? "/api/board/hide" : "/api/board/show", { kind, id }, 30_000);
+/** Where a run, a task or a chat stands for the owner, as the server says it (src/engine/queue.ts). */
+export type Place = "needs-you" | "in-progress" | "waiting" | "completed" | "failed" | "ended" | "chat";
+/** Why it needs the owner, or what it waits for. */
+export type Cause = "approval" | "failure" | "plan" | "result" | "usage-limit" | "dependency";
+/** One row of Home (src/api/work.ts, `homeItem`): what it is, where it stands and since when, and what its own line needs. */
+export interface HomeItem {
+  kind: "run" | "task" | "chat";
+  id: number;
+  title: string;
+  repo: string | null;
+  agents: string[];
+  place: Place;
+  cause: Cause | null;
+  /** When what it stands at began: the wait, the work, or the end. */
+  since: string;
+  updatedAt: string;
+  status: string | null;
+  mode: RunMode | null;
+  approval?: { tool: string; command: string } | null;
+  /** For a failure to recover: whether the task that can be resumed stopped or failed. */
+  failure?: "stopped" | "failed";
+  reason?: string | null;
+  taskCount?: number;
+  finishedCount?: number;
+  readyCount?: number;
+  checks?: ChecksMark | null;
+  evidence?: { state: EvidenceState["state"]; words: string } | null;
+  retryAt?: string | null;
+  waitingFor?: WaitingFor | null;
+  accepted?: { by: "owner" | "mode"; pullRequests: number[] };
+}
+/** Home: what needs the owner whole and in order, and each lower group counted truly with its first rows and what a summary of it says. */
+export interface Home {
+  needsYou: { total: number; messages: number; items: HomeItem[] };
+  inProgress: { total: number; items: HomeItem[]; agents: { name: string; count: number }[]; repos: { name: string; count: number }[] };
+  waiting: { total: number; items: HomeItem[]; causes: { cause: Cause; count: number; retryAt: string | null }[] };
+  completed: { total: number; items: HomeItem[]; lastDay: number; withoutYou: number; pullRequests: number };
+  ended: { rejected: number; cancelled: number; stopped: number; other: number };
+  failed: number;
+  total: number;
+}
+export const getHome = (): Promise<Home> => request("GET", "/api/home", undefined, 30_000);
+/** How many things need the owner, for the navigation's mark. */
+export const getHomeCount = (): Promise<{ needsYou: number }> => request("GET", "/api/home/count", undefined, 30_000);
+
+export type WorkKind = "all" | "task" | "run" | "chat";
+export type WorkState = "any" | "needs-you" | "in-progress" | "waiting" | "completed" | "failed" | "ended";
+/** One row of Work: the board's row, with where it stands and the agents at work on it. */
+export type WorkItem = BoardItem & { place: Place; cause: Cause | null; failure: "stopped" | "failed" | null; agents: string[] };
+/** One page of Work, newest change first, with what each filter would show and how much is older than this page. */
+export interface WorkPage {
+  items: WorkItem[];
+  total: number;
+  next: string | null;
+  older: { count: number; oldest: string } | null;
+  counts: { kind: Record<WorkKind, number>; state: Record<WorkState, number> };
+  all: number;
+  hidden: number;
+}
+export function getWork(o: { q: string; kind: WorkKind; state: WorkState; hidden: boolean; cursor?: string | null; limit?: number }): Promise<WorkPage> {
+  const query = new URLSearchParams({ kind: o.kind, state: o.state });
+  if (o.q.trim() !== "") query.set("q", o.q.trim());
+  if (o.hidden) query.set("hidden", "1");
+  if (o.cursor != null) query.set("cursor", o.cursor);
+  if (o.limit !== undefined) query.set("limit", String(o.limit));
+  return request("GET", `/api/work?${query.toString()}`, undefined, 30_000);
+}
 /** A chat as the Chat screen opens it. */
 export const getChat = (id: number): Promise<ChatItem> => request("GET", `/api/chats/${id}`, undefined, 30_000);
 /** Give a chat a name of the owner's; an empty one gives it back its first message. */

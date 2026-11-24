@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, initRepo, worktreeCount, write } from "../test/support/repo.ts";
 import type { Page } from "@playwright/test";
-import { allowCommands, askCancelRun, checkDesign, checkRebuilt, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, RUN_TASK_STATE, runSteps, runTaskRows, SHOTS, signIn, test, watchRequests } from "./helpers.ts";
+import { allowCommands, askCancelRun, checkDesign, checkRebuilt, chooseRepository, closeContext, copyShot, expect, filledButtons, messageBox, nav, offersCancelRun, openRow, openRunId, openWork, RUN_TASK_STATE, runSteps, runTaskRows, SHOTS, signIn, test, watchRequests, checkWords, workRows, workState } from "./helpers.ts";
 
 // Runs and the plan gate in the real client, at a phone's size, against a real Botbench process, a real temporary
 // repository and, for the test marked LIVE, the owner's Claude Code as the planner on its cheapest model.
@@ -165,14 +165,13 @@ test("LIVE: start a run from a prompt, see the plan arrive without a reload, edi
   await expect(page.getByTestId("task-status")).toHaveText(/^Cancelled\. The run was cancelled before this task started\.$/);
   await checkDesign(page, "task of a cancelled run");
 
-  // Work knows it: the run, once, under Finished, the one group that holds anything. Its tasks are on its own screen.
+  // Work knows it: the run, once, as Cancelled. Its tasks are on its own screen.
   await openWork(page);
-  await expect(page.getByRole("group", { name: "Show" }).getByLabel(/^Finished/)).toBeChecked();
-  const listed = page.getByTestId("board-group").getByRole("listitem");
+  const listed = workRows(page);
   await expect(listed).toHaveCount(1);
   await expect(listed).toContainText("Add three files");
-  await expect(listed).toContainText("Cancelled");
-  await checkDesign(page, "work, one run");
+  await expect(workState(listed)).toHaveText("Cancelled");
+  await checkWords(page, "work, one run");
   await copyShot(page, "work");
   await shot(page, "u11-runs.png");
 
@@ -186,11 +185,10 @@ test("the navigation lists the destinations; New run opens the composer asking f
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
   // Starting something new is a button in Work, not a destination.
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
   await openWork(page);
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Work");
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
-  await checkDesign(page, "work, none yet");
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
+  await checkWords(page, "work, none yet");
   await page.getByRole("link", { name: "New run" }).click();
   await closeContext(page);
   await expect(page.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Choose a repository");
@@ -240,7 +238,7 @@ test("a spec file that does not exist is reported in words and nothing starts; a
 
   // Nothing started: no run is listed, and no planner was launched.
   await openWork(page);
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
   const runs = (await (await page.request.get(`${botbench.base}/api/runs`)).json()) as { runs: unknown[] };
   expect(runs.runs).toEqual([]);
   expect(worktreeCount(repo)).toBe(1);

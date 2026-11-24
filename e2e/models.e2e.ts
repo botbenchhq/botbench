@@ -194,7 +194,7 @@ test("where Claude Code reports no list, the picker offers the configured models
   const withoutClaude = (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== "" && !fs.existsSync(path.join(dir, "claude"))).join(path.delimiter);
   const botbench = await startBotbench({ env: { PATH: withoutClaude }, settings: { drivers: { "claude-code": { model: "sonnet", models: ["opus", "sonnet"] } } } });
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");

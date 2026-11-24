@@ -257,7 +257,7 @@ test("the chat box names the agent in its placeholder and for assistive technolo
   await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toHaveCount(0);
   await expect(page.getByTestId("composer-about")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "New chat" })).toHaveCount(0);
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
   await checkDesign(page, "chat, empty");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "ui-chat.png") });
   await tempShot(page, "home-empty");
@@ -274,7 +274,7 @@ test("with Claude Code signed out, the composer says why it cannot send, and Che
   const empty = tempDir("botbench-e2e-claude-config-");
   const botbench = await startBotbench({ env: { CLAUDE_CONFIG_DIR: empty } });
   try {
-    await page.goto(botbench.base);
+    await page.goto(`${botbench.base}/#/turn`);
     await page.getByLabel("Login token").fill(botbench.token);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: signed out");
@@ -300,7 +300,7 @@ test("with Claude Code signed out, the composer says why it cannot send, and Che
 });
 
 test("a wrong token shows an error and stays on sign-in", async ({ page, botbench }) => {
-  await page.goto(botbench.base);
+  await page.goto(`${botbench.base}/#/turn`);
   await page.getByLabel("Login token").fill("not-the-token");
   await page.getByRole("button", { name: "Sign in" }).click();
   // The alert names its tone in a word, then says what happened and what to do.

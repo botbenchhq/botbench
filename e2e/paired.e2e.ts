@@ -5,7 +5,7 @@ import { LOGIN_TOKEN_FILE } from "../src/api/auth.ts";
 import { peerDraftTurn } from "../test/support/replay-peer-draft.ts";
 import { sharedRepository, until, workbench, type Workbench } from "../test/support/two-workbenches.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, expect, SHOTS, tallShot } from "./helpers.ts";
+import { checkDesign, expect, SHOTS, tallShot, checkWords } from "./helpers.ts";
 
 // Two Botbench installations on this Mac pair and talk through their screens (Peers P5, ADR 0004 decision 13): two real
 // processes with their own data folders, owner ports and listeners for paired workbenches on 127.0.0.1 at ports the
@@ -32,7 +32,7 @@ async function shots(page: Page, name: string, at: string): Promise<void> {
 
 async function signedIn(browser: Browser, w: Workbench): Promise<Page> {
   const page = await (await browser.newContext({ viewport: PHONE, deviceScaleFactor: 2, hasTouch: true })).newPage();
-  await page.goto(w.base);
+  await page.goto(`${w.base}/#/turn`);
   await page.getByLabel("Login token").fill(fs.readFileSync(path.join(w.home, LOGIN_TOKEN_FILE), "utf8").trim());
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("form.ds-composer textarea")).toBeEnabled();
@@ -136,15 +136,17 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await expect(card.getByTestId("peer-card-text")).toHaveText("Which port does the login service listen on?\n<b>Not bold</b> https://example.invalid");
   await expect(card.locator("b, a[href^='https://example']")).toHaveCount(0);
   for (const choice of ["Answer it yourself", "Give it to Claude Code", "Dismiss"]) await expect(card.getByRole("button", { name: choice })).toBeVisible();
-  await checkDesign(b, "Work, a card from the paired workbench");
-  await shots(b, "peers-incoming-card", `${bob.base}/#/work`);
+  // The card is on Home, under Needs you, and the headline counts it. Home is a rebuilt screen: its words are checked here.
+  await expect(b.getByTestId("headline")).toHaveText("1 thing needs you");
+  await checkWords(b, "Home, a card from the paired workbench");
+  await shots(b, "peers-incoming-card", `${bob.base}/#/`);
   await b.getByTestId("peer-card").getByRole("button", { name: "Answer it yourself" }).click();
   await b.getByTestId("peer-card").getByLabel("Your answer").fill("4790, on loopback.");
   await b.getByTestId("peer-card").getByRole("button", { name: "Send", exact: true }).click();
   await expect(b.getByTestId("peer-card")).toHaveCount(0);
 
   // ---- Alice sees the answer, in the conversation and as a card.
-  await a.goto(`${alice.base}/#/work`);
+  await a.goto(`${alice.base}/#/`);
   await expect(a.getByTestId("peer-card").getByRole("heading", { name: "bob answered your question about shared" })).toBeVisible();
   await a.getByTestId("peer-card").getByRole("link", { name: "Open the conversation" }).click();
   const thread = a.getByTestId("thread");
@@ -176,8 +178,7 @@ test("two workbenches pair, ask and answer, send a draft, switch a kind off and 
   await shots(a, "peers-outbound-card", `${alice.base}/#/tasks/${started.body.taskId}`);
   await a.getByTestId("draft-card").getByRole("button", { name: "Send", exact: true }).click();
   await expect(a.getByTestId("draft-card")).toHaveCount(0);
-  await expect(b.getByTestId("tray-peer-cards")).toBeVisible();
-  await b.goto(`${bob.base}/#/work`);
+  // Bob is on Home, where the card comes by itself, without a reload.
   await expect(b.getByTestId("peer-card").getByTestId("peer-card-text")).toHaveText("Which port does bob's login service listen on?");
   await b.getByTestId("peer-card").getByRole("button", { name: "Dismiss" }).click();
 

@@ -1,4 +1,4 @@
-import type { RunSourceRef } from "../api/client.ts";
+import type { RunSourceRef, WorkState } from "../api/client.ts";
 import type { Kind } from "./composer.ts";
 import { sourceInAddress } from "./run-source.ts";
 
@@ -16,7 +16,8 @@ export type Route =
   | { screen: "trust" }
   | { screen: "usage" }
   | { screen: "task"; id: number; discard: boolean }
-  | { screen: "work" }
+  | { screen: "home" }
+  | { screen: "work"; state: WorkState | null }
   | { screen: "settings"; section: SettingsSection | null }
   | { screen: "run"; id: number }
   | { screen: "chat"; id: number }
@@ -26,7 +27,9 @@ export type Route =
 /** The screen an address names. */
 export function parseRoute(hash: string): Route {
   const at = hash.replace(/^#/, "");
-  if (at === "" || at === "/" || at === "/turn") return { screen: "turn", start: null };
+  // Home, the queue, is where Botbench opens: the bare address, and the one the navigation names.
+  if (at === "" || at === "/" || at === "/home") return { screen: "home" };
+  if (at === "/turn") return { screen: "turn", start: null };
   // New task and New run open the composer with that kind chosen.
   if (at === "/turn?start=task" || at === "/turn?start=run") return { screen: "turn", start: at.endsWith("task") ? "task" : "run" };
   // Make this a run, on a finished task or a chat: Plan a run, with the owner's note as the prompt (components/make-run.tsx).
@@ -39,7 +42,10 @@ export function parseRoute(hash: string): Route {
   if (at === "/tasks/new") return { screen: "redirect", to: "#/turn?start=task" };
   if (at === "/runs/new") return { screen: "redirect", to: "#/turn?start=run" };
   // Work lists the runs and the tasks started on their own, where Runs and Tasks were.
-  if (at === "/work") return { screen: "work" };
+  if (at === "/work") return { screen: "work", state: null };
+  // Work with one state chosen, as Home's "Show all in Work" links open it.
+  const state = /^\/work\?state=(needs-you|in-progress|waiting|completed|failed|ended)$/.exec(at);
+  if (state) return { screen: "work", state: state[1] as WorkState };
   if (at === "/runs" || at === "/tasks") return { screen: "redirect", to: "#/work" };
   // The sign-in address from Add a device, opened on a device that is already signed in: the code is not needed.
   if (at.startsWith("code=")) return { screen: "redirect", to: "#/" };

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { checkoutState, git, gitProcesses, initRepo, releaseStalled, stalledRepo, write } from "../test/support/repo.ts";
-import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, nav, openCanDo, openDetails, openNewTask, openRow, openWork, signIn, startTaskIn, test, watchRequests } from "./helpers.ts";
+import { MONO_FAMILY, SHOTS, checkDesign, closeContext, contextSheet, copyShot, expect, messageBox, nav, openCanDo, openDetails, openNewTask, openRow, openWork, signIn, startTaskIn, test, watchRequests, checkWords, workRows, workState } from "./helpers.ts";
 import type { Page } from "@playwright/test";
 
 /** The Folder path field of the Repository view, with Another folder chosen. */
@@ -131,11 +131,11 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
 
   // Work shows the task with its state in words, and leads back to it.
   await openWork(page);
-  const rows = page.getByTestId("board-group").getByRole("link");
+  const rows = workRows(page).getByRole("link");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Ready for review");
   await expect(rows.first()).toContainText(prompt);
-  await checkDesign(page, "work, with one task");
+  await checkWords(page, "work, with one task");
   await copyShot(page, "work");
   await rows.first().click();
   await expect(page.getByTestId("branch")).toHaveText(branch);
@@ -152,16 +152,15 @@ test("LIVE: start a task in a repository, watch its transcript, expand the chang
   expect(checkoutState(repo), "the owner's checkout is as it was").toEqual(before);
 });
 
-test("the navigation is Chat and Work, and Work says there is nothing yet; Tasks leads there; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
+test("the navigation is Home, Work and Chat, and Work says there is nothing yet; Tasks leads there; New task opens the composer asking for a repository, and a path is checked as it is typed", async ({ page, botbench }) => {
   const repo = sourceRepo(botbench.home);
   await signIn(page, botbench);
-  // The navigation lists the two destinations, and gets to each.
-  await expect(nav(page).getByRole("link")).toHaveText(["Chat", "Work"]);
+  // The navigation lists the three destinations, and gets to each.
+  await expect(nav(page).getByRole("link")).toHaveText(["Home", "Work", "Chat"]);
   await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Chat");
   await openWork(page);
-  await expect(nav(page).locator('[aria-current="page"]')).toHaveText("Work");
-  await expect(page.getByTestId("board-empty").getByRole("heading")).toHaveText("No work yet");
-  await checkDesign(page, "work, none yet");
+  await expect(page.getByTestId("work-none")).toHaveText("No work yet. Each chat, run and task you start is listed here.");
+  await checkWords(page, "work, none yet");
   // The old addresses of the lists lead to Work.
   for (const old of ["#/tasks", "#/runs"]) {
     await page.evaluate((to) => (window.location.hash = to), old);
@@ -300,8 +299,9 @@ test("a task that cannot be built shows that it failed and why, as it happens, a
     await checkDesign(page, "task, failed");
 
     await openWork(page);
-    await expect(page.getByTestId("board-group").getByRole("link")).toHaveText(/Create hello\.txt.*Failed.*Task 1 · /);
-    await expect(page.getByTestId("board-group")).not.toContainText("second line");
+    await expect(workRows(page).getByRole("link")).toHaveText([/^Create hello\.txt.*Failed · Task 1 · /]);
+    await expect(workState(workRows(page))).toHaveText("Failed");
+    await expect(workRows(page)).not.toContainText("second line");
     expect(await page.evaluate(() => (window as unknown as { botbenchLoadedOnce?: boolean }).botbenchLoadedOnce)).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree "))).toHaveLength(1);
   } finally {

@@ -101,7 +101,7 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("branch")).toHaveText(seeded.current.branch);
     await expect(page.getByTestId("commit")).toHaveText(short(seeded.current.commit));
     // The navigation holds the screens that exist, and names the open task.
-    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText(["Chat", "Work", "Settings"]);
+    await expect(page.getByRole("navigation", { name: "Screens" }).getByRole("link")).toHaveText([/^Home/, "Work", "Chat", "Settings"]);
     await expect(page.getByRole("link", { name: seeded.current.title })).toHaveAttribute("aria-current", "page");
 
     // An overlay the library places itself (the whole commit, on hover or focus) is placed under the same policy: beneath its trigger.

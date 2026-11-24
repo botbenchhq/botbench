@@ -1,24 +1,27 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CSPProvider } from "@base-ui/react/csp-provider";
-import { Layers, Menu, MessageSquare, Moon, PanelBottomOpen, Settings, Sun } from "lucide-react";
+import { House, Layers, Menu, MessageSquare, Moon, PanelBottomOpen, Settings, Sun } from "lucide-react";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/ui/tooltip";
 import { cn } from "@/ui/lib/utils";
-import { getAgents, getWorkbench } from "../api/client.ts";
+import { getAgents, getHomeCount, getWorkbench } from "../api/client.ts";
 import { chooseAppearance, useAppearance } from "../app/appearance.ts";
-import { ApprovalsContext } from "../app/approvals.tsx";
+import { ApprovalsContext, PeerChangesContext, WorkChangesContext } from "../app/approvals.tsx";
 import { counted } from "../app/format.ts";
 import { Mark } from "../brand/mark.tsx";
 import { useNextRoot } from "./use-next-root.ts";
 
 /** The screens that exist today, by the names they have everywhere else (components/header.tsx, docs/product/voice.md). */
 const SCREENS = [
-  { label: "Chat", href: "#/turn", icon: MessageSquare },
+  { label: "Home", href: "#/", icon: House },
   { label: "Work", href: "#/work", icon: Layers },
+  { label: "Chat", href: "#/turn", icon: MessageSquare },
   { label: "Settings", href: "#/settings", icon: Settings },
 ] as const;
+
+type ScreenName = (typeof SCREENS)[number]["label"];
 
 /** Whether the window matches `query`, followed as it changes. */
 function useMedia(query: string): boolean {
@@ -33,7 +36,7 @@ function useMedia(query: string): boolean {
 }
 
 /** Whether the address is on `href`'s screen. */
-const onScreen = (hash: string, href: string): boolean => hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`) || (href === "#/turn" && (hash === "" || hash === "#/"));
+const onScreen = (hash: string, href: string): boolean => hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`) || (href === "#/" && (hash === "" || hash === "#/home"));
 
 function useHash(): string {
   return useSyncExternalStore(
@@ -67,26 +70,39 @@ export function InspectorButton({ children, className, quiet = false }: { childr
 }
 
 /** The screens, as links. `rail`: icons alone, each named on hover and focus, from 1024 to 1279px. `bar`: the bar at the foot under 768px. */
-function Screens({ look }: { look: "list" | "rail" | "bar" }) {
+function Screens({ look, shown, needsYou }: { look: "list" | "rail" | "bar"; shown: ScreenName | undefined; needsYou: number | null }) {
   const hash = useHash();
   return (
     <nav aria-label="Screens">
       <ul className={look === "bar" ? "flex" : "flex flex-col gap-0.5"}>
         {SCREENS.map((screen) => {
-          const current = onScreen(hash, screen.href);
+          const current = shown === undefined ? onScreen(hash, screen.href) : screen.label === shown;
+          const count = screen.label === "Home" && needsYou !== null && needsYou > 0 ? needsYou : null;
           const link = (
             <a
               href={screen.href}
               aria-current={current ? "page" : undefined}
-              aria-label={look === "rail" ? screen.label : undefined}
+              aria-label={look === "rail" ? (count === null ? screen.label : `${screen.label}, ${count} waiting for you`) : undefined}
               className={cn(
                 "flex items-center text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 aria-[current=page]:text-foreground",
                 look === "bar" ? "min-h-14 flex-col justify-center gap-1 text-xs aria-[current=page]:font-semibold aria-[current=page]:text-primary" : "min-h-9 gap-3 rounded-lg px-3 hover:bg-sidebar-accent aria-[current=page]:bg-sidebar-accent pointer-coarse:min-h-11",
                 look === "rail" && "size-10 justify-center px-0 pointer-coarse:size-11",
               )}
             >
-              <screen.icon aria-hidden="true" className="size-4 shrink-0" />
+              <span className="relative flex shrink-0">
+                <screen.icon aria-hidden="true" className="size-4" />
+                {/* Where the navigation has no room for the number: a dot on the icon, the number in the link's name. */}
+                {count !== null && look !== "list" && <span aria-hidden="true" className="absolute -top-1 -right-1 size-2 rounded-full bg-attention" />}
+              </span>
               {look !== "rail" && <span>{screen.label}</span>}
+              {/* What waits for the owner, counted by the server: a small amber number, never a band. */}
+              {count !== null && look === "list" && (
+                <span data-testid="home-count" className="ml-auto text-xs font-semibold text-attention tabular-nums">
+                  {count}
+                  <span className="sr-only"> waiting for you</span>
+                </span>
+              )}
+              {count !== null && look === "bar" && <span className="sr-only">{`, ${count} waiting for you`}</span>}
             </a>
           );
           return (
@@ -184,7 +200,7 @@ function OpenWork({ open, rail }: { open: { title: string; href: string }; rail:
  *   768 to 1023px      one pane: the navigation behind the menu button in the bar; `aside` in a sheet, opened from the foot.
  *   under 768px        one pane: the navigation as a bar at the foot; `aside` in a sheet, opened from the foot.
  *
- * `open` is the work the screen shows, named in the navigation under Open. `bar` is the screen's own line at the top:
+ * `current` is the screen of the navigation that is shown, when the address alone does not say it. `open` is the work the screen shows, named in the navigation under Open. `bar` is the screen's own line at the top:
  * where it is, and its state. `aside` is its pane at the right, named `asideLabel` where it is a sheet. `foot` is what
  * stays in reach at the foot of the window under 1024px: the screen's main action, and an <InspectorButton> for the
  * rest; a screen that gives an `aside` and no `foot` gets that button alone.
@@ -195,8 +211,29 @@ function OpenWork({ open, rail }: { open: { title: string; href: string }; rail:
  * Base UI is told to write no <style> element (`disableStyleElements`): Botbench's content security policy refuses
  * one, and the two components that would write one (the scroll area, and a select aligned to its trigger) are not used.
  */
-export function NextShell({ open, bar, aside, asideLabel = "Details", foot, children }: { open: { title: string; href: string } | null; bar: ReactNode; aside?: ReactNode; asideLabel?: string; foot?: ReactNode; children: ReactNode }) {
+/**
+ * How many things need the owner, as the server counts them (/api/home/count), for Home's mark in the navigation. Read
+ * again whenever live updates say a run, a task, an approval or a paired workbench's message changed. Null until it is
+ * known, and when it cannot be read: no mark is drawn then, never a wrong one.
+ */
+function useNeedsYou(): number | null {
+  const work = useContext(WorkChangesContext);
+  const peers = useContext(PeerChangesContext);
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let current = true;
+    getHomeCount().then(
+      (found) => current && setCount(found.needsYou),
+      () => current && setCount(null),
+    );
+    return () => void (current = false);
+  }, [work, peers]);
+  return count;
+}
+
+export function NextShell({ open, bar, aside, current, asideLabel = "Details", foot, children }: { open: { title: string; href: string } | null; bar: ReactNode; aside?: ReactNode; current?: ScreenName; asideLabel?: string; foot?: ReactNode; children: ReactNode }) {
   useNextRoot();
+  const needsYou = useNeedsYou();
   const { pending } = useContext(ApprovalsContext);
   // The oldest request of another task: this screen's own is on it already.
   const waiting = pending?.find((approval) => approval.taskId !== null && `#/tasks/${approval.taskId}` !== open?.href);
@@ -221,13 +258,13 @@ export function NextShell({ open, bar, aside, asideLabel = "Details", foot, chil
               <div className={cn("sticky top-0 flex h-svh shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground", labels ? "w-66" : "w-16")}>
                 {/* The slot's name is the one the navigation's head had as shadcn/ui's sidebar: the brand tests find the mark by it. */}
                 <div data-slot="sidebar-header">
-                  <a href="#/turn" aria-label={labels ? undefined : "Botbench"} className={cn("flex min-h-14 items-center gap-2 px-4 text-base font-semibold tracking-tight", !labels && "justify-center px-0")}>
+                  <a href="#/" aria-label={labels ? undefined : "Botbench"} className={cn("flex min-h-14 items-center gap-2 px-4 text-base font-semibold tracking-tight", !labels && "justify-center px-0")}>
                     <Mark size={labels ? 16 : 20} />
                     {labels && "Botbench"}
                   </a>
                 </div>
                 <div className={cn("flex flex-1 flex-col gap-6 overflow-y-auto p-2", !labels && "items-center")}>
-                  <Screens look={labels ? "list" : "rail"} />
+                  <Screens look={labels ? "list" : "rail"} shown={current} needsYou={needsYou} />
                   {open !== null && <OpenWork open={open} rail={!labels} />}
                 </div>
                 <Workbench rail={!labels} />
@@ -256,7 +293,7 @@ export function NextShell({ open, bar, aside, asideLabel = "Details", foot, chil
                 )}
                 {!twoPanes && (
                   <div className="sticky bottom-0 z-10 border-t bg-sidebar md:hidden">
-                    <Screens look="bar" />
+                    <Screens look="bar" shown={current} needsYou={needsYou} />
                   </div>
                 )}
               </div>
@@ -271,7 +308,7 @@ export function NextShell({ open, bar, aside, asideLabel = "Details", foot, chil
                   Botbench
                 </SheetTitle>
                 <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-2">
-                  <Screens look="list" />
+                  <Screens look="list" shown={current} needsYou={needsYou} />
                   {open !== null && <OpenWork open={open} rail={false} />}
                 </div>
                 <Workbench rail={false} />

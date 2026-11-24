@@ -12,6 +12,7 @@ import type { Tasks } from "../engine/task.ts";
 import type { Push } from "../push.ts";
 import { approvalRoutes } from "./approvals.ts";
 import { boardRoutes } from "./board.ts";
+import { workRoutes } from "./work.ts";
 import { pushRoutes } from "./push.ts";
 import { connectRoutes } from "./connect.ts";
 import { turnRoutes } from "./routes.ts";
@@ -183,6 +184,7 @@ export async function route(req: http.IncomingMessage, res: http.ServerResponse,
   if (await peerMessageRoutes(req, res, ctx, url)) return;
   if (await approvalRoutes(req, res, ctx, url)) return;
   if (await boardRoutes(req, res, ctx, url)) return;
+  if (await workRoutes(req, res, ctx, url)) return;
   if (await pushRoutes(req, res, ctx, url)) return;
   if (await connectRoutes(req, res, ctx, url)) return;
   if (await voiceRoutes(req, res, ctx, url)) return;

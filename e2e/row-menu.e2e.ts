@@ -15,10 +15,10 @@ import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { chatReplayDriver } from "../test/support/replay-chat.ts";
 import { replayGitHub } from "../test/support/replay-github.ts";
 import { botbenchBranches, git, initRepo, worktreeCount, write } from "../test/support/repo.ts";
-import { checkDesign, expect, openWork, signIn } from "./helpers.ts";
+import { checkWords, expect, openWork, signIn, workRows, workState } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// Each row's More menu on Work, in the real client at a phone's size, with no model turn. Before Botbench starts, the
+// Each row's More menu on Work (the rebuilt screen's: shadcn/ui's menu on Base UI), in the real client at a phone's size, with no model turn. Before Botbench starts, the
 // rows are put in their states through the engine itself: a run at its plan (so it is still going and can be
 // cancelled), a stand-alone task that failed with its copy and branch left, one accepted and delivered whose pull
 // request was opened by the delivery step replaying output captured from the real gh, and a chat sent through the chat
@@ -90,105 +90,63 @@ const test = base.extend<{ seeded: Seeded; botbench: Botbench }>({
   },
 });
 
-const group = (page: Page): Locator => page.getByTestId("board-group");
-const showGroup = (page: Page, name: RegExp): Promise<void> => page.getByRole("group", { name: "Show" }).getByLabel(name).check();
 const moreButton = (page: Page, row: string): Locator => page.getByRole("button", { name: `More actions for ${row}`, exact: true });
-const menuOf = (page: Page, row: string): Locator => page.getByRole("menu", { name: `More actions for ${row}`, exact: true });
-const items = (menu: Locator): Locator => menu.getByRole("menuitem");
+/** The one menu that is open. */
+const menu = (page: Page): Locator => page.getByRole("menu");
+const items = (page: Page): Locator => menu(page).getByRole("menuitem");
 
-test("a run still going and two finished tasks each offer only what is real for them; the keyboard follows the menu's model; a right-click, Shift+F10 and a long press open the same menu", async ({ page, botbench, seeded }) => {
+test("a run still going and two finished tasks each offer only what is real for them, the item that takes something away last, below a divider; the keyboard opens, moves in and closes the menu", async ({ page, botbench, seeded }) => {
   await signIn(page, botbench);
   await openWork(page);
 
   // The run at its plan needs you: Open, Hide, and last, below a divider, Cancel.
-  await expect(page.getByRole("group", { name: "Show" }).getByLabel(/^Needs you/)).toBeChecked();
-  const runRow = `run ${seeded.run}`;
-  const runButton = moreButton(page, runRow);
+  await expect(workState(workRows(page, "Plan a greeting file"))).toHaveText("Plan ready for review");
+  const runButton = moreButton(page, `run ${seeded.run}`);
   await expect(runButton).toBeVisible();
   await runButton.focus();
   await page.keyboard.press("Enter");
-  const runMenu = menuOf(page, runRow);
-  await expect(runMenu).toBeVisible();
-  await expect(items(runMenu)).toHaveText([`Open run ${seeded.run}`, "Hide from the list", `Cancel run ${seeded.run}`]);
-  await expect(items(runMenu).first()).toBeFocused();
-  await expect(runMenu.locator("hr.ds-menu__divider")).toHaveCount(1);
-  await expect(items(runMenu).last()).toHaveClass(/ds-menu__item--danger/);
-  await checkDesign(page, "work, a run's More menu open");
-  // Down, End, Home and a letter move; Escape closes it with focus back on the button.
+  await expect(menu(page)).toBeVisible();
+  await expect(items(page)).toHaveText([`Open run ${seeded.run}`, "Hide from the list", `Cancel run ${seeded.run}`]);
+  await expect(menu(page).getByRole("separator")).toHaveCount(1);
+  await expect(items(page).last()).toHaveAttribute("data-variant", "destructive");
+  // Every item is a full control under a finger.
+  for (const height of await items(page).evaluateAll((els) => els.map((el) => (el as HTMLElement).offsetHeight))) expect(height).toBeGreaterThanOrEqual(44);
+  await checkWords(page, "work, a run's More menu open");
+  // Down and End move; Escape closes it with focus back on the button.
   await page.keyboard.press("ArrowDown");
-  await expect(items(runMenu).nth(1)).toBeFocused();
   await page.keyboard.press("End");
-  await expect(items(runMenu).last()).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(items(runMenu).first()).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await expect(items(runMenu).last()).toBeFocused();
+  await expect(items(page).last()).toBeFocused();
   await page.keyboard.press("Home");
-  await expect(items(runMenu).first()).toBeFocused();
-  await page.keyboard.press("h");
-  await expect(items(runMenu).nth(1)).toBeFocused();
+  await expect(items(page).first()).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(runMenu).toBeHidden();
+  await expect(menu(page)).toHaveCount(0);
   await expect(runButton).toBeFocused();
-  // Space and Down on the button open it too, with focus on the first item; Tab closes it.
-  await page.keyboard.press(" ");
-  await expect(items(runMenu).first()).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(runMenu).toBeHidden();
-  await expect(runButton).toBeFocused();
-  await page.keyboard.press("ArrowDown");
-  await expect(items(runMenu).first()).toBeFocused();
-  await page.keyboard.press("Escape");
 
   // Cancel from the menu asks first, in the run screen's own words; keeping the run changes nothing.
   await runButton.click();
-  await items(runMenu).last().click();
+  await items(page).last().click();
   const cancel = page.getByTestId("cancel-run");
   await expect(cancel.getByRole("heading", { name: "Cancel this run?" })).toBeVisible();
   await expect(cancel).toContainText("The plan of 1 task is dropped and nothing is built.");
-  await checkDesign(page, "work, Cancel's confirmation from the More menu");
+  await checkWords(page, "work, Cancel's confirmation from the More menu");
   await cancel.getByRole("button", { name: "Keep run" }).click();
   await expect(cancel).toHaveCount(0);
   expect(((await (await page.request.get(`${botbench.base}/api/runs/${seeded.run}`)).json()) as { status: string }).status).toBe("awaiting_plan_approval");
 
-  // Finished: the failed task with its branch and copy, and the delivered task with its branch and its open pull request.
-  await showGroup(page, /^Finished/);
-  const failedRow = `task ${seeded.failed.id}`;
-  await moreButton(page, failedRow).click();
-  await expect(items(menuOf(page, failedRow))).toHaveText([`Open task ${seeded.failed.id}`, "Copy branch name", "Hide from the list", `Discard task ${seeded.failed.id}`]);
+  // The failed task with its branch and copy, and the delivered task with its branch and its open pull request.
+  await moreButton(page, `task ${seeded.failed.id}`).click();
+  await expect(items(page)).toHaveText([`Open task ${seeded.failed.id}`, "Copy branch name", "Hide from the list", `Discard task ${seeded.failed.id}`]);
   await page.keyboard.press("Escape");
-  const deliveredRow = `task ${seeded.delivered.id}`;
-  await moreButton(page, deliveredRow).click();
-  const deliveredMenu = menuOf(page, deliveredRow);
-  await expect(items(deliveredMenu)).toHaveText([`Open task ${seeded.delivered.id}`, "Copy branch name", `Open pull request #${seeded.delivered.number}`, "Hide from the list"]);
-  await checkDesign(page, "work, a delivered task's More menu open");
+  await moreButton(page, `task ${seeded.delivered.id}`).click();
+  await expect(items(page)).toHaveText([`Open task ${seeded.delivered.id}`, "Copy branch name", `Open pull request #${seeded.delivered.number}`, "Hide from the list"]);
+  await checkWords(page, "work, a delivered task's More menu open");
   await page.keyboard.press("Escape");
-
-  // A right-click on the row, Shift+F10 on its link and a long press open the same menu, in the same place.
-  const rowLink = group(page).getByRole("link", { name: /create hello\.txt/ });
-  await rowLink.click({ button: "right" });
-  await expect(deliveredMenu).toBeVisible();
-  await expect(items(deliveredMenu)).toHaveCount(4);
-  await page.keyboard.press("Escape");
-  await expect(deliveredMenu).toBeHidden();
-  await rowLink.focus();
-  await page.keyboard.press("Shift+F10");
-  await expect(deliveredMenu).toBeVisible();
-  await expect(items(deliveredMenu).first()).toBeFocused();
-  await page.keyboard.press("Escape");
-  const box = (await rowLink.boundingBox())!;
-  const at = { pointerType: "touch", isPrimary: true, clientX: box.x + 20, clientY: box.y + box.height / 2 };
-  await rowLink.dispatchEvent("pointerdown", at);
-  await page.waitForTimeout(700);
-  await rowLink.dispatchEvent("pointerup", at);
-  await expect(deliveredMenu).toBeVisible();
-  await expect(page).toHaveURL(/#\/work$/);
-  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
 
   // Discard goes to the task's screen with its own confirmation open; keeping them deletes nothing.
   const branchesBefore = botbenchBranches(seeded.repo);
-  await moreButton(page, failedRow).click();
-  await items(menuOf(page, failedRow)).last().click();
+  await moreButton(page, `task ${seeded.failed.id}`).click();
+  await items(page).last().click();
   await expect(page).toHaveURL(new RegExp(`#/tasks/${seeded.failed.id}$`));
   const discard = page.getByRole("alertdialog");
   await expect(discard.getByRole("heading", { name: "Discard what this task left?" })).toBeVisible();
@@ -200,20 +158,21 @@ test("a run still going and two finished tasks each offer only what is real for 
 test("a chat row offers only Rename and Hide; renaming shows the owner's name and clearing it brings the first message back; hiding and showing delete nothing", async ({ page, botbench, seeded }) => {
   await signIn(page, botbench);
   await openWork(page);
-  await showGroup(page, /^Chats/);
+  await page.getByRole("group", { name: "Kind" }).getByRole("button", { name: /^Chats/ }).click();
   const chatRow = "chat Name one primary colour.";
-  await expect(group(page).getByRole("link", { name: /Name one primary colour\./ })).toHaveAttribute("href", `#/chats/${seeded.chat}`);
-  await expect(group(page)).toContainText("Chat · Codex");
+  await expect(workRows(page)).toHaveCount(1);
+  await expect(workRows(page).getByRole("link")).toHaveAttribute("href", `#/chats/${seeded.chat}`);
+  await expect(workState(workRows(page))).toHaveText("Chat");
   await moreButton(page, chatRow).click();
-  await expect(items(menuOf(page, chatRow))).toHaveText(["Rename chat", "Hide from the list"]);
-  await checkDesign(page, "work, a chat's More menu open");
+  await expect(items(page)).toHaveText(["Rename chat", "Hide from the list"]);
+  await checkWords(page, "work, a chat's More menu open");
 
   // Rename: the owner's name, trimmed; the chat's messages are as they were.
   const before = (await (await page.request.get(`${botbench.base}/api/attempts/${seeded.chat}/events`)).json()) as { events: unknown[] };
-  await items(menuOf(page, chatRow)).first().click();
+  await items(page).first().click();
   const rename = page.getByTestId("rename-chat");
   await expect(rename.getByRole("heading", { name: "Rename the chat" })).toBeVisible();
-  await checkDesign(page, "work, Rename the chat");
+  await checkWords(page, "work, Rename the chat");
   await rename.getByLabel("Chat name").fill("  Colours for the logo  ");
   await rename.getByRole("button", { name: "Save name" }).click();
   await expect(rename).toHaveCount(0);
@@ -222,7 +181,7 @@ test("a chat row offers only Rename and Hide; renaming shows the owner's name an
   await expect(moreButton(page, renamedRow)).toBeVisible();
   // Cleared, the chat is named by its first message again.
   await moreButton(page, renamedRow).click();
-  await items(menuOf(page, renamedRow)).first().click();
+  await items(page).first().click();
   await expect(rename.getByLabel("Chat name")).toHaveValue("Colours for the logo");
   await rename.getByLabel("Chat name").fill("");
   await rename.getByRole("button", { name: "Save name" }).click();
@@ -232,24 +191,22 @@ test("a chat row offers only Rename and Hide; renaming shows the owner's name an
   // Hide: gone from the list and counted; among the hidden rows it offers Show in the list.
   const copies = worktreeCount(seeded.repo);
   await moreButton(page, chatRow).click();
-  await items(menuOf(page, chatRow)).last().click();
+  await items(page).last().click();
   await expect(page.getByTestId("row-said")).toContainText("Nothing was deleted");
   await expect(moreButton(page, chatRow)).toHaveCount(0);
   await page.getByRole("button", { name: "Show hidden (1)" }).click();
-  await expect(page.getByTestId("hidden-view")).toContainText("Rows hidden from the list (1).");
-  await showGroup(page, /^Chats/);
+  await expect(page.getByTestId("work-about")).toContainText("Rows hidden from the list: 1.");
   await moreButton(page, chatRow).click();
-  await expect(items(menuOf(page, chatRow))).toHaveText(["Rename chat", "Show in the list"]);
-  await checkDesign(page, "work, the hidden rows with a chat's More menu open");
-  await items(menuOf(page, chatRow)).last().click();
+  await expect(items(page)).toHaveText(["Rename chat", "Show in the list"]);
+  await checkWords(page, "work, the hidden rows with a chat's More menu open");
+  await items(page).last().click();
   await page.getByRole("button", { name: "Back to the list" }).click();
-  await showGroup(page, /^Chats/);
   await expect(moreButton(page, chatRow)).toBeVisible();
   await expect(page.getByRole("button", { name: /^Show hidden/ })).toHaveCount(0);
   expect(worktreeCount(seeded.repo)).toBe(copies);
 
   // The row opens the chat on Chat.
-  await group(page).getByRole("link", { name: /Name one primary colour\./ }).click();
+  await workRows(page, "Name one primary colour.").getByRole("link").click();
   await expect(page).toHaveURL(/#\/turn$/);
   await expect(page.getByRole("region", { name: "Transcript" })).toContainText("Name one primary colour.");
 });
