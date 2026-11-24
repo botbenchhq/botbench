@@ -87,6 +87,8 @@
   --peer: light-dark(#0c7187, #60d4d4);
   --peer-subtle: light-dark(#e0f3f6, #10292b);
   --destructive-subtle: light-dark(#fbe6e7, #331a1c);
+  /* The second bracket of the Botbench mark (web/src/brand/mark.tsx), in the old screens too. The mark's alone: no status or control. */
+  --brand-cyan: light-dark(#03748f, #06b6d4);
   --overlay-shadow: light-dark(0 16px 40px rgb(26 32 40 / 0.16), 0 16px 40px rgb(0 0 0 / 0.5));
 
   /* A control is 40px high, 44px under a finger. */

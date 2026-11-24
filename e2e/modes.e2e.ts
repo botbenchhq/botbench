@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, checkRebuilt, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // LIVE. The modes, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
@@ -48,8 +48,7 @@ async function neverAsked(page: Page, botbench: Botbench, until: () => Promise<v
 }
 
 const runIdOf = async (page: Page): Promise<number> => {
-  await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  return Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  return openRunId(page);
 };
 
 test("LIVE modes: semi-autonomous builds without plan approval and runs a task's command without an approval card; fully autonomous builds without plan approval and accepts the task whose check passed", async ({ page, botbench, repo }) => {
@@ -108,7 +107,7 @@ test("LIVE modes: semi-autonomous builds without plan approval and runs a task's
   expect(run.tasks.map((task) => [task.status, task.checks, task.decision?.decidedBy, task.decision?.branch, task.reason])).toEqual(run.tasks.map(() => ["accepted", "passed", "mode", "kept", null]));
   expect(run.status).toBe("done");
   await expect(page.getByTestId("run-status")).toHaveText(/^Done\. Every task that was built is decided: this run is fully autonomous/);
-  await checkDesign(page, "run, fully autonomous, done");
+  await checkRebuilt(page, "run, fully autonomous, done");
   await page.getByTestId("run-tasks").getByRole("link").first().click();
   // The review decision holds the result in place of the buttons: the badge says who accepted it.
   const decision = page.getByRole("region", { name: "Decision", exact: true });

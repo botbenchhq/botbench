@@ -302,60 +302,6 @@ export const primaries = async (page: Page): Promise<(string | null)[]> => {
  * gradient or blur, no shadow except on a dialog, a toast or a menu, and no corner off its radius scale; its typefaces are the theme's; every control has a 44px pointer target; nothing scrolls sideways at phone width. Call it once the
  * screen has its data, and again with each dialog open: an open dialog is a view of its own.
  */
-/**
- * Everything the browser refuses or complains of from now on, as lines: a violation of the content security policy
- * (the page's own event, and Chrome's console line for one), any console error, any failed request, any page error.
- * Call before the first page is opened.
- */
-export async function watchRefused(page: Page): Promise<string[]> {
-  const refused: string[] = [];
-  await page.exposeFunction("botbenchRefused", (line: string) => void refused.push(line));
-  await page.addInitScript(() => {
-    document.addEventListener("securitypolicyviolation", (event) => void (window as unknown as { botbenchRefused(line: string): void }).botbenchRefused(`policy: ${event.violatedDirective} refused ${event.blockedURI} (${event.sourceFile ?? "inline"}:${event.lineNumber})`));
-  });
-  page.on("console", (message) => {
-    // Before signing in, the client asks whether it has a session and is told it has none: Chrome prints that 401.
-    if (message.type() === "error" && message.location().url.endsWith("/api/session") && /status of 401/.test(message.text())) return;
-    if (message.type() === "error" || /content security policy/i.test(message.text())) refused.push(`console ${message.type()}: ${message.text()} (${message.location().url})`);
-  });
-  page.on("pageerror", (error) => refused.push(`page error: ${error.message}`));
-  page.on("requestfailed", (request) => {
-    // The live-updates request is ended by the page itself when a screen goes: that is not a refusal.
-    if (request.failure()?.errorText !== "net::ERR_ABORTED") refused.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
-  });
-  return refused;
-}
-
-/**
- * What stands in for the design checks on a screen rebuilt on shadcn/ui (ADR 0012), which is not drawn with the design
- * system's classes: nothing scrolls sideways, no text is under 12px, and no control is under `floor` px high (40 with a
- * mouse, 44 under a finger; a small control counts by its own height, 32). The parts of the old screens a rebuilt one
- * still draws (.ds- components, which the design checks covered where they came from) are left out.
- */
-export async function checkLayout(page: Page, floor: number, screen: string): Promise<void> {
-  const found = await page.evaluate(async (least) => {
-    // An overlay that is still opening is drawn smaller than it is: wait for what moves, at most half a second.
-    await Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 500))]);
-    const low: string[] = [];
-    const old = (el: Element): boolean => el.closest("[class*='ds-']") !== null;
-    for (const el of document.querySelectorAll("button, input, textarea, [role=radio], [role=tab], a[href]")) {
-      const box = el.getBoundingClientRect();
-      // Not drawn, a link inside a sentence, or the hidden input a drawn radio keeps for a form.
-      if (box.height === 0 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true" || old(el)) continue;
-      // A control drawn smaller carries its pointer target on a pseudo-element.
-      const target = getComputedStyle(el, "::after");
-      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
-      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
-    }
-    const small = [...document.querySelectorAll("body *")].filter((el) => !old(el) && el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
-    const sideways = document.documentElement.scrollWidth - document.documentElement.clientWidth;
-    // What reaches past the window, to say which element it is.
-    const wide = sideways <= 0 ? [] : [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > document.documentElement.clientWidth + 1).slice(0, 4).map((el) => `${el.tagName.toLowerCase()}${el.getAttribute("data-testid") ? `[${el.getAttribute("data-testid")}]` : ""}.${String(el.className).slice(0, 60)}`);
-    return { low, small, sideways, wide };
-  }, floor);
-  expect(found, screen).toEqual({ low: [], small: [], sideways: 0, wide: [] });
-}
-
 export async function checkDesign(page: Page, screen: string): Promise<void> {
   // A screen rebuilt on shadcn/ui is not drawn in the design system's vocabulary: its own checks stand in (ADR 0012).
   if ((await page.evaluate(() => document.documentElement.getAttribute("data-ui"))) === "next") {
@@ -525,5 +471,124 @@ export async function tempShot(page: Page, name: string): Promise<void> {
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
+
+/*
+ * A screen rebuilt on shadcn/ui and Tailwind (ADR 0012) is not drawn with the design system's classes, so `checkDesign`
+ * does not apply to it. What stands in its place: `checkWords`, `checkLayout`, and `watchRefused` for the content
+ * security policy. `checkDesign` itself runs `checkLayout` in its place when the screen it is asked about is a rebuilt one.
+ */
+
+/** Nothing scrolls sideways, no control is under `floor` px high (40 with a mouse, drawn at 32 in a bar; 44 under a finger), and no text is under 12px. */
+export async function checkLayout(page: Page, floor: number, screen: string): Promise<void> {
+  // A dialog or a menu that is still growing into place is measured smaller than it is drawn: wait for it, with a limit.
+  await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 600))]));
+  const found = await page.evaluate((least) => {
+    const low: string[] = [];
+    // The parts of an old screen a rebuilt one still draws (.ds- components, which the design checks covered where they came from) are left out.
+    const old = (el: Element): boolean => el.closest("[class*='ds-']") !== null;
+    for (const el of document.querySelectorAll("button, input, textarea, summary, [role=radio], [role=tab], [role=menuitem], a[href]")) {
+      const box = el.getBoundingClientRect();
+      // Not drawn, a link inside a sentence, or the hidden input a drawn radio keeps for a form.
+      if (box.height === 0 || getComputedStyle(el).display === "inline" || el.getAttribute("aria-hidden") === "true" || old(el)) continue;
+      // A control drawn smaller carries its pointer target on a pseudo-element.
+      const target = getComputedStyle(el, "::after");
+      const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
+      if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
+    }
+    const small = [...document.querySelectorAll("body *")].filter((el) => !old(el) && el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
+    return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+  }, floor);
+  expect(found, screen).toEqual({ low: [], small: [], sideways: 0 });
+}
+
+/**
+ * The least a rebuilt screen is held to in a journey whose states this repository's fast tests cannot produce: its
+ * words (docs/product/voice.md), and nothing scrolling sideways. Where a state can be produced without a model,
+ * `checkLayout` is run on it as well (e2e/run.e2e.ts).
+ */
+export async function checkRebuilt(page: Page, screen: string): Promise<void> {
+  await checkWords(page, screen);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${screen}: no sideways scrolling`).toBe(0);
+}
+
+/**
+ * Everything the browser refuses or complains of from now on, as lines: a violation of the content security policy
+ * (the page's own event, and Chrome's console line for one), any console error, any failed request, any page error.
+ * Call it before the page is opened; a test ends by expecting the list to be empty.
+ */
+export async function watchRefused(page: Page): Promise<string[]> {
+  const refused: string[] = [];
+  await page.exposeFunction("botbenchRefused", (line: string) => void refused.push(line));
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", (event) => void (window as unknown as { botbenchRefused(line: string): void }).botbenchRefused(`policy: ${event.violatedDirective} refused ${event.blockedURI} (${event.sourceFile ?? "inline"}:${event.lineNumber})`));
+  });
+  page.on("console", (message) => {
+    // Before signing in, the client asks whether it has a session and is told it has none: Chrome prints that 401.
+    if (message.type() === "error" && message.location().url.endsWith("/api/session") && /status of 401/.test(message.text())) return;
+    if (message.type() === "error" || /content security policy/i.test(message.text())) refused.push(`console ${message.type()}: ${message.text()} (${message.location().url})`);
+  });
+  page.on("pageerror", (error) => refused.push(`page error: ${error.message}`));
+  page.on("requestfailed", (request) => {
+    // The live-updates request is ended by the page itself when a screen goes: that is not a refusal.
+    if (request.failure()?.errorText !== "net::ERR_ABORTED") refused.push(`request failed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
+  });
+  return refused;
+}
+
+/*
+ * The run screen (web/src/screens2/run/). Its one h1 is the run's title, the owner's words, so a test reads the run's
+ * number from the address; its controls (Make the mode stricter, Cancel run) are a menu in the bar.
+ */
+
+/** The run whose screen is open, by its number, once the address is a run's. */
+export async function openRunId(page: Page): Promise<number> {
+  await expect(page).toHaveURL(/#\/runs\/\d+$/);
+  await expect(page.getByTestId("run-status")).toBeVisible();
+  return Number(/#\/runs\/(\d+)$/.exec(page.url())![1]);
+}
+
+/** The rows of the run screen's tasks, and the state each shows in the product's own word. */
+export const runTaskRows = (page: Page): Locator => page.getByTestId("run-tasks").locator(":scope > li");
+export const RUN_TASK_STATE = "[data-testid=run-task-state]";
+
+/** The run's three steps, in order: each a list item with its state as `data-state`, its name and its words. */
+export const runSteps = (page: Page): Locator => page.getByRole("list", { name: /^Steps of run \d+$/ }).getByRole("listitem");
+
+/** Open the run's menu, in the screen's bar, and return it. */
+export async function openRunMenu(page: Page): Promise<Locator> {
+  await page.getByTestId("run-menu").click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/** Choose Cancel run from the run's menu: the question that follows is the test's to answer. */
+export async function askCancelRun(page: Page): Promise<Locator> {
+  await (await openRunMenu(page)).getByRole("menuitem", { name: "Cancel run" }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Cancel this run?" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+/** Whether the run's menu offers Cancel run now: false also when the run has no menu left. */
+export async function offersCancelRun(page: Page): Promise<boolean> {
+  if ((await page.getByTestId("run-menu").count()) === 0) return false;
+  const menu = await openRunMenu(page);
+  const offered = (await menu.getByRole("menuitem", { name: "Cancel run" }).count()) > 0;
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  return offered;
+}
+
+/** The buttons drawn as the primary action on a rebuilt screen: filled with its theme's accent. */
+export const filledButtons = (page: Page): Promise<(string | null)[]> =>
+  page.getByRole("button").evaluateAll((buttons) => {
+    const probe = document.createElement("span");
+    probe.className = "bg-primary";
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return buttons.filter((button) => getComputedStyle(button).backgroundColor === accent).map((button) => button.textContent);
+  });
 
 export { expect };

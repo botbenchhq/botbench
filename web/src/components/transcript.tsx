@@ -4,7 +4,7 @@ import { DiffLine } from "./diff.tsx";
 import { counted, duration, fullDate } from "../app/format.ts";
 import { Icon, type IconName } from "./icon.tsx";
 import { MarkdownView } from "./markdown-view.tsx";
-import { exchangeOf, OUTSIDE, readStory, shownOf, stateOf, type Shown, type Story } from "./transcript-story.ts";
+import { exchangeOf, OUTSIDE, readStory, RESOLVED_LABEL, RESOLVED_SAID, shownOf, stateOf, type Shown, type Story } from "./transcript-story.ts";
 import { callLine, callReason, callTarget, confinedWords, editChange, ranFor, stepGroupOpen, stepsSummary, workedFor, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
@@ -341,17 +341,8 @@ function Row({ event, story, modelName, modelDiffers, promptBy, folded, who, ask
       // A web fetch or search the owner's setting lets run is an ordinary step: its call's own line says it. So is a
       // confined command that runs without asking, in a chat or a task, as it would when Claude Code is used directly.
       if (e.decision === "web" || e.decision === "chat" || e.decision === "mode" || e.decision === "bookkeeping") return null;
-      const said = {
-        allowed: "You allowed it once.",
-        answered: "You answered Claude Code's question.",
-        preapproved: "It was allowed without asking you: you listed this command when you started the task.",
-        standing: "It was allowed without asking you: you chose Always allow for this command. Permissions lists it, and you can take it back there.",
-        files: "It ran without asking you: it reads or changes a file inside the task's copy, or reads output Claude Code saved for this task.",
-        declined: "You denied it. It was not run.",
-        denied: "Botbench denied it without asking you. It was not run.",
-        cancelled: "The request ended without an answer. It was not run.",
-      }[e.decision];
-      const label = { allowed: "Allowed", answered: "Answered", preapproved: "Allowed for this task", standing: "Always allowed", files: "Allowed: the task's own files", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" }[e.decision];
+      const said = RESOLVED_SAID[e.decision];
+      const label = RESOLVED_LABEL[e.decision];
       // The owner's own answers and the standing rules are decisions; a refusal by Botbench and a request nobody answered are not.
       const icon = ({ allowed: "check", answered: "check", declined: "x", preapproved: "circle-check", standing: "circle-check", files: "circle-check" } as const)[e.decision as "allowed" | "answered" | "declined" | "preapproved" | "standing" | "files"];
       return (

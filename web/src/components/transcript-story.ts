@@ -119,3 +119,21 @@ export function shownOf(story: Story, id: string, state: CallState): Shown {
   }
 }
 
+
+/** The ways a request ends that are told as a decision; one that ran as an ordinary step (a web tool, a confined command, bookkeeping) has no line of its own. */
+type Told = Exclude<Of<"permission_resolved">["decision"], "web" | "chat" | "mode" | "bookkeeping">;
+
+/** What became of a request, as a sentence. */
+export const RESOLVED_SAID: Record<Told, string> = {
+  allowed: "You allowed it once.",
+  answered: "You answered Claude Code's question.",
+  preapproved: "It was allowed without asking you: you listed this command when you started the task.",
+  standing: "It was allowed without asking you: you chose Always allow for this command. Permissions lists it, and you can take it back there.",
+  files: "It ran without asking you: it reads or changes a file inside the task's copy, or reads output Claude Code saved for this task.",
+  declined: "You denied it. It was not run.",
+  denied: "Botbench denied it without asking you. It was not run.",
+  cancelled: "The request ended without an answer. It was not run.",
+};
+
+/** The same, in a word or two. */
+export const RESOLVED_LABEL: Record<Told, string> = { allowed: "Allowed", answered: "Answered", preapproved: "Allowed for this task", standing: "Always allowed", files: "Allowed: the task's own files", declined: "Denied", denied: "Denied by Botbench", cancelled: "Not answered" };

@@ -7,7 +7,6 @@ import { PeerCardsProvider } from "./peer-cards.tsx";
 import { ThreadScreen } from "../screens/thread.tsx";
 import { Alert, Frame, Page } from "../components/header.tsx";
 import { BoardScreen } from "../screens/board.tsx";
-import { RunScreen } from "../screens/run.tsx";
 import { SettingsScreen } from "../screens/settings.tsx";
 import { SignInScreen } from "../screens/sign-in.tsx";
 import { TrustScreen } from "../screens/trust.tsx";
@@ -87,17 +86,18 @@ function screenFor(route: Route, onSignedOut: () => void, wide: boolean) {
   if (route.screen === "usage") return <UsageScreen onSignedOut={onSignedOut} />;
   if (route.screen === "work") return <BoardScreen onSignedOut={onSignedOut} />;
   if (route.screen === "settings") return <SettingsScreen section={route.section} onSignedOut={onSignedOut} />;
-  if (route.screen === "run") return <RunScreen key={route.id} id={route.id} onSignedOut={onSignedOut} />;
   // A screen rebuilt on shadcn/ui (ADR 0012), when there is one for this address: screens2/routes.tsx is the one switch.
   const next = rebuilt(route, onSignedOut);
   if (next !== null || route.screen === "task") return next;
   if (route.screen === "thread") return <ThreadScreen key={`${route.pairingId} ${route.contextId}`} pairingId={route.pairingId} contextId={route.contextId} onSignedOut={onSignedOut} />;
   if (route.screen === "chat") return <OpenChat key={route.id} id={route.id} onSignedOut={onSignedOut} />;
+  // A run is always a rebuilt screen (screens2/routes.tsx), returned above.
+  if (route.screen === "run") return null;
   return <NotFound key={route.what} what={route.what} />;
 }
 
 /** The row of the column of chats and work that the open screen shows, as WorkColumn keys it. */
-const openRow = (route: Route): string | null => (route.screen === "run" ? `run ${route.id}` : route.screen === "task" ? `task ${route.id}` : null);
+const openRow = (route: Route): string | null => (route.screen === "task" ? `task ${route.id}` : null);
 
 /**
  * From 1024px, every screen but Settings (with Permissions and Usage, its sections there) has the column of runs and

@@ -4,10 +4,10 @@ import { test as base, type Page } from "@playwright/test";
 import { createRun, storePlan } from "../src/engine/run.ts";
 import { openStore } from "../src/store/db.ts";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, closeContext, contextSheet, expect, messageBox, openComposer, openRow, signIn, SHOTS, tallShot } from "./helpers.ts";
+import { checkDesign, checkLayout, checkWords, choose, closeContext, contextSheet, expect, messageBox, openComposer, openRow, openRunMenu, signIn, SHOTS, tallShot } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
-// Making a run's mode stricter on its screen, and the composer opening on the mode last chosen for a repository, at a
+// Making a run's mode stricter from its screen's menu, and the composer opening on the mode last chosen for a repository, at a
 // phone's and a wide screen's size, in the light and the dark theme. No model turn: before Botbench starts, runs are put
 // in its real store through the engine itself, at the plan gate, where nothing starts a planner or a builder, and the
 // real Botbench process shows them. The engine's side (the next request asks, the next result waits for the owner) is
@@ -73,6 +73,11 @@ for (const [size, viewport] of [["390", { width: 390, height: 844 }], ["1280", {
       test("a running run offers only the stricter modes, labels the current one, and shows the owner's change in its history; a manual or finished run offers none", async ({ page, botbench, seeded }) => {
         await signIn(page, botbench);
         await page.goto(`${botbench.base}/#/runs/${seeded.full}`);
+        // The choice is in the run's own menu, which says the mode the run is in now, and opens as a dialog.
+        const floor = size === "390" ? 44 : 32;
+        const menu = await openRunMenu(page);
+        await expect(menu.getByRole("menuitem")).toHaveText([/^Make the mode stricter\s*Now fully autonomous$/, "Cancel run"]);
+        await menu.getByRole("menuitem", { name: /^Make the mode stricter/ }).click();
         const offer = page.getByTestId("mode-change");
         await expect(offer.getByRole("heading", { name: "Make the mode stricter", level: 2 })).toBeVisible();
         await expect(offer.getByRole("radio")).toHaveCount(3);
@@ -82,31 +87,43 @@ for (const [size, viewport] of [["390", { width: 390, height: 844 }], ["1280", {
         await expect(offer.getByRole("radio", { name: "Manual" })).not.toBeChecked();
         await expect(offer.getByText("never looser")).toBeVisible();
         await expect(offer.getByRole("button", { name: "Change mode" })).toBeDisabled();
-        await checkDesign(page, `run, stricter mode offered, ${size} ${theme}`);
+        await checkLayout(page, floor, `run, stricter mode offered, ${size} ${theme}`);
+        await checkWords(page, `run, stricter mode offered, ${size} ${theme}`);
         await shot(page, `stricter-mode-offered-${size}-${theme}.png`);
 
         // Nothing changes until the owner presses the button.
-        await offer.getByRole("radio", { name: "Manual" }).check();
+        await offer.getByRole("radio", { name: "Manual" }).click();
+        await expect(offer.getByRole("radio", { name: "Manual" })).toBeChecked();
         expect(((await (await page.request.get(`${botbench.base}/api/runs/${seeded.full}`)).json()) as { mode: string }).mode).toBe("full");
         await offer.getByRole("button", { name: "Change to Manual" }).click();
         await expect(page.getByTestId("run-mode")).toHaveText(/^Manual: /);
         await expect(page.getByTestId("run-mode-changes")).toContainText("You changed the mode from fully autonomous to manual.");
         await expect(page.getByTestId("mode-change")).toHaveCount(0);
         expect(((await (await page.request.get(`${botbench.base}/api/runs/${seeded.full}`)).json()) as { mode: string }).mode).toBe("manual");
-        await checkDesign(page, `run, made manual, ${size} ${theme}`);
+        // A manual run has no stricter mode: its menu holds Cancel run alone.
+        await expect((await openRunMenu(page)).getByRole("menuitem")).toHaveText(["Cancel run"]);
+        await page.keyboard.press("Escape");
+        await checkLayout(page, floor, `run, made manual, ${size} ${theme}`);
+        await checkWords(page, `run, made manual, ${size} ${theme}`);
         await shot(page, `stricter-mode-changed-${size}-${theme}.png`);
 
         // Semi-autonomous: Manual alone is offered.
         await page.goto(`${botbench.base}/#/runs/${seeded.semi}`);
+        await (await openRunMenu(page)).getByRole("menuitem", { name: /^Make the mode stricter/ }).click();
         await expect(page.getByTestId("mode-change").getByRole("radio")).toHaveCount(2);
         await expect(page.getByTestId("mode-change").getByRole("radio", { name: "Semi-autonomous" })).toBeChecked();
         await expect(page.getByTestId("mode-change").getByRole("radio", { name: "Fully autonomous" })).toHaveCount(0);
-        // Manual, or finished: nothing is offered.
-        for (const id of [seeded.manual, seeded.cancelled]) {
-          await page.goto(`${botbench.base}/#/runs/${id}`);
-          await expect(page.getByTestId("run-mode")).toBeVisible();
-          await expect(page.getByTestId("mode-change")).toHaveCount(0);
-        }
+        await page.keyboard.press("Escape");
+        await expect(page.getByTestId("mode-change")).toHaveCount(0);
+        // Manual: the menu offers no stricter mode. Finished: the run has no menu at all.
+        await page.goto(`${botbench.base}/#/runs/${seeded.manual}`);
+        await expect(page.getByTestId("run-mode")).toHaveText(/^Manual: /);
+        await expect((await openRunMenu(page)).getByRole("menuitem")).toHaveText(["Cancel run"]);
+        await page.keyboard.press("Escape");
+        await page.goto(`${botbench.base}/#/runs/${seeded.cancelled}`);
+        await expect(page.getByTestId("run-mode")).toHaveText(/^Fully autonomous: /);
+        await expect(page.getByTestId("run-menu")).toHaveCount(0);
+        await expect(page.getByTestId("mode-change")).toHaveCount(0);
       });
 
       test("the composer opens on the run planned last, with its mode shown before Send; a remembered Fully autonomous on a repository with no check command falls back to Semi-autonomous and says why; another repository gets the Settings default", async ({ page, botbench, seeded }) => {

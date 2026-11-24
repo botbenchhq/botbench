@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test as base, type Page } from "@playwright/test";
 import { initRepo } from "../test/support/repo.ts";
-import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
+import { checkDesign, choose, chooseRepository, closeContext, expect, messageBox, openComposer, openRow, openRunId, SHOTS, signIn, tallShot, watchRequests } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The refine loop, yes or no, in the real client at a phone's size: a real Botbench process, a real temporary
@@ -75,8 +75,7 @@ test("LIVE the refine loop: Codex raises a defect in Claude Code's first build, 
   await closeContext(page);
   await messageBox(page).fill("Plan exactly one task: add a docstring to add in calc.py. Do not run any command; read calc.py only.");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByRole("heading", { name: /^Run \d+$/, level: 1 })).toBeVisible();
-  const runId = Number(/Run (\d+)/.exec((await page.getByRole("heading", { level: 1 }).textContent()) ?? "")![1]);
+  const runId = await openRunId(page);
   expect(((await (await page.request.get(`${botbench.base}/api/runs/${runId}`)).json()) as { maxRefineRounds: number }).maxRefineRounds).toBe(2);
 
   // The owner sets the plan: a first draft that subtracts, against a criterion that asks for the sum.

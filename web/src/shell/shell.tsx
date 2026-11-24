@@ -219,10 +219,13 @@ export function NextShell({ open, bar, aside, asideLabel = "Details", foot, chil
           <div data-shell={twoPanes ? (labels ? "three" : "two") : "one"} className="flex min-h-svh">
             {twoPanes && (
               <div className={cn("sticky top-0 flex h-svh shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground", labels ? "w-66" : "w-16")}>
-                <a href="#/turn" aria-label={labels ? undefined : "Botbench"} className={cn("flex min-h-14 items-center gap-2 px-4 text-base font-semibold tracking-tight", !labels && "justify-center px-0")}>
-                  <Mark size={labels ? 16 : 20} />
-                  {labels && "Botbench"}
-                </a>
+                {/* The slot's name is the one the navigation's head had as shadcn/ui's sidebar: the brand tests find the mark by it. */}
+                <div data-slot="sidebar-header">
+                  <a href="#/turn" aria-label={labels ? undefined : "Botbench"} className={cn("flex min-h-14 items-center gap-2 px-4 text-base font-semibold tracking-tight", !labels && "justify-center px-0")}>
+                    <Mark size={labels ? 16 : 20} />
+                    {labels && "Botbench"}
+                  </a>
+                </div>
                 <div className={cn("flex flex-1 flex-col gap-6 overflow-y-auto p-2", !labels && "items-center")}>
                   <Screens look={labels ? "list" : "rail"} />
                   {open !== null && <OpenWork open={open} rail={!labels} />}

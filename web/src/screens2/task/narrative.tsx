@@ -189,6 +189,26 @@ export function Narrative({ events, live, who, builder, children }: { events: re
             return <Steps key={part.id} part={part} />;
           case "step":
             return <NowStep key={part.id} step={part.step} />;
+          case "answer":
+            return (
+              <li key={part.id} data-testid="answer" className="flex flex-col gap-0.5 border-l-2 border-edge pl-3 text-meta">
+                <span>
+                  <span className="font-semibold">{`${part.label}. `}</span>
+                  <span className="text-muted-foreground">{part.said}</span>
+                </span>
+                {part.note !== null && (
+                  <span className="text-muted-foreground">
+                    {/* A reason Botbench gives is Botbench's own sentence; an answer or a note is the owner's. */}
+                    {part.theirs ? (part.question ? "Your answer: " : "Your note: ") : `Why: ${part.note}`}
+                    {part.theirs && (
+                      <span data-ds-content="" className="text-foreground">
+                        {part.note}
+                      </span>
+                    )}
+                  </span>
+                )}
+              </li>
+            );
           case "ended":
             return (
               <li key={part.id} data-testid="ended" className="text-meta text-muted-foreground">

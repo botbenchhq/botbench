@@ -1,6 +1,6 @@
 import type { DriverEvent, StoredEvent, TaskDetail } from "../../api/client.ts";
 import { callLine, ranFor, stepsSummary, type CallLine, type CallState } from "../../components/tool-summary.ts";
-import { exchangeOf, shownOf, stateOf, type Story } from "../../components/transcript-story.ts";
+import { exchangeOf, RESOLVED_LABEL, RESOLVED_SAID, shownOf, stateOf, type Story } from "../../components/transcript-story.ts";
 
 /*
  * What the task screen works out for itself from a task's stored events, as plain functions (test/task-model.test.ts).
@@ -34,6 +34,8 @@ export type Part =
   | { kind: "steps"; id: number; steps: Step[]; summary: string; open: boolean }
   /** A step that runs now, or waits for the owner's answer: drawn open. */
   | { kind: "step"; id: number; step: Step }
+  /** What became of a request to the owner: the owner's answer or note with it (`theirs`), or Botbench's own reason. */
+  | { kind: "answer"; id: number; label: string; said: string; note: string | null; theirs: boolean; question: boolean }
   | { kind: "ended"; id: number; reason: "error" | "interrupted"; detail: string | null }
   | { kind: "problem"; id: number; message: string };
 
@@ -68,6 +70,7 @@ export function narrative(events: readonly StoredEvent[], story: Story): Part[] 
     }
     if (e.type === "user_prompt") (close(), parts.push({ kind: "prompt", id: event.id, text: e.text }));
     else if (e.type === "text") (close(), parts.push({ kind: "said", id: event.id, attemptId: event.attemptId, text: e.text, at: event.ts }));
+    else if (e.type === "permission_resolved" && e.decision !== "web" && e.decision !== "chat" && e.decision !== "mode" && e.decision !== "bookkeeping" && e.decision !== "files") (close(), parts.push({ kind: "answer", id: event.id, label: RESOLVED_LABEL[e.decision], said: RESOLVED_SAID[e.decision], note: e.note, theirs: e.decision !== "denied", question: e.decision === "answered" }));
     else if (e.type === "turn_ended" && e.reason !== "completed") (close(), parts.push({ kind: "ended", id: event.id, reason: e.reason, detail: e.detail }));
     else if (e.type === "error") (close(), parts.push({ kind: "problem", id: event.id, message: e.message }));
   }

@@ -141,6 +141,12 @@ test.describe("at 1440×900, with a mouse", () => {
     // The theme is the approved direction's, in the appearance the owner chose: dark by default.
     const colours = (): Promise<string[]> => page.evaluate(() => [getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector("[data-testid=decision]")!).backgroundColor, getComputedStyle(document.querySelector("[data-testid=decision-actions] button:last-child")!).backgroundColor]);
     expect(await colours()).toEqual(["rgb(17, 19, 22)", "rgb(32, 36, 43)", "rgb(124, 183, 255)"]);
+    // The navigation's mark is two-tone: its first bracket in the text colour, its second in the brand cyan of the mode shown.
+    const name = page.locator('[data-slot="sidebar-header"] a', { hasText: "Botbench" });
+    const mark = (): Promise<{ text: string; fills: string[] }> => name.evaluate((a) => ({ text: getComputedStyle(a).color, fills: [...a.querySelectorAll("path")].map((p) => getComputedStyle(p).fill) }));
+    const darkMark = await mark();
+    expect(darkMark.fills, "the mark in dark").toEqual([darkMark.text, "rgb(6, 182, 212)"]);
+    if (SHOTS) await name.screenshot({ path: path.join(SHOTS, "mark-navigation-dark.png") });
     expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"Inter Variable"/);
     expect(await page.evaluate(() => getComputedStyle(document.querySelector("[data-testid=diff]")!).fontFamily)).toMatch(/^"JetBrains Mono Variable"/);
     await checkLayout(page, 32, "review, 1440, dark");
@@ -153,6 +159,10 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(page.getByTestId("verification-heading")).toHaveText("1 of 1 check passed");
     await expect(page.locator("[data-testid=diff] [data-line=added]")).toBeVisible();
     expect(await colours()).toEqual(["rgb(245, 246, 247)", "rgb(255, 255, 255)", "rgb(33, 91, 184)"]);
+    const lightMark = await mark();
+    expect(lightMark.text, "the text colour changes with the mode").not.toBe(darkMark.text);
+    expect(lightMark.fills, "the mark in light").toEqual([lightMark.text, "rgb(3, 116, 143)"]);
+    if (SHOTS) await name.screenshot({ path: path.join(SHOTS, "mark-navigation-light.png") });
     await shot(page, "review-1440-light");
     await page.evaluate(() => window.localStorage.setItem("botbench.appearance", "dark"));
     await page.reload();

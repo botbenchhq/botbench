@@ -21,10 +21,10 @@ export function noteNavigation(): void {
 }
 
 /**
- * The screen the address names is still being fetched (a rebuilt screen's code is fetched when first opened): the note
- * is kept until that screen draws its heading, however long the fetch takes.
+ * The next screen's code is still being fetched (a rebuilt screen is loaded when its address is first opened,
+ * screens2/routes.tsx), so its heading is drawn later than a moment: the note is kept until that heading claims it.
  */
-export function awaitScreen(): void {
+export function holdArrival(): void {
   if (navigated) window.clearTimeout(unclaimed);
 }
 

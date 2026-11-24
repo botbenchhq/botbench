@@ -69,7 +69,7 @@ test("a builder's question shows as a card titled 'Claude Code has a question' w
   expect(chosen, "the recorded answer is one of the choices").toBeGreaterThanOrEqual(0);
   await page.getByTestId("question-choice").nth(chosen).click();
   await expect(page.getByTestId("question-card")).toHaveCount(0);
-  await expect(page.getByRole("log", { name: "Transcript" }).getByText(`Your answer: ${recording.answer}`)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("log", { name: "Activity" }).getByText(`Your answer: ${recording.answer}`)).toBeVisible({ timeout: 30_000 });
   await openWork(page);
   await expect(page.getByTestId("board-group").getByRole("link").filter({ hasText: "Task 1 · " })).not.toHaveText(/Needs input/, { timeout: 30_000 });
 });
