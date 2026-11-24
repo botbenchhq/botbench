@@ -224,8 +224,9 @@ test("the renderer builds React elements only: no HTML string, no link, no image
 
 test("only an agent's reply and a review go through the renderer; prompts, issues and peers' text stay plain", () => {
   const source = (path: string) => readFileSync(new URL(`../web/src/${path}`, import.meta.url), "utf8");
-  const users = ["components/transcript.tsx", "components/evidence.tsx"];
-  const all = ["components/outside-text.tsx", "components/other-workbenches.tsx", "components/issue-choice.tsx", "screens/task.tsx", "screens/run.tsx", "screens/turn.tsx", "app/peers.ts", ...users];
+  // The cards of a round several agents answered draw each agent's reply as the transcript does.
+  const users = ["components/transcript.tsx", "components/evidence.tsx", "screens2/chat/compare.tsx"];
+  const all = ["components/outside-text.tsx", "components/other-workbenches.tsx", "components/issue-choice.tsx", "screens/task.tsx", "screens/run.tsx", "screens2/chat/chat-view.tsx", "screens2/chat/new-work.tsx", "screens2/chat/composer.tsx", "app/peers.ts", ...users];
   for (const path of all) assert.equal(/markdown-view/.test(source(path)), users.includes(path), path);
   const transcript = source("components/transcript.tsx");
   // The one place in the transcript is the agent's text row; the owner's prompt there is still plain text.

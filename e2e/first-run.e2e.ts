@@ -6,7 +6,7 @@ import { createTurns } from "../src/api/turns.ts";
 import { ClaudeCodeDriver } from "../src/drivers/claude-code.ts";
 import { openStore } from "../src/store/db.ts";
 import { chatReplayDriver } from "../test/support/replay-chat.ts";
-import { checkDesign, expect, messageBox, nav, tempShot, test } from "./helpers.ts";
+import { checkDesign, expect, goTo, messageBox, tempShot, test } from "./helpers.ts";
 import { startBotbench } from "./botbench.ts";
 
 // The first run of an installation, in the real client at a phone's size. No model turn. A fresh data folder, on a
@@ -29,11 +29,12 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
     await expect(lines.locator("p")).toHaveText(["Tap + to choose a repository, or just ask a question.", "Connect an agent in Settings → Agents."]);
     await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");
     await expect(page.locator("dialog[open], [role=dialog]:visible, [aria-modal=true]")).toHaveCount(0);
-    const above = await page.locator("main").evaluate((main) => {
-      const box = main.querySelector("form.ds-composer")!.getBoundingClientRect().top;
-      return [...main.querySelectorAll("p")].filter((p) => p.getClientRects().length > 0 && p.getBoundingClientRect().bottom <= box).length;
+    // They stand above the message box, under the four intents: the two lines, and the one that names what is wrong.
+    const above = await page.getByTestId("screen").evaluate((screen) => {
+      const box = screen.querySelector('[data-testid="composer"]')!.getBoundingClientRect().top;
+      return [...screen.querySelectorAll('[data-testid="first-run"] p, [data-testid="driver-state"]')].filter((p) => p.getClientRects().length > 0 && p.getBoundingClientRect().bottom <= box).length;
     });
-    expect(above, "lines above the message box").toBeLessThanOrEqual(3);
+    expect(above, "the first-run lines and the agent's state, above the message box").toBe(3);
 
     // Send is disabled, and its reason names the problem and carries exactly one link, to connect an agent.
     const send = page.getByRole("button", { name: "Send" });
@@ -77,7 +78,7 @@ test("a fresh installation's home screen shows the first-run lines, reaches Sett
       await expect(page.getByTestId("driver-state")).toHaveText("Claude Code: not installed");
       await expect(lines).toHaveCount(0);
     };
-    await goneAfter(() => nav(page).getByRole("link", { name: "Chat", exact: true }).click());
+    await goneAfter(() => goTo(page, "Chat"));
     await checkDesign(page, "chat, after the first run");
     await goneAfter(() => page.reload());
 

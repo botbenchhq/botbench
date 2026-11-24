@@ -33,8 +33,8 @@ const QUESTION = "Name one more primary colour, in one word, and say in one shor
 /** The context list's rows as they read: the setting, then its value. */
 const rows = (page: Page) =>
   contextSheet(page)
-    .locator(".ds-context-list__button")
-    .evaluateAll((buttons) => buttons.map((b) => `${b.querySelector(".ds-context-list__label")!.textContent} ${b.querySelector(".ds-context-list__value")!.textContent}`));
+    .locator("button[data-row]")
+    .evaluateAll((buttons) => buttons.map((b) => `${b.querySelector('[data-testid="context-row-label"]')!.textContent} ${b.querySelector('[data-testid="context-row-value"]')!.textContent}`));
 
 /** Choose the one agent a chat asks, in the Model row's view. */
 async function askOnly(page: Page, name: string): Promise<void> {
@@ -85,7 +85,7 @@ test("a repository attached under Let this chat read a repository is checked, se
 
   // Under the box: what is read, and that it is never changed. The box is still a chat's.
   await expect(page.getByTestId("read-line")).toHaveText("For the chat to read: docs-site. The agents you ask can read its files and its history, and never change it: nothing in it is written, committed or pushed.");
-  await expect(page.getByTestId("composer-about")).toHaveCount(0);
+  await expect(page.getByTestId("composer-about")).toContainText("It can read docs-site, and never change it.");
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 
   // An agent that cannot read a repository: Send waits, and says the repository is read only by the other agents.

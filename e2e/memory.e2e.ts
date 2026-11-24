@@ -3,7 +3,7 @@ import path from "node:path";
 import { captureNote, memoryFolder } from "../src/engine/memory.ts";
 import { openStore } from "../src/store/db.ts";
 import { startBotbench, tempDir } from "./botbench.ts";
-import { checkDesign, expect, signIn, test } from "./helpers.ts";
+import { checkDesign, expect, signIn, test, goTo } from "./helpers.ts";
 
 // Settings → Memory in the real client at a phone's size, against a real Botbench process. No model turn is started:
 // the two notes are saved before it starts, through the store's own capture (src/engine/memory.ts), as an owner's
@@ -18,7 +18,7 @@ test("Settings → Memory lists the notes; an edit is saved, one made on a note 
   const botbench = await startBotbench({ home });
   try {
     await signIn(page, botbench);
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    await goTo(page, "Settings");
     const memory = page.getByTestId("memory-settings");
     await expect(memory.getByRole("heading", { name: "Memory" })).toBeVisible();
     const rows = memory.getByTestId("memory-notes").getByRole("listitem");

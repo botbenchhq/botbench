@@ -59,7 +59,7 @@ async function across(page: Page, still: (width: number) => Promise<void>): Prom
 }
 
 for (const appearance of ["light", "dark"] as const) {
-  test(`${appearance}: from 1280 to 390 and back, Chat keeps its h1 and the unsent message, a task keeps its h1 and the unsent note, and Permissions draws its own h1 at each width`, async ({ page, botbench, seeded }) => {
+  test(`${appearance}: from 1280 to 390 and back, New chat or task keeps its h1 and the unsent message, a task keeps its h1 and the unsent note, and Permissions draws its own h1 at each width`, async ({ page, botbench, seeded }) => {
     await page.setViewportSize(WIDE);
     await page.goto(botbench.base);
     await page.evaluate((choice) => window.localStorage.setItem("botbench.appearance", choice), appearance);
@@ -67,16 +67,16 @@ for (const appearance of ["light", "dark"] as const) {
     await signIn(page, botbench);
     await expect(page.locator("html")).toHaveAttribute("data-theme", appearance);
 
-    // Chat, with the column beside it: a message typed and not sent stays through both crossings.
+    // New chat or task (the home screen with no chat), a rebuilt screen with its own navigation and no column beside
+    // it: a message typed and not sent stays through both crossings.
     const message = "Draft that is not sent yet: rename the timeout setting";
-    await expect(page.getByRole("region", { name: "Chats and work" })).toBeVisible();
     await messageBox(page).fill(message);
-    await expect(h1(page)).toHaveText("Chat");
-    await across(page, async (width) => {
+    await expect(h1(page)).toHaveText("What do you want to do?");
+    await across(page, async () => {
       await expect(h1(page)).toHaveCount(1);
-      await expect(h1(page)).toHaveText("Chat");
+      await expect(h1(page)).toHaveText("What do you want to do?");
       await expect(messageBox(page)).toHaveValue(message);
-      await expect(page.getByRole("region", { name: "Chats and work" })).toHaveCount(width >= 1024 ? 1 : 0);
+      await expect(page.getByRole("region", { name: "Chats and work" })).toHaveCount(0);
     });
     await checkDesign(page, `chat, ${appearance}, wide again after a phone's width`);
 

@@ -1,6 +1,6 @@
 import { useContext, type ReactNode } from "react";
 import { CSPProvider } from "@base-ui/react/csp-provider";
-import { Layers, MessageSquare, Settings } from "lucide-react";
+import { Layers, MessageSquare, Plus, Settings } from "lucide-react";
 import { Badge } from "@/ui/badge";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/ui/sidebar";
 import { TooltipProvider } from "@/ui/tooltip";
@@ -11,6 +11,7 @@ import { useNextRoot } from "./use-next-root.ts";
 /** The screens that exist today, by the names they have everywhere else (components/header.tsx, docs/product/voice.md). */
 const SCREENS = [
   { label: "Chat", href: "#/turn", icon: MessageSquare },
+  { label: "New chat or task", href: "#/new", icon: Plus },
   { label: "Work", href: "#/work", icon: Layers },
   { label: "Settings", href: "#/settings", icon: Settings },
 ] as const;

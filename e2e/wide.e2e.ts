@@ -6,7 +6,7 @@ import { createTask, moveTask } from "../src/engine/task.ts";
 import { openStore } from "../src/store/db.ts";
 import { commitWork, createWorktree } from "../src/worktrees.ts";
 import { initRepo, write } from "../test/support/repo.ts";
-import { checkDesign, expect, signIn } from "./helpers.ts";
+import { checkDesign, expect, signIn, goTo } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 import { escapeRegExp } from "../test/support/regexp.ts";
 
@@ -83,14 +83,16 @@ test.describe("at 1280×800, with a mouse", () => {
 
   test("arriving on a screen names the tab for it and puts focus on its heading, the page can be zoomed, and the message box says which key sends", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
-    await expect(rows(page)).toHaveCount(ALL);
     // Pinch zoom is the browser's to give: the page sets no limit on it.
     expect(await page.locator('meta[name="viewport"]').getAttribute("content")).toBe("width=device-width, initial-scale=1, viewport-fit=cover");
-    await expect(page).toHaveTitle("Chat \u2013 Botbench");
+    await expect(page).toHaveTitle("New chat or task \u2013 Botbench");
     // A mouse and a keyboard: Enter sends, and the line under the box says so and describes the box.
     await expect(page.getByTestId("composer-keys")).toHaveText("Enter sends. Shift with Enter starts a new line.");
     await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toHaveAccessibleDescription(/Enter sends\. Shift with Enter starts a new line\./);
 
+    // Work has the column of chats and work beside it (Chat, rebuilt on shadcn/ui, has its own navigation and none).
+    await goTo(page, "Work");
+    await expect(rows(page)).toHaveCount(ALL);
     // A task, opened from the column: the tab is named by Botbench's own name for it, and focus leaves the row for the heading.
     await rows(page).nth(2).click();
     await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
@@ -110,14 +112,16 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(page).toHaveTitle("No such screen \u2013 Botbench");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 
-    // Chat's heading is for a screen reader only, so with a keyboard the message box takes focus, where it can be seen.
+    // With no chat, Chat is New chat or task: with a keyboard its heading passes focus on to the message box, where typing starts.
     await page.getByRole("navigation", { name: "Screens" }).first().getByRole("link", { name: "Chat" }).click();
-    await expect(page).toHaveTitle("Chat \u2013 Botbench");
+    await expect(page).toHaveTitle("New chat or task \u2013 Botbench");
     await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeFocused();
-    // A change of address the owner did not make from here (a notification's, another screen's) never takes focus from a field being typed in.
+    // A change of address the owner did not make from here (a notification's, another screen's) never takes focus from a
+    // field being typed in: on Work, in the column's search, as a task's screen opens beside it.
+    await goTo(page, "Work");
     await search(page).pressSequentially("login");
-    await page.evaluate(() => (window.location.hash = "#/work"));
-    await expect(page).toHaveTitle("Work \u2013 Botbench");
+    await page.evaluate((id) => (window.location.hash = `#/tasks/${id}`), seeded.ready.id);
+    await expect(page).toHaveTitle(`Task ${seeded.ready.id} \u2013 Botbench`);
     await expect(search(page)).toBeFocused();
     await search(page).fill("");
 
@@ -227,7 +231,8 @@ test.describe("at 1280×800", () => {
 
   test("every screen but Settings has the column of chats and work, newest first with their states in words; its search filters by title as you type, counts in words, says when nothing matches and clears; opening a row keeps the column, its search and its scroll position, and marks the row current", async ({ page, botbench, seeded }) => {
     await signIn(page, botbench);
-    // Chat, the home screen, with the column beside it.
+    // Work, with the column beside it. (Chat, rebuilt on shadcn/ui, has its own navigation and no column.)
+    await goTo(page, "Work");
     await expect(rows(page)).toHaveCount(ALL);
     await expect(count(page)).toHaveText(`1 run and ${ALL - 1} tasks`);
     await expect(rows(page).first()).toContainText(seeded.newest.title);
@@ -384,7 +389,7 @@ test.describe("at 390×844", () => {
     await expect(page.getByTestId("work-column")).toHaveCount(0);
     await checkDesign(page, "task, phone, no column");
 
-    await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+    await goTo(page, "Settings");
     await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     await expect(page.getByTestId("settings-sections")).toHaveCount(0);
     await expect(page.getByTestId("settings-panes")).toHaveCount(0);

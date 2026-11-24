@@ -23,3 +23,6 @@ export const useWide = media(WIDE);
 
 /** Whether the main pointer is a mouse or a trackpad, which comes with a keyboard: there Enter sends a message. */
 export const useFinePointer = media("(pointer: fine)");
+
+/** Whether the window is at least 1280px wide: there a rebuilt screen has its inspector as a third pane (ADR 0012). */
+export const useThreePanes = media("(min-width: 1280px)");

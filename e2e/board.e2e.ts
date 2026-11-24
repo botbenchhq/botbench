@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { botbenchBranches, checkoutState, initRepo, worktreeCount } from "../test/support/repo.ts";
-import { askBeforeEveryCommand, checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, expect, nav, openDetails, openFromSettings, openWork, pageMode, SHOTS, signIn, tallShot, test, THEME_COLOR, token, watchRequests, goTo } from "./helpers.ts";
 import { startBotbench, tempDir, type Botbench } from "./botbench.ts";
 
 // The runs board, Settings and the appearance choice in the real client, at a phone's size: a real Botbench process,
@@ -20,7 +20,7 @@ const openBoard = openWork;
 
 async function openSettings(page: Page): Promise<void> {
   // Settings is the header's action, on every signed-in screen: the tab bar keeps to the app's main destinations.
-  await page.getByRole("banner").getByRole("link", { name: "Settings" }).click();
+  await goTo(page, "Settings");
   await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
 }
 
@@ -48,10 +48,12 @@ test("with no runs and no tasks, the board is the first-run state, in words, wit
   await checkDesign(page, "board, empty");
   await shot(page, "u16-board-empty.png");
   await empty.getByRole("link", { name: "New run" }).click();
-  await expect(page.getByRole("heading", { name: "Chat", level: 1 })).toBeAttached();
   // New run came to work in a repository: the sheet opens on Repository, and Send waits for one.
-  await expect(page.locator("dialog.ds-sheet").getByRole("heading", { name: "Repository" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Choose a Repository" })).toBeAttached();
+  await expect(page.getByTestId("context-sheet").getByRole("heading", { name: "Repository" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose a Repository", includeHidden: true })).toBeAttached();
+  // Behind the sheet, New chat or task has Plan a run chosen.
+  await page.getByTestId("context-sheet").getByRole("button", { name: "Close Add context" }).click();
+  await expect(page.getByRole("radio", { name: "Plan a run" })).toBeChecked();
   expect(foreign).toEqual([]);
 });
 
@@ -120,6 +122,8 @@ test("Settings lists each agent Botbench has, as the real probe reports it, and 
 
 test("Appearance: Light changes the page, its browser bar and its logo (which follows the text colour), is remembered on this device and drawn before the client starts; Match device follows the device; Dark is the default", async ({ page, botbench }) => {
   await signIn(page, botbench);
+  // The header with its mark is on every screen not yet rebuilt on shadcn/ui; Work is one.
+  await openBoard(page);
   const root = page.locator("html");
   const bar = page.locator('meta[name="theme-color"]');
   const mark = page.getByRole("banner").locator("svg[aria-hidden=\"true\"]").first();

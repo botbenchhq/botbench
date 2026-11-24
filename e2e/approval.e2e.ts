@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { checkoutState, git, initRepo } from "../test/support/repo.ts";
-import { MONO_FAMILY, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, askBeforeEveryCommand, checkDesign, expect, nav, openCanDo, openDetails, openWork, primaries, signIn, startTaskIn, tallShot, test, token, watchRequests } from "./helpers.ts";
+import { askBeforeEveryCommand, checkDesign, expect, goTo, MONO_FAMILY, nav, openCanDo, openDetails, openWork, primaries, PRIMARY_LOOK, SECONDARY_LOOK, SHOTS, signIn, startTaskIn, tallShot, test, token, watchRequests } from "./helpers.ts";
 import type { Botbench } from "./botbench.ts";
 
 // Approvals in the real client, at a phone's size: a real Botbench process, a real temporary repository,
@@ -75,8 +75,11 @@ test("LIVE: a task that needs the repository's script shows one pending approval
   await expect(page.getByTestId("approval-card")).toHaveCount(0);
   await checkDesign(page, "work, tray with one waiting");
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "u7-tray.png") });
-  await nav(page).getByRole("link", { name: "Chat" }).click();
+  // Chat is a rebuilt screen: the request is named at its top, as a link to the task that waits. Back on Work, the tray.
+  await goTo(page, "Chat");
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Needs input: task 1" })).toBeVisible();
+  await goTo(page, "Work");
   await expect(tray).toHaveText("1 approval is waiting. Open it.");
 
   // The tray is reachable by keyboard and opens the oldest pending card, on its task's screen.
