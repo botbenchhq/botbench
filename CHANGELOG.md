@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/botbenchhq/botbench/compare/v0.2.0...v0.3.0) (2026-11-24)
+
+
+### Features
+
+* evidence is tied to the commit under review; out-of-date or differing evidence takes Accept away ([7bd1b25](https://github.com/botbenchhq/botbench/commit/7bd1b25beab8b5ec365c4d6a91cccdbcc77f2a62))
+* shadcn/ui and Tailwind 4 as the interface's foundation, with the review screen rebuilt on them (ADR 0012) ([#228](https://github.com/botbenchhq/botbench/issues/228)) ([5a732cd](https://github.com/botbenchhq/botbench/commit/5a732cd0f84b76b73a1dbeab50aff572b24ab1c4))
+* the redesigned interface: Home, Work, tasks, chat, runs and Settings on the new stack ([5faceaf](https://github.com/botbenchhq/botbench/commit/5faceafb73b9ba005c9f16da7dc44b1bef16b5ad))
+* the run screen rebuilt: the plan as cards, the run's controls as a menu ([2ca64b9](https://github.com/botbenchhq/botbench/commit/2ca64b9658fa83afe04dce4a1867a45031a13fa8))
+* the two-tone mark is the product's mark in the interface ([#230](https://github.com/botbenchhq/botbench/issues/230)) ([387555d](https://github.com/botbenchhq/botbench/commit/387555d9ea1203db2d94b710721a3af48dbe434e))
+
+
+### Bug Fixes
+
+* a button stays enabled and focused while its action runs ([f907eab](https://github.com/botbenchhq/botbench/commit/f907eabc5c2b3274852c86c039f6b2eb37b02474))
+* dates, clocks, durations and plurals follow the reader's region ([62b55f1](https://github.com/botbenchhq/botbench/commit/62b55f18ef928f009664e627e7dc505642e641c3))
+* the page can be zoomed, Enter sends, tabs are named, focus lands on arrival, and unsaved plan edits are guarded ([0f31463](https://github.com/botbenchhq/botbench/commit/0f314633ca7ea38578e7570f341c52f39ec2efc6))
+* the paired-workbench journey, Discard after a failed setup and arrival focus work again on the redesigned screens ([#238](https://github.com/botbenchhq/botbench/issues/238)) ([df30944](https://github.com/botbenchhq/botbench/commit/df309444ceac0cf5ae8c45064c2782449020e91e))
+
 ## [0.2.0](https://github.com/jon-lange/botbench/compare/v0.1.0...v0.2.0) (2026-11-23)
 
 
