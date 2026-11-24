@@ -88,7 +88,7 @@ function StepRow({ step }: { step: Step }) {
           <ChevronDown aria-hidden="true" className={cn("mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-data-panel-open/step:rotate-180", step.ms === null && "ml-auto")} />
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-2 px-5 pb-3">
-          {step.note !== null && <p className="text-meta text-muted-foreground">{step.note}</p>}
+          {step.note !== null && <p data-testid={step.confined ? "confined" : undefined} className="text-meta text-muted-foreground">{step.note}</p>}
           <Output step={step} />
         </CollapsibleContent>
       </Collapsible>

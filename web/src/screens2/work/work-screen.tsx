@@ -333,6 +333,7 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
           </p>
         ) : (
           <Card className="mt-4 gap-0 overflow-hidden py-0">
+            {/* The agent and the repository are shown only where the title keeps room beside them (64rem of container): at 1024px wide they would leave it a hundred pixels. */}
             <Table data-testid="work-table" className="table-fixed text-sm">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -341,8 +342,8 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                   </TableHead>
                   <TableHead className="px-2 text-meta font-semibold text-muted-foreground">Title</TableHead>
                   <TableHead className="w-24 px-2 text-meta font-semibold text-muted-foreground @max-2xl:hidden">Kind</TableHead>
-                  <TableHead className="w-32 px-2 text-meta font-semibold text-muted-foreground @max-4xl:hidden">Agent</TableHead>
-                  <TableHead className="w-36 px-2 text-meta font-semibold text-muted-foreground @max-4xl:hidden">Repository</TableHead>
+                  <TableHead className="w-32 px-2 text-meta font-semibold text-muted-foreground @max-5xl:hidden">Agent</TableHead>
+                  <TableHead className="w-36 px-2 text-meta font-semibold text-muted-foreground @max-5xl:hidden">Repository</TableHead>
                   <TableHead className="w-40 px-2 text-right text-meta font-semibold text-muted-foreground @max-lg:hidden">Last change</TableHead>
                   <TableHead className="w-14 px-2">
                     <span className="sr-only">More</span>
@@ -381,8 +382,8 @@ export default function WorkScreen({ state: opened, onSignedOut }: { state: Work
                         </a>
                       </TableCell>
                       <TableCell className="truncate px-2 py-1 text-muted-foreground @max-2xl:hidden">{kindWord(item)}</TableCell>
-                      <TableCell className="truncate px-2 py-1 text-muted-foreground @max-4xl:hidden">{agentWord(item)}</TableCell>
-                      <TableCell data-ds-content="" className="truncate px-2 py-1 text-muted-foreground @max-4xl:hidden">
+                      <TableCell className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">{agentWord(item)}</TableCell>
+                      <TableCell data-ds-content="" className="truncate px-2 py-1 text-muted-foreground @max-5xl:hidden">
                         {repoWord(item)}
                       </TableCell>
                       <TableCell className="truncate px-2 py-1 text-right text-muted-foreground tabular-nums @max-lg:hidden">

@@ -215,6 +215,16 @@ export function confinedWords(confined: { hosts: string[]; files: boolean } | un
 }
 
 /**
+ * The note of a call the sandbox kept from something, for the call's own line: null for a call that did not run to a
+ * result, or whose result reports nothing of the kind. One owner for the transcript's rows and the task's narrative: a
+ * call with such a note is told as one that did not end well.
+ */
+export function confinedNote(state: CallState, confined: { hosts: string[]; files: boolean } | undefined): string | null {
+  const kept = state === "done" || state === "failed" ? confinedWords(confined) : null;
+  return kept === null ? null : `${kept.note[0]!.toUpperCase()}${kept.note.slice(1)}. ${kept.sentences.join(" ")}`;
+}
+
+/**
  * Whether a step group is drawn open. The reader's own choice stands. Otherwise it is open while the reply it belongs to
  * is still arriving, so the calls are seen as they happen, and stays open while any call in it failed, was not run, did
  * not finish or waits for an answer; once the reply has finished well it folds to its one line, one tap from the calls.

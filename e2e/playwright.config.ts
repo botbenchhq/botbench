@@ -31,5 +31,8 @@ export default defineConfig({
     // The design checks at a desktop's size, 1280x800: only design-checks.desktop.ts, which the phone project's
     // *.e2e.ts does not match, so no test runs in both projects.
     { name: "desktop", testMatch: "design-checks.desktop.ts", use: { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, hasTouch: false } },
+    // The pictures of every screen kept in docs/design/built/final (pictures.shots.ts): taken only when BOTBENCH_SHOTS
+    // names the folder, skipped otherwise. Each picture sets its own size.
+    { name: "pictures", testMatch: "pictures.shots.ts", use: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, hasTouch: false } },
   ],
 });

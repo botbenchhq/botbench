@@ -116,7 +116,7 @@ test.describe("at 1280×800, with a mouse", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 
     // With no chat, Chat is New chat or task: with a keyboard its heading passes focus on to the message box, where typing starts.
-    await page.getByRole("navigation", { name: "Screens" }).first().getByRole("link", { name: "Chat" }).click();
+    await page.getByRole("navigation", { name: "Screens" }).first().getByRole("link", { name: "Chat", exact: true }).click();
     await expect(page).toHaveTitle("New chat or task \u2013 Botbench");
     await expect(page.getByRole("textbox", { name: "Message Claude Code" })).toBeFocused();
 
@@ -248,7 +248,8 @@ test.describe("at 1280×800", () => {
     await expect(page.getByRole("link", { name: seeded.planned.title })).toHaveAttribute("aria-current", "page");
     await checkScreen(page, "run, wide, opened from Work", { floor: 32 });
     // Home, Chat and Settings have none either.
-    for (const [screen, heading] of [["Home", "Home"], ["Chat", null], ["Settings", "Agents and models"]] as const) {
+    // Home's heading is its headline, which counts what needs the owner; it is "Home" only with nothing to count.
+    for (const [screen, heading] of [["Home", /needs? you/], ["Chat", null], ["Settings", "Agents and models"]] as const) {
       await page.evaluate((to) => (window.location.hash = to), screen === "Home" ? "#/" : screen === "Chat" ? "#/turn" : "#/settings");
       if (heading !== null) await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeAttached();
       else await expect(messageBox(page)).toBeVisible();

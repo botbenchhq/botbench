@@ -1,5 +1,5 @@
 import type { DriverEvent, StoredEvent, TaskDetail } from "../../api/client.ts";
-import { callLine, ranFor, stepsSummary, type CallLine, type CallState } from "../../components/tool-summary.ts";
+import { callLine, confinedNote, ranFor, stepsSummary, type CallLine, type CallState } from "../../components/tool-summary.ts";
 import { exchangeOf, RESOLVED_LABEL, RESOLVED_SAID, shownOf, stateOf, type Story } from "../../components/transcript-story.ts";
 
 /*
@@ -18,6 +18,8 @@ export interface Step {
   line: CallLine;
   /** Why it did not run or end well, in words; null for a step that ran and returned, runs, or waits. */
   note: string | null;
+  /** The sandbox kept it from a file or the network, as its result reports: `note` says which, and it is told as a step that did not end well. */
+  confined: boolean;
   /** What it returned, once it has. */
   output: string | null;
   /** How long it ran, when its times are stored. */
@@ -40,9 +42,15 @@ export type Part =
   | { kind: "problem"; id: number; message: string };
 
 const stepOf = (event: StoredEvent, call: Call, story: Story): Step => {
-  const state = stateOf(story, call.id, exchangeOf(event));
+  const ran = stateOf(story, call.id, exchangeOf(event));
+  const result = story.results.get(call.id);
+  // What the sandbox kept a call that ran from, as its result reports it: told as the chat's and a run's transcripts
+  // tell it (components/tool-summary.ts, `confinedNote`), a step that did not end well, with the reason in plain words.
+  const kept = confinedNote(ran, result?.confined);
+  const state = kept === null ? ran : "failed";
   const ms = ranFor({ calledAt: story.calledAt.get(call.id), asked: story.asked.has(call.id), allowedAt: story.allowedAt.get(call.id), returnedAt: story.returnedAt.get(call.id) });
-  return { id: event.id, call, state, line: callLine(call.name, call.input, state), note: shownOf(story, call.id, state).note, output: story.results.get(call.id)?.output ?? null, ms, at: event.ts };
+  const note = kept ?? shownOf(story, call.id, state).note;
+  return { id: event.id, call, state, line: callLine(call.name, call.input, state), note, confined: kept !== null, output: result?.output ?? null, ms, at: event.ts };
 };
 
 /**

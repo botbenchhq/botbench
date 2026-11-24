@@ -528,6 +528,30 @@ export async function tempShot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
 }
 
+/** The five sizes every screen is pictured at for docs/design/built/final (pictures.shots.ts). */
+export const SIZES = [
+  { width: 1440, height: 900, mode: "dark" },
+  { width: 1440, height: 900, mode: "light" },
+  { width: 1024, height: 768, mode: "dark" },
+  { width: 768, height: 1024, mode: "dark" },
+  { width: 390, height: 844, mode: "dark" },
+] as const;
+
+/** A picture of one screen at each of SIZES, kept under SHOTS when it is set: `ready` is what it shows once it has read its data. */
+export async function pictures(page: Page, name: string, at: string, ready: () => Promise<unknown>): Promise<void> {
+  if (!SHOTS) return;
+  for (const { width, height, mode } of SIZES) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate((m) => window.localStorage.setItem("botbench.appearance", m), mode);
+    await page.goto(at);
+    await page.reload();
+    await ready();
+    await page.evaluate(() => document.fonts.ready);
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: path.join(SHOTS, `${name}-${width}-${mode}.png`) });
+  }
+}
+
 /** The screen itself, its pane and its dialogs, without the shell's navigation: for `within`, where a screen holds its own controls to more than the shell's. */
 export const SCREEN_ONLY = "main, aside, [role=dialog], [role=alertdialog]";
 
@@ -561,8 +585,9 @@ export async function checkScreen(page: Page, screen: string, { floor = 32, with
         if (within !== undefined && el.closest(within) === null) continue;
         // A control drawn smaller carries its pointer target on a pseudo-element.
         const target = getComputedStyle(el, "::after");
-        const height = Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0);
-        if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 30)}" is ${Math.round(height)}px high`);
+        // To a tenth of a pixel: a box measured while its sheet still slides has its edges at fractions, and a 44px control then reads 43.99.
+        const height = Math.round(Math.max(box.height, target.content !== "none" && target.position === "absolute" ? parseFloat(target.height) || 0 : 0) * 10) / 10;
+        if (height < least) low.push(`${el.tagName.toLowerCase()} "${(el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 30)}" is ${height}px high`);
       }
       const small = [...document.querySelectorAll("body *")].filter((el) => !old(el) && el.getClientRects().length > 0 && el.childElementCount === 0 && (el.textContent ?? "").trim() !== "" && parseFloat(getComputedStyle(el).fontSize) < 12).map((el) => `${getComputedStyle(el).fontSize}: ${(el.textContent ?? "").trim().slice(0, 30)}`);
       return { low, small, sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth, styleElements: document.querySelectorAll("body style").length };

@@ -5,7 +5,7 @@ import { counted, duration, fullDate } from "../app/format.ts";
 import { Icon, type IconName } from "./icon.tsx";
 import { MarkdownView } from "./markdown-view.tsx";
 import { exchangeOf, OUTSIDE, readStory, RESOLVED_LABEL, RESOLVED_SAID, shownOf, stateOf, type Shown, type Story } from "./transcript-story.ts";
-import { callLine, callReason, callTarget, confinedWords, editChange, ranFor, stepGroupOpen, stepsSummary, workedFor, writtenText, type CallState } from "./tool-summary.ts";
+import { callLine, callReason, callTarget, confinedNote, editChange, ranFor, stepGroupOpen, stepsSummary, workedFor, writtenText, type CallState } from "./tool-summary.ts";
 
 /** Add events to a list kept in id order, skipping any already there. */
 export function mergeEvents(have: StoredEvent[], more: StoredEvent[]): StoredEvent[] {
@@ -167,8 +167,8 @@ function Action({ call, story, state, folded }: { call: Of<"tool_call">; story: 
     </>
   );
   // What the sandbox kept a call that ran from, as its result reports it (U27): a failed row, open, its note in plain words.
-  const kept = state === "done" || state === "failed" ? confinedWords(result?.confined) : null;
-  const shown: Shown = kept === null ? shownOf(story, call.id, state) : { state: "failed", word: "Failed", note: `${kept.note[0]!.toUpperCase()}${kept.note.slice(1)}. ${kept.sentences.join(" ")}` };
+  const kept = confinedNote(state, result?.confined);
+  const shown: Shown = kept === null ? shownOf(story, call.id, state) : { state: "failed", word: "Failed", note: kept };
   const line = callLine(call.name, call.input, state);
   const reason = callReason(call.input);
   const change = editChange(call.name, call.input);

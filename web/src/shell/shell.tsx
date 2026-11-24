@@ -219,7 +219,8 @@ function Waiting({ showing, cardsShown, home, row }: { showing: readonly number[
   const link = "inline-flex items-center gap-1 rounded-md border border-attention/50 bg-attention-subtle px-2 text-xs font-medium text-attention outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
   const size = row ? "min-h-11 w-full rounded-none border-x-0 border-t-0 px-4" : "min-h-(--control-small) pointer-coarse:min-h-11";
   return (
-    <div data-testid="approval-tray" aria-live="polite" aria-atomic="true" className={row ? "empty:hidden" : "ml-auto shrink-0 empty:hidden"}>
+    // With nothing to show but a screen reader's sentence, it takes no room in the bar.
+    <div data-testid="approval-tray" aria-live="polite" aria-atomic="true" className={shows === "here" ? "sr-only" : row ? "empty:hidden" : "shrink-0 empty:hidden"}>
       {shows === "here" ? (
         <span className="sr-only">{plural(count, "An approval is waiting on this screen.", `${number(count)} approvals are waiting on this screen.`)}</span>
       ) : shows === "tray" && count > 0 ? (
@@ -337,7 +338,8 @@ export function NextShell({ open, bar, aside, current, side, showing, cardsShown
                       <Menu aria-hidden="true" />
                     </Button>
                   )}
-                  {bar}
+                  {/* The screen's own line keeps the room that is left, so what it sets at its right end stays beside what waits, at the bar's right. */}
+                  <div className="flex min-w-0 flex-1 items-center gap-3">{bar}</div>
                   {tablet && <Waiting showing={here} cardsShown={cardsShown} home={home} row={false} />}
                 </div>
                 {!tablet && <Waiting showing={here} cardsShown={cardsShown} home={home} row />}

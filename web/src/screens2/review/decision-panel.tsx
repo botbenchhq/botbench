@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Check, Minus } from "lucide-react";
+import { Check, Copy, Minus } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/ui/alert-dialog";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
@@ -7,6 +7,8 @@ import { Input } from "@/ui/input";
 import { Label } from "@/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/ui/radio-group";
 import { acceptTask, ApiError, rejectTask, runChecksAgain, type TaskDetail } from "../../api/client.ts";
+import { copyWords } from "../../components/decision.tsx";
+import { offersMerge } from "../../components/task-status.ts";
 import { DecisionSurface } from "../decision/decision-surface.tsx";
 import { offered } from "./review-model.ts";
 
@@ -204,11 +206,35 @@ export function DecisionPanel({ task, d, children }: { task: TaskDetail; d: Deci
             ) : (
               <p>The branch and the task's copy of the project are gone.</p>
             )}
+            {/* An accepted branch that no pull request delivers is the owner's to merge: the command, ready to copy. */}
+            {decision.decision === "accept" && decision.branch === "kept" && offersMerge(task) && <MergeCommand branch={decision.branchName} />}
           </div>
         )}
       </DecisionSurface>
 
     </>
+  );
+}
+
+/** The command that merges an accepted branch, with a button that copies it; nothing is merged by Botbench. */
+function MergeCommand({ branch }: { branch: string }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const command = `git merge ${branch}`;
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-meta text-muted-foreground">Nothing was merged. To bring the work into your own files, run this in the repository, on the branch you want it in:</p>
+      <p className="flex items-start gap-1.5">
+        <code data-testid="merge-command" data-ds-content="" className="min-w-0 flex-1 rounded-md bg-sunken px-2 py-1.5 break-all">
+          {command}
+        </code>
+        <Button variant="ghost" size="icon" className="size-(--control-small) shrink-0 text-muted-foreground pointer-coarse:size-11" aria-label="Copy merge command" onClick={() => void copyWords(command).then(setCopied)}>
+          <Copy aria-hidden="true" />
+        </Button>
+      </p>
+      <span data-testid="merge-copy-state" role="status" className="text-meta text-muted-foreground">
+        {copied}
+      </span>
+    </div>
   );
 }
 
