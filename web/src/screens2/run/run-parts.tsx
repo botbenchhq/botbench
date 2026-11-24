@@ -18,6 +18,7 @@ import { ResumeControl } from "../../components/resume.tsx";
 import { runTaskNote, stations, type StationState } from "../../components/run-status.ts";
 import { offersMerge } from "../../components/task-status.ts";
 import { DestructiveDialog } from "../decision/decision-surface.tsx";
+import { MergeCommand } from "../review/decision-panel.tsx";
 import { rowState, runControls, stateTone, taskFacts, type StateTone } from "./run-model.ts";
 
 /*
@@ -142,7 +143,9 @@ function TaskRow({ task, first, repo, onChanged, onSignedOut }: { task: RunTask;
           <CommandRounds lists={task.commandLists} rows={checks} what={{ one: "check", many: "checks" }} failedFirst again={task.rerunRounds} />
           {task.resumeNote !== null && <ResumeControl taskId={task.id} note={task.resumeNote} name={`task ${task.id}`} primary={false} onResumed={onChanged} onSignedOut={onSignedOut} />}
           {task.status === "awaiting_decision" && <DecisionControls taskId={task.id} leftovers={task.leftovers} evidence={task.evidenceState} evidenceProblem={task.evidenceProblem} primary={false} name={`task ${task.id}`} onDecided={onChanged} onSignedOut={onSignedOut} />}
-          {task.decision !== null && <DecisionOutcome decision={task.decision} repo={repo} merge={offersMerge(task)} compact />}
+          {/* The owner's note, then the merge command drawn whole on as many lines as it takes: a field that scrolls cannot be read in a row this narrow. */}
+          {task.decision !== null && <DecisionOutcome decision={task.decision} repo={repo} merge={false} compact />}
+          {task.decision?.decision === "accept" && offersMerge(task) && <MergeCommand branch={task.decision.branchName} />}
           {words !== null && (
             <p data-testid="run-task-pull-request" data-ds-content="">
               {words}

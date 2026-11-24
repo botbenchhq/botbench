@@ -129,6 +129,13 @@ test.describe("at 1440×900, with a mouse", () => {
     await expect(files.getByTestId("diff").locator("[data-line=removed]")).toHaveText("2−    return a - b");
     await expect(files.getByTestId("diff").locator("[data-line=added]")).toHaveText("2+    return a + b");
     await expect(files.getByTestId("diff").locator("[data-line=context]")).toHaveText("1 def add(a, b):");
+    // The diff is a Tab stop, and its focus ring is drawn inside it, where the card around it cannot cut it off.
+    await files.getByTestId("diff").focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(files.getByTestId("diff")).toBeFocused();
+    await expect.poll(() => files.getByTestId("diff").evaluate((pre) => getComputedStyle(pre).boxShadow)).toMatch(/inset/);
+    await shot(page, "review-1440-dark-diff-focus");
 
     // The decision: what accepting will do, and Accept as the one filled button.
     const decision = page.getByTestId("decision");

@@ -153,7 +153,7 @@ function Workbench({ rail }: { rail: boolean }) {
   return (
     <div data-testid="workbench" className={cn("flex items-center gap-3 border-t p-3", rail && "flex-col")}>
       {name !== null && (
-        <a href={groupHref("identity")} aria-label={rail ? `Workbench ${name}` : undefined} className={cn("flex min-h-(--control) min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50", rail && "flex-none")}>
+        <a href={groupHref("identity")} aria-label={rail ? `Workbench ${name}` : undefined} className={cn("flex min-h-(--control) min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50", rail && "min-w-(--control) flex-none justify-center")}>
           <span aria-hidden="true" data-ds-content="" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary-subtle text-xs font-semibold text-primary uppercase">
             {name.slice(0, 1)}
           </span>

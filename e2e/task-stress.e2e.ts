@@ -215,6 +215,15 @@ test("a task with long content in each state it can end in keeps inside the scre
       if (size.width < 1024) await endIsInReach(page, `task, ${name}, ${size.width}`);
       if (size.width < 1024) await shot(page, `end-task-${name}-${size.width}`);
       await page.evaluate(() => window.scrollTo(0, 0));
+      // The heading is the first words of a long task: all of it is on the heading for a pointer, and one press under it.
+      const whole = name === "stale" || name === "stopped" || name === "rejected" ? TOKEN_TITLE : name === "differs" ? `${LONG_TITLE} (the copy differs)` : LONG_TITLE;
+      if (name !== "refused") await expect.soft(page.getByRole("heading", { level: 1 }), `task, ${name}, ${size.width}: the heading carries the whole task`).toHaveAttribute("title", whole);
+      if (size.width === 390 && name !== "refused") {
+        await page.getByRole("button", { name: "Show the whole task" }).click();
+        await expect.soft(page.getByTestId("task-whole")).toHaveText(whole);
+        await contentFits(page, `task, ${name}, ${size.width}, the whole task shown`);
+        await page.getByRole("button", { name: "Show the whole task" }).click();
+      }
       // The bar is one line: the task's name is cut short beside its state, not stacked over it.
       expect.soft(await page.getByRole("navigation", { name: "Where this is" }).evaluate((nav) => nav.getBoundingClientRect().height), `task, ${name}, ${size.width}: the bar is one line`).toBeLessThan(48);
       // The copy button stands beside the branch, however many lines the branch takes.
@@ -260,6 +269,14 @@ test("a run with a long plan, one that is done and one that was cancelled keep i
       await expect(page.getByTestId("run-state")).toBeVisible();
       await page.waitForLoadState("networkidle");
       await contentFits(page, `run, ${name}, ${size.width}`);
+      // An accepted task's merge command is drawn whole inside its row, on as many lines as it takes, and Copy answers.
+      const merges = await page.getByTestId("merge-command").evaluateAll((codes) => codes.map((code) => code.tagName === "CODE" && code.scrollWidth <= code.clientWidth + 1 && code.getBoundingClientRect().right <= window.innerWidth));
+      if (name === "done") expect.soft(merges.length, `run, ${name}, ${size.width}: its accepted tasks name their merge command`).toBeGreaterThan(0);
+      expect.soft(merges, `run, ${name}, ${size.width}: each merge command is whole`).toEqual(merges.map(() => true));
+      if (name === "done" && size.width === 390) {
+        await page.getByRole("button", { name: "Copy merge command" }).first().click();
+        await expect.soft(page.getByTestId("merge-copy-state").first()).not.toBeEmpty();
+      }
       if (size.width < 1024) await endIsInReach(page, `run, ${name}, ${size.width}`);
       if (size.width < 1024) await shot(page, `end-run-${name}-${size.width}`);
       await page.evaluate(() => window.scrollTo(0, 0));
@@ -293,8 +310,7 @@ test("the sheets and dialogs of a task and a run hold long content inside the sc
       await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => {}))), new Promise((resolve) => setTimeout(resolve, 600))]));
       await shot(page, `${name.replaceAll(/[^a-z]+/g, "-")}-${size.width}-dark`);
       await contentFits(page, `${name}, ${size.width}`);
-      // The radio buttons of the Reject dialog are 42px under a finger (web/src/ui/radio-group.tsx, another unit's): there, only the words and the width.
-      await checkScreen(page, `${name}, ${size.width}`, { floor: phone ? 44 : 32, least: name === "task, the reject dialog" });
+      await checkScreen(page, `${name}, ${size.width}`, { floor: phone ? 44 : 32 });
     };
     // Reject, from the review: on a phone the decision's sheet first.
     await page.goto(`${botbench.base}/#/tasks/${seeded.tasks.differs}`);

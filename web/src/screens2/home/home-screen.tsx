@@ -63,14 +63,14 @@ function FirstNeed({ item, now }: { item: HomeItem; now: number }) {
   const Icon = NEED_ICON[item.cause ?? "result"] ?? SquareCheck;
   return (
     <Card data-testid="first-need" className="gap-0 py-0">
-      <div className="flex flex-col gap-4 p-5 @2xl:flex-row @2xl:items-center">
-        <Icon aria-hidden="true" className="hidden size-5 shrink-0 text-attention @2xl:block" />
+      <div className="flex flex-col gap-4 p-5 @3xl:flex-row @3xl:items-center">
+        <Icon aria-hidden="true" className="hidden size-5 shrink-0 text-attention @3xl:block" />
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-2 text-meta font-semibold text-attention">
-            <Icon aria-hidden="true" className="size-4 shrink-0 @2xl:hidden" />
+            <Icon aria-hidden="true" className="size-4 shrink-0 @3xl:hidden" />
             <span className="min-w-0 flex-1">{`${n.label} · ${n.lead}`}</span>
             {/* On a phone the wait is at the card's top and the action spans it. */}
-            <Waited since={item.since} now={now} className="self-start @2xl:hidden" />
+            <Waited since={item.since} now={now} className="self-start @3xl:hidden" />
           </p>
           <h3 className="mt-1 text-base font-semibold">
             <Title className="whitespace-normal">{item.title}</Title>
@@ -83,9 +83,9 @@ function FirstNeed({ item, now }: { item: HomeItem; now: number }) {
             {facts(item)}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-4 @2xl:justify-end">
-          <Waited since={item.since} now={now} prefix="Waiting " className="@max-2xl:hidden" />
-          <a href={hrefOf(item)} className={cn(buttonVariants(), "min-w-36 @max-2xl:flex-1")}>
+        <div className="flex shrink-0 items-center gap-4 @3xl:justify-end">
+          <Waited since={item.since} now={now} prefix="Waiting " className="@max-3xl:hidden" />
+          <a href={hrefOf(item)} className={cn(buttonVariants(), "min-w-36 @max-3xl:flex-1")}>
             {n.action}
           </a>
         </div>

@@ -93,6 +93,12 @@ test.describe("at 1440×900, with a mouse", () => {
     const [waiting, completed] = [(await page.getByTestId("waiting").boundingBox())!, (await page.getByTestId("completed").boundingBox())!];
     expect(completed.x).toBeGreaterThan(waiting.x + waiting.width - 1);
     await checkScreen(page, "Home, 1024", { floor: 32 });
+    // At 768px the first thing that needs you has its words across the card, with its action under them: no narrow column beside an empty one.
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await expect.poll(async () => {
+      const [card, words] = [(await page.getByTestId("first-need").boundingBox())!, (await page.getByTestId("first-need").getByRole("heading").boundingBox())!];
+      return card.width - words.width;
+    }, { message: "at 768px the first card's words take the card's width" }).toBeLessThanOrEqual(42);
     // The groups follow the width the screen really has: at 768px, with the navigation behind its menu button, there is still room for two; one column where there is not.
     await page.setViewportSize({ width: 640, height: 1024 });
     // The layout follows the new width a frame later, so the measure is asked again until it settles.
