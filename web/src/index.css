@@ -1,7 +1,39 @@
-/* The design system's stylesheet is imported before this file, in main.tsx. No base-layer rule is written here. */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/*
+ * Tailwind 4 and shadcn/ui (ADR 0012). The order of the layers is set in styles/layers.css, which main.tsx imports
+ * first, then the design system's stylesheet, then this file.
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+/* shadcn/ui's own variants and utilities: a copy of the `shadcn` package's tailwind.css (NOTICE). */
+@import "./styles/shadcn-tailwind.css";
+@import "./styles/theme.css";
+
+/*
+ * The six spacing utilities and the one height the screens drawn with the design system use, by the names the design
+ * system's Tailwind 3 preset gave them. They are written here because Tailwind 4 reads no preset, and a spacing token
+ * named sm, md or lg in its theme would change what max-w-md and its like mean for shadcn/ui's components.
+ */
+@utility gap-sm {
+  gap: var(--ds-space-sm);
+}
+@utility p-md {
+  padding: var(--ds-space-md);
+}
+@utility p-lg {
+  padding: var(--ds-space-lg);
+}
+@utility px-lg {
+  padding-inline: var(--ds-space-lg);
+}
+@utility pb-lg {
+  padding-bottom: var(--ds-space-lg);
+}
+@utility pt-md {
+  padding-top: var(--ds-space-md);
+}
+@utility h-screen {
+  height: 100dvh;
+}
 
 /*
  * bb-diff-prose (web/design-gaps.json): the diff of a prose file (.md, .txt), set on its ds-diff figure. Its lines wrap

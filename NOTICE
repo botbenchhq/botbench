@@ -49,6 +49,11 @@ NOTICE lists them:
   design system. It keeps the same element defaults as the preflight
   stylesheet of Tailwind CSS (Copyright (c) Tailwind Labs, Inc., MIT License).
 
+web/src/ui/ holds components copied from shadcn/ui (https://ui.shadcn.com,
+style base-nova) by its CLI, `shadcn` 4.23.0, and changed for Botbench's
+design; web/src/styles/shadcn-tailwind.css is that package's
+dist/tailwind.css, unmodified. Copyright (c) 2023 shadcn. MIT License.
+
 One more Lucide icon, outside the copy: the path of Lucide's message-circle
 icon, written into web/src/components/icon.tsx for the Chat destination,
 which the design system's icon set does not have yet. Same licence and notice
@@ -158,3 +163,20 @@ The built client (web/dist, produced by `npm run build --prefix web`) contains:
   stylesheet draws. Their notices are above. The gallery pages, the checker,
   the rules and the hook in the copy are not part of the built client.
 - React and React DOM. Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.
+- Since ADR 0012, for the screens built on shadcn/ui:
+  Base UI (@base-ui/react). Copyright (c) 2019 Material-UI SAS. MIT License.
+  Its dependencies, as installed: Floating UI, reselect,
+  use-sync-external-store and @babel/runtime, each under the MIT License.
+  class-variance-authority. Copyright 2022 Joe Bell. Apache License 2.0.
+  clsx. Copyright (c) Luke Edwards. MIT License.
+  cn. Copyright (c) 2026 shadcn. MIT License.
+  lucide-react. Copyright (c) 2026 Lucide Icons and Contributors. ISC License.
+  tw-animate-css. Copyright (c) 2025 Wombosvideo. MIT License.
+  Tailwind CSS (its reset, theme and utilities). Copyright (c) Tailwind Labs, Inc. MIT License.
+- Inter, variable weight, Latin subset. Copyright 2016 The Inter Project
+  Authors (https://github.com/rsms/inter). SIL Open Font License, Version 1.1.
+  From the npm package @fontsource-variable/inter 5.3.0, unmodified.
+- JetBrains Mono, variable weight, Latin subset. Copyright 2020 The JetBrains
+  Mono Project Authors (https://github.com/JetBrains/JetBrainsMono). SIL Open
+  Font License, Version 1.1. From the npm package
+  @fontsource-variable/jetbrains-mono 5.3.0, unmodified.

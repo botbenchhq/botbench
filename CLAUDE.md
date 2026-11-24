@@ -24,7 +24,7 @@ Done = tests pass. Owner checks batched per milestone.
 - Complex or parallel research: use subagents. Keep main context clean.
 - Read DESIGN.md before any UI work.
 - Any text a person sees (labels, states, errors, also the server's) follows `docs/product/voice.md`; its glossary is the list the tests enforce.
-- UI work follows the vendored design system: read `web/vendor/design-system/rules/core.md` first, and never edit `web/vendor/design-system/`.
+- UI work on an old screen follows the vendored design system: read `web/vendor/design-system/rules/core.md` first, and never edit `web/vendor/design-system/`. A new or rebuilt screen is built on shadcn/ui and Tailwind (ADR 0012): components in `web/src/ui/`, the shell in `web/src/shell/`, one folder per screen under `web/src/screens2/`, the theme in `web/src/styles/theme.css`.
 
 ## Hard rules
 - Nothing fake. No mocks, fake CLIs, demo data, empty screens. Stop and ask if a unit needs one. One exception the owner approved: a session captured from a real CLI run may be replayed through the driver contract, for scenarios a live model cannot produce on demand and for routine screen and engine tests, so that live model turns are kept to the few tests that prove something about the real CLI.
@@ -41,7 +41,7 @@ Done = tests pass. Owner checks batched per milestone.
 Apply in proportion to a one-owner, local tool. Each line says what it means here, not the whole framework.
 - Core: DRY, KISS, YAGNI. One owner per rule; no abstraction before its second use. SOLID and separation of concerns at module edges (store, drivers, approvals, engine, api, web). Errors carry what failed and what to do; nothing is swallowed.
 - Security: STRIDE per unit that adds a trust boundary; update `docs/security/threat-model.md` in the same PR. OWASP ASVS as the checklist for auth, sessions, input and files. Least privilege and secure defaults: deny on failure, loopback only, owner-only file modes.
-- Dependencies and secrets: zero runtime dependencies unless an ADR says why. `npm audit` clean, lockfile committed, no secret or token in the repo, logs or responses.
+- Dependencies and secrets: the server has zero runtime dependencies. The client may have a small number, each one where it makes the interface clearly better and would be done worse by hand. Each is a row in the table of ADR 0012 (name, what it is for, licence, size, why not hand-built, how it would be replaced) before it is installed. None may make a network request or collect telemetry. `npm audit` clean, lockfile committed, no secret or token in the repo, logs or responses.
 - Architecture: domain terms from the plan are the names in code (run, task, attempt, station, approval, grant). A decision that is costly to reverse gets a short ADR in `docs/adr/`. 12-factor where it applies: config from file and env, one process, logs to stdout.
 - Supply chain: every change traces to a unit and a PR with its evidence. Copied files are listed in `NOTICE`. SBOM (`npm sbom`) and build provenance arrive with the first release, not before.
 - Agentic AI security (OWASP Agentic Top 10): repository text, web text and model output are data, never instructions to Botbench. Tool permissions go through the broker and the safety floor. Every agent action that ran is in the append-only log. Isolation claims are stated exactly: a worktree separates changes, it is not a sandbox. Secrets stay outside the place an agent's commands run (`docs/adr/0002-agent-environment-tools-and-secrets.md`).

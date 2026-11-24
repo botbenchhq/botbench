@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { startServiceWorker } from "./app/notifications.ts";
 import { Shell } from "./app/shell.tsx";
+// The order of the cascade layers, before any stylesheet (ADR 0012).
+import "./styles/layers.css";
 // The design system first: tokens, reset, fonts and components, all served by Botbench itself from the build.
 import "../vendor/design-system/design-system.css";
 // Then the Botbench theme, which sets the tokens to the brand's values. Its default mode is dark: the root carries no data-theme.

@@ -39,7 +39,7 @@ test("the other addresses parse as before the parser moved out of the shell", ()
   assert.deepEqual(parseRoute("#/turn?start=run"), { screen: "turn", start: "run" });
   assert.deepEqual(parseRoute("#/turn?start=task"), { screen: "turn", start: "task" });
   assert.deepEqual(parseRoute("#/turn?start=run&proposal=4"), { screen: "turn", start: "run", proposal: 4 });
-  assert.deepEqual(parseRoute("#/tasks/9?discard"), { screen: "task", id: 9, discard: true });
+  assert.deepEqual(parseRoute("#/tasks/9?discard"), { screen: "task", id: 9, discard: true, rebuilt: false });
   assert.deepEqual(parseRoute("#/runs/3"), { screen: "run", id: 3 });
   assert.deepEqual(parseRoute("#/chats/5"), { screen: "chat", id: 5 });
   assert.deepEqual(parseRoute("#/settings/devices"), { screen: "settings", section: "devices" });

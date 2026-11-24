@@ -15,7 +15,7 @@ export type Route =
   | { screen: "redirect"; to: string }
   | { screen: "trust" }
   | { screen: "usage" }
-  | { screen: "task"; id: number; discard: boolean }
+  | { screen: "task"; id: number; discard: boolean; rebuilt: boolean }
   | { screen: "work" }
   | { screen: "settings"; section: SettingsSection | null }
   | { screen: "run"; id: number }
@@ -58,8 +58,9 @@ export function parseRoute(hash: string): Route {
   const chat = /^\/chats\/([1-9]\d{0,14})$/.exec(at);
   if (chat) return { screen: "chat", id: Number(chat[1]) };
   // A task's Discard chosen from its More menu on Work: the task's screen, with Discard's confirmation open.
-  const task = /^\/tasks\/([1-9]\d{0,14})(\?discard)?$/.exec(at);
-  if (task) return { screen: "task", id: Number(task[1]), discard: task[2] !== undefined };
+  // With ?new=1: the same task on the review screen rebuilt on shadcn/ui (ADR 0012), beside the old one until it replaces it.
+  const task = /^\/tasks\/([1-9]\d{0,14})(\?discard|\?new=1)?$/.exec(at);
+  if (task) return { screen: "task", id: Number(task[1]), discard: task[2] === "?discard", rebuilt: task[2] === "?new=1" };
   const run = /^\/runs\/([1-9]\d{0,14})$/.exec(at);
   return run ? { screen: "run", id: Number(run[1]) } : { screen: "none", what: at };
 }
