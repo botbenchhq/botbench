@@ -13,7 +13,20 @@ Botbench is a local-first workbench on your Mac for the coding agents you alread
 
 It is for developers on macOS who use Claude Code with their own subscription, alone or in a small team that shares a repository. It is early, built from source, runs on your machine with no hosted service, and never merges a pull request.
 
-<!-- PRODUCT-CARD -->
+<a href="https://botbenchhq.github.io/coordination.html">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-still-dark.svg">
+    <source media="(max-width: 600px) and (prefers-reduced-motion: reduce)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-still-light.svg">
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-dark.svg">
+    <source media="(max-width: 600px)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-light.svg">
+    <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-still-dark.svg">
+    <source media="(prefers-reduced-motion: reduce)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-still-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-dark.svg">
+    <img src="https://botbenchhq.github.io/assets/cards/botbench-card-light.svg" width="1200" alt="Illustration in Botbench's own words: a task, Make add in calc.py return the sum, is handed to Claude Code, which works in a separate copy on the branch botbench/studio-mac/run-7/task-7. 1 of 1 check passed. Codex's review is shown as a model's opinion, not a check. Under the changed file, calc.py, Botbench warns: office-mac's open pull request #12 also changes calc.py, so the two may conflict when both are merged. Your decision: Reject or Accept. An annotation beside the warning, not part of the screen, says: Another workbench is changing the same file. You find out before either is merged.">
+  </picture>
+</a>
+
+<em>An authored 13-second illustration, not a recording: the words are Botbench's own, and each step is a shipped feature (see <a href="#what-works-today">What works today</a>). Motionless versions: <a href="https://botbenchhq.github.io/assets/cards/botbench-card-still-light.svg">light</a>, <a href="https://botbenchhq.github.io/assets/cards/botbench-card-still-dark.svg">dark</a>.</em>
 
 <p align="center">
   <a href="docs/media/botbench-demo.mp4"><img src="docs/media/botbench-demo-thumbnail.png" alt="A still from the demo video: a task ready for review, with 1 of 1 check passed, Codex's review, the one changed file, its branch botbench/studio-mac/run-7/task-7, and Your decision: Reject and Accept" width="100%"></a>

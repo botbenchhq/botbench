@@ -88,7 +88,7 @@ Scored against the README standard's rubric, by this author (not an independent 
 Changes:
 
 1. The first screen says what Botbench is, for whom, and the coordination story ("you find out before the second pull request opens"), above the demo.
-2. A marked place for the animated product card (`<!-- PRODUCT-CARD -->`), no image until it exists.
+2. The animated product card (botbenchhq/botbenchhq.github.io#5) under the opening: the overlap warning in the product's own words, labelled as an illustration, with light, dark, phone-width and motionless sources, and the real demo and screenshots kept beside it.
 3. The team story is one section with the three shipped moments in the product's own words, then the Early paired questions and answers.
 4. *Current availability* became a short list of facts beside *Is it for you?*; nothing in it was dropped (macOS only; Claude Code plans and builds; Codex builds in its own sandbox; Codex, Grok and Antigravity review and chat; pairing's limits; the optional container; the separate copy is not a security boundary; the macOS sandbox is not a VM; not hosted; never merges).
 5. Correction: the overlap line appears on the task's Review tab under the changed files, not under Your decision (`web/src/screens2/task/task-screen.tsx:336`).
