@@ -9,7 +9,7 @@
 
 <p align="center">One workbench for your agents. One coordination layer for your team.</p>
 
-Botbench is a workbench on your Mac for the coding agents you already use. Hand a task to Claude Code, walk away, and come back to a branch with its diff, the output of your repository's checks and, if you choose, a review by another vendor's agent; then accept or reject it. When a teammate runs their own Botbench on the same GitHub repository, it tells you before your work collides, not when the second pull request opens.
+Botbench is a local-first workbench on your Mac for the coding agents you already use. Hand a task to Claude Code, walk away, and come back to a branch with its diff, the output of your repository's checks and, if you choose, a review by another vendor's agent; then accept or reject it. When a teammate runs their own Botbench on the same GitHub repository and you both push there, it can tell you before your work collides, not when the second pull request opens ([how](#your-team-before-the-second-pull-request-opens)).
 
 It is for developers on macOS who use Claude Code with their own subscription, alone or in a small team that shares a repository. It is early, built from source, runs on your machine with no hosted service, and never merges a pull request.
 
@@ -25,7 +25,7 @@ It is for developers on macOS who use Claude Code with their own subscription, a
 
 **Verify.** Your repository's checks run on the work, and another vendor's agent can review it. You read the branch, the checks and the review, then accept or reject.
 
-**Coordinate.** See your teammates' workbenches' work on the same repository, be warned when it overlaps yours, claim an issue so only one of you takes it, and check two changes together before either is merged. Paired workbenches can also ask each other questions, each one approved by its owner.
+**Coordinate.** See your teammates' workbenches' work on the same repository, be warned when it overlaps yours, claim an issue so only one of you takes it (a setting you turn on for a repository), and check two changes together before either is merged. Paired workbenches can also ask each other questions, each one approved by its owner.
 
 [Website](https://botbenchhq.github.io/) · [Quickstart](#quickstart) · [Is it for you?](#is-it-for-you) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going) · [Documentation](#where-to-go-next)
 
@@ -49,11 +49,11 @@ Start a task, or a run of several, from a browser on the Mac or on your phone. E
 
 *Your agents. Their agents. One coordinated workflow.*
 
-Two developers work on one GitHub repository, each with their own Mac, their own Botbench and their own agents, and neither gives the other access to their machine. Three things tell them about each other's work before either pull request is merged. These are the product's own words:
+Two developers work on one GitHub repository, each with their own Mac, their own Botbench and their own agents, and neither gives the other access to their machine. Three things tell them about each other's work before either pull request is merged. The lines below are the product's own wording, with example names, numbers and times:
 
 - **The same files.** On a task's Review tab, under the changed files: `office-mac's open pull request #12 also changes calc.py, so the two may conflict when both are merged.`
 - **The same issue.** With issue claims on, the later of two runs on one issue stops and says why: `studio-mac started on issue #42 at 14:14:07 UTC on 2026-11-25, before this workbench did (14:15:02 UTC on 2026-11-25), so this run stopped: when two workbenches start on one issue, the earliest claim goes ahead.`
-- **Changes that must fit.** On a task that is ready for review, *Check together with pull request #12* merges the two in a temporary copy and runs the repository's own checks on the merge: `Passed together:`, `Failed together:` or `Conflict:`.
+- **Changes that must fit.** On a task that is ready for review, *Check together with pull request #12* merges the two in a temporary copy and runs the repository's own checks on the merge: `Passed together:`, `Failed together:`, `Conflict:` or `Did not run:`.
 
 What Botbench does about two workbenches on one repository today:
 

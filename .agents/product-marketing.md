@@ -30,7 +30,7 @@ The source of truth for what the product does is the README's *What works today*
 
 ## Target Audience
 
-**Target users:** Developers on a Mac who already use Claude Code (and maybe Codex) with their own subscriptions, and small teams of 2 to 5 where each person delegates to agents in one shared GitHub repository.
+**Target users:** Developers on a Mac who already use Claude Code (and maybe Codex) with their own subscriptions, and small teams (the brief's hypothesis: 2 to 5 people) where each person delegates to agents in one shared GitHub repository.
 
 **Decision-makers:** The developer who installs it. For a team, each developer installs their own; nobody buys for anybody else.
 
@@ -70,9 +70,9 @@ The source of truth for what the product does is the README's *What works today*
 
 ## Competitive Landscape
 
-Every statement here comes from `docs/competitive/`, which was written from a read of each project's source at a named commit. Nothing was installed or run there. Say "not demonstrated in the projects reviewed"; never "unique", "first" or "only".
+Every statement here comes from `docs/competitive/` unless it says otherwise; that library was written from a read of each project's source at a named commit. Nothing was installed or run there. Say "not demonstrated in the projects reviewed"; never "unique", "first" or "only".
 
-**Direct (same job, one developer):** Local workbenches and worktree managers for coding agents, such as Conductor, Vibe Kanban, OpenMausBot and Tutti's open desktop app. They start several agents in separate worktrees and show diffs. Where Botbench differs today: approvals and confined commands are on by default (the review found running with permissions bypassed is the norm in the projects read, `docs/competitive/README.md`, finding 2), and the result is gated on checks that ran rather than on the agent's statement (finding 3).
+**Direct (same job, one developer):** Local workbenches and worktree managers for coding agents, such as OpenMausBot and Tutti's open desktop app (both read in `docs/competitive/`). Conductor and Vibe Kanban are named in `positioning-concept.md` from their documentation; their source was not reviewed, so make no claim about them beyond what their own pages say. They start several agents in separate worktrees and show diffs. Where Botbench differs today: approvals and confined commands are on by default (the review found running with permissions bypassed is the norm in the projects read, `docs/competitive/README.md`, finding 2), and the result is gated on checks that ran rather than on the agent's statement (finding 3).
 
 **Secondary (same job, a team):** Team servers and shared workspaces for people and agents, such as Agor, OpenAgents, Paperclip, QM. They coordinate through one server that one operator runs. Botbench keeps each developer on their own Mac and uses the shared repository as the meeting point. The review is explicit that a shared server is also why their setup is shorter, so this is a difference to prove, not an advantage to assume (finding 1).
 
@@ -105,7 +105,7 @@ The owner's lines are fixed; use them verbatim (`docs/product/positioning-concep
    - Team: *Your agents. Their agents. One coordinated workflow.* Supported by the three shipped coordination moments, in the product's own words:
      - Overlap: `office-mac's open pull request #12 also changes calc.py, so the two may conflict when both are merged.` (`web/src/app/peers.ts:157`; shown on the task's Review tab under the changed files, `web/src/screens2/task/task-screen.tsx:336`)
      - Claim: `studio-mac started on issue #42 at 14:14:07 UTC on 2026-11-25, before this workbench did (14:15:02 UTC on 2026-11-25), so this run stopped: when two workbenches start on one issue, the earliest claim goes ahead.` (`src/engine/claims.ts:266,506`; the time format is `claimTimeWords`, `src/engine/claim-branch.ts:155`, so never write "2:14 PM")
-     - Check together: `Check together with pull request #12`, then `Passed together:`, `Failed together:` or `Conflict:` (`web/src/components/check-together.tsx:116`)
+     - Check together: `Check together with pull request #12`, then `Passed together:`, `Failed together:`, `Conflict:` or `Did not run:` (`web/src/components/check-together.tsx:116`)
 5. **Proof:** real screens and recordings; the acceptance test `e2e/northstar.e2e.ts`; pull request #113, opened by Botbench on its own repository; the *What works today* table with a code path for every row.
 6. **Boundaries, said once, where the reader decides:** macOS only, build from source, early, the subscription terms are the vendor's decision, a separate copy is not a security boundary, no hosted service, never merges.
 
@@ -196,7 +196,7 @@ States: **Implemented and verified** (code and tests in the repository; may be d
 | Phone access over a private network | README, Use it from your phone; `src/api/auth.ts` | Must be at the Mac to answer | "Your phone can bring you back to it" | Implemented; not part of the tested quickstart. Home Screen app and notifications: in the code, not confirmed on a real iPhone |
 | Named workbenches | `src/workbench.ts`, `e2e/peers.e2e.ts` | Two installations' branches clash | "Branches never clash" | Implemented and verified |
 | Read-only view of other workbenches' open PRs and pushed branches | `src/engine/peers.ts`, `e2e/peers.e2e.ts` | You cannot see a teammate's agents' work | "See each other's work" | Implemented and verified; Early as part of coordination |
-| Overlap warning (issue at start; files at review) | `web/src/app/peers.ts:157`, `web/src/screens2/task/task-screen.tsx:336`, `test/peers-words.test.ts` | Learning of a conflict when both are merged | The realization moment: "also changes calc.py" | Implemented and verified (unit and screen); no committed screenshot yet |
+| Overlap warning (issue at start; files at review) | `web/src/app/peers.ts:157`, `web/src/screens2/task/task-screen.tsx:336`, `test/peers-words.test.ts` | Learning of a conflict when both are merged | The realization moment: "also changes calc.py" | Implemented and verified (unit: `test/peers-words.test.ts`); no browser test shows it on screen, and no committed screenshot |
 | Issue claims (opt-in `claimIssues`); later run stops | `src/engine/claims.ts`, `test/engine/claims.test.ts`, `e2e/northstar.e2e.ts` | Two people take the same issue | "studio-mac started first" | Implemented and verified (acceptance test, live Claude Code, replayed gh); no committed screenshot yet |
 | Check together with another workbench's open PR | `src/engine/combined.ts`, `test/engine/check-together.test.ts`, `test/api/check-together.test.ts`, `web/src/components/check-together.tsx` | Two changes pass alone and fail together | "Passed together" | Implemented and verified (unit and API); no committed screenshot yet |
 | Pairing one other workbench | `src/peers/`, `e2e/paired.e2e.ts`, `docs/pairing.md` | Relaying questions between two agent conversations | "Ask the other workbench" | Early: one pairing per installation; tested with two installations on one Mac, not across two Macs |
@@ -229,7 +229,7 @@ Every meaningful claim the README and the website make. Status: **Supported** (e
 | 17 | No accounts or shared server (README, site) | No account code; peers listeners talk directly, `src/peers/` | Inspected | Supported |
 | 18 | About ten minutes to a first branch; one short Claude Code turn on your subscription (README, site Get started) | Quickstart; steps 1 to 5 labels checked in a browser on an empty installation | Executed in part (build, start, sign-in, Chat and Add context labels); not timed, no model turn started | Supported with condition: the time is the owner's, not measured here |
 | 19 | The demo is 25 seconds, recorded at 1440×900 at its real speed; agents replayed (README, site) | `e2e/media.shots.ts:236`, `docs/media/botbench-demo.mp4` | Inspected | Supported |
-| 20 | Real screens; nothing on them was edited (README, site) | `e2e/media.shots.ts:186`; site `PROVENANCE.md` | Inspected | Supported |
+| 20 | Real screens; nothing on them was edited (README, site) | `e2e/media.shots.ts:186`; `PROVENANCE.md` in the website repository | Inspected | Supported |
 | 21 | Botbench is built with Botbench where it can be; PR #113 is one it opened (README, site Evidence) | https://github.com/botbenchhq/botbench/pull/113 | Inspected | Supported |
 | 22 | The acceptance test runs the whole story (site Evidence heading) | `e2e/northstar.e2e.ts` covers one autonomous run to a pull request and the second workbench's claim withdrawal; it does not cover the overlap warning or checking together | Inspected | **Fix** the heading's scope: "runs one issue from start to pull request, and the second workbench's withdrawal" |
 | 23 | Codex, Grok or Antigravity review (README, site) | `src/drivers/`, `src/engine/review.ts` | Inspected | Supported |
