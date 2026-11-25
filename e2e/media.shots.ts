@@ -4,10 +4,16 @@ import path from "node:path";
 import { test as base, type Browser, type Page } from "@playwright/test";
 import { createRun, storePlan } from "../src/engine/run.ts";
 import { openStore } from "../src/store/db.ts";
-import { git, initRepo } from "../test/support/repo.ts";
+import { git, initRepo, ownerCommit, write } from "../test/support/repo.ts";
 import { pairThem, workbench, type Workbench } from "../test/support/two-workbenches.ts";
+import { makeScene, OTHER_PRS } from "../test/support/check-together.ts";
+import { loadPeersOpenCapture } from "../test/support/replay-peers.ts";
+import { createTask, moveTask } from "../src/engine/task.ts";
+import { chooseWorkbench } from "../src/workbench.ts";
+import { claimBranchName, lockBranch } from "../src/engine/claim-branch.ts";
+import { commitWork, createWorktree, makeClaimCommit, pushNewBranches } from "../src/worktrees.ts";
 import { startBotbench, type Botbench } from "./botbench.ts";
-import { closeContext, expect, messageBox, openRow, sendChat } from "./helpers.ts";
+import { chooseRepository, closeContext, expect, messageBox, openRow, sendChat } from "./helpers.ts";
 import { seeder, tomorrowAfternoon } from "./home-seed.ts";
 import { choose as chooseSetting } from "./settings-helpers.ts";
 
@@ -418,4 +424,127 @@ paired("the paired question: office-mac asks, studio-mac answers, and the answer
   // The two phones side by side, office-mac on the left: both clips began and ended together.
   ffmpeg("-f", "concat", "-safe", "0", "-i", a.list, "-f", "concat", "-safe", "0", "-i", b.list, "-filter_complex", "[0:v]fps=30,scale=600:-2,pad=iw+12:ih:0:0:color=0x08090B[a];[1:v]fps=30,scale=600:-2[b];[a][b]hstack=inputs=2:shortest=1", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-crf", "25", media("paired-question.mp4"));
   ffmpeg("-sseof", "-1", "-i", media("paired-question.mp4"), "-frames:v", "1", "-update", "1", media("paired-question-poster.jpg"));
+});
+
+/*
+ * Between two workbenches in one repository: the overlap line on a task ready for review, checking the task together
+ * with the other workbench's open pull request, and the composer's warning for an issue the other workbench claimed.
+ * No model turn. The other workbench's open pull request is #128 of dev1, as gh listed it in the capture taken once from
+ * the real gh (test/recordings/gh-peers-open.json, replayed by e2e/serve-replayed-open-peers.ts); its name, number,
+ * title, branch and the files gh listed for it are the capture's (test/support/check-together.ts). dev1's branch is
+ * really pushed to a real bare remote, and its claim on issue #82 is made with Botbench's own claim commit and push.
+ * This workbench, studio-mac, has one task, put in the store through the engine with its work committed by Botbench in
+ * its own copy, and the check together really merges the two in a temporary copy and really runs the check there.
+ */
+/** dev1's open pull request in the capture, with its number, branch and workbench as gh listed them. */
+const PEER = ((): { number: number; branch: string; workbench: string } => {
+  const listed = JSON.parse(loadPeersOpenCapture().outputs.open.result.stdout) as { number: number; headRefName: string }[];
+  const pr = listed.find((p) => p.number === OTHER_PRS[0]);
+  const named = pr && /^botbench\/([a-z0-9-]+)\/run-\d+\/task-\d+$/.exec(pr.headRefName);
+  if (!pr || !named) throw new Error("test/recordings/gh-peers-open.json holds no second open pull request from a named workbench.");
+  return { number: pr.number, branch: pr.headRefName, workbench: named[1]! };
+})();
+const TOGETHER_CHECK = "node --test test/peers.test.ts";
+const SHARED = (sort: boolean, quiet: boolean): string => `/** The files both changes touch. */
+export function shared(ours: string[], theirs: string[]): string[] {
+  const both = ours.filter((file) => theirs.includes(file));
+  return ${sort ? "both.sort()" : "both"};
+}
+
+/** How many of a workbench's pull requests are open. */
+export function openCount(states: string[]): number {
+  return states.filter((state) => state === "OPEN").length;
+}
+
+/** A pull request's state as a word. */
+export function stateWord(state: string): string {
+  if (state === "OPEN") return "open";
+  if (state === "MERGED") return "merged";
+  return ${quiet ? '"closed"' : "state.toLowerCase()"};
+}
+`;
+const PEERS_TEST = (sorted: boolean): string => `import assert from "node:assert/strict";
+import { test } from "node:test";
+import { openCount, shared } from "../src/engine/peers.ts";
+
+test("shared files", () => assert.deepEqual(shared(["b.ts", "a.ts"], ["a.ts", "b.ts"]), ${sorted ? '["a.ts", "b.ts"]' : '["b.ts", "a.ts"]'}));
+test("open count", () => assert.equal(openCount(["OPEN", "CLOSED", "OPEN"]), 2));
+`;
+
+const together = base.extend<{ scene: { botbench: Botbench; taskId: number; repo: string } }>({
+  scene: async ({}, use) => {
+    const root = freshRoot();
+    // dev2's open pull request (#127 in the capture) is the scene's first: its branch changes a file this task does not.
+    const scene = makeScene(path.join(root, "billing"), { "src/engine/peers.ts": SHARED(false, false), "test/peers.test.ts": PEERS_TEST(false) }, { "src/drivers/codex.ts": "export const codex = true;\n" });
+    // dev1's work, pushed on dev1's captured branch: the end of the same file, far from this workbench's change.
+    git(scene.peer, "checkout", "--quiet", "-b", PEER.branch, "origin/main");
+    write(scene.peer, "src/engine/peers.ts", SHARED(false, true));
+    ownerCommit(scene.peer, "Say closed for every state that is not open or merged");
+    git(scene.peer, "push", "--quiet", "origin", `HEAD:refs/heads/${PEER.branch}`);
+    // And dev1's claim on issue #82, made two minutes ago: the issue's lock and dev1's named claim branch, in one push.
+    const claim = claimBranchName(PEER.workbench, 12, 82, new Date(Date.now() - 2 * 60_000));
+    await pushNewBranches({ repo: scene.peer, remote: "origin", branches: [lockBranch(82), claim], commit: await makeClaimCommit(scene.peer, `Botbench: ${PEER.workbench} started on issue #82`) });
+    // studio-mac's task, ready for review: its work committed by Botbench in its own copy.
+    const db = openStore(scene.home);
+    chooseWorkbench(db, "studio-mac", "owner");
+    const task = createTask(db, { repo: scene.repo, prompt: "In src/engine/peers.ts, make shared() list the files in order, and say so in test/peers.test.ts." });
+    const worktree = await createWorktree({ repo: scene.repo, home: scene.home, run: `run-${task.runId}`, task: `task-${task.id}`, workbench: "studio-mac" });
+    fs.writeFileSync(path.join(worktree.path, "src/engine/peers.ts"), SHARED(true, false));
+    fs.writeFileSync(path.join(worktree.path, "test/peers.test.ts"), PEERS_TEST(true));
+    const made = await commitWork({ path: worktree.path, message: `Botbench task ${task.id}` });
+    if (!made.committed) throw new Error("the task's work was not committed");
+    moveTask(db, task.id, "building", { worktree });
+    moveTask(db, task.id, "verifying", { headCommit: made.commit });
+    moveTask(db, task.id, "awaiting_decision", { checks: "passed" });
+    db.close();
+    const botbench = await startBotbench({ home: scene.home, entry: path.resolve(import.meta.dirname, "serve-replayed-open-peers.ts"), settings: { workbench: "studio-mac", drivers: { "claude-code": { model: "haiku" } }, repositories: { [scene.repo]: { checks: [TOGETHER_CHECK] } } } });
+    await use({ botbench, taskId: task.id, repo: scene.repo });
+    await botbench.stop();
+    fs.rmSync(ROOT, { recursive: true, force: true });
+  },
+});
+
+together("between workbenches: the overlap line on a task, checking it together with dev1's open pull request, and the warning for an issue dev1 claimed", async ({ browser, scene }) => {
+  together.setTimeout(600_000);
+  const { botbench } = scene;
+  const page = await signedIn(browser, botbench.base, botbench.token, DESKTOP);
+  const task = `${botbench.base}/#/tasks/${scene.taskId}`;
+  const overlap = page.getByTestId("peer-overlap");
+  const start = page.getByTestId("check-together-start").first();
+  await page.goto(task);
+  // The task's own check really runs, on the commit Accept would keep.
+  await page.getByRole("button", { name: "Run checks again" }).click();
+  await expect(page.getByRole("heading", { name: "1 of 1 check passed" }).first()).toBeVisible({ timeout: 120_000 });
+  await expect(overlap).toHaveText(`${PEER.workbench}'s open pull request #${PEER.number} also changes src/engine/peers.ts and test/peers.test.ts, so the two may conflict when both are merged.`);
+  await expect(start).toBeVisible();
+  await settle(page);
+  await picture(page, image("peers/peers-overlap-desktop.png"), task, async () => (await expect(overlap).toBeVisible(), await overlap.evaluate((el) => el.scrollIntoView({ block: "center" }))));
+
+  // The clip: the overlap line, then the owner checks the two together and the result comes back.
+  await page.goto(task);
+  await expect(start).toBeVisible();
+  await overlap.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await settle(page);
+  const clip = film(page, path.join(ROOT, "together-frames"));
+  await pause(page, 3000);
+  await page.getByTestId("check-together").evaluate((el) => el.scrollIntoView({ block: "start", behavior: "smooth" }));
+  await pause(page, 2000);
+  await page.getByRole("button", { name: `Check together with pull request #${PEER.number}` }).click();
+  const outcome = page.getByTestId("check-together-outcome").first();
+  await expect(outcome).toContainText("Passed together:", { timeout: 120_000 });
+  await outcome.evaluate((el) => el.scrollIntoView({ block: "center", behavior: "smooth" }));
+  await pause(page, 5000);
+  mp4((await clip.stop()).list, media("check-together.mp4"), 1440);
+  await settle(page);
+  await page.screenshot({ path: image("peers/peers-passed-together-desktop.png") });
+
+  // A new task that names the issue dev1 claimed: a warning only, and Send stays enabled.
+  await page.goto(`${botbench.base}/#/turn`);
+  await chooseRepository(page, scene.repo);
+  await closeContext(page);
+  await messageBox(page).fill("Fix issue #82 on jon-lange/botbench");
+  await expect(page.getByTestId("peer-warning")).toHaveText(new RegExp(`^A best-effort match on #82 in your message: ${PEER.workbench} started on this issue \\d+ minutes? ago\\.$`));
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
+  await settle(page);
+  await page.screenshot({ path: image("peers/peers-claim-warning-desktop.png") });
 });
