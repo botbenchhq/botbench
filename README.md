@@ -9,6 +9,25 @@
 
 <p align="center">One workbench for your agents. One coordination layer for your team.</p>
 
+Botbench is a local-first workbench on your Mac for the coding agents you already use. Hand a task to Claude Code, walk away, and come back to a branch with its diff, the output of your repository's checks and, if you choose, a review by another vendor's agent; then accept or reject it. When a teammate runs their own Botbench on the same GitHub repository and you both push there, it can tell you before your work collides, not when the second pull request opens ([how](#your-team-before-the-second-pull-request-opens)).
+
+It is for developers on macOS who use Claude Code with their own subscription, alone or in a small team that shares a repository. It is early, built from source, runs on your machine with no hosted service, and never merges a pull request.
+
+<a href="https://botbenchhq.github.io/coordination.html">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-still-dark.svg">
+    <source media="(max-width: 600px) and (prefers-reduced-motion: reduce)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-still-light.svg">
+    <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-dark.svg">
+    <source media="(max-width: 600px)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-compact-light.svg">
+    <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-still-dark.svg">
+    <source media="(prefers-reduced-motion: reduce)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-still-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://botbenchhq.github.io/assets/cards/botbench-card-dark.svg">
+    <img src="https://botbenchhq.github.io/assets/cards/botbench-card-light.svg" width="1200" alt="Illustration in Botbench's own words: a task, Make add in calc.py return the sum, is handed to Claude Code, which works in a separate copy on the branch botbench/studio-mac/run-7/task-7. 1 of 1 check passed. Codex's review is shown as a model's opinion, not a check. Under the changed file, calc.py, Botbench warns: office-mac's open pull request #12 also changes calc.py, so the two may conflict when both are merged. Your decision: Reject or Accept. An annotation beside the warning, not part of the screen, says: Another workbench is changing the same file. You find out before either is merged.">
+  </picture>
+</a>
+
+<em>An authored 13-second illustration, not a recording: the words are Botbench's own, and each step is a shipped feature (see <a href="#what-works-today">What works today</a>). Motionless versions: <a href="https://botbenchhq.github.io/assets/cards/botbench-card-still-light.svg">light</a>, <a href="https://botbenchhq.github.io/assets/cards/botbench-card-still-dark.svg">dark</a>.</em>
+
 <p align="center">
   <a href="docs/media/botbench-demo.mp4"><img src="docs/media/botbench-demo-thumbnail.png" alt="A still from the demo video: a task ready for review, with 1 of 1 check passed, Codex's review, the one changed file, its branch botbench/studio-mac/run-7/task-7, and Your decision: Reject and Accept" width="100%"></a>
 </p>
@@ -19,21 +38,9 @@
 
 **Verify.** Your repository's checks run on the work, and another vendor's agent can review it. You read the branch, the checks and the review, then accept or reject.
 
-**Coordinate.** See what your teammates' workbenches are doing on the same repository, claim an issue so only one of you takes it (a setting you turn on for a repository), check two changes together before either is merged, and, once paired, ask the other workbench a question. Every message between workbenches is one its owner approved.
+**Coordinate.** See your teammates' workbenches' work on the same repository, be warned when it overlaps yours, claim an issue so only one of you takes it (a setting you turn on for a repository), and check two changes together before either is merged. Paired workbenches can also ask each other questions, each one approved by its owner.
 
-[Website](https://botbenchhq.github.io/) · [Quickstart](#quickstart) · [Documentation](#where-to-go-next) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going)
-
-As you add more agents, tools and teammates, keeping their work organized, and making sure it all fits together, becomes a job of its own.
-
-Botbench is a local-first workbench for the coding agents you already use. Hand them tasks, let them work within your policies, and come back to git branches, diffs, check results and review evidence, instead of piecing together what happened across terminals.
-
-**Where it is going.** Connect your workbench with a colleague's, so your agents and theirs coordinate the work between them, while each person keeps control of their own agents, environments and permissions. Only its first piece is built: two paired workbenches exchange questions and answers, each one approved by its owner. [Where it is going](#where-it-is-going) says what is planned.
-
-Your agents. Their agents. One coordinated workflow.
-
-Walk away. Come back to the branch.
-
-> **Current availability.** Early, and macOS only. Claude Code, signed in with your own subscription, plans and builds. Codex can build too, in its own sandbox, and Codex, Grok and Antigravity review and chat. Messages sent directly between workbenches work in a first form: one paired workbench per installation, questions and answers only, with both listeners on this Mac's loopback address or a private network; they have been tested with two installations on one Mac, not across two Macs. A repository can run its commands in one Docker container per task (a setting, off by default). Each task works in a separate copy of your repository, which separates changes and is not a security boundary; commands are confined by the macOS sandbox, which is not a virtual machine or a container ([Is it a sandbox?](#is-it-a-sandbox)). It is not a hosted service, and it never merges a pull request.
+[Website](https://botbenchhq.github.io/) · [Quickstart](#quickstart) · [Is it for you?](#is-it-for-you) · [What works today](#what-works-today) · [Where it is going](#where-it-is-going) · [Documentation](#where-to-go-next)
 
 <!-- CAPTURE: a 20 to 30 second screen recording at phone size, from a real task in a practice repository: type the task in the message box, Send, the approval card appears, Allow once, the task reads Ready for review with its changed file and branch, Accept. Upload it to GitHub and put its <video> tag here, above the screenshots. -->
 
@@ -43,27 +50,36 @@ One coding agent in one terminal is easy to follow. Several are not. You answer 
 
 Add a teammate who hands work to their own agents, and the two of you become the messengers. One agent builds an API; the other developer's agent needs that contract for the frontend; you and your teammate carry it from one conversation to the other. You find out you both took the same issue when the second pull request opens, and that two changes do not fit when both are merged.
 
-Botbench is built for both problems: it does a good deal for the first today, and only the first steps for the second, with the larger part still to come. This page keeps the two apart.
+Botbench does a good deal about the first problem today. For the second, the first steps work, below, and the larger part is planned ([Where it is going](#where-it-is-going)).
 
-## Two ways to use it
+## Your workbench
 
-### Your workbench
+*Walk away. Come back to the branch.*
 
 Start a task, or a run of several, from a browser on the Mac or on your phone. Each task works in its own copy of your repository, on its own branch; Botbench does not touch your files or your branch. You choose how much each run needs you: manual, semi-autonomous or fully autonomous. An action that reaches outside the task's copy waits for your answer, and a short list of dangerous ones always asks, or is refused when nobody is there. Botbench then runs your repository's checks and keeps their output, and another vendor's agent can review the change. You come back to a branch, its diff, the checks and the transcript, and you accept it or reject it.
 
-### Your team's coordination
+## Your team: before the second pull request opens
 
-Two developers work on one GitHub repository, each with their own Mac, their own Botbench and their own agents, and neither gives the other access to their machine. What Botbench does about that today:
+*Your agents. Their agents. One coordinated workflow.*
+
+Two developers work on one GitHub repository, each with their own Mac, their own Botbench and their own agents, and neither gives the other access to their machine. Three things tell them about each other's work before either pull request is merged. The lines below are the product's own wording, with example names, numbers and times:
+
+- **The same files.** On a task's Review tab, under the changed files: `office-mac's open pull request #12 also changes calc.py, so the two may conflict when both are merged.`
+- **The same issue.** With issue claims on, the later of two runs on one issue stops and says why: `studio-mac started on issue #42 at 14:14:07 UTC on 2026-11-25, before this workbench did (14:15:02 UTC on 2026-11-25), so this run stopped: when two workbenches start on one issue, the earliest claim goes ahead.`
+- **Changes that must fit.** On a task that is ready for review, *Check together with pull request #12* merges the two in a temporary copy and runs the repository's own checks on the merge: `Passed together:`, `Failed together:`, `Conflict:` or `Did not run:`.
+
+What Botbench does about two workbenches on one repository today:
 
 - **Branches never clash.** Each workbench puts its name in its branches (`botbench/<workbench>/run-N/task-M`). Change the name in Settings → Workbench identity.
 - **You see each other's work.** The Work screen shows, read only, the other workbenches' open pull requests and pushed branches on the same remote, read with your own `gh` and `git`.
-- **You are warned before you overlap.** The warning appears under the message box when another workbench already has a pull request open for the issue you attached, or has started on it, and under Your decision when another workbench's open pull request changes the same files as your task, so the two may conflict when both are merged.
-- **You can ask each other directly, once paired.** One owner makes an invite in Settings → Connections and peers → Paired workbench, the other pastes it, you compare fingerprints, and both confirm. Then either of you, or your agent with your Send, can ask the other workbench a question about the repository you share, and the other owner answers it, gives it to their Claude Code, or dismisses it. Every message that leaves is one you approved, and every message that arrives is a card for its owner and runs nothing. [Pair two workbenches](docs/pairing.md) walks through it.
+- **You are warned before you overlap.** The warning appears under the message box when another workbench already has a pull request open for the issue you attached, or has started on it, and on the task's Review tab, under the changed files, when another workbench's open pull request changes the same files as your task, so the two may conflict when both are merged.
 - **Only one of you takes an issue, if you choose.** With `"claimIssues": true` for the repository in each settings file, a run from an issue that opens pull requests claims the issue as it starts, with two empty branches on the remote. The remote takes only the first claim; the other workbench's run stops and says who started first. Nothing is pushed for a run that keeps its work on your Mac.
+- **You can check two changes together.** On a task that is ready for review, you ask for it, and Botbench merges your task with another workbench's open pull request in a temporary copy and runs the repository's own checks on the merge (`src/engine/combined.ts`), so you learn that two changes do not fit before either is merged. A passing check proves only what the check covers; [What works today](#what-works-today) says what else it can and cannot tell you.
+- **You can ask each other directly, once paired (early).** One owner makes an invite in Settings → Connections and peers → Paired workbench, the other pastes it, you compare fingerprints, and both confirm. Then either of you, or your agent with your Send, can ask the other workbench a question about the repository you share, and the other owner answers it, gives it to their Claude Code, or dismisses it. Every message that leaves is one you approved, and every message that arrives is a card for its owner and runs nothing. [Pair two workbenches](docs/pairing.md) walks through it.
 
-Apart from a claim, Botbench writes nothing to GitHub for this, and puts nothing another workbench wrote in a prompt to your agents unless you give a paired workbench's message to Claude Code yourself, as outside text. It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. You can also check your task together with another workbench's open pull request: on a task that is ready for review, you ask for it, and Botbench merges the two in a temporary copy and runs the repository's own checks on the merge (`src/engine/combined.ts`), so you learn that two changes do not fit before either is merged. A passing check proves only what the check covers; what else it can and cannot tell you is under [What works today](#what-works-today).
+It works when both workbenches push their branches or open pull requests on the same remote, with `gh` signed in on each Mac. Apart from a claim, Botbench writes nothing to GitHub for this, and puts nothing another workbench wrote in a prompt to your agents unless you give a paired workbench's message to Claude Code yourself, as outside text.
 
-<!-- CAPTURE: a screenshot from two real installations of the task screen's "Your decision" with the line "<workbench>'s open pull request #<n> also changes <files>, so the two may conflict when both are merged." -->
+<!-- CAPTURE: a screenshot from two real installations of the task screen's Review tab with the line "<workbench>'s open pull request #<n> also changes <files>, so the two may conflict when both are merged." -->
 
 ## Proof, not promises
 
@@ -127,6 +143,13 @@ Real screens from a Botbench installation named studio-mac, working on a small b
 - **You want a hosted service or a shared team server.** Each developer runs their own Botbench on their own Mac, behind its own login token. Botbench has no accounts or shared server. Workbenches see branches and pull requests on a shared GitHub repository; paired workbenches can also exchange questions and answers approved by their owners.
 - **You need a hard security boundary for code you do not trust.** See [Is it a sandbox?](#is-it-a-sandbox) below.
 - **You need it stable.** It changes often, and nothing here is promised to stay the same.
+
+### Current availability
+
+- **Early, and macOS only.** It is not a hosted service, and it never merges a pull request.
+- **Agents.** Claude Code, signed in with your own subscription, plans and builds. Codex can build too, in its own sandbox. Codex, Grok and Antigravity review and chat.
+- **Isolation.** Each task works in a separate copy of your repository, which separates changes and is not a security boundary. Commands are confined by the macOS sandbox, which is not a virtual machine or a container ([Is it a sandbox?](#is-it-a-sandbox)). A repository can run its commands in one Docker container per task instead (a setting, off by default).
+- **Messages between workbenches** work in a first form: one paired workbench per installation, questions and answers only, with both listeners on this Mac's loopback address or a private network. They have been tested with two installations on one Mac, not across two Macs.
 
 ## Quickstart
 
