@@ -110,8 +110,9 @@ vm.runInNewContext(fs.readFileSync(path.join(HERE, "timelines.js"), "utf8"), san
 const sources = sandbox.window.SOURCES;
 for (const [name, src] of Object.entries(sources)) if (src.clip) extractClip(name, src);
 // Large images are otherwise decoded off the main thread and drawn a frame later ("checker-imaging"), which made a few
-// frames differ from one render to the next; one colour profile so a frame is the same on any display.
-const browser = await chromium.launch({ args: ["--disable-checker-imaging", "--force-color-profile=srgb", "--disable-gpu-rasterization", "--disable-partial-raster"] });
+// frames differ from one render to the next; one colour profile so a frame is the same on any display; text drawn with
+// the same antialiasing whatever the page drew before (LCD text and subpixel positioning made glyph edges vary).
+const browser = await chromium.launch({ args: ["--disable-checker-imaging", "--force-color-profile=srgb", "--disable-gpu-rasterization", "--disable-partial-raster", "--disable-lcd-text", "--disable-font-subpixel-positioning"] });
 try {
   for (const film of films) {
     if (!OUTPUTS[film]) throw new Error(`no film ${film}: ${Object.keys(OUTPUTS).join(", ")}`);

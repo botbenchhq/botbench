@@ -20,7 +20,10 @@
 html,body{background:var(--surface);overflow:hidden}
 #stage{position:relative;overflow:hidden;background:var(--surface);font-family:var(--font);color:var(--ink);
   -webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
-.shot{position:absolute;inset:0;opacity:0;visibility:hidden;background:var(--surface)}
+/* every layer that fades is its own compositing layer from the first frame, so its text is drawn the same way whatever
+   came before (a layer promoted part-way through a render drew its glyph edges differently) */
+.shot{position:absolute;inset:0;opacity:0;visibility:hidden;background:var(--surface);will-change:opacity}
+.kicker,.caption{will-change:opacity}
 /* the dark product frame: the recording or screenshot is the product; the frame only holds it */
 .frame{position:absolute;overflow:hidden;border-radius:14px;background:var(--sunken);
   box-shadow:0 0 0 1px var(--border),0 24px 60px rgba(0,0,0,.45)}
@@ -30,13 +33,13 @@ html,body{background:var(--surface);overflow:hidden}
 .kicker .step{color:var(--accent)}
 .chip{display:inline-block;vertical-align:.18em;margin-left:.5em;font-size:.5em;font-weight:600;letter-spacing:.02em;
   padding:.18em .6em;border-radius:99px;color:var(--muted);box-shadow:inset 0 0 0 1.5px var(--border)}
-.caption{position:absolute;left:0;right:0;text-align:center;color:var(--muted);font-weight:450;letter-spacing:0;z-index:5}
+.caption{position:absolute;left:0;right:0;text-align:center;color:var(--muted);font-weight:450;letter-spacing:0;line-height:1.25;padding:0 40px;z-index:5}
 .card{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8%}
 .card .mark{display:block}
 .card .head{font-weight:700;letter-spacing:-.02em;line-height:1.08}
 .card .sub{color:var(--muted);font-weight:450;letter-spacing:-.005em;line-height:1.3}
 .card .url{color:var(--accent);font-weight:550;letter-spacing:0}
-.card .o{opacity:0}
+.card .o{opacity:0;will-change:opacity}   /* its own layer from the first frame, like .shot */
 </style></head><body>
 <div id="stage"></div>
 <script src="timelines.js"></script>
@@ -79,13 +82,16 @@ for(const s of SHOTS){
     // The frame is the layout's, made shorter (and centred) only when even the shot's widest view of its source is
     // shorter than the frame: never an empty band inside the frame, never an upscale to fill it.
     const src=window.SOURCES[s.src];if(!src) throw new Error('no source '+s.src);
+    // A shot may ask for a smaller frame (s.frame: {w, h}) to show only the line that matters; it is centred in the
+    // layout's frame area.
+    const box=s.frame?{...L.frame,...s.frame,x:L.frame.x+Math.round((L.frame.w-s.frame.w)/2),y:L.frame.y+Math.round((L.frame.h-s.frame.h)/2)}:L.frame;
     const wmax=Math.max(...(s.cam||[[0,0,0,src.w]]).map(k=>k[3]));
-    const fh=Math.min(L.frame.h,Math.floor(src.h*L.frame.w/wmax)),fr={...L.frame,h:fh,y:L.frame.y+Math.round((L.frame.h-fh)/2)};s.fr=fr;
+    const fh=Math.min(box.h,Math.floor(src.h*box.w/wmax)),fr={...box,h:fh,y:box.y+Math.round((box.h-fh)/2)};s.fr=fr;
     el.innerHTML=`<div class="frame${fr.bleed?' bleed':''}" style="left:${fr.x}px;top:${fr.y}px;width:${fr.w}px;height:${fr.h}px"><img alt="" decoding="sync"></div>`;
     s.img=el.querySelector('img');s.srcInfo=src;s.img.style.width=src.w+'px';s.img.style.height=src.h+'px';
   }
   s.kick=kickerHtml(s);
-  s.cap=s.kind==='card'?(s.cardCaption??window.CAPTION_CARD):window.CAPTION;
+  s.cap=s.caption??(s.kind==='card'?window.CAPTION_CARD:window.CAPTION);   // what is recorded, replayed or a title card
   s.textAt=s.start+(s.join||s.i===0?0:XF/2);   // the title line and caption change at the middle of the cut
 }
 // The title line and the caption are one layer above every shot. When a cut changes them, the old words fade out over

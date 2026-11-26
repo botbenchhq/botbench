@@ -4,10 +4,10 @@ Four silent films made from Botbench's own recordings and screenshots, with typo
 
 | File (in `docs/media/`) | Format | Length, size | For |
 |---|---|---|---|
-| `botbench-launch.mp4` | 1920×1080, H.264, 30 fps | 42.3 s, 4.1 MB | Launch |
-| `botbench-loop.mp4` | 1280×800, H.264, 30 fps | 9.8 s, 0.41 MB | Website loop (loops on its first frame) |
-| `botbench-social-square.mp4` | 1080×1080, H.264, 30 fps | 28.2 s, 1.7 MB | Social, 1:1 |
-| `botbench-social-portrait.mp4` | 1080×1350, H.264, 30 fps | 28.2 s, 2.0 MB | Social, 4:5 |
+| `botbench-launch.mp4` | 1920×1080, H.264, 30 fps | 39.0 s, 3.0 MB | Launch |
+| `botbench-loop.mp4` | 1280×800, H.264, 30 fps | 9.8 s, 0.42 MB | Website loop (loops on its first frame) |
+| `botbench-social-square.mp4` | 1080×1080, H.264, 30 fps | 26.0 s, 1.4 MB | Social, 1:1 |
+| `botbench-social-portrait.mp4` | 1080×1350, H.264, 30 fps | 26.0 s, 1.4 MB | Social, 4:5 |
 
 Each has a poster, `<name>-poster.png`: a frame of the film itself. Every file has `faststart` (the index is at the front).
 
@@ -20,30 +20,51 @@ plays at its own speed, frame for frame.
 | Shot | Source | What it is |
 |---|---|---|
 | Approving the plan; Claude Code at work; Accept | `docs/media/botbench-demo.mp4` | Recorded from the real client and server by `e2e/media.shots.ts` ("the demo"). Claude Code's build of the fix to `add` in `calc.py` and Codex's review of it are replayed from recorded sessions (`e2e/serve-replayed-media.ts`); the repository's check really runs. |
-| The task ready for review: the check passed, Codex's review "a model's opinion, not a check" | `docs/images/ready-for-review-proof.png` | A screenshot from the same test file ("pictures"), the same replayed sessions. |
-| The overlap line under the changed files | `docs/images/peers/peers-overlap-desktop.png` | From "between workbenches" in `e2e/media.shots.ts`. No model turn. The other workbench's open pull request (dev1's #128, its title, branch and listed files) is the list captured once from the real `gh` (`test/recordings/gh-peers-open.json`), replayed by `e2e/serve-replayed-open-peers.ts`. dev1's branch is really pushed to a bare remote on disk. studio-mac's task is put in the store through the engine with its work committed by Botbench in its own copy (as `e2e/home-seed.ts` does for Home); its check really runs. |
-| Checking together until "Passed together:" | `docs/media/check-together.mp4`, `docs/images/peers/peers-passed-together-desktop.png` | Same test: the check together really merges the two in a temporary copy and really runs the check there. |
-| "dev1 started on this issue 2 minutes ago." | `docs/images/peers/peers-claim-warning-desktop.png` | Same test: dev1's claim on issue #82 is made with Botbench's own claim commit and push to the bare remote. This is the composer's warning before a run starts; the later run's stop ("…so this run stopped") is not shown, because no recording of it exists without a live model turn. |
-| Title cards and the line above each frame | `film.html`, `timelines.js` | Typographic title text in Inter and the Botbench theme (Graphite + Glacier, dark); the mark and lockup are `assets/svg/botbench-mark-two-tone-dark.svg` and `botbench-lockup-two-tone-dark.svg`, unchanged. |
+| The task ready for review: the check passed, Codex's review "a model's opinion, not a check" (launch, loop); the same at a phone's size, panning to Accept (social) | `docs/images/ready-for-review-proof.png`, `docs/images/ready-for-review.png` | Screenshots from the same test file ("pictures"), the same replayed sessions. |
+| The overlap line under the changed files | `docs/images/peers/peers-overlap-phone.png` | From "between workbenches" in `e2e/media.shots.ts`, at a phone's size (390 wide at 3x, so its lines read in a film). No model turn. The other workbench's open pull request (dev1's #128, its title, branch and listed files) is the list captured once from the real `gh` (`test/recordings/gh-peers-open.json`), replayed by `e2e/serve-replayed-open-peers.ts`. dev1's branch is really pushed to a bare remote on disk. studio-mac's task is set up by the test: put in the store through the engine, its work committed by Botbench in its own copy (as `e2e/home-seed.ts` does for Home); its check really runs. No agent took part, although the task's screen names its configured agent. |
+| "Passed together:" | `docs/images/peers/peers-passed-together-phone.png` | Same test: the check together really merges the two in a temporary copy and really runs the check there. |
+| "dev1 started on this issue 2 minutes ago." | `docs/images/peers/peers-claim-warning-phone.png` | Same test: dev1's claim on issue #82 is made by the test with Botbench's own claim commit and push to the bare remote. This is the composer's warning before a run starts; the later run's stop ("…so this run stopped") is not shown, because no recording of it exists without a live model turn. |
+| Title cards and the headline above each frame | `film.html`, `timelines.js` | Typographic title text in Inter and the Botbench theme (Graphite + Glacier, dark); the mark and lockup are `assets/svg/botbench-mark-two-tone-dark.svg` and `botbench-lockup-two-tone-dark.svg`, unchanged. |
 
-Each product shot carries the caption "Recorded from Botbench. Agents' parts replayed from recorded sessions."; the
-opening card carries it too, and the other cards say "Title card." The shots between workbenches are marked Early, as
-the README marks coordination between workbenches. The website loop has no text on it: the page that shows it must
-carry the caption.
+The same test also writes the desktop pictures of those three moments (`peers-*-desktop.png`) and a clip of the check
+together (`docs/media/check-together.mp4`); the films use the phone pictures, whose lines are large enough to read.
+
+Each shot says what it is, in the caption under its frame:
+
+- The demo's shots and the opening card: "Recorded from Botbench. Agents' parts replayed from recorded sessions."
+- The overlap and the check together: "Recorded from Botbench. The task was set up by a test; the check and the check
+  together really ran."
+- The claim: "Recorded from Botbench. dev1's claim was pushed by a test, with Botbench's own claim push."
+- Other cards: "Title card."
+
+Nothing in the films is marked Early: the overlap warning, issue claims and checking together are in the README's
+"What works today"; only questions and answers between paired workbenches are early, and the films do not show them.
+The website loop has no text on it: the page that shows it must carry the caption.
+
+Sizes: headlines are Inter 600 at 52 px in the launch film and 56 to 60 px in the social cuts; captions 22 to 24 px.
+In the shots between workbenches the key line is shown at 0.91x to 1x of a 3x picture: 13 px type is 35 to 39 px.
 
 ## Storyboard
 
-Launch (42.3 s): opening card "Hand work to your agents. / Walk away. Come back to the branch." → 1 approving the
-plan (demo 2.9–7.7 s) → 2 Claude Code working in its own copy (demo 9.3–12.1 s) → 3 the task ready for review, a 750 ms
-push in to the check and Codex's review → 4 Accept (demo 17.0–21.4 s) → card "With a teammate. / Your agents. Their
-agents. One coordinated workflow. Early" → the overlap line, push in → Check together with pull request #128
-(check-together 3.8–8.8 s), cut to "Passed together:" → the claim warning in the composer, push in → end card: the
-lockup, "Put your agents to work. Together.", botbenchhq.github.io.
+Launch (39.0 s):
 
-Loop (9.8 s): the task ready for review, push in to the evidence, Accept (demo 17.4–21.8 s), back to the first frame.
+1. Opening card: the mark, "Hand work to your agents." / "Walk away. Come back to the branch."
+2. "You approve the plan. Claude Code builds it." The demo, 2.9 to 7.7 s.
+3. "Walk away. It works on its own branch." The demo, 9.3 to 12.3 s.
+4. "Come back to evidence: your check, a second opinion." The review, with a 750 ms push in to the check and Codex's
+   review.
+5. "The decision is yours: Accept or Reject." The demo, 17.0 to 21.4 s.
+6. Card: "With a teammate." / "Your agents. Their agents. One coordinated workflow."
+7. "Told before your work collides." The overlap line, a short push in.
+8. "Both changes, checked together." With dev1's pull request #128, "Passed together:", a short push in.
+9. "Who started on an issue first." The composer's warning, a short push in.
+10. End card: the lockup, "Put your agents to work. Together.", botbenchhq.github.io.
 
-Social, 1:1 and 4:5 (28.2 s): opening card → evidence → the decision (a crop of the demo at its own size) → teammate
-card → overlap → passed together → claim warning → end card.
+Loop (9.8 s): the task ready for review, push in to the evidence, Accept (the demo, 17.4 to 21.8 s), back to the first
+frame.
+
+Social, 1:1 and 4:5 (26.0 s): opening card → "Come back to a branch with evidence." (the phone's review) → "The decision
+is yours." (a pan down to Accept) → teammate card → overlap → passed together → claim warning → end card.
 
 ## Reproduce
 
@@ -69,12 +90,19 @@ ffmpeg -i docs/media/<file>.mp4 -vf "fps=1,scale=320:-1,tile=<cols>x<rows>:paddi
 Single frames for a look: `AT=2,9.5 OUT=docs/media/film/work/look node docs/media/film/render.mjs launch`.
 A frame range: `FRAMES=0:90 OUT=… node docs/media/film/render.mjs launch` (no encode).
 
-`seek(t)` draws each frame from scratch, so a frame does not depend on the ones before it. Two things made frames differ
-by their lowest bit between renders, and are switched off: Chromium's deferred decoding of large images
-(`--disable-checker-imaging`, with `decoding="sync"` and a new address for a still on each frame), and drawing the
-first frames before the page has warmed up (two frames are drawn and thrown away after each load). `render.mjs` also
-forces one colour profile (`--force-color-profile=srgb`) and waits two animation frames before each screenshot. Two
-full renders of every film then give byte-identical frames.
+`seek(t)` draws each frame from scratch, so a frame does not depend on the ones before it. Chromium's own drawing
+made frames differ in their lowest bits between renders, or depending on the frames drawn before. These are switched
+off or pinned:
+
+- Deferred decoding of large images: `--disable-checker-imaging`, `decoding="sync"`, and a new address for a still on
+  each frame.
+- The first frames after a page loads: two frames are drawn and thrown away.
+- Text antialiasing that changed with the page's history: `--disable-lcd-text` and
+  `--disable-font-subpixel-positioning`, with every layer that fades given `will-change: opacity` from the first frame.
+- One colour profile (`--force-color-profile=srgb`), and two animation frames before each screenshot.
+
+Two full renders of every film give byte-identical frames, and frames rendered again from a fresh page (a run from the
+middle, and single frames) match the full render. The evidence for this pass is in the pull request.
 
 Cuts: the next shot fades in over the last one in 400 ms, eased in and out, so no frame is empty. The line of title
 text and the caption sit in one layer above the shots; when a cut changes them, the old words fade out over 150 ms
