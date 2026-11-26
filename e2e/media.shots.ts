@@ -547,4 +547,19 @@ together("between workbenches: the overlap line on a task, checking it together 
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
   await settle(page);
   await page.screenshot({ path: image("peers/peers-claim-warning-desktop.png") });
+
+  // The same three moments at a phone's size (390 wide, at 3x), where each line is large enough to read in a square film.
+  const phone = await signedIn(browser, botbench.base, botbench.token, PHONE);
+  const phoneOverlap = phone.getByTestId("peer-overlap");
+  await picture(phone, image("peers/peers-overlap-phone.png"), task, async () => (await expect(phoneOverlap).toBeVisible(), await phoneOverlap.evaluate((el) => el.scrollIntoView({ block: "center" }))));
+  const phoneOutcome = phone.getByTestId("check-together-outcome").first();
+  await picture(phone, image("peers/peers-passed-together-phone.png"), task, async () => (await expect(phoneOutcome).toContainText("Passed together:"), await phoneOutcome.evaluate((el) => el.scrollIntoView({ block: "center" }))));
+  await phone.goto(`${botbench.base}/#/turn`);
+  await chooseRepository(phone, scene.repo);
+  await closeContext(phone);
+  await messageBox(phone).fill("Fix issue #82 on jon-lange/botbench");
+  await expect(phone.getByTestId("peer-warning")).toBeVisible();
+  await phone.getByTestId("peer-warning").evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await settle(phone);
+  await phone.screenshot({ path: image("peers/peers-claim-warning-phone.png") });
 });
