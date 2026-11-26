@@ -1,0 +1,158 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<!-- Botbench product films: one page draws every frame of every film.
+     URL: film.html?film=<launch|loop|square|portrait>
+     window.seek(t) draws film time t (seconds) from scratch and resolves once every image on screen is decoded, so a
+     frame never depends on the frame before it. The shots are in timelines.js; render.mjs captures and encodes.
+     Engine adapted from product-film (display.dev, MIT, commit fd9db88), templates/walkthrough/beats.html: the 2D
+     camera, the eased holds and the stateless seek. The product on screen is never rebuilt: each product shot is one of
+     Botbench's own recordings (a frame of a clip) or screenshots, cropped, scaled and panned, never edited. -->
+<style>
+/* The owner's type and the Botbench theme (Graphite + Glacier, dark), from design-system themes/botbench.css.
+   Inter is the client's own copy (web/node_modules/@fontsource-variable/inter, listed in NOTICE). */
+@font-face{font-family:"Inter Film";font-style:normal;font-weight:100 900;
+  src:url("../../../web/node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations")}
+:root{
+  --surface:#111316; --pane:#181B20; --raised:#20242B; --sunken:#0B0D10; --border:#2A2F37;
+  --ink:#F2F3F5; --muted:#ADB4BE; --accent:#7CB7FF;
+  --font:"Inter Film", system-ui, sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:var(--surface);overflow:hidden}
+#stage{position:relative;overflow:hidden;background:var(--surface);font-family:var(--font);color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
+/* every layer that fades is its own compositing layer from the first frame, so its text is drawn the same way whatever
+   came before (a layer promoted part-way through a render drew its glyph edges differently) */
+.shot{position:absolute;inset:0;opacity:0;visibility:hidden;background:var(--surface);will-change:opacity}
+.kicker,.caption{will-change:opacity}
+/* the dark product frame: the recording or screenshot is the product; the frame only holds it */
+.frame{position:absolute;overflow:hidden;border-radius:14px;background:var(--sunken);
+  box-shadow:0 0 0 1px var(--border),0 24px 60px rgba(0,0,0,.45)}
+.frame.bleed{border-radius:0;box-shadow:none}
+.frame img{position:absolute;left:0;top:0;transform-origin:0 0;display:block;image-rendering:auto}
+.kicker{position:absolute;left:0;right:0;text-align:center;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
+.kicker .step{color:var(--accent)}
+.chip{display:inline-block;vertical-align:.18em;margin-left:.5em;font-size:.5em;font-weight:600;letter-spacing:.02em;
+  padding:.18em .6em;border-radius:99px;color:var(--muted);box-shadow:inset 0 0 0 1.5px var(--border)}
+.caption{position:absolute;left:0;right:0;text-align:center;color:var(--muted);font-weight:450;letter-spacing:0;line-height:1.25;padding:0 40px;z-index:5}
+.card{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8%}
+.card .mark{display:block}
+.card .head{font-weight:700;letter-spacing:-.02em;line-height:1.08}
+.card .sub{color:var(--muted);font-weight:450;letter-spacing:-.005em;line-height:1.3}
+.card .url{color:var(--accent);font-weight:550;letter-spacing:0}
+.card .o{opacity:0;will-change:opacity}   /* its own layer from the first frame, like .shot */
+</style></head><body>
+<div id="stage"></div>
+<script src="timelines.js"></script>
+<script>
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x)),lerp=(a,b,u)=>a+(b-a)*u,seg=(t,a,b)=>clamp((t-a)/(b-a),0,1);
+const eo=u=>1-Math.pow(1-u,3),eio=u=>u<.5?4*u*u*u:1-Math.pow(-2*u+2,3)/2;   // story beats ease out; camera eases in and out
+const Q=new URLSearchParams(location.search);
+const NAME=Q.get('film')||'launch';
+const F=window.FILMS[NAME]; if(!F) throw new Error('no film '+NAME);
+const L=window.LAYOUTS[F.layout];
+const FPS=window.FPS, XF=window.XF, TXT=window.TEXT_FADE;
+const stage=document.getElementById('stage');
+stage.style.width=L.w+'px';stage.style.height=L.h+'px';
+document.body.style.width=L.w+'px';document.body.style.height=L.h+'px';
+
+// ---- timeline ----
+// Shots overlap by XF: the incoming shot fades in over the outgoing one (opaque layers, so never an empty frame). A shot
+// marked join follows the one before with a plain cut (the next view of the same moment). A loop gets one more shot, the
+// first shot's opening frame, faded in over the end: the film's last frame is its first, and that frame is dropped.
+const list=F.loop?[...F.shots,{...F.shots[0],dur:XF,cam:F.shots[0].cam?[F.shots[0].cam[0]]:undefined,loopback:true}]:F.shots;
+let g=0;const SHOTS=list.map((s,i)=>{const o={...s,i,start:g};const nx=list[i+1];g+=s.dur-(nx&&!nx.join?XF:0);return o;});
+window.FILM_DURATION=+(SHOTS.at(-1).start+SHOTS.at(-1).dur).toFixed(4);
+window.FILM_FRAMES=Math.round(window.FILM_DURATION*FPS)-(F.loop?1:0);
+window.FILM_POSTER=F.poster;
+
+// ---- build each shot's DOM once ----
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const kickerHtml=s=>s.kicker?(s.step?`<span class="step">${esc(s.step)}</span> `:'')+esc(s.kicker)+(s.early?'<span class="chip">Early</span>':''):'';
+for(const s of SHOTS){
+  const el=document.createElement('div');el.className='shot';s.el=el;stage.appendChild(el);
+  if(s.kind==='card'){
+    const c=L.card;let h='';
+    if(s.mark) h+=`<img class="mark o" src="${s.mark}" alt="" style="height:${c.mark}px;margin-bottom:${c.gap*1.4}px">`;
+    if(s.head) h+=`<div class="head o" style="font-size:${c.head}px">${esc(s.head)}</div>`;
+    if(s.sub) h+=`<div class="sub o" style="font-size:${c.sub}px;margin-top:${c.gap}px">${esc(s.sub)}${s.early?'<span class="chip">Early</span>':''}</div>`;
+    if(s.url) h+=`<div class="url o" style="font-size:${c.sub}px;margin-top:${c.gap*1.6}px">${esc(s.url)}</div>`;
+    el.innerHTML=`<div class="card">${h}</div>`;
+    s.parts=[...el.querySelectorAll('.o')];
+  } else {
+    // The frame is the layout's, made shorter (and centred) only when even the shot's widest view of its source is
+    // shorter than the frame: never an empty band inside the frame, never an upscale to fill it.
+    const src=window.SOURCES[s.src];if(!src) throw new Error('no source '+s.src);
+    // A shot may ask for a smaller frame (s.frame: {w, h}) to show only the line that matters; it is centred in the
+    // layout's frame area.
+    const box=s.frame?{...L.frame,...s.frame,x:L.frame.x+Math.round((L.frame.w-s.frame.w)/2),y:L.frame.y+Math.round((L.frame.h-s.frame.h)/2)}:L.frame;
+    const wmax=Math.max(...(s.cam||[[0,0,0,src.w]]).map(k=>k[3]));
+    const fh=Math.min(box.h,Math.floor(src.h*box.w/wmax)),fr={...box,h:fh,y:box.y+Math.round((box.h-fh)/2)};s.fr=fr;
+    el.innerHTML=`<div class="frame${fr.bleed?' bleed':''}" style="left:${fr.x}px;top:${fr.y}px;width:${fr.w}px;height:${fr.h}px"><img alt="" decoding="sync"></div>`;
+    s.img=el.querySelector('img');s.srcInfo=src;s.img.style.width=src.w+'px';s.img.style.height=src.h+'px';
+  }
+  s.kick=kickerHtml(s);
+  s.cap=s.caption??(s.kind==='card'?window.CAPTION_CARD:window.CAPTION);   // what is recorded, replayed or a title card
+  s.textAt=s.start+(s.join||s.i===0?0:XF/2);   // the title line and caption change at the middle of the cut
+}
+// The title line and the caption are one layer above every shot. When a cut changes them, the old words fade out over
+// TXT before the middle of the cut and the new ones in over TXT after it: words never dissolve into other words.
+const kick=document.createElement('div'),cap=document.createElement('div');
+if(L.kicker){kick.className='kicker';kick.style.cssText=`top:${L.kicker.top}px;font-size:${L.kicker.size}px;line-height:1.15;padding:0 ${L.kicker.pad}px;z-index:5`;stage.appendChild(kick);}
+if(L.caption){cap.className='caption';cap.style.cssText=`top:${L.caption.top}px;font-size:${L.caption.size}px`;stage.appendChild(cap);}
+function words(el,key,T){
+  let i=0;for(const s of SHOTS) if(s.textAt<=T) i=s.i;
+  const s=SHOTS[i],prev=SHOTS[i-1],next=SHOTS[i+1];
+  const v=s[key];if(el.innerHTML!==v) el.innerHTML=v;
+  const fin=prev&&prev[key]!==v?eo(seg(T,s.textAt,s.textAt+TXT)):1, fout=next&&next[key]!==v?1-eo(seg(T,next.textAt-TXT,next.textAt)):1;
+  el.style.opacity=(v?fin*fout:0).toFixed(4);
+}
+
+// ---- camera: keyframes [t, cx, cy, w] in source pixels; w is the source width the frame shows ----
+// Eased in and out between keyframes, holding still outside them (no drift). Never past 1 output pixel per source
+// pixel: a push-in that would upscale throws, so no frame is ever a blurred enlargement.
+function camAt(s,t){
+  const src=s.srcInfo,fr=s.fr,K=(s.cam||[[0,src.w/2,src.h/2,src.w]]);
+  let a=K[0],b=K[0];
+  if(t>=K.at(-1)[0]){a=b=K.at(-1);}else{for(let i=0;i<K.length-1;i++){if(t>=K[i][0]&&t<=K[i+1][0]){a=K[i];b=K[i+1];break;}}}
+  const u=b[0]>a[0]?eio(seg(t,a[0],b[0])):1;
+  const k=fr.w/Math.exp(lerp(Math.log(a[3]),Math.log(b[3]),u));   // scale, interpolated in log space: no zoom wobble
+  if(k>1.0001) throw new Error(`shot ${s.i} (${s.src}) would upscale ×${k.toFixed(3)}`);
+  const vw=fr.w/k,vh=fr.h/k;
+  const cx=vw>=src.w?src.w/2:clamp(lerp(a[1],b[1],u),vw/2,src.w-vw/2),cy=vh>=src.h?src.h/2:clamp(lerp(a[2],b[2],u),vh/2,src.h-vh/2);   // never past the edge
+  return{k,x:fr.w/2-cx*k,y:fr.h/2-cy*k};
+}
+function frameSrc(s,t){
+  // A still gets a new address every frame, so Chromium decodes and rasters it afresh: a frame never reuses a decode made
+  // at another scale for an earlier frame (that made frames differ in their lowest bit depending on what came before).
+  if(s.kind==='still') return `${s.srcInfo.file}?f=${Math.round((s.start+t)*FPS)}`;
+  const n=clamp(Math.round((s.from+(s.loopback?0:t))*FPS),0,s.srcInfo.frames-1);   // the clip's own frame at its own time: never faster
+  return `work/frames/${s.src}/f_${String(n).padStart(5,'0')}.jpg`;
+}
+
+// ---- seek ----
+window.seek=async function(T){
+  const waits=[];
+  for(const s of SHOTS){
+    const t=T-s.start,nx=SHOTS[s.i+1];
+    const covered=nx&&T>=nx.start+(nx.join?0:XF);          // the next shot is fully in: this one is gone
+    const op=t<0||covered?0:(s.i===0||s.join?1:eio(seg(t,0,XF)));
+    s.el.style.opacity=op.toFixed(4);s.el.style.visibility=op>0?'visible':'hidden';
+    if(op<=0) continue;
+    if(s.kind==='card'){
+      // A card's words come in once its plate has covered the shot before, and go before the next shot fades in: never over other words.
+      const e0=s.i===0?0.15:XF+0.05,out=nx&&!nx.join?1-eo(seg(t,s.dur-XF-0.2,s.dur-XF)):1;
+      s.parts.forEach((p,j)=>{const a=e0+j*0.16,u=s.loopback?1:eo(seg(t,a,a+0.36))*out;p.style.opacity=u.toFixed(4);p.style.transform=`translateY(${lerp(12,0,u).toFixed(2)}px)`;});
+    } else {
+      const c=camAt(s,s.loopback?0:t);s.img.style.transform=`translate(${c.x.toFixed(3)}px,${c.y.toFixed(3)}px) scale(${c.k.toFixed(5)})`;
+      const want=frameSrc(s,t);if(s.img.getAttribute('src')!==want){s.img.setAttribute('src',want);waits.push(s.img.decode());}
+    }
+  }
+  if(L.kicker) words(kick,'kick',T);
+  if(L.caption) words(cap,'cap',T);
+  await Promise.all(waits);
+  await document.fonts.ready;
+  // Two animation frames, so the compositor has finished the frame (and any raster it redoes at full quality) before the screenshot.
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+};
+window.READY=Promise.all([document.fonts.load('700 40px "Inter Film"'),document.fonts.load('450 20px "Inter Film"'),document.fonts.load('600 20px "Inter Film"')]);
+</script></body></html>

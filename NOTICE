@@ -123,6 +123,18 @@ template (skills/diagram-design/assets/template.html).
     from, out of or in connection with the Software or the use or other
     dealings in the Software.
 
+docs/media/film/render.mjs and docs/media/film/film.html are adapted from
+product-film by display.dev (https://github.com/display-dev/product-film),
+commit fd9db88a76945bbd1d678739cad411c1a61bce1e: render.mjs from
+product-film/templates/walkthrough/render.js and assemble.sh, film.html's
+engine (stateless seek, 2D camera, eased moves) from
+product-film/templates/walkthrough/beats.html. Changed for Botbench: the shots
+are Botbench's own recordings and screenshots, the theme is Botbench's.
+
+  product-film
+  Copyright (c) 2026 display.dev
+  MIT License. Full text: docs/media/film/LICENSE-product-film.
+
 Approaches learned from (no files copied)
 -----------------------------------------
 
